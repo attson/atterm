@@ -132,7 +132,7 @@ function onStatus(data: unknown) {
 
 function onPulled(data: unknown) {
   const result = data as PullResult
-  if ((result.Adopted?.length ?? 0) === 0 && (result.Conflict?.length ?? 0) === 0) return
+  if ((result.adopted?.length ?? 0) === 0 && (result.conflict?.length ?? 0) === 0) return
   notice.value = result
 }
 
@@ -187,15 +187,15 @@ onBeforeUnmount(() => {
 
     <div v-if="notice" class="sync-notice" data-testid="sync-notice">
       <p
-        v-if="notice.Adopted && notice.Adopted.length"
+        v-if="notice.adopted && notice.adopted.length"
         class="sync-notice-adopted"
         data-testid="sync-notice-adopted"
-      >{{ t('sync.pulledAdopted', { keys: notice.Adopted.map(keyLabel).join(', ') }) }}</p>
+      >{{ t('sync.pulledAdopted', { keys: notice.adopted.map(keyLabel).join(', ') }) }}</p>
       <p
-        v-if="notice.Conflict && notice.Conflict.length"
+        v-if="notice.conflict && notice.conflict.length"
         class="sync-notice-conflict"
         data-testid="sync-notice-conflict"
-      >{{ t('sync.pulledConflict', { keys: notice.Conflict.map(keyLabel).join(', ') }) }}</p>
+      >{{ t('sync.pulledConflict', { keys: notice.conflict.map(keyLabel).join(', ') }) }}</p>
       <button class="sync-notice-dismiss" data-testid="sync-notice-dismiss" @click="dismissNotice">{{
         t('app.dismiss')
       }}</button>

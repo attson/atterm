@@ -39,9 +39,19 @@ it. This is the prerequisite, not a side quest: the feature is
 "see and steer the sync", and steering an unserialized engine is how you
 lose a preference.
 
-**Ruling:** one owning goroutine, one request channel, no lock. A mutex
-would also work, but a channel makes the queue observable — which is
-exactly what the status indicator needs to report ("2 changes waiting").
+**Ruling:** one owning goroutine, one request channel, no lock.
+
+This design originally justified the channel by saying it makes the queue
+observable, "exactly what the status indicator needs to report '2 changes
+waiting'". That turned out to be wrong about its own design: §2 defines
+`PendingKeys` as the count of **dirty keys**, read from `PrefsMeta`, and the
+shipped code never reads the queue depth at all. The channel is still the
+right choice — coalescing a burst of setter-driven pushes into at most one
+extra round trip is natural to express as a merge-in-place on a buffered
+channel and awkward as a mutex plus a pending-flags struct — but it is not
+load-bearing for the indicator. Recorded rather than quietly corrected,
+because a rationale that survives into a comment somewhere is how the next
+person learns the wrong thing.
 
 ## 2. Sync status
 

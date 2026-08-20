@@ -610,6 +610,14 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	// otherwise. Done outside a.mu (reconcile uses its own lock and may touch
 	// the long-conn). No-op until startFeishu has run.
 	a.reconcileFeishuMode(a.ctx, cfg)
+	// Every caller of this function has just changed something that can flip
+	// sync between offline and online — pause, unpause, log in, log out, or
+	// a different relay. None of them enqueue any sync work, so the sync
+	// loop's own emitters never run and the Settings indicator would keep
+	// showing whatever it last saw. See syncOfflineChanged: it also drops
+	// the recorded error, which otherwise reappears red and stale the moment
+	// the config is online again with nothing yet synced.
+	a.syncOfflineChanged()
 }
 
 // applyRelayUplink (re)starts the uplink to match the given config. URL == ""

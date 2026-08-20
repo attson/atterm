@@ -32,6 +32,9 @@ type fakePrefsSyncEngine struct {
 	pullErr        error
 	pushErr        error
 	pullPanic      bool
+	// pushPanic, when non-empty, makes Push panic with it — so a test can
+	// prove a survived panic still reaches the status, not just the log.
+	pushPanic string
 	// pullResult is returned by Pull whenever pullErr is nil, so tests can
 	// drive the "sync:pulled" event without a real relay.
 	pullResult prefssync.PullResult
@@ -106,7 +109,12 @@ func (f *fakePrefsSyncEngine) Push(ctx context.Context) error {
 	f.pushCalls++
 	err := f.pushErr
 	delay := f.callDelay
+	panicWith := f.pushPanic
 	f.mu.Unlock()
+
+	if panicWith != "" {
+		panic(panicWith)
+	}
 
 	if f.pushStarted != nil {
 		select {
@@ -681,12 +689,13 @@ func configuredCfgStore(extra appConfig) *configStore {
 // error. syncOffline is checked before the stored error in GetSyncStatus
 // specifically so this can't regress into a red indicator. It also pins
 // MAJOR 3: LastError itself, not just State, must be suppressed while
-// offline. A user who is offline with a stale recorded error (say, logged
-// out right after a failed push) must not see a red error indicator flash
-// the instant they log back in and GetSyncStatus is polled while still
-// mid-reconnect -- checking State alone in the UI and rendering LastError
-// whenever it's non-empty would do exactly that if LastError leaked
-// through here.
+// offline.
+//
+// It does NOT cover coming back online. An earlier version of this docstring
+// claimed it did, and the whole-branch review disproved that: masking alone
+// left a stale error to reappear red the moment the config became online
+// again. That half is
+// TestGetSyncStatus_ConfigChangeDropsAStaleErrorAndEmits below.
 func TestGetSyncStatus_OfflineWhenRelayNotConfigured(t *testing.T) {
 	a, fake, cancel := newLoopTestApp(t)
 	defer stopLoop(t, a, cancel)
@@ -1217,4 +1226,126 @@ func TestSyncNow_ReturnsBeforeUnderlyingSyncCompletes(t *testing.T) {
 		pull, push := fake.counts()
 		return pull == 1 && push == 1
 	})
+}
+
+// The whole-branch review found the gap these two pin, and it is one gap with
+// two halves: a relay config change neither cleared the recorded error nor
+// emitted anything. Pausing sync, failing a push, and unpausing left
+// GetSyncStatus returning {error, "<the old error>"} with no sync attempted
+// since -- because unpausing goes through applyRelayConfig, which enqueues no
+// work, so the loop's own emitters never ran. A user watching the Settings
+// header while pausing sync in the relay tab went on seeing "Up to date".
+func TestGetSyncStatus_ConfigChangeDropsAStaleErrorAndEmits(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = &configStore{cfg: appConfig{RelayURL: "wss://r", RelaySessionToken: "tok"}}
+
+	fake.mu.Lock()
+	fake.pushErr = errors.New("400 unknown_key: stale-and-irrelevant")
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "the push to fail", func() bool {
+		return a.GetSyncStatus().State == "error"
+	})
+
+	// Now the user pauses the relay. The config is offline, so the error is
+	// masked -- but masking is not clearing, which is the whole point.
+	cfg := a.cfgStore.Get()
+	cfg.RelayPaused = true
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	a.syncOfflineChanged()
+	if got := a.GetSyncStatus(); got.State != "offline" || got.LastError != "" {
+		t.Fatalf("while paused: %+v, want state=offline and no LastError", got)
+	}
+
+	// And unpauses, without anything having enqueued a sync in between.
+	cfg = a.cfgStore.Get()
+	cfg.RelayPaused = false
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	a.syncOfflineChanged()
+	got := a.GetSyncStatus()
+	if got.State == "error" || got.LastError != "" {
+		t.Fatalf("after unpausing: %+v -- a stale error from the previous config must not resurface; no sync has been attempted since", got)
+	}
+}
+
+// The emit half. None of the config transitions enqueue sync work, so without
+// an explicit emit the frontend never learns the state changed at all.
+func TestSyncStatusEvent_FiresOnAConfigChangeWithNoSyncWork(t *testing.T) {
+	a, _, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = &configStore{cfg: appConfig{RelayURL: "wss://r", RelaySessionToken: "tok"}}
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	// Establish a baseline so the dedup has something to compare against.
+	a.syncOfflineChanged()
+	before := len(syncStatusStates(events()))
+
+	cfg := a.cfgStore.Get()
+	cfg.RelayPaused = true
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	a.syncOfflineChanged()
+
+	states := syncStatusStates(events())
+	if len(states) <= before {
+		t.Fatalf("no sync:status event after the config went offline (%d states, was %d); the Settings indicator would keep showing the previous state", len(states), before)
+	}
+	if last := states[len(states)-1]; last != "offline" {
+		t.Fatalf("last emitted state = %q, want offline", last)
+	}
+}
+
+// Pins the WIRING, not just the helper. An earlier version of the test above
+// called syncOfflineChanged directly, so deleting its call site in
+// applyRelayConfig left the suite green -- the same "the guard exists but
+// nothing reaches it" shape this branch has now hit repeatedly.
+func TestApplyRelayConfig_NotifiesSyncStatus(t *testing.T) {
+	a, _, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = &configStore{cfg: appConfig{}}
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	// An unconfigured relay: applyRelayUplink and applyRelayPrefsWatch both
+	// take their "nothing to do" branches, so what is left to observe is
+	// precisely whether the sync status was notified.
+	a.applyRelayConfig(a.cfgStore.Get())
+
+	states := syncStatusStates(events())
+	if len(states) == 0 {
+		t.Fatal("applyRelayConfig emitted no sync:status; pausing, unpausing, logging in and logging out all flow through here and none of them enqueue sync work, so without this the indicator never learns the state changed")
+	}
+	if last := states[len(states)-1]; last != "offline" {
+		t.Fatalf("last emitted state = %q, want offline", last)
+	}
+}
+
+// A panic inside the loop must not merely be survived, it must be visible.
+// Surviving keeps the loop alive; leaving the status untouched leaves the
+// indicator saying "Up to date" about a sync that blew up, which is the
+// invisible-failure mode this whole feature exists to end.
+func TestSyncLoopPanicIsRecordedAsAnError(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = &configStore{cfg: appConfig{RelayURL: "wss://r", RelaySessionToken: "tok"}}
+
+	fake.mu.Lock()
+	fake.pushPanic = "boom"
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, 2*time.Second, "the panic to surface as an error status", func() bool {
+		return a.GetSyncStatus().State == "error"
+	})
+	if got := a.GetSyncStatus(); !strings.Contains(got.LastError, "boom") {
+		t.Fatalf("LastError = %q, want it to name the panic", got.LastError)
+	}
 }

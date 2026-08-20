@@ -167,7 +167,7 @@ describe("SyncStatusIndicator", () => {
 
   it("a sync:pulled event with adopted keys renders a dismissible notice naming them by human-readable name", async () => {
     const { w, events } = await mountIndicator();
-    const result: PullResult = { Adopted: ["terminal_font_head", "ssh_hosts_encrypted"], Conflict: null };
+    const result: PullResult = { adopted: ["terminal_font_head", "ssh_hosts_encrypted"], conflict: null };
     events.emit("sync:pulled", result);
     await flushPromises();
 
@@ -187,8 +187,8 @@ describe("SyncStatusIndicator", () => {
   it("conflicted keys are worded distinctly from adopted keys, and both can render together", async () => {
     const { w, events } = await mountIndicator();
     const result: PullResult = {
-      Adopted: ["terminal_theme"],
-      Conflict: ["terminal_font_size"],
+      adopted: ["terminal_theme"],
+      conflict: ["terminal_font_size"],
     };
     events.emit("sync:pulled", result);
     await flushPromises();
@@ -211,7 +211,7 @@ describe("SyncStatusIndicator", () => {
 
   it("falls back to a humanized label for an unmapped key instead of the raw key or crashing", async () => {
     const { w, events } = await mountIndicator();
-    events.emit("sync:pulled", { Adopted: ["some_future_pref"], Conflict: null } satisfies PullResult);
+    events.emit("sync:pulled", { adopted: ["some_future_pref"], conflict: null } satisfies PullResult);
     await flushPromises();
 
     const notice = w.find('[data-testid="sync-notice-adopted"]');
@@ -221,7 +221,7 @@ describe("SyncStatusIndicator", () => {
 
   it("does not render a notice for an empty sync:pulled payload", async () => {
     const { w, events } = await mountIndicator();
-    events.emit("sync:pulled", { Adopted: null, Conflict: null } satisfies PullResult);
+    events.emit("sync:pulled", { adopted: null, conflict: null } satisfies PullResult);
     await flushPromises();
     expect(w.find('[data-testid="sync-notice"]').exists()).toBe(false);
   });

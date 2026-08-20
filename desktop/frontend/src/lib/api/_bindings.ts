@@ -624,8 +624,8 @@ export interface SyncStatus {
 // conflicted on at least one key (a no-op pull fires nothing). Both slices
 // are pref keys, sorted.
 export interface PullResult {
-  Adopted: string[] | null;
-  Conflict: string[] | null;
+  adopted: string[] | null;
+  conflict: string[] | null;
 }
 
 // AppBindings mirrors Go's exposed App.<Method> surface, one entry per

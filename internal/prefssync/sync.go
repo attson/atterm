@@ -96,9 +96,13 @@ func NewEngine(a Adapter, r RelayClient) *Engine {
 // instead of the sync staying invisible. Both slices are sorted so a
 // comparison never needs set gymnastics, and so a UI listing changed
 // settings gets a stable order for free.
+// Tagged snake_case to match the other payload this feature sends over the
+// Wails boundary (desktop's SyncStatus). Untagged, Go would ship Adopted and
+// Conflict while its sibling shipped last_synced_at, and the next person to
+// add a field would have to notice which convention this one happens to use.
 type PullResult struct {
-	Adopted  []string // server value taken; local had no competing edit
-	Conflict []string // server was newer BUT local was dirty; local kept, a
+	Adopted  []string `json:"adopted"`  // server value taken; local had no competing edit
+	Conflict []string `json:"conflict"` // server was newer BUT local was dirty; local kept, a
 	// later Push will reconcile via LWW. Recording this is the whole point:
 	// before this field existed the user was never told two devices
 	// disagreed and a timestamp silently picked the winner.

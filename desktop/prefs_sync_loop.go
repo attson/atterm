@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -23,6 +24,16 @@ import (
 // that used to mean three racing PUTs. Every caller now goes through
 // enqueueSync or enqueuePostLoginSeed instead of touching a.prefsSync
 // directly.
+//
+// One deliberate exception: markPrefDirtyAndPush calls MarkDirty on the
+// caller's goroutine (see its own comment for why the ordering demands it),
+// so MarkDirty is the one engine method still reachable concurrently. That is
+// a pre-existing shape — updatePref's Get/mutate/Set in app.go is unlocked
+// the same way — and MarkDirty is a read-modify-write, so two setters for one
+// key inside a millisecond can read the same prev and write the same bumped
+// stamp, which is exactly the loss its own bump exists to prevent. Narrower
+// than what this file replaced, but not zero; say so rather than claim
+// otherwise.
 
 // prefsSyncEngine is the surface this file needs from the cross-device sync
 // engine; *prefssync.Engine already satisfies it. It exists so tests can
@@ -59,10 +70,12 @@ func (a *App) startPrefsSyncLoop() {
 }
 
 // runPrefsSyncLoop serialises every engine call. A channel rather than a
-// mutex is deliberate: enqueueSync's coalescing means "is a request
-// currently queued" is externally observable (a later status indicator
-// reads it as "changes waiting") — a mutex guarding direct calls would hide
-// that queue depth instead of exposing it.
+// mutex is deliberate, though not for the reason the design doc first gave:
+// the status indicator reports dirty KEYS (from PrefsMeta), never this queue's
+// depth. The channel earns its place on coalescing — merging a burst of
+// setter-driven pushes into at most one extra round trip is a natural
+// merge-in-place on a buffered channel and an awkward mutex-plus-pending-flags
+// struct.
 func (a *App) runPrefsSyncLoop() {
 	// prefsSyncLoopDone exists purely so tests can wait for this goroutine
 	// to actually exit instead of guessing a sleep long enough for
@@ -163,6 +176,12 @@ func (a *App) runSyncRequest(req syncRequest) {
 	defer func() {
 		if r := recover(); r != nil {
 			logWarn("prefssync", "sync loop: recovered panic: %v", r)
+			// Record it as an outcome, not just a log line. Surviving the
+			// panic keeps the loop alive; leaving the status at whatever it
+			// last was leaves the indicator saying "Up to date" about a sync
+			// that blew up. Invisible failure is the thing this status
+			// exists to end.
+			a.recordSyncOutcome(fmt.Errorf("sync panicked: %v", r))
 		}
 	}()
 	if req.pull {
@@ -211,6 +230,9 @@ func (a *App) runSyncTask(task func(prefsSyncEngine)) {
 	defer func() {
 		if r := recover(); r != nil {
 			logWarn("prefssync", "sync loop: recovered panic in task: %v", r)
+			// Same reason as runSyncRequest's recover: a survived panic that
+			// leaves the status untouched is an invisible failure.
+			a.recordSyncOutcome(fmt.Errorf("sync task panicked: %v", r))
 		}
 	}()
 	task(engine)
@@ -263,11 +285,14 @@ func (a *App) markPrefDirtyAndPush(key string) {
 // engine across all three calls without an unrelated enqueueSync(...) --
 // say, a setter firing while the user is still logging in -- interleaving
 // its own PUT in the middle of the seed's Push. Called by
-// LoginRemoteRelay's post-login step; see app_relay.go. Non-blocking: the
-// caller is expected to invoke this with `go`, matching the fire-and-forget
-// goroutine this sequence used to run on directly.
+// LoginRemoteRelay's post-login step; see app_relay.go.
+//
+// NOT non-blocking, despite what an earlier version of this comment said: the
+// send below waits if a task is already queued. It only behaves that way for
+// its caller because that caller invokes it with `go`, matching the
+// fire-and-forget goroutine this sequence used to run on directly.
 func (a *App) enqueuePostLoginSeed() {
-	if a.prefsSync == nil || a.prefsSyncTaskCh == nil {
+	if a.prefsSync == nil || a.prefsSyncTaskCh == nil || a.cfgStore == nil {
 		return
 	}
 	task := func(engine prefsSyncEngine) {
@@ -363,12 +388,17 @@ func (a *App) GetSyncStatus() SyncStatus {
 	switch {
 	case offline:
 		state = "offline"
-		// "Not configured" is not a failure -- a stale LastError from before
-		// the relay was logged out of (or paused) must not leak through here
-		// and render as a red error indicator the instant the user is back
-		// online with nothing yet synced. State already reads "offline"
-		// either way; suppressing LastError here keeps the payload
-		// consistent with it instead of contradicting it.
+		// "Not configured" is not a failure, so the payload must not carry a
+		// LastError that contradicts the state it ships with.
+		//
+		// This masks; it does not clear. Clearing is syncOfflineChanged's
+		// job, and it has to be, because masking alone was not enough: an
+		// earlier version of this code suppressed the error only here, so
+		// pausing the relay, failing a push, and unpausing left
+		// GetSyncStatus returning {error, "400 unknown_key: ..."} with no
+		// sync having been attempted since. Unpausing goes through
+		// applyRelayConfig, which enqueues nothing, so that false red could
+		// sit there until the next preference edit happened to trigger one.
 		lastError = ""
 	case busy:
 		state = "syncing"
@@ -410,6 +440,25 @@ func (a *App) SyncNow() error {
 // than once per request so that, within one pull-then-push request, a
 // failing push after a successful pull still ends the request in the
 // "error" state -- the later call's outcome always wins.
+// syncOfflineChanged is called whenever the relay configuration changes in a
+// way that can flip sync between offline and online: pausing, unpausing,
+// logging in, logging out, or pointing at a different relay.
+//
+// It does two things that nothing else does. It DROPS any recorded error,
+// because an error from the previous configuration says nothing about the new
+// one — and because GetSyncStatus only masks that error while offline, so it
+// would reappear, red and stale, the moment the config became online again
+// with no sync yet attempted. And it emits, because none of those config
+// transitions enqueue any sync work, so the loop's own emitters never run:
+// without this, a user watching the Settings header while pausing sync in the
+// relay tab would go on seeing "Up to date".
+func (a *App) syncOfflineChanged() {
+	a.syncStatusMu.Lock()
+	a.syncLastError = ""
+	a.syncStatusMu.Unlock()
+	a.emitSyncStatusIfChanged()
+}
+
 func (a *App) recordSyncOutcome(err error) {
 	a.syncStatusMu.Lock()
 	if err != nil {

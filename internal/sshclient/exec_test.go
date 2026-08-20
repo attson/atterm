@@ -256,6 +256,43 @@ func TestRunCancelledContextReturnsCtxErr(t *testing.T) {
 	}
 }
 
+// A per-host timeout is how a hung command ends, and the commonest hang is a
+// sudo prompt a non-PTY exec can never answer — so whatever the host managed
+// to print before it stalled is the only thing explaining the timeout. An
+// earlier version of this branch returned a zero ExecResult and threw it away.
+func TestRunCancelledContextKeepsWhatTheHostAlreadyPrinted(t *testing.T) {
+	const printed = "sudo: a password is required\n"
+
+	wrote := make(chan struct{})
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	addr, hostPub, _ := startExecTestServer(t, func(ch ssh.Channel, cmd string) {
+		_, _ = ch.Write([]byte(printed))
+		close(wrote)
+		// Never sends exit-status: the command is stuck at a prompt.
+		<-block
+	})
+	c := dialExecTestConn(t, addr, hostPub)
+
+	// Cancel only after the bytes are demonstrably on the wire, so this test
+	// pins "output is kept" rather than racing "output arrived at all".
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-wrote
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	defer cancel()
+
+	res, err := c.Run(ctx, "sudo systemctl restart nginx", 0)
+	if err != context.Canceled {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if string(res.Output) != printed {
+		t.Fatalf("Output = %q, want %q — the cancellation path must not discard what the host printed", res.Output, printed)
+	}
+}
+
 func TestRunConcurrentCallsOnOneConn(t *testing.T) {
 	addr, hostPub, _ := startExecTestServer(t, func(ch ssh.Channel, cmd string) {
 		_, _ = ch.Write([]byte(cmd))

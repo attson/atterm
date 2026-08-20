@@ -85,11 +85,22 @@ func (c *Conn) Run(ctx context.Context, cmd string, limit int64) (ExecResult, er
 		// here would make ctx cancellation not actually bound Run at all,
 		// which defeats the reason a caller passes ctx in the first place.
 		// done is buffered, so the goroutine's eventual send (if the
-		// connection ever does die) still never blocks; buf and sess are
-		// both unreachable to any other caller once this returns, so
-		// leaving them to a goroutine nobody waits on costs nothing.
+		// connection ever does die) still never blocks; sess is unreachable
+		// to any other caller once this returns, so leaving it to a
+		// goroutine nobody waits on costs nothing.
+		//
+		// The output IS returned, unlike an earlier version of this branch.
+		// Cancellation is not an exotic path: a per-host timeout is the one
+		// way a hung command ends, and the commonest hang is a sudo prompt
+		// that a non-PTY exec can never answer. Discarding the buffer there
+		// means the caller sees "context deadline exceeded" and nothing
+		// else, when the host had already printed the line explaining
+		// itself. Bytes() copies under limitedBuffer's own mutex, so
+		// reading it while the copiers are still running is safe — the
+		// snapshot may simply be short, which is the honest answer for a
+		// command that never finished.
 		_ = sess.Close()
-		return ExecResult{}, ctx.Err()
+		return ExecResult{Output: buf.Bytes(), Truncated: buf.Truncated()}, ctx.Err()
 	case waitErr := <-done:
 		res := ExecResult{Output: buf.Bytes(), Truncated: buf.Truncated()}
 		if waitErr == nil {

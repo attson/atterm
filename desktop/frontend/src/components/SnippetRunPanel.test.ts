@@ -22,6 +22,9 @@ vi.mock("../lib/api", async () => {
 const HOST_A = { id: "h1", host: "10.0.0.1", user: "root", auth_kind: "password" as const, alias: "alpha" };
 const HOST_B = { id: "h2", host: "10.0.0.2", user: "root", auth_kind: "password" as const, alias: "beta" };
 const HOST_C = { id: "h3", host: "10.0.0.3", user: "root", auth_kind: "password" as const, alias: "gamma" };
+// No alias. Every other fixture has one, which hid the fact that the panel's
+// label rule and Go's sshHostLabel disagreed for exactly this case.
+const HOST_NOALIAS = { id: "h4", host: "10.0.0.4", user: "root", auth_kind: "password" as const, alias: "" };
 
 const SNIPPET_LABEL = "Snip One";
 const SNIPPET_TEXT = "echo hi";
@@ -388,6 +391,31 @@ describe("SnippetRunPanel", () => {
     } finally {
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: original });
     }
+  });
+
+  it("labels an unaliased host the same way Go does, so the label does not flip mid-run", async () => {
+    listSSHHosts.mockReset().mockResolvedValue([HOST_NOALIAS]);
+    const { w, events } = await mountPanel();
+    await selectAndRun(w, [HOST_NOALIAS.id]);
+
+    // Pending row: the panel invented this label locally.
+    const row = w.find(`[data-testid="snippet-run-row-${HOST_NOALIAS.id}"]`);
+    expect(row.text()).toContain("10.0.0.4");
+    expect(row.text()).not.toContain("root@10.0.0.4");
+
+    // Go's sshHostLabel is alias-or-host, and its value overwrites ours the
+    // moment the first event lands. If the two rules disagree the row reads
+    // one thing while pending and another a moment later — including in the
+    // copy-all header.
+    const before = row.text();
+    events.emit("snippet:run:progress", {
+      run_id: "run-1",
+      result: { host_id: HOST_NOALIAS.id, host_label: "10.0.0.4", state: "running", exit_code: 0, output: "", truncated: false },
+    } satisfies SnippetRunProgress);
+    await flushPromises();
+    const after = w.find(`[data-testid="snippet-run-row-${HOST_NOALIAS.id}"]`).text();
+    expect(after.replace("Running", "").trim()).toContain("10.0.0.4");
+    expect(before).toContain("10.0.0.4");
   });
 
   it("copy-all keeps the partial output an 'error' host printed before it dropped", async () => {

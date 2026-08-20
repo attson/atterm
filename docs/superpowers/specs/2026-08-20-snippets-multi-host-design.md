@@ -43,7 +43,13 @@ preserved — batch exec adds none, because it never dials a host itself.
 // Run executes cmd on the remote host over a fresh non-PTY session and
 // returns its combined stdout+stderr. It is safe to call concurrently on
 // one Conn: each call opens its own SSH channel.
-func (c *Conn) Run(ctx context.Context, cmd string, limit int64) (output []byte, exitCode int, truncated bool, err error)
+type ExecResult struct {
+    Output    []byte
+    ExitCode  int
+    Truncated bool
+}
+
+func (c *Conn) Run(ctx context.Context, cmd string, limit int64) (ExecResult, error)
 ```
 
 No PTY is requested, so there is no prompt, no echo, and no terminal control
@@ -92,16 +98,34 @@ purpose, in the terminal. The batch consumes trust; it never asks for it.
 
 ## 6. Surface
 
-`App.RunSnippetOnHosts(snippetID string, hostIDs []string) (runID string, err error)`
-starts the run and returns immediately. Progress arrives as wails events
-(`snippet:run:progress`), one per host state transition, carrying the
-per-host result. `App.CancelSnippetRun(runID)` cancels.
+`App.RunSnippetOnHosts(snippetLabel string, snippetText string, hostIDs []string) (runID string, err error)`
+starts the run and returns immediately.
+
+It takes the snippet's text, not its id. `DEFAULT_TEMPLATES` live in
+TypeScript and Go's store holds nothing until the user first customises a
+template, so an id-only API could only run a default by duplicating the
+defaults into Go — a second source of truth — or by persisting them as a side
+effect of clicking a button that is not "save". The desktop frontend runs
+in-process and can already call any binding, so the id indirection buys no
+boundary here; it only breaks the default templates. (Item 32's mobile path
+is different and does send an id: a frame from a remote device is a real
+boundary, and there the desktop must resolve the recipe itself.)
+
+Progress arrives as wails events (`snippet:run:progress`), one per host state
+transition, carrying the per-host result. `App.CancelSnippetRun(runID)`
+cancels.
 
 Push, not poll: a batch takes as long as its slowest host, and a polling UI
 would either lag or hammer the binding.
 
 The UI is a panel listing selected hosts with live status, exit code, and
-collapsible output, plus copy-all. Selection is by SSH host, multi-select.
+output, plus copy-all. Selection is by SSH host, multi-select.
+
+Output is rendered in a height-bounded `<pre>` rather than a collapsible one,
+which this design originally called for. The DOM therefore holds every
+captured byte — 20 hosts at the 256 KiB cap is roughly 5 MB of live text
+nodes. Acceptable at the sizes this feature is for; if it stops being
+acceptable, collapsing is the fix.
 
 ## 7. Non-goals
 
@@ -111,5 +135,13 @@ collapsible output, plus copy-all. Selection is by SSH host, multi-select.
   templating language is a new surface with its own escaping rules.
 - **No sudo prompt handling.** Non-PTY exec cannot answer a password prompt;
   a snippet needing one will hang until the 60s timeout. Documented, not
-  worked around.
-- **No mobile.** Batch exec is desktop-only, like the SSH host list.
+  worked around — but the timeout path does return whatever the host printed
+  before stalling, so the user sees `sudo: a password is required` rather
+  than a bare `context deadline exceeded`.
+- **No mobile.** Batch exec is desktop-only, like the SSH host list. This is
+  not automatic: `web/vite.config.ts` aliases the web build's `@` to
+  `desktop/frontend/src`, and Capacitor mounts the same shell, so an
+  unguarded button in a shared settings component ships to the relay embed
+  and to iOS. The entry point is gated on `platform.caps.wailsBindings`, and
+  a test mounts the component under both shapes — an ungated version renders
+  the button, opens the modal, and dies on `app.wailsBindingsNotReady`.

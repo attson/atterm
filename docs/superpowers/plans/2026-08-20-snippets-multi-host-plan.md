@@ -123,7 +123,7 @@ git commit -m "feat(sshclient): run a command over a non-PTY exec channel"
       Error     string `json:"error,omitempty"`
   }
 
-  func (a *App) RunSnippetOnHosts(snippetID string, hostIDs []string) (string, error)
+  func (a *App) RunSnippetOnHosts(snippetLabel string, snippetText string, hostIDs []string) (string, error)
   func (a *App) CancelSnippetRun(runID string) error
   ```
 
@@ -131,7 +131,7 @@ git commit -m "feat(sshclient): run a command over a non-PTY exec channel"
 - At most `snippetMaxConcurrentHosts` hosts run at once — assert with a counter that records the observed maximum, not with timing.
 - One host's failure (dial error, non-zero exit, timeout) leaves every other host's result untouched and the run completing.
 - Each host emits `snippet:run:progress` on entering `running` and again on reaching a terminal state, via `a.eventsEmitter`.
-- Unknown `snippetID` or empty `hostIDs` returns an error and starts nothing.
+- Empty (or whitespace-only) `snippetText`, or empty `hostIDs`, returns an error and starts nothing.
 - A host ID not in the store ends as `error`, not a panic.
 - `CancelSnippetRun` on an unknown run ID returns an error; on a live run it moves `pending` hosts to `error` with a cancellation message and leaves finished results alone.
 - The `jumpChain` is closed for every host, on every path.
@@ -192,7 +192,7 @@ git commit -m "feat(ssh): run one snippet across many hosts, bounded and isolate
 
 **Interfaces:**
 - Consumes: Task 2's exported method signatures.
-- Produces: `runSnippetOnHosts(snippetId: string, hostIds: string[]): Promise<string>`, `cancelSnippetRun(runId: string): Promise<void>`, and the `snippet:run:progress` event payload type `SnippetHostResult`.
+- Produces: `runSnippetOnHosts(snippetLabel: string, snippetText: string, hostIds: string[]): Promise<string>`, `cancelSnippetRun(runId: string): Promise<void>`, and the `snippet:run:progress` event payload type `SnippetHostResult`.
 
 Keys to add under a new `snippets` namespace, both locales, same key set: `snippets.runOnHosts`, `snippets.selectHosts`, `snippets.running`, `snippets.ok`, `snippets.failed`, `snippets.error`, `snippets.exitCode`, `snippets.truncated`, `snippets.copyAll`, `snippets.cancel`, `snippets.noHostsSelected`, `snippets.hostKeyUntrusted`.
 

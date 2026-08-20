@@ -26,12 +26,16 @@ const starting = ref(false)
 const cancelling = ref(false)
 const errorMsg = ref('')
 
-// Same alias-or-user@host convention SshHostsPanel.vue uses (hostLabel there):
-// kept local rather than shared because that file has no exported helper to
-// import, and duplicating one line is cheaper than introducing a new shared
-// module for it.
+// Deliberately NOT SshHostsPanel.vue's alias-or-user@host convention. Every
+// SnippetHostResult carries a HostLabel from Go's sshHostLabel (ssh_jump.go),
+// which is alias-or-host, and that value overwrites this one the instant the
+// first progress event lands. Using a different rule here would make an
+// unaliased host's row read "root@10.0.0.1" while pending and flip to
+// "10.0.0.1" a moment later — including in the "=== label ===" copy-all
+// header, which would then differ depending on when it was copied. Matching
+// Go is the only way the label is stable across that handover.
 function hostLabel(h: SSHHost): string {
-  return h.alias?.trim() || `${h.user}@${h.host}`
+  return h.alias?.trim() || h.host.trim()
 }
 
 function toggleHost(id: string) {

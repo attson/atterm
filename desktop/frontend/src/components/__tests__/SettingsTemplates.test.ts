@@ -15,6 +15,10 @@ const { fake } = vi.hoisted(() => {
         emit: vi.fn(),
         on: vi.fn().mockReturnValue(() => {}),
       },
+      // Defaults to the desktop shape. The web build aliases `@` to this same
+      // source tree and Capacitor mounts the same shell, so "run on hosts" is
+      // gated on wailsBindings; a test that wants the web/iOS shape flips it.
+      caps: { wailsBindings: true },
     },
   }
 })
@@ -139,5 +143,50 @@ describe('SettingsTemplates', () => {
 
     w.unmount()
     expect(off).toHaveBeenCalled()
+  })
+
+  it('passes the template label and text to the run panel in the right order', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.caps = { wailsBindings: true }
+    // The two props are adjacent and both strings, so a swap typechecks and
+    // every other test stays green — while the runtime consequence is running
+    // the template's LABEL as a shell command on N remote hosts. Distinct,
+    // unmistakable values are the whole point of this test.
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'a', label: 'Restart nginx', text: 'systemctl restart nginx' },
+    ])
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-run-a"]').trigger('click')
+    await flushPromises()
+
+    const panel = w.findComponent({ name: 'SnippetRunPanel' })
+    expect(panel.exists()).toBe(true)
+    expect(panel.props('snippetLabel')).toBe('Restart nginx')
+    expect(panel.props('snippetText')).toBe('systemctl restart nginx')
+  })
+
+  it('hides "run on hosts" where the Wails bindings do not exist (web, iOS)', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'a', label: 'A', text: 'a-text' },
+    ])
+
+    __fake.caps = { wailsBindings: true }
+    const desktop = mount(SettingsTemplates)
+    await flushPromises()
+    expect(desktop.find('[data-testid="template-run-a"]').exists()).toBe(true)
+
+    // Same component, web/Capacitor shape. Without the gate the button renders,
+    // the modal opens, listSSHHosts throws app.wailsBindingsNotReady, and the
+    // user is left looking at a developer's error message in a dead dialog.
+    __fake.caps = { wailsBindings: false }
+    const web = mount(SettingsTemplates)
+    await flushPromises()
+    expect(web.find('[data-testid="template-run-a"]').exists()).toBe(false)
+    // The rest of the tab still works everywhere — the gate is on the button,
+    // not the tab.
+    expect(web.find('[data-testid="template-row-a"]').exists()).toBe(true)
   })
 })

@@ -21,6 +21,9 @@ const error = ref('')
 // fix round below) because a still-default, never-customized template has
 // no Go-side existence for an id-only lookup to find.
 const runningTemplate = ref<QuickTemplate | null>(null)
+// See the button's comment: this tab renders on web and iOS too, and batch
+// execution is desktop-only because it needs the Wails bindings.
+const canRunOnHosts = platform.caps.wailsBindings
 function openRunPanel(it: QuickTemplate) { runningTemplate.value = it }
 function closeRunPanel() { runningTemplate.value = null }
 
@@ -151,7 +154,21 @@ function cancelReset() { resetOpen.value = false }
           <button :disabled="idx === 0" @click="moveUp(it.id)">↑</button>
           <button :disabled="idx === items.length - 1" @click="moveDown(it.id)">↓</button>
           <button @click="startEdit(it)">{{ t('settings.templates.edit') }}</button>
-          <button :data-testid="`template-run-${it.id}`" @click="openRunPanel(it)">
+          <!--
+            Desktop only. This component is shared: web/vite.config.ts aliases
+            the web build's `@` to desktop/frontend/src, and Capacitor mounts
+            the same shell, so anything unguarded here also ships to the relay
+            embed and to iOS. Batch execution needs the Wails bindings
+            (listSSHHosts, RunSnippetOnHosts) — without them the modal opens
+            and immediately dies on `app.wailsBindingsNotReady`, which is a
+            developer's error message shown to a user. The rest of this tab
+            works everywhere, so the gate belongs on the button, not the tab.
+          -->
+          <button
+            v-if="canRunOnHosts"
+            :data-testid="`template-run-${it.id}`"
+            @click="openRunPanel(it)"
+          >
             {{ t('snippets.runOnHosts') }}
           </button>
           <button class="del" :data-testid="`template-delete-${it.id}`" @click="deleteItem(it.id)">

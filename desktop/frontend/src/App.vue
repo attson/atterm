@@ -931,7 +931,11 @@ function onCommandNotifyThresholdChanged(seconds: number) {
 // here falls the picker back to "" (= default profile, if any), which is
 // the more honest state for "the thing you picked no longer exists".
 async function refreshProfiles() {
-  profiles.value = await getProfiles();
+  // `?? []` even though GetProfiles now guarantees an array: this is the only
+  // caller that dereferences the result on the next line, and it was shielded
+  // only by the `&&` short-circuit below — a user with a profile selected
+  // would have hit the throw.
+  profiles.value = (await getProfiles()) ?? [];
   if (selectedProfileId.value && !profiles.value.some((p) => p.id === selectedProfileId.value)) {
     selectedProfileId.value = "";
   }

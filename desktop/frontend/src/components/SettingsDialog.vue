@@ -19,6 +19,7 @@ import SettingsPlugins from "./SettingsPlugins.vue";
 import SettingsShortcuts from "./SettingsShortcuts.vue";
 import SettingsDiagnostics from "./SettingsDiagnostics.vue";
 import SettingsTemplates from "./SettingsTemplates.vue";
+import SettingsProfiles from "./SettingsProfiles.vue";
 import SettingsTasks from "./SettingsTasks.vue";
 import SettingsFeishu from "./SettingsFeishu.vue";
 import SettingsDevices from "./SettingsDevices.vue";
@@ -36,7 +37,7 @@ const { t, resolvedLocale } = useI18n();
 // UI is in Chinese (CodeIsland-style "通用 General preferences" anchor).
 // English locale skips the subtitle to avoid duplicate text.
 type SettingsTabId = "general" | "account" | "tasks" | "relay" | "plugins"
-  | "shortcuts" | "templates" | "logging" | "updates" | "diagnostics" | "feishu" | "devices" | "received-files";
+  | "shortcuts" | "templates" | "profiles" | "logging" | "updates" | "diagnostics" | "feishu" | "devices" | "received-files";
 
 const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> = {
   general:     { labelKey: "settings.tabs.general",        english: "General preferences" },
@@ -46,6 +47,7 @@ const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> 
   plugins:     { labelKey: "settings.tabs.plugins",        english: "Plugins" },
   shortcuts:   { labelKey: "settings.tabs.shortcuts",      english: "Keyboard shortcuts" },
   templates:   { labelKey: "settings.templates.tab",       english: "Quick templates" },
+  profiles:    { labelKey: "settings.profiles.tab",        english: "Session profiles" },
   logging:     { labelKey: "settings.tabs.logging",        english: "Logging" },
   updates:     { labelKey: "settings.tabs.updates",        english: "Updates" },
   diagnostics: { labelKey: "settings.diagnostics.tab",     english: "Diagnostics" },
@@ -71,6 +73,7 @@ const tabIcons: Record<SettingsTabId, string> = {
   plugins:     `<svg ${icoBase}><path d="M5 2v2.5H2.5V8H5v3.5h3.5V14H12V11.5h2V8h-2.5V4.5H8.5V2z"/></svg>`,
   shortcuts:   `<svg ${icoBase}><rect x="1.6" y="4.2" width="12.8" height="7.6" rx="1.6"/><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M4.5 9.5h7"/></svg>`,
   templates:   `<svg ${icoBase}><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.4"/><path d="M2.4 6h11.2M6 6v7.6"/></svg>`,
+  profiles:    `<svg ${icoBase}><rect x="1.6" y="3" width="12.8" height="10" rx="1.4"/><path d="M4.2 6.6h4.4M4.2 9h7.6"/><circle cx="11.4" cy="6.6" r="0.9" fill="currentColor" stroke="none"/></svg>`,
   logging:     `<svg ${icoBase}><path d="M3 2.5h7l3 3v8H3z"/><path d="M10 2.5v3h3M5 8.5h6M5 11h4"/></svg>`,
   updates:     `<svg ${icoBase}><path d="M2.5 8a5.5 5.5 0 0 1 9.7-3.5L14 6.5"/><path d="M14 2.5v4h-4"/><path d="M13.5 8a5.5 5.5 0 0 1-9.7 3.5L2 9.5"/><path d="M2 13.5v-4h4"/></svg>`,
   diagnostics: `<svg ${icoBase}><circle cx="7.2" cy="7.2" r="4.4"/><path d="m10.4 10.4 3 3"/></svg>`,
@@ -83,7 +86,7 @@ const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
-  initialTab?: "general" | "account" | "relay" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices";
+  initialTab?: "general" | "account" | "relay" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices";
 }>();
 
 const emit = defineEmits<{
@@ -93,13 +96,14 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", appearance: TerminalAppearance): void;
   (e: "bindings-changed", bindings: Record<string, string>): void;
+  (e: "profiles-changed"): void;
 }>();
 
 // Logging is no longer a standalone tab — it lives inside the Diagnostics
 // pane. Map any legacy `initialTab: 'logging'` onto diagnostics so deep links
 // keep working.
 const initialTab = props.initialTab === "logging" ? "diagnostics" : (props.initialTab ?? "general");
-const activeTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files">(initialTab);
+const activeTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files">(initialTab);
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
@@ -115,6 +119,10 @@ if (!caps.wailsBindings) {
   hiddenTabs.add('diagnostics')
   hiddenTabs.add('received-files')
   hiddenTabs.add('feishu')
+  // Session profiles (roadmap item 22) are a desktop-only concept — they
+  // launch a local shell (desktop/relay_host.go's NewSession), which web /
+  // Capacitor never do. Same reasoning as relay/diagnostics/feishu above.
+  hiddenTabs.add('profiles')
 }
 if (hiddenTabs.has(activeTab.value)) activeTab.value = 'general'
 
@@ -132,7 +140,7 @@ watch(
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files" | null>(null);
+const pendingTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -168,7 +176,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files") {
+function switchTab(next: "general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -229,6 +237,14 @@ function onAppearanceChanged(state: TerminalAppearanceState) {
 // waiting for the dialog to close and remount (see App.vue's onBindingsChanged).
 function onBindingsChanged(bindings: Record<string, string>) {
   emit("bindings-changed", bindings);
+}
+
+// SettingsProfiles emits after a successful persist()/setDefault() so
+// App.vue's picker can refresh independently of prefs:changed, which only
+// fires when a Push to the relay actually succeeds (see SettingsProfiles.vue
+// and App.vue's onProfilesChanged).
+function onProfilesChanged() {
+  emit("profiles-changed");
 }
 
 async function openLogViewer() {
@@ -346,6 +362,15 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.templates.tab") }}</span>
           </button>
           <button
+            v-if="caps.wailsBindings"
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'profiles' }"
+            @click="switchTab('profiles')"
+          >
+            <span class="nav-icon" v-html="tabIcons.profiles"></span>
+            <span class="nav-label">{{ t("settings.profiles.tab") }}</span>
+          </button>
+          <button
             v-if="caps.autoUpdate"
             class="settings-nav-item"
             :class="{ active: activeTab === 'updates' }"
@@ -412,6 +437,7 @@ function onSaveClick() {
           <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" @bindings-changed="onBindingsChanged" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
+          <SettingsProfiles v-if="activeTab === 'profiles' && caps.wailsBindings" @profiles-changed="onProfilesChanged" />
           <div v-if="activeTab === 'diagnostics' && caps.wailsBindings" class="diag-merged">
             <section v-if="caps.fileDialog" class="merged-section">
               <h4 class="merged-section-title">{{ t("settings.tabs.logging") }}</h4>

@@ -30,6 +30,7 @@ import type {
   NewSessionReq,
   NewSessionResp,
   NotificationRouteData,
+  SessionProfile,
   StartupError,
 } from "./api/_bindings";
 
@@ -64,6 +65,7 @@ export type {
   SSHCredential,
   SSHHost,
   SSHKey,
+  SessionProfile,
   SignOutOthersResult,
   StartupError,
   TaskGroupBy,
@@ -366,4 +368,43 @@ export function setCommandNotifyThresholdSeconds(seconds: number): Promise<void>
 
 export function getUserHomeDir(): Promise<string> {
   return bindings().GetUserHomeDir();
+}
+
+// ---- session profiles ----
+//
+// GetProfiles/SetProfiles/GetDefaultProfileID/SetDefaultProfileID are marked
+// optional on AppBindings (see _bindings.ts) because they landed after most
+// of App.test.ts's __setBindingsForTest mocks were written. The read fallbacks
+// below mirror getStartupError()'s pattern: a missing binding degrades to
+// "no profiles configured" instead of throwing, so callers that load
+// profiles unconditionally (App.vue's onMounted) don't need every existing
+// test mock updated just to keep mounting.
+//
+// The write fallbacks are deliberately NOT the same shape. Degrading a read
+// to "empty" is harmless; degrading a write to "resolved, nothing written"
+// is a different class of bug — persist()/setDefault() in SettingsProfiles.vue
+// would report success to the user while silently performing no write at
+// all. Reject instead so callers surface the failure.
+export function getProfiles(): Promise<SessionProfile[]> {
+  const b = bindings();
+  if (!b.GetProfiles) return Promise.resolve([]);
+  return b.GetProfiles();
+}
+
+export function setProfiles(profiles: SessionProfile[]): Promise<void> {
+  const b = bindings();
+  if (!b.SetProfiles) return Promise.reject(new Error("SetProfiles binding is not available"));
+  return b.SetProfiles(profiles);
+}
+
+export function getDefaultProfileID(): Promise<string> {
+  const b = bindings();
+  if (!b.GetDefaultProfileID) return Promise.resolve("");
+  return b.GetDefaultProfileID();
+}
+
+export function setDefaultProfileID(id: string): Promise<void> {
+  const b = bindings();
+  if (!b.SetDefaultProfileID) return Promise.reject(new Error("SetDefaultProfileID binding is not available"));
+  return b.SetDefaultProfileID(id);
 }

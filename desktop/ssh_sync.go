@@ -14,10 +14,6 @@ import (
 // it or previously-synced blobs won't open.
 var sshHostsSyncSessionID = uuid.MustParse("55480000-0000-4000-8000-000000000001")
 
-// sshSyncFrameType is an AAD-only tag for host-list sync seals. It never
-// appears on the relay wire (not a proto frame type) — it only binds the AAD.
-const sshSyncFrameType = 0xF0
-
 type sshSyncPayload struct {
 	Hosts []sshSyncHost `json:"hosts"`
 	Keys  []sshSyncKey  `json:"keys"`
@@ -57,7 +53,7 @@ func sealSSHHosts(accountKey []byte, hosts []SSHHost, creds map[string]sshCreden
 	if err != nil {
 		return nil, err
 	}
-	ct, err := e2eecrypto.SealUnsequenced(sessionKey, sshHostsSyncSessionID, sshSyncFrameType, plain)
+	ct, err := e2eecrypto.SealUnsequenced(sessionKey, sshHostsSyncSessionID, e2eecrypto.AADTagSSHHosts, plain)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +81,7 @@ func openSSHHosts(accountKey []byte, value json.RawMessage) ([]SSHHost, map[stri
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	plain, err := e2eecrypto.OpenUnsequenced(sessionKey, sshHostsSyncSessionID, sshSyncFrameType, ct)
+	plain, err := e2eecrypto.OpenUnsequenced(sessionKey, sshHostsSyncSessionID, e2eecrypto.AADTagSSHHosts, ct)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

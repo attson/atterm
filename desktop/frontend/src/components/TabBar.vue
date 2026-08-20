@@ -8,6 +8,7 @@ import TaskStateIcon from "./TaskStateIcon.vue";
 import { stateColor, type TaskState } from "../lib/taskState";
 import { usableAITitle } from "../lib/sessionLabel";
 import { SESSION_DND_MIME, carriesSessionDrag, draggingSession } from "../lib/paneDrop";
+import type { SessionProfile } from "../lib/api";
 
 interface TabSummary {
   id: string;
@@ -33,8 +34,17 @@ withDefaults(
     isAdmin?: boolean;
     // Whether the admin panel is the currently active main-area view.
     adminOpen?: boolean;
+    // Session profiles (roadmap item 22), desktop-only. Empty on web/mobile
+    // and on any mount that hasn't loaded them yet, which keeps the picker
+    // hidden (v-if="profiles.length > 0" below) instead of rendering an
+    // always-empty dropdown.
+    profiles?: SessionProfile[];
+    // "" means "use the default profile" (resolved on the Go side —
+    // desktop/relay_host.go resolveSessionProfile). Only set to a real id
+    // when the user explicitly picked one from the dropdown.
+    selectedProfileId?: string;
   }>(),
-  { canNewLocal: true, updateBadge: false, isAdmin: false, adminOpen: false },
+  { canNewLocal: true, updateBadge: false, isAdmin: false, adminOpen: false, profiles: () => [], selectedProfileId: "" },
 );
 
 const emit = defineEmits<{
@@ -50,6 +60,8 @@ const emit = defineEmits<{
   (e: "toggle-admin"): void;
   /** A session was dragged out of a pane and dropped here: give it its own tab. */
   (e: "detach-session", sessionId: string): void;
+  /** The profile picker's selection changed; App.vue owns the ref this feeds. */
+  (e: "select-profile", profileId: string): void;
 }>();
 
 const DRAG_THRESHOLD = 4;
@@ -340,6 +352,19 @@ function onStripDrop(e: DragEvent) {
         <button class="close" @pointerdown.stop @click="onClose($event, t.id)">×</button>
       </div>
     </div>
+    <select
+      v-if="canNewLocal && profiles.length > 0"
+      class="profile-picker"
+      data-test="new-tab-profile"
+      :aria-label="i18nT('terminal.newTabProfileLabel')"
+      :title="i18nT('terminal.newTabProfileLabel')"
+      :value="selectedProfileId"
+      @change="emit('select-profile', ($event.target as HTMLSelectElement).value)"
+      @click.stop
+    >
+      <option value="">{{ i18nT("terminal.useDefaultProfile") }}</option>
+      <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+    </select>
     <button
       v-if="canNewLocal"
       class="plus"
@@ -454,6 +479,18 @@ function onStripDrop(e: DragEvent) {
 }
 .tab:hover .close, .tab.active .close { opacity: 1; }
 .tab .close:hover { background: rgba(248, 81, 73, 0.18); color: var(--bad); }
+.profile-picker {
+  max-width: 120px;
+  height: 100%;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+.profile-picker:hover { color: var(--fg); }
 .plus {
   border: none; background: transparent; color: var(--fg-dim);
   font-size: 18px; line-height: 1; padding: 0 14px; cursor: pointer;

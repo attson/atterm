@@ -56,6 +56,7 @@ func TestSyncedKeys_MatchesWhitelist(t *testing.T) {
 		"terminal_scrollback",
 		"default_shell",
 		"shortcut_bindings",
+		"profiles_encrypted",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d keys, want %d: %v", len(got), len(want), got)

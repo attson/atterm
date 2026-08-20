@@ -30,6 +30,7 @@ var expectedSyncedKeyKinds = map[string]preferenceKind{
 	"terminal_scrollback":              preferenceKindInt,
 	"default_shell":                    preferenceKindString,
 	"shortcut_bindings":                preferenceKindObject,
+	"profiles_encrypted":               preferenceKindString, // base64 ciphertext string, see desktop/profiles.go sealProfiles
 }
 
 // TestAllowedPreferenceKeys_CoversSyncedKeys is the structural test the

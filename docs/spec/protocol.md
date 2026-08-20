@@ -608,13 +608,18 @@ AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字�
 
 | frame_type | 出现位置 | sealed 内容 |
 |------------|----------|-------------|
+| `0x02` `IN` | IN 帧 payload（整体，无 seq） | 原始 UTF-8 键入字节；relay→agent 方向，desktop `openInboundFrame` 已支持解封，尚无发送端（web/desktop 前端）产出该信封 |
 | `0x03` `OUT` | OUT 帧 `seq` 后的字节流 | 原始 PTY 输出字节 |
 | `0x05` `META` | `MetaPayload.sealed`（base64） | JSON `SealedMetaFields { title, cwd, current_command }` |
 | `0x12` `LIST_RESP` | `SessionInfo.sealed`（base64） | JSON `SealedSessionFields { title, cwd, command, current_command }` |
+| `0x33` `PASTE_IMAGE` | PASTE_IMAGE 帧 payload（整体） | JSON `PasteImagePayload { filename, content_type, data }`；relay→agent 方向，desktop `openInboundFrame` 已支持解封，尚无发送端产出该信封 |
 | `0x35` `COMMAND_EVENT` | `CommandEventPayload.sealed_body`（base64） | JSON `SealedPushBody { label, exit_code, elapsed_ms }` |
+| `0x37` `PASTE_FILE` | PASTE_FILE 帧 payload（整体） | JSON `PasteFilePayload { filename, content_type, data }` |
 | `0x38` `FS_REQUEST` | 分段 payload 的 segment 1（裸二进制，非 base64） | JSON `SealedFSRequestFields { path, new_path }` |
 | `0x39` `FS_RESPONSE` | segment 1（元数据）+ segment 2（文件字节） | segment 1 = JSON `SealedFSResponseFields { entries, meta, error, content, chunk }`；segment 2 = 原始文件字节，不经 base64 |
 | `0x3a` `FS_EVENT` | 分段 payload 的 segment 1（裸二进制） | JSON `SealedFSEventFields { path }` |
+| `0xF0` （合成，不上 wire） | `ssh_hosts_encrypted` 偏好值 | JSON `sshSyncPayload { hosts, keys }` |
+| `0xF1` （合成，不上 wire） | `profiles_encrypted` 偏好值 | JSON `profilesSyncPayload { profiles, default_profile_id }` |
 
 **红线**：加新 sealed 帧时**必须**给一个**唯一**的 `frame_type` 字节，并在这张表里增行；不允许复用（[AGENTS.md](../../AGENTS.md) §22）。
 

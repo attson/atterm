@@ -45,6 +45,12 @@ type NewSessionReq struct {
 	Cols    uint16   `json:"cols,omitempty"`
 	Rows    uint16   `json:"rows,omitempty"`
 
+	// ProfileID explicitly selects a SessionProfile for this session,
+	// overriding the configured default profile (see relayHost.NewSession's
+	// precedence: explicit > default > default_shell/HOME). Empty means "no
+	// explicit choice" — fall through to the default profile if one is set.
+	ProfileID string `json:"profile_id,omitempty"`
+
 	// AIKind is set by the frontend after calling its own classifyAIKind()
 	// on the user-typed command. Allowed values match the keys of
 	// aiSniffers ("claude" | "codex" | "aider"). Empty disables AI behavior
@@ -1077,6 +1083,75 @@ func (a *App) SetShortcutBindings(bindings map[string]string) error {
 	})
 }
 
+// GetProfiles returns the user's saved session-launch profiles.
+// cfgStore.Get() already deep-copies each profile's Env map (see
+// detachMaps in config.go), so the returned slice is safe for the caller to
+// mutate without affecting the store.
+func (a *App) GetProfiles() []SessionProfile {
+	if a == nil || a.cfgStore == nil {
+		return nil
+	}
+	return a.cfgStore.Get().Profiles
+}
+
+// SetProfiles replaces the profile list wholesale. Validates before touching
+// the store, same discipline as SetShortcutBindings: a rejected call must
+// leave the previously stored profiles untouched.
+func (a *App) SetProfiles(profiles []SessionProfile) error {
+	seen := make(map[string]bool, len(profiles))
+	for _, p := range profiles {
+		// Compare trimmed ids, matching filterValidProfiles' inbound check
+		// (profiles.go). Unreachable in practice with generated UUIDs — the
+		// only caller (SettingsProfiles.vue) never emits whitespace-padded
+		// ids — but the two validation boundaries should agree on what an id
+		// is rather than silently diverge on an edge case neither exercises.
+		id := strings.TrimSpace(p.ID)
+		if id == "" {
+			return errors.New("profiles: id must be non-empty")
+		}
+		if seen[id] {
+			return fmt.Errorf("profiles: duplicate id %q", id)
+		}
+		seen[id] = true
+		if strings.TrimSpace(p.Name) == "" {
+			return fmt.Errorf("profiles[%q]: name must be non-empty", id)
+		}
+	}
+	return a.updatePref("profiles_encrypted", func(cfg *appConfig) error {
+		cfg.Profiles = profiles
+		// Structural guarantee, not a caller's responsibility: if this write
+		// removes the profile DefaultProfileID currently names, the default
+		// must fall back to "" rather than persist a dangling reference.
+		// resolveDefaultProfileID already exists for the inbound-sync half
+		// of this same invariant (openProfiles' merge path); reuse it here
+		// so a local SetProfiles call (the UI's delete path already
+		// compensates, but nothing else does — see SettingsProfiles.vue's
+		// deleteProfile) can't strand it either.
+		cfg.DefaultProfileID = resolveDefaultProfileID(cfg.DefaultProfileID, profiles)
+		return nil
+	})
+}
+
+// GetDefaultProfileID returns the profile used for new tabs/splits when none
+// is explicitly picked. Empty means "no default".
+func (a *App) GetDefaultProfileID() string {
+	if a == nil || a.cfgStore == nil {
+		return ""
+	}
+	return a.cfgStore.Get().DefaultProfileID
+}
+
+// SetDefaultProfileID persists the default profile choice. Marked dirty
+// under the same "profiles_encrypted" key as SetProfiles — the default
+// selection is part of the same user-facing "profiles" preference, wired
+// into the actual sync payload by Task 3.
+func (a *App) SetDefaultProfileID(id string) error {
+	return a.updatePref("profiles_encrypted", func(cfg *appConfig) error {
+		cfg.DefaultProfileID = id
+		return nil
+	})
+}
+
 // GetTaskPreset returns the user's persisted task state display preset.
 func (a *App) GetTaskPreset() string {
 	if a.cfgStore == nil {
@@ -1719,6 +1794,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.DefaultShell != ""
 		case "shortcut_bindings":
 			return len(c.ShortcutBindings) > 0
+		case "profiles_encrypted":
+			return len(c.Profiles) > 0
 		}
 		return false
 	}

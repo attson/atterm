@@ -468,12 +468,107 @@ func (h *relayHost) Stop() {
 	}
 }
 
+// resolveSessionProfile implements design §4's precedence for choosing a
+// profile at session-creation time: an explicitly chosen profile id wins,
+// then the configured default, then no profile at all (nil) — the caller
+// then falls back to whatever req.Command/req.Cwd already carry, i.e.
+// today's default_shell + HOME behavior, unchanged.
+//
+// Returns nil rather than an error when the resolved id (explicit or
+// default) does not match any profile: a stale or deleted profile id must
+// never block session creation, it just means "no profile applies".
+func resolveSessionProfile(profiles []SessionProfile, defaultProfileID, explicitProfileID string) *SessionProfile {
+	id := explicitProfileID
+	if id == "" {
+		id = defaultProfileID
+	}
+	if id == "" {
+		return nil
+	}
+	for i := range profiles {
+		if profiles[i].ID == id {
+			p := profiles[i]
+			return &p
+		}
+	}
+	return nil
+}
+
+// applyProfileEnv merges a profile's environment variables onto the base
+// terminal env. Profile entries win over the base environment (design §4
+// precedence) — with one deliberate exception: TERM. relay_host builds its
+// base env via terminalEnvForXterm, which sets TERM=xterm-256color to match
+// the xterm.js renderer atterm actually talks to; a profile env that
+// happened to carry TERM (e.g. copied from a dotfile) would silently break
+// rendering if it were allowed to win (design §6.3). Every other key is the
+// user's to override, TERM is not.
+func applyProfileEnv(env []string, profileEnv map[string]string) []string {
+	for k, v := range profileEnv {
+		if k == envKeyTerm {
+			continue
+		}
+		env = setEnv(env, k, v)
+	}
+	return env
+}
+
 // NewSession spawns a PTY for the given command and adopts it as a session.
 func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUID, error) {
-	if req.Command == "" {
+	var profiles []SessionProfile
+	var defaultProfileID string
+	if h.cfg != nil {
+		c := h.cfg.Get()
+		profiles = c.Profiles
+		defaultProfileID = c.DefaultProfileID
+	}
+	profile := resolveSessionProfile(profiles, defaultProfileID, req.ProfileID)
+	profileID := ""
+	if profile != nil {
+		profileID = profile.ID
+	}
+
+	// Precedence (design §4): the resolved profile's Shell/Cwd win when set;
+	// an empty Shell/Cwd on the profile means "fall back to what the caller
+	// already resolved" (req.Command from default_shell, req.Cwd/HOME) —
+	// exactly today's behavior when no profile applies at all.
+	//
+	// Shell and Cwd get deliberately asymmetric treatment for a synced
+	// profile whose Shell/Cwd don't exist on this machine (final-review
+	// ruling, Important 3):
+	//
+	//   - Shell gets a fallback. A shell that cannot start means no session
+	//     at all, so degrading to the caller's already-resolved default
+	//     shell (req.Command) is strictly better than failing outright — and
+	//     a bad *default* profile would otherwise fail every new tab and
+	//     split. Mirrors DefaultShellOrDefault's treatment of a synced
+	//     absolute default_shell (config.go): stat only absolute paths (a
+	//     bare name is PATH-resolved at spawn time, so statting it here would
+	//     reject perfectly good configs) and fall back with a logWarn.
+	//   - Cwd does NOT get a fallback. A wrong cwd still opens a working
+	//     session — just in the wrong directory, which the user may not
+	//     notice and may run commands in unintentionally. Failing loudly
+	//     (see the ptyhost.Open wrap below, which names the profile) is
+	//     better than silently landing somewhere the user didn't choose.
+	command := req.Command
+	if profile != nil && profile.Shell != "" {
+		shell := profile.Shell
+		if filepath.IsAbs(shell) {
+			if _, err := os.Stat(shell); err != nil {
+				logWarn("session", "profile %q (%s) shell %q is not present on this machine; falling back to the default shell", profile.Name, profile.ID, shell)
+				shell = ""
+			}
+		}
+		if shell != "" {
+			command = shell
+		}
+	}
+	if command == "" {
 		return uuid.Nil, fmt.Errorf("empty command")
 	}
 	cwd := req.Cwd
+	if profile != nil && profile.Cwd != "" {
+		cwd = profile.Cwd
+	}
 	if cwd == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			cwd = home
@@ -487,17 +582,20 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		rows = 24
 	}
 
-	argv := append([]string{req.Command}, defaultShellArgs(req.Command, req.Args)...)
-	logInfo("session", "command=%q args=%v cwd=%q aiKind=%q -> argv=%v",
-		req.Command, req.Args, cwd, req.AIKind, argv)
+	argv := append([]string{command}, defaultShellArgs(command, req.Args)...)
+	logInfo("session", "command=%q args=%v cwd=%q aiKind=%q profileID=%q -> argv=%v",
+		command, req.Args, cwd, req.AIKind, profileID, argv)
 	env := terminalEnvForXterm(os.Environ())
+	if profile != nil {
+		env = applyProfileEnv(env, profile.Env)
+	}
 
 	enabled := true
 	if h.cfg != nil {
 		enabled = h.cfg.Get().ShellIntegrationEnabledOrDefault()
 	}
 	sid := uuid.New() // generated here so the plan can scope temp files by id
-	plan := shellintegration.Prepare(req.Command, enabled, sid.String())
+	plan := shellintegration.Prepare(command, enabled, sid.String())
 	argv, env = mergeShellIntegrationPlan(argv, env, plan)
 	env = appendFeishuHookEnv(env, sid.String(), h.FeishuHookEndpoint)
 	if plan.Shell != "" {
@@ -515,6 +613,14 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		if plan.Cleanup != nil {
 			plan.Cleanup()
 		}
+		// Name the profile when one applied — most likely to fire here is a
+		// synced cwd that doesn't exist on this machine (Shell already has a
+		// fallback above; Cwd deliberately does not). Without this, the user
+		// gets a bare "chdir: no such file or directory" with nothing tying
+		// it to a profile they configured on another machine.
+		if profile != nil {
+			return uuid.Nil, fmt.Errorf("open pty for profile %q (%s): %w", profile.Name, profile.ID, err)
+		}
 		return uuid.Nil, fmt.Errorf("open pty: %w", err)
 	}
 
@@ -522,7 +628,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	info := proto.SessionInfo{
 		Command:   strings.Join(argv, " "),
 		Cwd:       cwd,
-		Title:     req.Command,
+		Title:     command,
 		Cols:      cols,
 		Rows:      rows,
 		HostID:    h.hostID,
@@ -721,12 +827,23 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	//  2. Kick id resolution to re-capture the id for the NEXT crash (after
 	//     resume, claude appends to the same jsonl so the title match re-resolves
 	//     the same id).
+	// resumeClaimed tracks whether the block below actually registered a
+	// SetOnFirstPrompt callback for AI-session resume. It is NOT the same as
+	// req.AIKind != "": a freshly classified AI command (user just typed
+	// "claude", no crash involved) has AIKind set but no
+	// InitialAISessionID, so computeResumeArgs returns nil and nothing
+	// claims the callback. Gating the profile-startup block on
+	// req.AIKind == "" would then skip it on that path too, even though the
+	// slot is free — and since a default profile applies to every new
+	// session regardless of what was typed, that's not a corner case.
+	resumeClaimed := false
 	if req.AIKind != "" {
 		if sess, ok := h.server.Registry().Get(id); ok {
 			sidCopy := id
 			resumeArgv := computeResumeArgs(req.AIKind, req.InitialAISessionID, req.InitialAICommandLine)
 			startResolveGeneration(sess, req.AIKind, cwd, req.InitialAISessionID, resumeArgv != nil)
 			if resumeArgv != nil {
+				resumeClaimed = true
 				line := strings.Join(resumeArgv, " ") + "\n"
 				ptyCopy := pty
 				sess.SetOnFirstPrompt(func() {
@@ -734,6 +851,37 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 					go func() { _, _ = ptyCopy.Write([]byte(line)) }()
 				})
 			}
+		}
+	}
+
+	// Profile startup command: written straight to the PTY once the shell
+	// draws its first prompt, reusing the exact SetOnFirstPrompt mechanism
+	// the AI-resume injection above uses — never a frontend sendInput of
+	// "<cmd>\r". Codex reads a trailing CR as a paste, not a submitted
+	// command; this repo has made and re-fixed that exact mistake three
+	// times (PR #63 → #110 → #129, AGENTS.md redline #28), so StartupCmd
+	// must not open a second "inject text into the PTY" implementation.
+	//
+	// Skipped when resumeClaimed: SetOnFirstPrompt is a single callback slot
+	// (session.Session), and the restore block above claims it only when it
+	// actually has a resume command to inject. A profile-selected new
+	// session is never itself a genuine AI-restore session, so the two never
+	// legitimately compete — but "genuine restore" means resumeClaimed, not
+	// merely req.AIKind != "".
+	if profile != nil && profile.StartupCmd != "" && !resumeClaimed {
+		if sess, ok := h.server.Registry().Get(id); ok {
+			line := profile.StartupCmd + "\n"
+			ptyCopy := pty
+			sidCopy := id
+			sess.SetOnFirstPrompt(func() {
+				// StartupCmd is user-authored and plausibly carries a secret
+				// (e.g. "export GH_TOKEN=…"). Logs are bundled by
+				// ExportDiagnostics and users share those bundles, so log its
+				// length rather than its contents — enough to confirm
+				// something was injected without leaking what.
+				logInfo("profile", "session=%s profile=%s — injecting startup command (%d bytes)", sidCopy, profileID, len(profile.StartupCmd))
+				go func() { _, _ = ptyCopy.Write([]byte(line)) }()
+			})
 		}
 	}
 

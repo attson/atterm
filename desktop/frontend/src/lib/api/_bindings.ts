@@ -445,6 +445,18 @@ export interface AppBindings {
   AppendFrontendLogs(records: FrontendLogRecord[]): Promise<number>;
   GetTerminalTheme(): Promise<string>;
   SetTerminalTheme(themeID: string): Promise<void>;
+  GetTerminalFontHead(): Promise<string>;
+  SetTerminalFontHead(head: string): Promise<void>;
+  GetTerminalFontSize(): Promise<number>;
+  SetTerminalFontSize(size: number): Promise<void>;
+  GetTerminalLineHeight(): Promise<number>;
+  SetTerminalLineHeight(lineHeight: number): Promise<void>;
+  GetTerminalCursorStyle(): Promise<string>;
+  SetTerminalCursorStyle(style: string): Promise<void>;
+  GetTerminalCursorBlink(): Promise<boolean>;
+  SetTerminalCursorBlink(blink: boolean): Promise<void>;
+  GetTerminalScrollback(): Promise<number>;
+  SetTerminalScrollback(lines: number): Promise<void>;
   GetLocalePreference(): Promise<LocalePreference>;
   SetLocalePreference(preference: LocalePreference): Promise<void>;
   GetDefaultShell(): Promise<string>;

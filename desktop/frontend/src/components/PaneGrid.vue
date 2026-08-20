@@ -4,7 +4,7 @@ import TerminalView from "./TerminalView.vue";
 import PaneSplitter from "./PaneSplitter.vue";
 import type { Endpoint } from "../lib/api";
 import type { SessionInfo } from "../lib/connection";
-import type { Pane, Tab } from "../lib/types";
+import type { Pane, Tab, TerminalAppearance } from "../lib/types";
 import type { TerminalThemeDefinition } from "../lib/terminalThemes";
 import { extractSessionLabel } from "../lib/terminalBell";
 import { useI18n } from "../i18n/useI18n";
@@ -26,6 +26,7 @@ const props = defineProps<{
   terminalTheme: TerminalThemeDefinition["xtermTheme"];
   commandNotifyThresholdSec: number;
   searchRequestSeq?: number;
+  appearance?: TerminalAppearance;
 }>();
 
 const emit = defineEmits<{
@@ -207,6 +208,7 @@ function formatWho(info: SessionInfo | null): string {
           :resize-suspended="dragging"
           :search-request-seq="searchRequestSeq"
           :can-detach="tab.layout !== 'single'"
+          :appearance="appearance"
           @toast="emit('toast', $event)"
           @detach="pane.sessionId && emit('detach-session', pane.sessionId)"
         />

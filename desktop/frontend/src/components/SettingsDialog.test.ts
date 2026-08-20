@@ -129,6 +129,7 @@ import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { createPinia } from "pinia";
 import SettingsDialog from "./SettingsDialog.vue";
+import SettingsGeneral from "./SettingsGeneral.vue";
 
 const baseProps: { localSessionCount: number; remoteSessionCount: number; terminalThemeId: string; initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" } = { localSessionCount: 0, remoteSessionCount: 0, terminalThemeId: "default" };
 let platform: ReturnType<typeof createFakePlatform>;
@@ -268,5 +269,28 @@ describe("SettingsDialog version footer", () => {
     const w = mountDialog();
     await flushPromises();
     expect(w.find('[data-testid="settings-version-footer"]').text()).toBe("AT Term (dev)");
+  });
+});
+
+// SettingsDialog.vue's forwarding of SettingsGeneral's appearance-changed
+// event once shipped dead (never wired at all) with the full unit suite
+// green, because every other hop in the Appearance -> General -> parent ->
+// App -> PaneGrid -> TerminalView chain had its own test but nothing pinned
+// this one. Guards both ends: the dialog is listening on the child, and it
+// re-emits exactly what it received.
+describe("SettingsDialog appearance forwarding", () => {
+  it("forwards appearance-changed from SettingsGeneral", () => {
+    const w = mountDialog();
+    const payload = {
+      fontHead: "",
+      fontSize: 16,
+      lineHeight: 1.2,
+      cursorStyle: "bar",
+      cursorBlink: false,
+      scrollback: 8000,
+    };
+    w.findComponent(SettingsGeneral).vm.$emit("appearance-changed", payload);
+    expect(w.emitted("appearance-changed")).toBeTruthy();
+    expect(w.emitted("appearance-changed")!.at(-1)![0]).toEqual(payload);
   });
 });

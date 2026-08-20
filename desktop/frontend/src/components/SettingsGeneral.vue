@@ -21,6 +21,7 @@ import { type LocalePreference, type MessageKey } from "../i18n";
 import { useI18n } from "../i18n/useI18n";
 import { TERMINAL_THEMES, getTerminalTheme } from "../lib/terminalThemes";
 import SelectDropdown from "./SelectDropdown.vue";
+import SettingsTerminalAppearance, { type TerminalAppearanceState } from "./SettingsTerminalAppearance.vue";
 import { usePlatform } from "../platform";
 import { enablePushFlow, disablePushFlow, type EnableReason } from "@shared/api/push-flow";
 import { testPush } from "@shared/api/push";
@@ -32,6 +33,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "command-notify-threshold-changed", seconds: number): void;
+  (e: "appearance-changed", state: TerminalAppearanceState): void;
 }>();
 
 const selected = ref(getTerminalTheme(props.terminalThemeId).id);
@@ -349,6 +351,13 @@ async function onCommandNotifyThresholdChange(e: Event) {
   }
 }
 
+// SettingsTerminalAppearance owns the font/size/line-height/cursor/scrollback
+// state and persistence; we just re-emit its event so App.vue (Task 4) keeps
+// seeing "appearance-changed" on this component, same as before the split.
+function onAppearanceChanged(state: TerminalAppearanceState) {
+  emit("appearance-changed", state);
+}
+
 async function onLocaleChange() {
   const next = selectedLocale.value;
   const previous = persistedLocale.value;
@@ -417,6 +426,8 @@ async function onChange() {
     <p class="hint">
       {{ t("settings.general.terminalThemeHint") }}
     </p>
+
+    <SettingsTerminalAppearance @appearance-changed="onAppearanceChanged" />
 
     <label class="checkbox" v-if="caps.wailsBindings && !notificationsLoading">
       <input

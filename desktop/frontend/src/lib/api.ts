@@ -201,6 +201,59 @@ export function setTerminalThemePreference(themeID: string): Promise<void> {
   return bindings().SetTerminalTheme(themeID);
 }
 
+export function getTerminalFontHead(): Promise<string> {
+  return bindings().GetTerminalFontHead();
+}
+
+export function setTerminalFontHead(head: string): Promise<void> {
+  return bindings().SetTerminalFontHead(head);
+}
+
+export function getTerminalFontSize(): Promise<number> {
+  return bindings().GetTerminalFontSize();
+}
+
+export function setTerminalFontSize(size: number): Promise<void> {
+  return bindings().SetTerminalFontSize(size);
+}
+
+export function getTerminalLineHeight(): Promise<number> {
+  return bindings().GetTerminalLineHeight();
+}
+
+export function setTerminalLineHeight(lineHeight: number): Promise<void> {
+  return bindings().SetTerminalLineHeight(lineHeight);
+}
+
+// The Wails binding is generated as Promise<string> (Go's method signature
+// is untyped), but App.GetTerminalCursorStyle always routes through
+// TerminalCursorStyleOrDefault, which falls back to a supported value for
+// anything else — so this is the one place that narrows to the tighter
+// union, rather than casting it again at every call site.
+export function getTerminalCursorStyle(): Promise<"block" | "underline" | "bar"> {
+  return bindings().GetTerminalCursorStyle() as Promise<"block" | "underline" | "bar">;
+}
+
+export function setTerminalCursorStyle(style: string): Promise<void> {
+  return bindings().SetTerminalCursorStyle(style);
+}
+
+export function getTerminalCursorBlink(): Promise<boolean> {
+  return bindings().GetTerminalCursorBlink();
+}
+
+export function setTerminalCursorBlink(blink: boolean): Promise<void> {
+  return bindings().SetTerminalCursorBlink(blink);
+}
+
+export function getTerminalScrollback(): Promise<number> {
+  return bindings().GetTerminalScrollback();
+}
+
+export function setTerminalScrollback(lines: number): Promise<void> {
+  return bindings().SetTerminalScrollback(lines);
+}
+
 export function getLocalePreference(): Promise<LocalePreference> {
   return bindings().GetLocalePreference();
 }

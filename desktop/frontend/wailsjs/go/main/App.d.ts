@@ -107,6 +107,18 @@ export function GetTaskSidebarCollapsed():Promise<boolean>;
 
 export function GetTaskSidebarWidth():Promise<number>;
 
+export function GetTerminalCursorBlink():Promise<boolean>;
+
+export function GetTerminalCursorStyle():Promise<string>;
+
+export function GetTerminalFontHead():Promise<string>;
+
+export function GetTerminalFontSize():Promise<number>;
+
+export function GetTerminalLineHeight():Promise<number>;
+
+export function GetTerminalScrollback():Promise<number>;
+
 export function GetTerminalTheme():Promise<string>;
 
 export function GetUpdateGHProxyURL():Promise<string>;
@@ -224,6 +236,18 @@ export function SetTaskPreset(arg1:string):Promise<void>;
 export function SetTaskSidebarCollapsed(arg1:boolean):Promise<void>;
 
 export function SetTaskSidebarWidth(arg1:number):Promise<void>;
+
+export function SetTerminalCursorBlink(arg1:boolean):Promise<void>;
+
+export function SetTerminalCursorStyle(arg1:string):Promise<void>;
+
+export function SetTerminalFontHead(arg1:string):Promise<void>;
+
+export function SetTerminalFontSize(arg1:number):Promise<void>;
+
+export function SetTerminalLineHeight(arg1:number):Promise<void>;
+
+export function SetTerminalScrollback(arg1:number):Promise<void>;
 
 export function SetTerminalTheme(arg1:string):Promise<void>;
 

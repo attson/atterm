@@ -897,6 +897,106 @@ func (a *App) SetTerminalTheme(theme string) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetTerminalFontHead returns the user's chosen leading monospace family,
+// or "" for the built-in chain. Only the head is user-controlled — the
+// CJK-aware tail is composed on the frontend (redline #13).
+func (a *App) GetTerminalFontHead() string {
+	if a == nil || a.cfgStore == nil {
+		return ""
+	}
+	return a.cfgStore.Get().TerminalFontHeadOrDefault()
+}
+
+func (a *App) SetTerminalFontHead(head string) error {
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.TerminalFontHead = strings.TrimSpace(head)
+		return nil
+	})
+}
+
+func (a *App) GetTerminalFontSize() int {
+	if a == nil || a.cfgStore == nil {
+		return terminalFontSizeDefault
+	}
+	return a.cfgStore.Get().TerminalFontSizeOrDefault()
+}
+
+func (a *App) SetTerminalFontSize(px int) error {
+	if px < terminalFontSizeMin || px > terminalFontSizeMax {
+		return fmt.Errorf("font size out of range: %d", px)
+	}
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.TerminalFontSize = px
+		return nil
+	})
+}
+
+func (a *App) GetTerminalLineHeight() float64 {
+	if a == nil || a.cfgStore == nil {
+		return terminalLineHeightDefault
+	}
+	return a.cfgStore.Get().TerminalLineHeightOrDefault()
+}
+
+func (a *App) SetTerminalLineHeight(v float64) error {
+	if v < terminalLineHeightMin || v > terminalLineHeightMax {
+		return fmt.Errorf("line height out of range: %v", v)
+	}
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.TerminalLineHeight = v
+		return nil
+	})
+}
+
+func (a *App) GetTerminalCursorStyle() string {
+	if a == nil || a.cfgStore == nil {
+		return terminalCursorStyleDefault
+	}
+	return a.cfgStore.Get().TerminalCursorStyleOrDefault()
+}
+
+func (a *App) SetTerminalCursorStyle(style string) error {
+	style = strings.TrimSpace(style)
+	if !isSupportedCursorStyle(style) {
+		return fmt.Errorf("bad cursor style: %s", style)
+	}
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.TerminalCursorStyle = style
+		return nil
+	})
+}
+
+func (a *App) GetTerminalCursorBlink() bool {
+	if a == nil || a.cfgStore == nil {
+		return true
+	}
+	return a.cfgStore.Get().TerminalCursorBlinkOrDefault()
+}
+
+func (a *App) SetTerminalCursorBlink(on bool) error {
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.TerminalCursorBlink = &on
+		return nil
+	})
+}
+
+func (a *App) GetTerminalScrollback() int {
+	if a == nil || a.cfgStore == nil {
+		return terminalScrollbackDefault
+	}
+	return a.cfgStore.Get().TerminalScrollbackOrDefault()
+}
+
+func (a *App) SetTerminalScrollback(lines int) error {
+	if lines <= 0 || lines > terminalScrollbackMax {
+		return fmt.Errorf("scrollback out of range: %d", lines)
+	}
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.TerminalScrollback = lines
+		return nil
+	})
+}
+
 // GetLocalePreference returns the user's persisted UI language preference.
 func (a *App) GetLocalePreference() string {
 	if a == nil || a.cfgStore == nil {

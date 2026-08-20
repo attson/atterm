@@ -1240,3 +1240,60 @@ describe("TerminalView scrollback search wiring", () => {
     expect(paneSource).toContain(':search-request-seq="searchRequestSeq"');
   });
 });
+
+describe("TerminalView appearance", () => {
+  test("seeds the terminal from the appearance prop instead of literals", () => {
+    expect(source).toContain("appearance?: TerminalAppearance");
+    // Scope to the actual `new Terminal({...})` constructor call, not the
+    // whole file — the withDefaults() default factory a few dozen lines up
+    // also contains a literal `scrollback: 5000`, which is legitimate there
+    // (it's the prop default) but would be a bug if it showed up here.
+    const ctor = source.match(/term = new Terminal\(\{[\s\S]*?\n\s*\}\);/);
+    expect(ctor).not.toBeNull();
+    const body = ctor![0];
+    expect(body).toMatch(/fontFamily:\s*composeFontFamily\(/);
+    expect(body).toMatch(/fontSize:\s*props\.appearance\.fontSize/);
+    expect(body).toMatch(/lineHeight:\s*props\.appearance\.lineHeight/);
+    expect(body).toMatch(/cursorStyle:\s*props\.appearance\.cursorStyle/);
+    expect(body).toMatch(/cursorBlink:\s*props\.appearance\.cursorBlink/);
+    expect(body).toMatch(/scrollback:\s*props\.appearance\.scrollback/);
+    // Negative side: catches reverting any one field back to a literal.
+    expect(body).not.toMatch(/scrollback:\s*5000/);
+    expect(body).not.toMatch(/cursorBlink:\s*true/);
+  });
+
+  test("re-fits only for metrics-affecting changes, and only as driver", () => {
+    const body = source.match(/function\s+applyAppearance\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    // Pins the guard shape itself, not just that the two tokens appear
+    // somewhere in the function — `metricsChanged &&` deleted from the guard
+    // still satisfied the old looser regex.
+    expect(body![0]).toMatch(/if\s*\(\s*metricsChanged\s*&&\s*isDriver\.value\s*\)\s*safeFit\(\)/);
+  });
+
+  test("cursor and scrollback changes do not trigger a fit", () => {
+    const body = source.match(/function\s+applyAppearance\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/metricsChanged/);
+    // The literal inverse of this test's name — folding cursorStyle,
+    // cursorBlink or scrollback into the metricsChanged comparison — must
+    // fail here, not just pass by virtue of the token "metricsChanged"
+    // existing somewhere in the function.
+    expect(body![0]).not.toMatch(/lastAppliedMetrics\.cursorStyle|lastAppliedMetrics\.cursorBlink|lastAppliedMetrics\.scrollback/);
+  });
+
+  test("App drills one appearance object through PaneGrid", () => {
+    expect(appSource).toMatch(/const terminalAppearance = ref</);
+    expect(appSource).toContain(':appearance="terminalAppearance"');
+    expect(paneSource).toContain("appearance?: TerminalAppearance");
+    expect(paneSource).toContain(':appearance="appearance"');
+  });
+
+  // Important 1 — SettingsDialog.vue:214-215 forwards appearance-changed
+  // from SettingsGeneral up to App.vue; this hop shipped dead once (nothing
+  // caught it because the wire was simply never connected). Pin App.vue's
+  // listener here since App.vue's own source is already loaded in this file.
+  test("App listens for appearance-changed on the settings dialog", () => {
+    expect(appSource).toContain('@appearance-changed="onAppearanceChanged"');
+  });
+});

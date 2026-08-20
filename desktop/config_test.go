@@ -174,3 +174,77 @@ func TestConfigStore_ConcurrentMetaWrites(t *testing.T) {
 		t.Fatal("expected meta entries after concurrent writes")
 	}
 }
+
+func TestTerminalAppearanceDefaults(t *testing.T) {
+	var c appConfig
+	if got := c.TerminalFontSizeOrDefault(); got != 13 {
+		t.Errorf("font size default = %d, want 13", got)
+	}
+	if got := c.TerminalLineHeightOrDefault(); got != 1.0 {
+		t.Errorf("line height default = %v, want 1.0", got)
+	}
+	if got := c.TerminalCursorStyleOrDefault(); got != "block" {
+		t.Errorf("cursor style default = %q, want block", got)
+	}
+	if got := c.TerminalCursorBlinkOrDefault(); got != true {
+		t.Errorf("cursor blink default = %v, want true", got)
+	}
+	if got := c.TerminalScrollbackOrDefault(); got != 5000 {
+		t.Errorf("scrollback default = %d, want 5000", got)
+	}
+	if got := c.TerminalFontHeadOrDefault(); got != "" {
+		t.Errorf("font head default = %q, want empty (system default)", got)
+	}
+}
+
+func TestTerminalAppearanceClamping(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func(*appConfig)
+		want func(appConfig) bool
+	}{
+		{"font size below floor", func(c *appConfig) { c.TerminalFontSize = 2 },
+			func(c appConfig) bool { return c.TerminalFontSizeOrDefault() == 8 }},
+		{"font size above ceiling", func(c *appConfig) { c.TerminalFontSize = 999 },
+			func(c appConfig) bool { return c.TerminalFontSizeOrDefault() == 32 }},
+		{"line height below floor", func(c *appConfig) { c.TerminalLineHeight = 0.1 },
+			func(c appConfig) bool { return c.TerminalLineHeightOrDefault() == 1.0 }},
+		{"line height above ceiling", func(c *appConfig) { c.TerminalLineHeight = 9 },
+			func(c appConfig) bool { return c.TerminalLineHeightOrDefault() == 2.0 }},
+		{"scrollback above ceiling", func(c *appConfig) { c.TerminalScrollback = 10_000_000 },
+			func(c appConfig) bool { return c.TerminalScrollbackOrDefault() == 20000 }},
+		{"scrollback below floor", func(c *appConfig) { c.TerminalScrollback = -5 },
+			func(c appConfig) bool { return c.TerminalScrollbackOrDefault() == 5000 }},
+		{"unknown cursor style falls back", func(c *appConfig) { c.TerminalCursorStyle = "spiral" },
+			func(c appConfig) bool { return c.TerminalCursorStyleOrDefault() == "block" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var c appConfig
+			tc.set(&c)
+			if !tc.want(c) {
+				t.Errorf("clamp failed for %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestTerminalCursorBlinkOrDefault_ExplicitValues covers the reason
+// TerminalCursorBlink is a *bool rather than bool: a plain bool's zero value
+// (false) cannot distinguish "never set" from "user explicitly disabled
+// blink". TestTerminalAppearanceDefaults already covers the nil case; this
+// covers both explicit states so a regression to plain bool, or an accessor
+// slip like `return c.TerminalCursorBlink != nil`, fails loudly.
+func TestTerminalCursorBlinkOrDefault_ExplicitValues(t *testing.T) {
+	off := false
+	c := appConfig{TerminalCursorBlink: &off}
+	if got := c.TerminalCursorBlinkOrDefault(); got != false {
+		t.Errorf("explicit false = %v, want false (must not fall back to default)", got)
+	}
+
+	on := true
+	c = appConfig{TerminalCursorBlink: &on}
+	if got := c.TerminalCursorBlinkOrDefault(); got != true {
+		t.Errorf("explicit true = %v, want true", got)
+	}
+}

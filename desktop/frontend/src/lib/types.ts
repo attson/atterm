@@ -39,6 +39,24 @@ export interface Tab {
   rowRatio: number;
 }
 
+// Terminal appearance settings, resolved on the desktop side and drilled
+// down as one object so PaneGrid doesn't grow a prop per setting and
+// per-profile overrides (item 22) only have to swap the source.
+//
+// Task 3's SettingsTerminalAppearance.vue exports a near-identical
+// TerminalAppearanceState, but types cursorStyle as `string` (its ref is
+// narrowed at the call site, not at the type). Declaring the tighter union
+// here rather than reusing that type keeps every consumer of this object
+// (App.vue, PaneGrid.vue, TerminalView.vue) from having to re-narrow it.
+export interface TerminalAppearance {
+  fontHead: string;
+  fontSize: number;
+  lineHeight: number;
+  cursorStyle: "block" | "underline" | "bar";
+  cursorBlink: boolean;
+  scrollback: number;
+}
+
 export const PANE_COUNT: Record<LayoutKind, number> = {
   single: 1,
   vertical: 2,

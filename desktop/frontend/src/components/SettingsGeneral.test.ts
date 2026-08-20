@@ -2,8 +2,10 @@ import { describe, expect, test, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import source from "./SettingsGeneral.vue?raw";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsTerminalAppearance from "./SettingsTerminalAppearance.vue";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
+import { __setBindingsForTest } from "../lib/api";
 
 vi.mock("@shared/api/push-flow", () => ({
   enablePushFlow: vi.fn(),
@@ -290,5 +292,72 @@ describe("SettingsGeneral push notification section", () => {
     await flushPromises();
 
     expect(testPushMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SettingsGeneral terminal appearance", () => {
+  // The six controls themselves (rendering, the live memory estimate, and
+  // emitting on commit) are covered in SettingsTerminalAppearance.test.ts,
+  // next to the component that now owns them. This only checks the part
+  // that's still SettingsGeneral's job: rendering the child and forwarding
+  // its event untouched, so App.vue's "appearance-changed" listener (Task 4)
+  // doesn't have to know the controls moved.
+  beforeEach(() => {
+    __setPlatformForTests(createFakePlatform());
+    __setBindingsForTest({
+      GetLocalePreference: vi.fn().mockResolvedValue("system"),
+      GetNotificationsEnabled: vi.fn().mockResolvedValue(true),
+      GetShellIntegrationEnabled: vi.fn().mockResolvedValue(true),
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
+      GetDefaultShell: vi.fn().mockResolvedValue("auto"),
+      ListShells: vi.fn().mockResolvedValue([]),
+      GetWebglRendererEnabled: vi.fn().mockResolvedValue(true),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(10),
+      GetTerminalFontHead: vi.fn().mockResolvedValue(""),
+      SetTerminalFontHead: vi.fn().mockResolvedValue(undefined),
+      GetTerminalFontSize: vi.fn().mockResolvedValue(13),
+      SetTerminalFontSize: vi.fn().mockResolvedValue(undefined),
+      GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
+      SetTerminalLineHeight: vi.fn().mockResolvedValue(undefined),
+      GetTerminalCursorStyle: vi.fn().mockResolvedValue("block"),
+      SetTerminalCursorStyle: vi.fn().mockResolvedValue(undefined),
+      GetTerminalCursorBlink: vi.fn().mockResolvedValue(true),
+      SetTerminalCursorBlink: vi.fn().mockResolvedValue(undefined),
+      GetTerminalScrollback: vi.fn().mockResolvedValue(5000),
+      SetTerminalScrollback: vi.fn().mockResolvedValue(undefined),
+    } as any);
+  });
+
+  afterEach(() => {
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+  });
+
+  async function mountSettings() {
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    return w;
+  }
+
+  it("renders SettingsTerminalAppearance below the terminal theme field", async () => {
+    const w = await mountSettings();
+    expect(w.findComponent(SettingsTerminalAppearance).exists()).toBe(true);
+  });
+
+  it("re-emits appearance-changed with the child's payload unchanged", async () => {
+    const w = await mountSettings();
+    const child = w.findComponent(SettingsTerminalAppearance);
+    const payload = {
+      fontHead: "jetbrains-mono",
+      fontSize: 16,
+      lineHeight: 1.2,
+      cursorStyle: "bar",
+      cursorBlink: false,
+      scrollback: 8000,
+    };
+    child.vm.$emit("appearance-changed", payload);
+    const ev = w.emitted("appearance-changed");
+    expect(ev).toBeTruthy();
+    expect(ev!.at(-1)![0]).toEqual(payload);
   });
 });

@@ -47,6 +47,12 @@ import {
   getRelayConfig,
   getCommandNotifyThresholdSeconds,
   getTerminalThemePreference,
+  getTerminalFontHead,
+  getTerminalFontSize,
+  getTerminalLineHeight,
+  getTerminalCursorStyle,
+  getTerminalCursorBlink,
+  getTerminalScrollback,
   getUpdateState,
   listShells,
   newSession,
@@ -64,7 +70,7 @@ import type { RemoteSession } from "./platform/types";
 import { type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
-import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
+import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir, type TerminalAppearance } from "./lib/types";
 import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
 import { resolvePaneRemote } from "./lib/paneRemote";
 import {
@@ -396,6 +402,18 @@ let updatePollHandle: number | null = null;
 
 const currentTerminalThemeID = ref<TerminalThemeID>(DEFAULT_TERMINAL_THEME_ID);
 const currentTerminalTheme = computed(() => getTerminalTheme(currentTerminalThemeID.value));
+
+// Defaults mirror the Go side's persisted defaults (internal/config) so a
+// pane rendered before refreshTerminalAppearance() resolves — or one running
+// without wailsBindings — still matches what a fresh install would show.
+const terminalAppearance = ref<TerminalAppearance>({
+  fontHead: "",
+  fontSize: 13,
+  lineHeight: 1.0,
+  cursorStyle: "block",
+  cursorBlink: true,
+  scrollback: 5000,
+});
 const themeStyle = computed(() => currentTerminalTheme.value.appVars);
 
 const commandNotifyThresholdSec = ref<number>(10);
@@ -845,6 +863,35 @@ async function refreshTerminalTheme() {
 
 function onTerminalThemeChanged(themeID: string) {
   currentTerminalThemeID.value = getTerminalTheme(themeID).id;
+}
+
+// One Promise.all mirrors SettingsTerminalAppearance.vue's own onMounted load
+// so the two never observe different Go-side values at boot.
+async function refreshTerminalAppearance() {
+  const [fontHead, fontSize, lineHeight, cursorStyle, cursorBlink, scrollback] = await Promise.all([
+    getTerminalFontHead(),
+    getTerminalFontSize(),
+    getTerminalLineHeight(),
+    getTerminalCursorStyle(),
+    getTerminalCursorBlink(),
+    getTerminalScrollback(),
+  ]);
+  terminalAppearance.value = {
+    fontHead,
+    fontSize,
+    lineHeight,
+    cursorStyle,
+    cursorBlink,
+    scrollback,
+  };
+}
+
+// SettingsGeneral (via SettingsDialog) re-sends all six values on every
+// change (not just the one field the user touched) — see
+// SettingsTerminalAppearance.vue's emitAppearanceChanged — so replacing the
+// ref wholesale here is correct rather than a partial patch.
+function onAppearanceChanged(appearance: TerminalAppearance) {
+  terminalAppearance.value = appearance;
 }
 
 function onCommandNotifyThresholdChanged(seconds: number) {
@@ -1461,6 +1508,8 @@ onMounted(async () => {
     try {
       bootStage = "refreshTerminalTheme";
       await refreshTerminalTheme();
+      bootStage = "refreshTerminalAppearance";
+      await refreshTerminalAppearance();
       bootStage = "getEndpoint";
       localEndpoint.value = await getEndpoint();
       bootStage = "getHostInfo";
@@ -1672,6 +1721,7 @@ defineExpose({ me });
             :terminal-theme="currentTerminalTheme.xtermTheme"
             :command-notify-threshold-sec="commandNotifyThresholdSec"
             :search-request-seq="terminalSearchSeq"
+            :appearance="terminalAppearance"
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
             @close-pane="(idx) => requestClosePane(t, idx)"
             @drop-session="(p) => onPaneDropSession(t, p)"
@@ -1713,6 +1763,7 @@ defineExpose({ me });
       :initial-tab="settingsInitialTab"
       @terminal-theme-changed="onTerminalThemeChanged"
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
+      @appearance-changed="onAppearanceChanged"
       @relay-config-changed="refreshDesktopRelayConfig"
       @close="onSettingsClose"
     />

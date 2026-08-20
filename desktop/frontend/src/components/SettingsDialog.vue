@@ -8,7 +8,9 @@ import {
 } from "../lib/api";
 import { getTerminalTheme } from "../lib/terminalThemes";
 import { usePlatform } from "../platform";
+import type { TerminalAppearance } from "../lib/types";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import type { TerminalAppearanceState } from "./SettingsTerminalAppearance.vue";
 import SettingsAccount from "./SettingsAccount.vue";
 import SettingsRelay from "./SettingsRelay.vue";
 import SettingsLogging from "./SettingsLogging.vue";
@@ -89,6 +91,7 @@ const emit = defineEmits<{
   (e: "relay-config-changed"): void;
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "command-notify-threshold-changed", seconds: number): void;
+  (e: "appearance-changed", appearance: TerminalAppearance): void;
 }>();
 
 // Logging is no longer a standalone tab — it lives inside the Diagnostics
@@ -199,6 +202,15 @@ function onTerminalThemeChanged(themeID: string) {
 
 function onCommandNotifyThresholdChanged(seconds: number) {
   emit("command-notify-threshold-changed", seconds);
+}
+
+// SettingsGeneral re-emits SettingsTerminalAppearance's event unchanged (see
+// its own onAppearanceChanged); this dialog is just a pass-through so App.vue
+// doesn't need to know the settings tree got a level deeper. No cast needed:
+// TerminalAppearanceState.cursorStyle is typed as the same union
+// TerminalAppearance declares, so the two shapes already match structurally.
+function onAppearanceChanged(state: TerminalAppearanceState) {
+  emit("appearance-changed", state);
 }
 
 async function openLogViewer() {
@@ -363,6 +375,7 @@ function onSaveClick() {
             :terminal-theme-id="persistedTheme"
             @terminal-theme-changed="onTerminalThemeChanged"
             @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
+            @appearance-changed="onAppearanceChanged"
           />
           <SettingsAccount v-if="!caps.wailsBindings && activeTab === 'account'" />
           <SettingsTasks v-show="activeTab === 'tasks'" />

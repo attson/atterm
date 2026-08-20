@@ -79,9 +79,13 @@ key。而 roadmap Backlog 里堆着的字体、字号、启动目录、环境变
 **缺口**
 
 - 无 `xterm-addon-search`（xterm v5 下的无 scope 包名；非 v6 的 `@xterm/addon-search`）：scrollback 不可搜索。
-- `TerminalView.vue` 的 `scrollback: 5000` 是硬编码常量（#343 为抗输出洪水从更
-  大的值下调而来），用户无法按机器性能调整。
-- 无字号 / 行高 / 光标样式配置；字体族固定在 `lib/terminalFont.ts` 常量里。
+- ~~`TerminalView.vue` 的 `scrollback: 5000` 是硬编码常量（#343 为抗输出洪水从更
+  大的值下调而来），用户无法按机器性能调整。~~
+  ~~无字号 / 行高 / 光标样式配置；字体族固定在 `lib/terminalFont.ts` 常量里。~~
+  2026-08-17 补记：item 20 已交付——字体族头部、字号、行高、光标样式/闪烁、
+  scrollback 五项均已变为持久化的用户设置并实时应用到面板，见
+  `2026-08-17-terminal-appearance-design.md`。本节其余是 item 20 之前的点时
+  快照，保留供参照；`docs/roadmap.md` 是活的 tracker。
 - 无 profile 概念：shell、启动目录、环境变量三者散落，其中后两者尚不存在。
 - `terminal_theme`、`default_shell`、快捷键绑定**已在本地持久化但不在
   `syncedKeys` 里**，换台机器要重配。
@@ -173,8 +177,10 @@ key。而 roadmap Backlog 里堆着的字体、字号、启动目录、环境变
 5. **快捷键绑定拆 key 会动 `Plugins` 结构**。拆出 `shortcut_bindings` 独立 key
    时需要一次性迁移：读到老结构就搬进新 key 并清掉旧字段。
 6. **scrollback 行数放开会重新引入 #343 修掉的问题**。#343 把 scrollback 下调
-   到 5000 是为了让终端在输出洪水下存活。放开为配置项时必须保留上限约束与默认
-   值，并在设置项旁说明调高的代价。
+   到 5000 是为了让终端在输出洪水下存活；这不是一层独立的「洪水保护」机制，
+   下调 scrollback 本身就是当时唯一的缓解手段，此外并无别的机制兜底（详见
+   `2026-08-17-terminal-appearance-design.md` §3 发现 2）。放开为配置项时必须
+   保留上限约束与默认值，并在设置项旁说明调高的内存代价。
 
 ## 7. 验证
 
@@ -182,8 +188,9 @@ key。而 roadmap Backlog 里堆着的字体、字号、启动目录、环境变
   更新 → pull → 本地生效；同时更新 → 时间戳裁决）。
 - profile 的 seal / open 走与 `ssh_sync_test.go` 同构的往返测试，并覆盖
   `accountKey` 为空时不产生任何网络写入。
-- 终端外观与搜索走 `desktop/frontend` 的 Vitest；scrollback 行数改动需补一条
-  连接层测试，确认高值下 #343 的洪水保护仍生效。
+- 终端外观与搜索走 `desktop/frontend` 的 Vitest。scrollback 不存在独立的连接层
+  洪水保护可测（见 §6 风险 6），验证只需覆盖上限约束（20000）与默认值不变；
+  不再补「确认洪水保护仍生效」这类不可执行的测试项。
 - OSC 133 click-to-move-cursor 需要在真实 shell（zsh + fish）下手动验证一次，
   因为它依赖 shell 侧的 `cl=line` 扩展支持。
 - SSH 相关条目在本机起 sshd 容器做集成验证，不依赖外部主机。

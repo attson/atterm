@@ -57,12 +57,6 @@ const (
 // "" as loopback exactly as this does.
 const defaultForwardBindAddr = "127.0.0.1"
 
-// tunnelKeepalive is how often a tunnel connection pings the remote. It also
-// bounds how long a dropped connection can go unnoticed while every tunnel on
-// it is idle, because the failed ping is what closes sshclient.Conn.Done.
-// Tests shorten it so a drop is observable in a test's lifetime.
-var tunnelKeepalive = 30 * time.Second
-
 // ForwardRule is one port-forwarding rule saved on an SSHHost. It is
 // configuration, not state: nothing starts it except an explicit StartForward.
 type ForwardRule struct {
@@ -110,10 +104,11 @@ func (a *App) StartForward(hostID, ruleID string) error {
 		return err
 	}
 
-	// The jump-host gate, shared with NewSshSessionByID. It runs before the
+	// The ProxyCommand gate, shared with NewSshSessionByID. It runs before the
 	// credential read and before any dial: for a host we refuse, nothing at
-	// all happens.
-	if needsJump, reason := hostNeedsJump(host); needsJump {
+	// all happens. A ProxyJump host is not refused — dialTunnelConn builds its
+	// chain, the same builder the terminal path uses.
+	if refused, reason := hostRunsProxyCommand(host); refused {
 		return errors.New(reason)
 	}
 
@@ -122,15 +117,15 @@ func (a *App) StartForward(hostID, ruleID string) error {
 	}
 	switch rule.Kind {
 	case forwardKindLocal:
-		return a.tunnels.startLocal(host, rule, func() (*sshclient.Conn, error) {
+		return a.tunnels.startLocal(host, rule, func() (*jumpChain, error) {
 			return a.dialTunnelConn(host)
 		})
 	case forwardKindRemote:
-		return a.tunnels.startRemote(host, rule, func() (*sshclient.Conn, error) {
+		return a.tunnels.startRemote(host, rule, func() (*jumpChain, error) {
 			return a.dialTunnelConn(host)
 		})
 	case forwardKindDynamic:
-		return a.tunnels.startDynamic(host, rule, func() (*sshclient.Conn, error) {
+		return a.tunnels.startDynamic(host, rule, func() (*jumpChain, error) {
 			return a.dialTunnelConn(host)
 		})
 	default:
@@ -225,42 +220,48 @@ func sshAuthForHost(h SSHHost) (sshclient.AuthMethod, error) {
 	}
 }
 
-// dialTunnelConn opens the shell-less SSH connection a host's tunnels ride on.
+// dialTunnelConn opens the shell-less SSH connections a host's tunnels ride
+// on: the host's jump hosts, if it has any, and the host itself last. A host
+// with no ProxyJump yields a one-element chain, so there is one shape here
+// rather than two.
 //
-// Unlike the terminal path there is no TOFU dialog behind this call, so an
-// unknown host key is refused outright with a message telling the user where
-// the fingerprint can be accepted. Silently trusting it would mean a
-// background action pinning a key the user never saw.
-func (a *App) dialTunnelConn(h SSHHost) (*sshclient.Conn, error) {
-	auth, err := sshAuthForHost(h)
-	if err != nil {
-		return nil, err
-	}
-	var unknownFP string
-	cb := sshclient.KnownHostsCallback(a.knownHostsPath(), func(_, fp string) bool {
-		unknownFP = fp
-		return false
-	})
+// Unlike the terminal path there is no TOFU dialog behind this call, so nothing
+// is ever accepted (the zero acceptedHostKey) and an unknown host key is
+// refused outright with a message telling the user where the fingerprint can be
+// accepted. Silently trusting it would mean a background action pinning a key
+// the user never saw — and on a chain, pinning it for a machine they were never
+// even shown.
+func (a *App) dialTunnelConn(h SSHHost) (*jumpChain, error) {
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	conn, err := sshclient.DialConn(ctx, sshclient.Config{
-		Host: h.Host, Port: h.Port, User: h.User,
-		Auth:      auth,
-		HostKeyCb: cb,
-		Timeout:   15 * time.Second,
-		Keepalive: tunnelKeepalive,
-	})
+	chain, err := a.dialThroughJumps(ctx, h, acceptedHostKey{})
 	if err != nil {
-		if unknownFP != "" {
-			return nil, fmt.Errorf(
-				"host key for %s is not in known_hosts (fingerprint %s); open a terminal to this host once and accept the fingerprint, then start the tunnel",
-				h.Host, unknownFP)
+		var unknown *HostKeyUnknownError
+		if errors.As(err, &unknown) {
+			return nil, tunnelHostKeyError(unknown)
 		}
 		return nil, err
 	}
-	return conn, nil
+	return chain, nil
+}
+
+// tunnelHostKeyError turns the terminal path's TOFU prompt into the tunnel
+// path's refusal, and names the hop when there is a chain: on a chain the
+// unknown key usually belongs to a bastion, and "open a terminal to this host"
+// would send the user to accept a fingerprint they will not be shown.
+func tunnelHostKeyError(e *HostKeyUnknownError) error {
+	if e.HopIndex > 0 {
+		return fmt.Errorf(
+			"host key for %s (%q, hop %d of the jump-host chain) is not in known_hosts (fingerprint %s); "+
+				"open a terminal to the host you are tunnelling to once — it asks about each hop in turn — "+
+				"and accept the fingerprint, then start the tunnel",
+			e.Host, e.HopName, e.HopIndex, e.Fingerprint)
+	}
+	return fmt.Errorf(
+		"host key for %s is not in known_hosts (fingerprint %s); open a terminal to this host once and accept the fingerprint, then start the tunnel",
+		e.Host, e.Fingerprint)
 }
 
 // --- tunnel manager ---------------------------------------------------------
@@ -287,16 +288,26 @@ func tunnelKey(hostID, ruleID string) string { return hostID + "/" + ruleID }
 // rules. Per-rule connections would show N logins on the remote and multiply
 // keepalives, so rules refcount a single one instead.
 //
+// What is refcounted is the whole *chain*, not just the host's own connection:
+// through a jump host the login on the bastion is as real as the one on the
+// host, and closing the host's connection does not close it. Holding the chain
+// here is what makes the last release close all of it.
+//
 // ready is closed once dial completes, so a second rule starting while the
 // first is still dialing waits for the same connection instead of opening
-// another. refs is guarded by tunnelManager.mu; conn/err are written before
+// another. refs is guarded by tunnelManager.mu; chain/err are written before
 // ready closes and only read after.
 type hostConn struct {
 	ready chan struct{}
-	conn  *sshclient.Conn
+	chain *jumpChain
 	err   error
 	refs  int
 }
+
+// conn is the connection to the host itself — the last link of the chain, and
+// the one every forwarded channel is opened on. A host with no ProxyJump has a
+// one-element chain, so this is that host's own connection either way.
+func (hc *hostConn) conn() *sshclient.Conn { return hc.chain.Target() }
 
 // tunnel is one running rule.
 type tunnel struct {
@@ -410,7 +421,7 @@ func (m *tunnelManager) claimStart(key string, r ForwardRule) (release func(), e
 // gets a fresh dial.
 func (m *tunnelManager) checkConnAlive(h SSHHost, hc *hostConn) error {
 	select {
-	case <-hc.conn.Done():
+	case <-hc.conn().Done():
 		m.releaseConn(h.ID, hc)
 		return fmt.Errorf("the ssh connection to %s dropped while the tunnel was starting", h.Host)
 	default:
@@ -525,7 +536,7 @@ func (m *tunnelManager) reconcile(hosts []SSHHost) {
 
 // startLocal brings up a -L tunnel: listen locally, and hand every accepted
 // connection to the remote host via a direct-tcpip channel.
-func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
+func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*jumpChain, error)) error {
 	release, err := m.claimStart(tunnelKey(h.ID, r.ID), r)
 	if err != nil {
 		return err
@@ -567,7 +578,7 @@ func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*sshcl
 //
 // The rule's TargetHost/TargetPort are unused here: there is no configured
 // destination, which is the entire point of dynamic forwarding.
-func (m *tunnelManager) startDynamic(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
+func (m *tunnelManager) startDynamic(h SSHHost, r ForwardRule, dial func() (*jumpChain, error)) error {
 	release, err := m.claimStart(tunnelKey(h.ID, r.ID), r)
 	if err != nil {
 		return err
@@ -624,7 +635,7 @@ func listenError(r ForwardRule, bind string, err error) error {
 // such cheap local step: the "listen" *is* the SSH round trip
 // (ListenRemote sends the tcpip-forward global request), so acquiring the
 // connection has to come first.
-func (m *tunnelManager) startRemote(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
+func (m *tunnelManager) startRemote(h SSHHost, r ForwardRule, dial func() (*jumpChain, error)) error {
 	release, err := m.claimStart(tunnelKey(h.ID, r.ID), r)
 	if err != nil {
 		return err
@@ -640,7 +651,7 @@ func (m *tunnelManager) startRemote(h SSHHost, r ForwardRule, dial func() (*sshc
 	}
 
 	bind := forwardBindAddr(r)
-	ln, err := hc.conn.ListenRemote("tcp", bind)
+	ln, err := hc.conn().ListenRemote("tcp", bind)
 	if err != nil {
 		m.releaseConn(h.ID, hc)
 		return remoteListenError(r, bind, err)
@@ -701,7 +712,7 @@ func (m *tunnelManager) serveRemoteConn(t *tunnel, remote net.Conn) {
 
 // acquireConn returns the host's shared connection, dialing it if this is the
 // first rule to need it. The caller owns exactly one reference on success.
-func (m *tunnelManager) acquireConn(hostID string, dial func() (*sshclient.Conn, error)) (*hostConn, error) {
+func (m *tunnelManager) acquireConn(hostID string, dial func() (*jumpChain, error)) (*hostConn, error) {
 	m.mu.Lock()
 	m.ensureLocked()
 	if hc, ok := m.conns[hostID]; ok {
@@ -718,7 +729,7 @@ func (m *tunnelManager) acquireConn(hostID string, dial func() (*sshclient.Conn,
 	m.conns[hostID] = hc
 	m.mu.Unlock()
 
-	hc.conn, hc.err = dial()
+	hc.chain, hc.err = dial()
 	if hc.err != nil {
 		// Drop the poisoned entry before waking anyone. releaseConn only
 		// removes it once refs reach zero, so while other waiters still hold
@@ -752,7 +763,7 @@ func (m *tunnelManager) acquireConn(hostID string, dial func() (*sshclient.Conn,
 // set running=false under m.mu *before* teardown releases the connection, so
 // a watcher waking up afterwards finds nothing left to tear down.
 func (m *tunnelManager) watchConn(hostID string, hc *hostConn) {
-	<-hc.conn.Done()
+	<-hc.conn().Done()
 	m.connectionLost(hostID, hc, "ssh connection lost (keepalive failed or the peer closed it)")
 }
 
@@ -769,8 +780,10 @@ func (m *tunnelManager) releaseConn(hostID string, hc *hostConn) {
 		delete(m.conns, hostID)
 	}
 	m.mu.Unlock()
-	if last && hc.conn != nil {
-		_ = hc.conn.Close()
+	if last {
+		// The whole chain, target first and then back down the hops: the
+		// bastions exist only to carry this connection.
+		_ = hc.chain.Close()
 	}
 }
 
@@ -834,12 +847,12 @@ func (m *tunnelManager) acceptFailed(t *tunnel, err error) {
 // noteDialFailure would classify a merely slow remote as a dead transport and
 // stop every tunnel on the connection. What actually bounds it is the
 // keepalive: a transport that has died takes the pending channel open down
-// with it within tunnelKeepalive. socks5.ServeConn documents the same fact
+// with it within jumpKeepalive. socks5.ServeConn documents the same fact
 // from the other side.
 func (m *tunnelManager) serveLocalConn(t *tunnel, local net.Conn) {
 	defer t.untrackConn(local)
 
-	remote, err := t.hc.conn.DialRemote("tcp", t.target)
+	remote, err := t.hc.conn().DialRemote("tcp", t.target)
 	if err != nil {
 		_ = local.Close()
 		m.noteDialFailure(t, t.target, err)
@@ -897,7 +910,7 @@ func (m *tunnelManager) serveDynamicConn(t *tunnel, local net.Conn) {
 	defer func() { _ = local.Close() }()
 
 	err := socks5.ServeConn(local, func(network, addr string) (net.Conn, error) {
-		remote, err := t.hc.conn.DialRemote(network, addr)
+		remote, err := t.hc.conn().DialRemote(network, addr)
 		if err != nil {
 			// Report it exactly as -L does — including tearing the tunnel down
 			// when the transport is gone — and still return the error, so the

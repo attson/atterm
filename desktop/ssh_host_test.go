@@ -94,8 +94,8 @@ func TestOpenSSHSessionAdoptsAndCloses(t *testing.T) {
 	id, err := h.OpenSSHSession(context.Background(), SSHConnectReq{
 		Host: host, Port: port, User: "u",
 		AuthKind: "password", Password: "pw",
-		Cols: 80, Rows: 24, AcceptHostKey: true,
-	}, testFixedHostKeyCb(hostPub))
+		Cols: 80, Rows: 24,
+	}, testFixedHostKeyCb(hostPub), nil)
 	if err != nil {
 		t.Fatalf("OpenSSHSession: %v", err)
 	}

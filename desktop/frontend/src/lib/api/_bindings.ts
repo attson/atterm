@@ -86,8 +86,28 @@ export interface SSHConnectReq {
   passphrase?: string;
   cols?: number;
   rows?: number;
-  // Set on retry after the user confirmed an unknown host fingerprint.
-  accept_host_key?: boolean;
+  // Set on a retry after the user confirmed an unknown host fingerprint in the
+  // TOFU dialog: the Host and Fingerprint of the rejection that produced the
+  // dialog, echoed back verbatim.
+  //
+  // They replaced an accept_host_key bool, and the difference is a security one
+  // once a connection can run through a jump-host chain. The Go callback does
+  // not merely let an accepted key through — it appends it to known_hosts — so
+  // "accept the next unknown key" would record keys for machines the user was
+  // never shown, and a substituted hop would never prompt again. Send both or
+  // neither; a fingerprint without its host matches nothing.
+  accepted_host_key_host?: string;
+  accepted_host_key_fingerprint?: string;
+}
+
+// AcceptedHostKey mirrors desktop/ssh_host.go AcceptedHostKey — the second
+// argument of NewSshSessionByID, and the saved-host equivalent of the two
+// SSHConnectReq fields above. Both members are required so the pair cannot be
+// split on the way back; { host: "", fingerprint: "" } accepts nothing and is
+// what a first attempt sends.
+export interface AcceptedHostKey {
+  host: string;
+  fingerprint: string;
 }
 
 // SSHHost mirrors desktop SSHHost — the non-secret part of a saved host.
@@ -105,10 +125,17 @@ export interface SSHHost {
   // identity_file / proxy_jump / proxy_command are populated by ssh_config
   // import (desktop/ssh_config_import.go) and are otherwise empty for
   // manually-added hosts. identity_file is a path only — atterm never reads
-  // the file as part of import. proxy_jump / proxy_command mark a host that
-  // NewSshSessionByID refuses to dial directly until roadmap item 27 adds
-  // jump-host support; the frontend must surface that as a visible marker,
-  // not silently connect.
+  // the file as part of import.
+  //
+  // proxy_jump is connectable as of roadmap item 27: the backend dials the
+  // chain, one hop at a time, and every hop must itself be a saved host in
+  // atterm (it uses that host's own credential). The frontend still shows the
+  // route — which machines a connection passes through is worth seeing before
+  // it happens — but no longer refuses it.
+  //
+  // proxy_command is still refused, and always will be: atterm never runs an
+  // arbitrary command to open a connection. That marker has to stay visible
+  // rather than turning into a failed dial.
   identity_file?: string;
   proxy_jump?: string;
   proxy_command?: string;
@@ -508,7 +535,7 @@ export interface AppBindings {
   GetHostInfo(): Promise<HostInfo>;
   NewSession(req: NewSessionReq): Promise<NewSessionResp>;
   NewSshSession(req: SSHConnectReq): Promise<NewSessionResp>;
-  NewSshSessionByID(id: string): Promise<NewSessionResp>;
+  NewSshSessionByID(id: string, accepted: AcceptedHostKey): Promise<NewSessionResp>;
   ListSSHHosts(): Promise<SSHHost[]>;
   AddSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost>;
   UpdateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void>;

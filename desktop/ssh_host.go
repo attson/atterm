@@ -12,31 +12,25 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// hostNeedsJump reports whether h must go through a jump host or an arbitrary
-// proxy command, and returns the user-facing reason to refuse it.
+// hostRunsProxyCommand reports whether h is configured with an arbitrary proxy
+// command, and returns the user-facing reason to refuse it.
 //
-// A ProxyJump host is usually not reachable directly, so dialing HostName
-// anyway either times out or connects to whatever else answers there.
-// ProxyCommand is never executed by atterm at all (it would be an RCE
-// surface). Callers must run this *before* reading any credential and before
-// any dial: the point is that nothing happens for a host we refuse.
+// ProxyCommand is never executed by atterm at all (it would be an RCE surface),
+// and unlike ProxyJump it never will be — so this is a refusal, not a
+// not-yet. Callers must run it *before* reading any credential and before any
+// dial: the point is that nothing happens for a host we refuse.
 //
-// Every entry point that dials a saved host gates on this one function —
-// NewSshSessionByID (terminal) and StartForward (tunnel) — so roadmap item 27
-// (jump-host support) has exactly one condition to relax instead of two that
-// can drift apart.
-//
-// The two cases get different wording: naming ProxyJump at a host that only
-// sets ProxyCommand sends the user looking for a line that isn't in their
-// config, and the two have different outlooks — ProxyJump is roadmap item 27,
-// ProxyCommand is never going to be executed at all.
-func hostNeedsJump(h SSHHost) (bool, string) {
-	switch {
-	case h.ProxyJump != "":
-		return true, fmt.Sprintf(
-			"host %q needs a jump host (ProxyJump %q); jump-host support is roadmap item 27 and not implemented yet",
-			h.Alias, h.ProxyJump)
-	case h.ProxyCommand != "":
+// Until roadmap item 27 this function also refused ProxyJump. It no longer
+// does: a ProxyJump host goes through the chain builder in ssh_jump.go, which
+// dials each hop as its own saved host and verifies each hop's key. What has
+// not changed is that both entry points that dial a saved host — the terminal
+// (NewSshSessionByID) and the tunnel (StartForward) — gate on this one
+// function. Item 26's review confirmed that property deliberately, and the
+// design's risk 4 is exactly what spreading it would cost: relaxing one path
+// and not the other gives "the terminal connects but the tunnel says
+// unsupported", which is worse than a uniform refusal.
+func hostRunsProxyCommand(h SSHHost) (bool, string) {
+	if h.ProxyCommand != "" {
 		return true, fmt.Sprintf(
 			"host %q is configured with a ProxyCommand (%q); atterm never runs that command, so this host cannot be connected directly",
 			h.Alias, h.ProxyCommand)
@@ -44,37 +38,81 @@ func hostNeedsJump(h SSHHost) (bool, string) {
 	return false, ""
 }
 
+// findSSHHost looks a saved host up by ID.
+func (a *App) findSSHHost(id string) (SSHHost, bool) {
+	if id == "" {
+		return SSHHost{}, false
+	}
+	for _, h := range a.ListSSHHosts() {
+		if h.ID == id {
+			return h, true
+		}
+	}
+	return SSHHost{}, false
+}
+
+// AcceptedHostKey is the one host key the user confirmed in a TOFU dialog, on
+// its way back in from the frontend: the Host and Fingerprint of the
+// *HostKeyUnknownError that produced the dialog, echoed verbatim. Its zero
+// value accepts nothing, which is what a first attempt sends.
+//
+// It is a struct rather than two parameters on NewSshSessionByID because two
+// adjacent strings can be passed in the wrong order and still compile, and the
+// symptom of that mistake is the one this whole mechanism exists to remove: an
+// acceptance that matches nothing, so the dialog asks again and again. Named
+// fields cannot be swapped.
+//
+// It stays separate from ssh_jump.go's unexported acceptedHostKey, which is the
+// chain builder's matcher: this one is the frontend-facing shape (exported,
+// JSON-tagged), and it never reaches a host-key callback directly — it is
+// copied into SSHConnectReq's AcceptedHostKeyHost / AcceptedHostKeyFingerprint,
+// the fields Task 3 already made the wire contract.
+type AcceptedHostKey struct {
+	Host        string `json:"host"`
+	Fingerprint string `json:"fingerprint"`
+}
+
 // NewSshSessionByID looks up a saved host + its credential by ID and connects,
 // reusing NewSshSession (which carries the slice-1 known_hosts TOFU flow).
 // Returns errCredentialMissing when no credential is stored so the frontend
 // can prompt the user to supply one.
-func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
+//
+// accepted is the one host key the user confirmed in a TOFU dialog, echoed back
+// from the *HostKeyUnknownError that produced it. A first attempt passes the
+// zero value, which accepts nothing.
+//
+// Until roadmap item 27 this method took the id alone, and that made a saved
+// host with an unfamiliar key unconnectable: the error came back, the frontend
+// had nowhere to send the answer, and the next attempt asked the same question.
+// A jump-host chain turns that from an annoyance into a wall, because every hop
+// can ask — and the tunnel path is behind it too, since dialTunnelConn accepts
+// nothing on its own and tells the user to go accept the fingerprints in a
+// terminal first.
+func (a *App) NewSshSessionByID(id string, accepted AcceptedHostKey) (NewSessionResp, error) {
 	if a.host == nil {
 		return NewSessionResp{}, fmt.Errorf("relay host not ready")
 	}
-	var found *SSHHost
-	for _, h := range a.ListSSHHosts() {
-		if h.ID == id {
-			hh := h
-			found = &hh
-			break
-		}
-	}
-	if found == nil {
+	found, ok := a.findSSHHost(id)
+	if !ok {
 		return NewSessionResp{}, fmt.Errorf("no such host: %s", id)
 	}
 
-	// Refuse hosts that ssh_config marked as needing a jump host or an
-	// arbitrary proxy command, before any credential read or dial.
-	if needsJump, reason := hostNeedsJump(*found); needsJump {
+	// Refuse hosts that ssh_config marked as needing an arbitrary proxy
+	// command, before any credential read or dial. A ProxyJump host is not
+	// refused: NewSshSession builds its chain from SSHHostID below.
+	if refused, reason := hostRunsProxyCommand(found); refused {
 		return NewSessionResp{}, errors.New(reason)
 	}
 
 	req := SSHConnectReq{
 		Host: found.Host, Port: found.Port, User: found.User,
-		AuthKind:      found.AuthKind,
-		AcceptHostKey: false,
-		SSHHostID:     found.ID, // carried into SessionInfo for recovery reconnect
+		AuthKind:  found.AuthKind,
+		SSHHostID: found.ID, // carried into SessionInfo, and used to find the chain
+		// Verbatim, both halves: the acceptance names one key on one machine,
+		// and rebuilding either half here would let it match a hop the user was
+		// never shown. See acceptedHostKey.
+		AcceptedHostKeyHost:        accepted.Host,
+		AcceptedHostKeyFingerprint: accepted.Fingerprint,
 	}
 	switch found.AuthKind {
 	case "key":
@@ -96,25 +134,57 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 
 // NewSshSession opens an SSH remote shell as an adoptable session. On an
 // unknown host key it returns *HostKeyUnknownError with the fingerprint; the
-// frontend shows a TOFU dialog and retries with AcceptHostKey=true. It builds
-// the known_hosts callback (defaulting to ~/.ssh/known_hosts) and delegates
-// the actual dial + adopt to relayHost.OpenSSHSession.
+// frontend shows a TOFU dialog and retries with that host + fingerprint echoed
+// back. It builds the known_hosts callback (defaulting to ~/.ssh/known_hosts)
+// and delegates the actual dial + adopt to relayHost.OpenSSHSession.
+//
+// When the request came from a saved host (SSHHostID set), the host's jump
+// hosts are dialled first and handed to OpenSSHSession as the transport for the
+// last link. It is dialJumpHops rather than dialThroughJumps because the last
+// link is not a plain connection: sshclient.Dial is the only thing that puts a
+// PTY on one, and it opens its own connection with Via set. Building the whole
+// chain here would open a target connection with no shell on it — a wasted
+// login, an extra line in the remote's `who`, and one more thing to close.
 func (a *App) NewSshSession(req SSHConnectReq) (NewSessionResp, error) {
 	if a.host == nil {
 		return NewSessionResp{}, fmt.Errorf("relay host not ready")
 	}
 	khPath := a.knownHostsPath()
 
+	// An ad-hoc request (no SSHHostID) has no saved record and so no chain:
+	// nil chain, nil Via, hop 0 — exactly the direct connection this path has
+	// always made.
+	var chain *jumpChain
+	hopName := ""
+	if h, ok := a.findSSHHost(req.SSHHostID); ok {
+		hopName = sshHostLabel(h)
+		c, err := a.dialJumpHops(a.ctx, h, req.acceptedHostKey())
+		if err != nil {
+			return NewSessionResp{}, err
+		}
+		chain = c
+	}
+	// The hop number the destination carries in a TOFU prompt, read off the
+	// chain rather than recomputed, so the two paths cannot disagree about
+	// which machine "hop 3" is. 0 for a direct connection.
+	hopIndex := chain.targetHopIndex()
+
 	var unknown *HostKeyUnknownError
 	cb := sshclient.KnownHostsCallback(khPath, func(host, fp string) bool {
-		if req.AcceptHostKey {
-			return true // user already confirmed in the TOFU dialog
+		// Only the exact key the user was shown and agreed to — never "the next
+		// unknown key", which on a chain would write a stranger's key into
+		// known_hosts. See acceptedHostKey.
+		if req.acceptedHostKey().accepts(host, fp) {
+			return true
 		}
-		unknown = &HostKeyUnknownError{Fingerprint: fp, Host: host}
+		unknown = &HostKeyUnknownError{
+			Fingerprint: fp, Host: host,
+			HopIndex: hopIndex, HopName: hopName,
+		}
 		return false
 	})
 
-	id, err := a.host.OpenSSHSession(a.ctx, req, cb)
+	id, err := a.host.OpenSSHSession(a.ctx, req, cb, chain)
 	if err != nil {
 		if unknown != nil {
 			return NewSessionResp{}, unknown // typed → frontend shows fingerprint
@@ -133,7 +203,13 @@ type sshPtyHost struct{ *sshclient.Session }
 // local shell. hostKeyCb is injected: the real known_hosts callback in prod,
 // FixedHostKey in tests. Credentials in req are used for this connection only
 // and are never persisted (slice 1).
-func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostKeyCb ssh.HostKeyCallback) (uuid.UUID, error) {
+//
+// chain, when non-nil, is the host's jump hosts, already connected: the shell
+// is opened over its last hop. From here the chain belongs to this function —
+// Session.Close closes only the target connection, so every exit below has to
+// close the chain itself or the bastion logins outlive the terminal that needed
+// them. A nil chain is a direct connection and every call below is a no-op.
+func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostKeyCb ssh.HostKeyCallback, chain *jumpChain) (uuid.UUID, error) {
 	var auth sshclient.AuthMethod
 	switch req.AuthKind {
 	case "key":
@@ -156,8 +232,10 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 		HostKeyCb: hostKeyCb,
 		Cols:      cols, Rows: rows,
 		Timeout: 15 * time.Second,
+		Via:     chain.Target(), // nil for a direct connection
 	})
 	if err != nil {
+		_ = chain.Close()
 		return uuid.Nil, err
 	}
 
@@ -183,6 +261,7 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 		h.mu.Unlock()
 		cleanup()
 		_ = sess.Close()
+		_ = chain.Close()
 		return uuid.Nil, fmt.Errorf("relay host stopped")
 	}
 	h.sessions[id] = &activeSession{host: host, cleanup: cleanup}
@@ -191,7 +270,8 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 
 	// Watch for remote shell exit / disconnect → clean up the session, so a
 	// dropped SSH connection ends the session the same way a local PTY exit
-	// does.
+	// does. This is also where a jump-host chain ends: the hops exist only to
+	// carry this shell, and closing the shell does not close them.
 	go func() {
 		_ = sess.Wait()
 		h.mu.Lock()
@@ -199,6 +279,7 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 		h.mu.Unlock()
 		cleanup()
 		_ = sess.Close()
+		_ = chain.Close()
 		h.notifyChange()
 	}()
 

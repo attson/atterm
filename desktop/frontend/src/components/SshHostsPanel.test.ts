@@ -77,7 +77,7 @@ describe("SshHostsPanel", () => {
     await flushPromises();
     await wrapper.find('[data-test="ssh-connect-1"]').trigger("click");
     await flushPromises();
-    expect(newSshSessionByID).toHaveBeenCalledWith("1");
+    expect(newSshSessionByID).toHaveBeenCalledWith("1", { host: "", fingerprint: "" });
     expect(wrapper.emitted("connected")?.[0]).toEqual(["s1"]);
   });
 
@@ -404,7 +404,7 @@ describe("SshHostsPanel 主机右键菜单", () => {
     await openMenu(wrapper);
     await wrapper.find('[data-test="session-row-menu-item-connect"]').trigger("click");
     await flushPromises();
-    expect(newSshSessionByID).toHaveBeenCalledWith("1");
+    expect(newSshSessionByID).toHaveBeenCalledWith("1", { host: "", fingerprint: "" });
     expect(wrapper.emitted("connected")?.[0]).toEqual(["s1"]);
   });
 
@@ -746,7 +746,7 @@ describe("SshHostsPanel ssh_config 导入", () => {
     expect(wrapper.find('[data-test="ssh-config-import-result"]').text()).toContain("1");
   });
 
-  it("proxy_jump/proxy_command 的主机带跳板机提示标记", async () => {
+  it("proxy_jump 的条目标记链路,不再说不能连接", async () => {
     previewSSHConfigImport.mockResolvedValueOnce({
       entries: [
         {
@@ -762,7 +762,8 @@ describe("SshHostsPanel ssh_config 导入", () => {
     await openConfigImportDrawer(wrapper);
     const badge = wrapper.find('[data-test="ssh-config-entry-proxy-0"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toMatch(/jump host|ProxyJump/i);
+    expect(badge.text()).toContain("bastion");
+    expect(badge.text()).not.toContain("not directly connectable");
   });
 
   it("预览请求失败时展示错误信息,而不是空列表", async () => {
@@ -863,6 +864,9 @@ describe("SshHostsPanel ssh_config 导入", () => {
     expect(badge.exists()).toBe(true);
     expect(badge.text()).toContain("ProxyCommand");
     expect(badge.text()).not.toContain("ProxyJump");
+    // ProxyCommand is the one that stays unconnectable, so this row keeps the
+    // disclaimer that the ProxyJump row lost.
+    expect(badge.text()).toContain("not directly connectable");
   });
 
   // The two-step import exists because import overwrites hosts that sync to
@@ -949,21 +953,45 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     );
   });
 
-  it("代理主机在列表里带标记,Connect 被禁用且不会发起连接", async () => {
+  // Item 26 marked a ProxyJump host "not directly connectable" and greyed its
+  // Connect button. Item 27 made that false. The marker stays — the chain is
+  // still something the user should see before connecting, and every hop on it
+  // has to be a saved host — but it now describes the route instead of
+  // refusing it.
+  it("proxy_jump 主机保留链路标记,但 Connect 可用并真的发起连接", async () => {
     listSSHHosts.mockResolvedValue([PROXIED]);
+    newSshSessionByID.mockResolvedValueOnce({ session_id: "s3" });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
     const marker = wrapper.find('[data-test="ssh-host-proxy-p1"]');
     expect(marker.exists()).toBe(true);
-    expect(marker.text()).toContain("Jump host");
+    expect(marker.text()).toContain("bastion");
+    expect(marker.text()).not.toContain("not directly connectable");
     const btn = wrapper.find('[data-test="ssh-connect-p1"]');
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false);
+    await btn.trigger("click");
+    await flushPromises();
+    expect(newSshSessionByID).toHaveBeenCalledWith("p1", { host: "", fingerprint: "" });
+    expect(wrapper.emitted("connected")?.[0]).toEqual(["s3"]);
+  });
+
+  it("proxy_command 主机仍然被拒,Connect 禁用且不会发起连接", async () => {
+    listSSHHosts.mockResolvedValue([
+      {
+        id: "pc1", alias: "corky", host: "10.0.0.7", user: "root", auth_kind: "password",
+        proxy_command: "corkscrew proxy 8080 %h %p",
+      },
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    const btn = wrapper.find('[data-test="ssh-connect-pc1"]');
     expect((btn.element as HTMLButtonElement).disabled).toBe(true);
     // Double-click bypasses the disabled button, so the guard has to live in
-    // connect() too — a proxied host must never be dialled.
-    await wrapper.find('[data-test="ssh-host-card-p1"]').trigger("dblclick");
+    // connect() too — a ProxyCommand host must never be dialled.
+    await wrapper.find('[data-test="ssh-host-card-pc1"]').trigger("dblclick");
     await flushPromises();
     expect(newSshSessionByID).not.toHaveBeenCalled();
-    expect(wrapper.find('[data-test="ssh-hosts-error"]').text()).toContain("ProxyJump");
+    expect(wrapper.find('[data-test="ssh-hosts-error"]').text()).toContain("ProxyCommand");
   });
 
   it("只有 proxy_command 的主机,提示说 ProxyCommand 而不是 ProxyJump", async () => {
@@ -982,6 +1010,36 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     const err = wrapper.find('[data-test="ssh-hosts-error"]').text();
     expect(err).toContain("ProxyCommand");
     expect(err).not.toContain("ProxyJump");
+  });
+
+  // sshconfig parses ProxyJump and ProxyCommand into separate fields, and the
+  // importer carries both when a single Host block sets both lines. Before
+  // this fix proxyLabel/proxyReason branched on proxy_jump first, so a host
+  // like this showed the affirmative "Via bastion" badge and the jumpReason
+  // sentence even though runsProxyCommand disabled Connect — the UI text
+  // contradicted the UI state. It must read as the ProxyCommand refusal.
+  it("同时带 proxy_jump 与 proxy_command 的主机,标记与提示只说 ProxyCommand", async () => {
+    listSSHHosts.mockResolvedValue([
+      {
+        id: "p3", alias: "both", host: "10.0.0.8", user: "root", auth_kind: "password",
+        proxy_jump: "bastion", proxy_command: "corkscrew proxy 8080 %h %p",
+      },
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    const marker = wrapper.find('[data-test="ssh-host-proxy-p3"]');
+    expect(marker.text()).toContain("ProxyCommand");
+    expect(marker.text()).not.toContain("bastion");
+    expect(marker.attributes("title")).toContain("ProxyCommand");
+    expect(marker.attributes("title")).not.toContain("jump host");
+    const btn = wrapper.find('[data-test="ssh-connect-p3"]');
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
+    await wrapper.find('[data-test="ssh-host-card-p3"]').trigger("dblclick");
+    await flushPromises();
+    expect(newSshSessionByID).not.toHaveBeenCalled();
+    const err = wrapper.find('[data-test="ssh-hosts-error"]').text();
+    expect(err).toContain("ProxyCommand");
+    expect(err).not.toContain("jump host");
   });
 
   // §5.2 records IdentityFile as a path precisely so the user knows which key
@@ -1010,7 +1068,154 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     expect(wrapper.find('[data-test="ssh-host-proxy-n1"]').exists()).toBe(false);
     await wrapper.find('[data-test="ssh-connect-n1"]').trigger("click");
     await flushPromises();
-    expect(newSshSessionByID).toHaveBeenCalledWith("n1");
+    expect(newSshSessionByID).toHaveBeenCalledWith("n1", { host: "", fingerprint: "" });
+  });
+});
+
+// ---- TOFU on a saved host (roadmap item 27, design §5.2) -----------------
+//
+// Until item 27 this panel had no TOFU dialog at all: an unknown host key came
+// back as the bare sentinel `ssh_host_key_unknown` printed into the error line,
+// and there was nowhere to answer it. That also walled off the tunnel path,
+// whose refusal message tells the user to "open a terminal to the host you are
+// tunnelling to once — it asks about each hop in turn — and accept the
+// fingerprint". These tests are what makes that sentence true.
+describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
+  const DB = {
+    id: "db1", alias: "db-1", host: "10.0.0.9", user: "root",
+    auth_kind: "password" as const, proxy_jump: "bastion-b",
+  };
+
+  function hostKeyError(over: Record<string, unknown> = {}) {
+    return { Fingerprint: "SHA256:aaa", Host: "10.0.0.9", HopIndex: 0, HopName: "", ...over };
+  }
+
+  it("直连主机的未知指纹弹出确认框,而不是打印 ssh_host_key_unknown", async () => {
+    listSSHHosts.mockResolvedValue([{ ...DB, proxy_jump: undefined }]);
+    newSshSessionByID.mockRejectedValueOnce(hostKeyError());
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await flushPromises();
+    const tofu = wrapper.find('[data-test="ssh-host-tofu"]');
+    expect(tofu.exists()).toBe(true);
+    expect(tofu.text()).toContain("SHA256:aaa");
+    expect(wrapper.text()).not.toContain("ssh_host_key_unknown");
+    // A direct host has no chain, so the prompt must read the way it always
+    // has: no hop numbers, no jump-host talk.
+    expect(tofu.text().toLowerCase()).not.toContain("hop");
+    expect(tofu.text().toLowerCase()).not.toContain("jump");
+  });
+
+  it("确认后把用户看到的 host + fingerprint 原样回带", async () => {
+    listSSHHosts.mockResolvedValue([{ ...DB, proxy_jump: undefined }]);
+    newSshSessionByID
+      .mockRejectedValueOnce(hostKeyError({ Host: "[10.0.0.9]:2222" }))
+      .mockResolvedValueOnce({ session_id: "s7" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-host-accept-hostkey"]').trigger("click");
+    await flushPromises();
+    // Verbatim, both halves. The panel knows the host as "10.0.0.9"; the key is
+    // scoped to the known_hosts name the backend reported, so rebuilding either
+    // half here would produce an acceptance that matches nothing.
+    expect(newSshSessionByID).toHaveBeenLastCalledWith("db1", {
+      host: "[10.0.0.9]:2222",
+      fingerprint: "SHA256:aaa",
+    });
+    expect(wrapper.emitted("connected")?.[0]).toEqual(["s7"]);
+  });
+
+  // The security red line of §5.2: on a chain the user sees an unfamiliar
+  // fingerprint and cannot tell the destination from a bastion on the way to
+  // it. The prompt has to name the hop *and* say it is not the host that was
+  // asked for — accepting a key without knowing whose it is turns TOFU into a
+  // formality, and the acceptance is written to known_hosts permanently.
+  it("链路中间一跳的指纹提示说明是第几跳、哪台机器,并区分于目标主机", async () => {
+    listSSHHosts.mockResolvedValue([DB]);
+    newSshSessionByID.mockRejectedValueOnce(
+      hostKeyError({ Host: "10.0.0.2", HopIndex: 2, HopName: "bastion-b" }),
+    );
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await flushPromises();
+    const text = wrapper.find('[data-test="ssh-host-tofu"]').text();
+    expect(text).toContain("bastion-b");
+    expect(text).toContain("2");
+    expect(text).toContain("db-1");
+    expect(text.toLowerCase()).toContain("not");
+    expect(text).toContain("SHA256:aaa");
+  });
+
+  it("链路终点的指纹提示说明这就是你要连的主机", async () => {
+    listSSHHosts.mockResolvedValue([DB]);
+    newSshSessionByID.mockRejectedValueOnce(
+      hostKeyError({ HopIndex: 3, HopName: "db-1" }),
+    );
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await flushPromises();
+    const text = wrapper.find('[data-test="ssh-host-tofu"]').text();
+    expect(text).toContain("db-1");
+    expect(text).toContain("3");
+    // It is the destination, so it must not be described as a machine on the
+    // way to somewhere else.
+    expect(text).not.toContain("not db-1");
+  });
+
+  // Each hop is asked about separately, so accepting hop 1 can be answered with
+  // hop 2's question. The dialog has to move on rather than close.
+  it("接受一跳后如果下一跳又未知,提示换成下一跳", async () => {
+    listSSHHosts.mockResolvedValue([DB]);
+    newSshSessionByID
+      .mockRejectedValueOnce(hostKeyError({ Host: "10.0.0.1", Fingerprint: "SHA256:one", HopIndex: 1, HopName: "bastion-a" }))
+      .mockRejectedValueOnce(hostKeyError({ Host: "10.0.0.2", Fingerprint: "SHA256:two", HopIndex: 2, HopName: "bastion-b" }));
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').text()).toContain("bastion-a");
+    await wrapper.find('[data-test="ssh-host-accept-hostkey"]').trigger("click");
+    await flushPromises();
+    expect(newSshSessionByID).toHaveBeenNthCalledWith(2, "db1", {
+      host: "10.0.0.1",
+      fingerprint: "SHA256:one",
+    });
+    const text = wrapper.find('[data-test="ssh-host-tofu"]').text();
+    expect(text).toContain("bastion-b");
+    expect(text).toContain("SHA256:two");
+    expect(text).not.toContain("SHA256:one");
+  });
+
+  it("取消后不再连接,也不留下待确认的指纹", async () => {
+    listSSHHosts.mockResolvedValue([{ ...DB, proxy_jump: undefined }]);
+    newSshSessionByID.mockRejectedValueOnce(hostKeyError());
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-host-reject-hostkey"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').exists()).toBe(false);
+    expect(newSshSessionByID).toHaveBeenCalledTimes(1);
+  });
+
+  // A rejection carrying a fingerprint but no host cannot be answered at all:
+  // an acceptance without the machine it belongs to matches nothing. Show the
+  // error rather than a button that quietly does nothing.
+  it("缺少 host 的指纹错误按普通错误显示", async () => {
+    listSSHHosts.mockResolvedValue([{ ...DB, proxy_jump: undefined }]);
+    newSshSessionByID.mockRejectedValueOnce(hostKeyError({ Host: "" }));
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="ssh-hosts-error"]').exists()).toBe(true);
   });
 });
 
@@ -1271,16 +1476,35 @@ describe("SshHostsPanel 活跃隧道面板", () => {
     expect(wrapper.find('[data-test="ssh-hosts-error"]').text()).toContain("already in use");
   });
 
-  // §5.2: a proxied host is refused by StartForward. Letting the user click and
-  // read the error afterwards is exactly what the badge exists to prevent.
-  it("带 proxy_jump 的主机启动按钮禁用,并写明原因", async () => {
+  // Item 26 disabled Start for any proxied host because StartForward refused
+  // them. Item 27 routes a ProxyJump host through the chain builder on the
+  // tunnel path too, so the button has to work — a greyed button here would be
+  // the UI refusing something the backend now does.
+  it("带 proxy_jump 的主机启动按钮可用,并真的调用 StartForward", async () => {
     const wrapper = await mountPanel([{ ...FWD_HOST, id: "p1", proxy_jump: "bastion" }]);
     await openTunnels(wrapper);
     const btn = wrapper.find('[data-test="ssh-tunnel-start-p1-f1"]');
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false);
+    // The chain is still worth showing before starting a tunnel through it,
+    // but as a route, not as a refusal.
+    expect(wrapper.find('[data-test="ssh-tunnel-proxy-p1"]').text()).toContain("bastion");
+    expect(wrapper.find('[data-test="ssh-tunnel-proxy-reason-p1"]').exists()).toBe(false);
+    await btn.trigger("click");
+    await flushPromises();
+    expect(startForward).toHaveBeenCalledWith("p1", "f1");
+  });
+
+  // ProxyCommand is still never executed, on either path.
+  it("带 proxy_command 的主机启动按钮仍然禁用,并写明原因", async () => {
+    const wrapper = await mountPanel([
+      { ...FWD_HOST, id: "pc1", proxy_command: "corkscrew proxy 8080 %h %p" },
+    ]);
+    await openTunnels(wrapper);
+    const btn = wrapper.find('[data-test="ssh-tunnel-start-pc1-f1"]');
     expect((btn.element as HTMLButtonElement).disabled).toBe(true);
-    const reason = wrapper.find('[data-test="ssh-tunnel-proxy-reason-p1"]');
+    const reason = wrapper.find('[data-test="ssh-tunnel-proxy-reason-pc1"]');
     expect(reason.exists()).toBe(true);
-    expect(reason.text()).toContain("ProxyJump");
+    expect(reason.text()).toContain("ProxyCommand");
     await btn.trigger("click");
     await flushPromises();
     expect(startForward).not.toHaveBeenCalled();

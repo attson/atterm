@@ -1,5 +1,6 @@
 import { bindings } from "./_bindings";
 import type {
+  AcceptedHostKey,
   ActiveForward,
   NewSessionResp,
   SSHConfigImportPreview,
@@ -10,6 +11,7 @@ import type {
 } from "./_bindings";
 
 export type {
+  AcceptedHostKey,
   ActiveForward,
   ForwardRule,
   SSHConfigImportPreview,
@@ -20,12 +22,28 @@ export type {
   SSHKey,
 } from "./_bindings";
 
+// ACCEPT_NO_HOST_KEY is what a connection that has not been through a TOFU
+// dialog sends: it matches nothing, so an unknown key is reported rather than
+// trusted. It is the default below so a caller that knows nothing about host
+// keys — background recovery restore, say — fails closed by construction
+// instead of by remembering to.
+export const ACCEPT_NO_HOST_KEY: AcceptedHostKey = { host: "", fingerprint: "" };
+
 export function newSshSession(req: SSHConnectReq): Promise<NewSessionResp> {
   return bindings().NewSshSession(req);
 }
 
-export function newSshSessionByID(id: string): Promise<NewSessionResp> {
-  return bindings().NewSshSessionByID(id);
+// newSshSessionByID connects a saved host. accepted is the one host key the
+// user confirmed in a TOFU dialog, echoed back verbatim from the rejection that
+// produced it — both halves, exactly as they arrived. It travels as one object
+// rather than two arguments because two adjacent strings can be passed in the
+// wrong order and still typecheck, and the symptom of that would be an
+// acceptance that matches nothing: the dialog asks again, forever.
+export function newSshSessionByID(
+  id: string,
+  accepted: AcceptedHostKey = ACCEPT_NO_HOST_KEY,
+): Promise<NewSessionResp> {
+  return bindings().NewSshSessionByID(id, accepted);
 }
 
 export function listSSHHosts(): Promise<SSHHost[]> {
@@ -60,8 +78,11 @@ export function importSSHHosts(hosts: SSHHost[]): Promise<number> {
 
 // startForward brings up one saved rule. Tunnels are only ever started
 // explicitly — a tunnel occupies a local port, so nothing auto-starts one on
-// connect. Rejects for a host that needs a jump host, for an invalid rule, and
-// for a local port that is already taken.
+// connect. A ProxyJump host is fine as of roadmap item 27 — the tunnel rides
+// the same chain the terminal does. Rejects for a ProxyCommand host, for an
+// invalid rule, for a local port that is already taken, and for an unknown host
+// key on any hop (there is no dialog behind this call, so nothing is accepted
+// here — the message says to accept the fingerprints in a terminal first).
 export function startForward(hostID: string, ruleID: string): Promise<void> {
   return bindings().StartForward(hostID, ruleID);
 }

@@ -20,8 +20,8 @@ var (
 )
 
 const (
-	wsExToolWindow  = 0x00000080
-	wsExAppWindow   = 0x00040000
+	wsExToolWindow     = 0x00000080
+	wsExAppWindow      = 0x00040000
 	widgetWindowsTitle = "AT Term Widget"
 )
 

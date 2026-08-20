@@ -319,8 +319,8 @@ func TestAcceptFailureMarksTheTunnelStopped(t *testing.T) {
 	defer ln.Close()
 
 	var m tunnelManager
-	// A hostConn with no *sshclient.Conn: releaseConn drops the reference and
-	// skips the close, which is all this test needs from it.
+	// A hostConn with no chain: releaseConn drops the reference and the nil
+	// chain's Close is a no-op, which is all this test needs from it.
 	hc := &hostConn{ready: make(chan struct{}), refs: 1}
 	close(hc.ready)
 

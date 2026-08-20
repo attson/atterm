@@ -25,9 +25,10 @@ import (
 // original payload byte-for-byte.
 //
 // Path under test:
-//   PTY → relayHost local Session → uplink forwarder (seals with M2b
-//   sealOutFrame) → remote relay (M2c marks mirror content-opaque, no
-//   OSC parsing) → /client subscriber (this test) → AEAD open
+//
+//	PTY → relayHost local Session → uplink forwarder (seals with M2b
+//	sealOutFrame) → remote relay (M2c marks mirror content-opaque, no
+//	OSC parsing) → /client subscriber (this test) → AEAD open
 //
 // The marker string deliberately includes ANSI escape bytes so a
 // false-negative "didn't actually encrypt" path would surface as a

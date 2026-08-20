@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import { newSshSession, type SSHConnectReq } from "../lib/api";
+import { parseHostKeyPrompt, type HostKeyPrompt } from "../lib/sshHostKey";
 
 const emit = defineEmits<{
   (e: "connected", sessionId: string): void;
@@ -17,21 +18,26 @@ const passphrase = ref("");
 
 const busy = ref(false);
 const errorMsg = ref("");
-// When set, the last attempt failed with an unknown host key; show the
-// fingerprint and a confirm button that retries with accept_host_key.
-const pendingFingerprint = ref("");
+// When set, the last attempt failed with an unknown host key: show the
+// fingerprint and a confirm button that retries with exactly this (host,
+// fingerprint) pair echoed back.
+//
+// This dialog is the ad-hoc path — it never names a saved host, so the backend
+// has no ProxyJump chain to build and hopIndex is always 0. The chain wording
+// lives in SshHostsPanel, which is the only place a chain can be reached from.
+const pending = ref<HostKeyPrompt | null>(null);
 
-// A rejected NewSshSession whose message is the errCodeHostKeyUnknown sentinel
-// carries a Fingerprint field (Go HostKeyUnknownError). Detect it structurally.
-function unknownHostFingerprint(err: unknown): string {
-  if (err && typeof err === "object" && "Fingerprint" in err) {
-    const fp = (err as { Fingerprint?: unknown }).Fingerprint;
-    if (typeof fp === "string" && fp) return fp;
-  }
-  return "";
-}
-
-function buildReq(acceptHostKey: boolean): SSHConnectReq {
+// buildReq takes the acceptance rather than a bool: the retry has to name the
+// one key the user was shown, on the one machine they were shown it for.
+// "Accept the next unknown key" is what this replaced, and it was not a
+// stylistic difference — the Go callback *writes* an accepted key into
+// known_hosts, so a blanket accept records keys for machines nobody saw.
+//
+// Both halves come from the rejection untouched. Rebuilding either one from the
+// form would be the same bug: host.value is what the user typed, while the key
+// is scoped to the known_hosts name the backend reported ("[h]:2222"), and a
+// value that no longer matches means the acceptance is silently ignored.
+function buildReq(accepted: HostKeyPrompt | null): SSHConnectReq {
   return {
     host: host.value,
     port: port.value || "22",
@@ -40,24 +46,29 @@ function buildReq(acceptHostKey: boolean): SSHConnectReq {
     password: authKind.value === "password" ? password.value : undefined,
     private_key: authKind.value === "key" ? privateKey.value : undefined,
     passphrase: authKind.value === "key" ? passphrase.value : undefined,
-    accept_host_key: acceptHostKey,
+    accepted_host_key_host: accepted?.host,
+    accepted_host_key_fingerprint: accepted?.fingerprint,
   };
 }
 
-async function connect(acceptHostKey: boolean) {
+async function connect(accepted: HostKeyPrompt | null) {
   if (busy.value) return;
   busy.value = true;
   errorMsg.value = "";
   try {
-    const resp = await newSshSession(buildReq(acceptHostKey));
-    pendingFingerprint.value = "";
+    const resp = await newSshSession(buildReq(accepted));
+    pending.value = null;
     emit("connected", resp.session_id);
   } catch (err) {
-    const fp = unknownHostFingerprint(err);
-    if (fp && !acceptHostKey) {
-      pendingFingerprint.value = fp;
+    // A prompt after an acceptance means a *different* key was refused, not
+    // the one just agreed to — show it as the next question rather than
+    // dead-ending on the raw errCodeHostKeyUnknown sentinel, which is all
+    // Error() carries.
+    const prompt = parseHostKeyPrompt(err);
+    if (prompt) {
+      pending.value = prompt;
     } else {
-      pendingFingerprint.value = "";
+      pending.value = null;
       errorMsg.value = err instanceof Error ? err.message : String(err);
     }
   } finally {
@@ -105,10 +116,10 @@ async function connect(acceptHostKey: boolean) {
         </label>
       </template>
 
-      <div v-if="pendingFingerprint" class="tofu" data-test="ssh-tofu">
+      <div v-if="pending" class="tofu" data-test="ssh-tofu">
         <p class="warn">Unknown host key. Verify this fingerprint before trusting it:</p>
-        <code>{{ pendingFingerprint }}</code>
-        <button class="primary" data-test="ssh-accept-hostkey" @click="connect(true)">
+        <code>{{ pending.fingerprint }}</code>
+        <button class="primary" data-test="ssh-accept-hostkey" @click="connect(pending)">
           Accept & Connect
         </button>
       </div>
@@ -117,7 +128,7 @@ async function connect(acceptHostKey: boolean) {
 
       <div class="row end">
         <button @click="$emit('cancel')">Cancel</button>
-        <button class="primary" data-test="ssh-connect" :disabled="busy" @click="connect(false)">
+        <button class="primary" data-test="ssh-connect" :disabled="busy" @click="connect(null)">
           Connect
         </button>
       </div>

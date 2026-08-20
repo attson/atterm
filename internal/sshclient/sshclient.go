@@ -56,6 +56,16 @@ type Config struct {
 	Cols, Rows       uint16
 	Timeout          time.Duration // dial timeout; 0 → 15s
 	Keepalive        time.Duration // keepalive interval; 0 → 30s
+
+	// Via, when non-nil, is the connection this dial rides on: the TCP
+	// connection to Host:Port is opened *from that host* (via its
+	// DialRemote, a direct-tcpip channel) rather than from this machine,
+	// and the SSH handshake happens on top of it. This is what makes jump
+	// hosts possible — a chain is just this, folded: hop 1 dialled
+	// directly, hop 2 via hop 1, the target via the last hop. Nil means
+	// dial directly, which is what every caller other than the chain
+	// builder does, and must keep doing.
+	Via *Conn
 }
 
 // Conn is an authenticated SSH connection with no remote shell attached.
@@ -115,13 +125,87 @@ func DialConn(ctx context.Context, cfg Config) (*Conn, error) {
 		Timeout:         timeout,
 	}
 	addr := net.JoinHostPort(cfg.Host, port)
-	client, err := ssh.Dial("tcp", addr, clientCfg)
-	if err != nil {
-		return nil, fmt.Errorf("sshclient: dial %s: %w", addr, err)
+	var client *ssh.Client
+	if cfg.Via == nil {
+		client, err = ssh.Dial("tcp", addr, clientCfg)
+		if err != nil {
+			return nil, fmt.Errorf("sshclient: dial %s: %w", addr, err)
+		}
+	} else {
+		raw, derr := cfg.Via.DialRemote("tcp", addr)
+		if derr != nil {
+			return nil, fmt.Errorf("sshclient: reach %s through jump host: %w", addr, derr)
+		}
+		cc, chans, reqs, herr := newClientConnBounded(raw, addr, clientCfg, timeout)
+		if herr != nil {
+			// DialRemote already opened a channel on the jump host; if the
+			// handshake on top of it fails (including on our own timeout)
+			// we still have to close raw ourselves, or that channel is left
+			// dangling on the jump host with nothing left downstream to
+			// ever close it. x/crypto v0.37.0 does close it on both of its
+			// own error paths, and newClientConnBounded closes it on a
+			// timeout — but this stays unconditional rather than relying on
+			// a detail of the dependency's error handling.
+			_ = raw.Close()
+			return nil, fmt.Errorf("sshclient: handshake with %s through jump host: %w", addr, herr)
+		}
+		client = ssh.NewClient(cc, chans, reqs)
 	}
 	c := &Conn{client: client, closeCh: make(chan struct{})}
 	go c.keepalive(cfg.Keepalive)
 	return c, nil
+}
+
+// newClientConnBounded runs ssh.NewClientConn with a bound on the whole
+// handshake, for the one case that needs one: raw is the net.Conn
+// DialConn's Via branch gets from Conn.DialRemote, which is backed by an SSH
+// channel (x/crypto/ssh's chanConn), not a socket — its SetDeadline always
+// returns "deadline not supported". That is why ClientConfig.Timeout, which
+// becomes a net.DialTimeout on the direct path (ssh.Dial), bounds nothing
+// here: there is no OS-level deadline to hand it. Left alone, a hop whose
+// handshake never completes (the bastion accepted the TCP/channel but the
+// far side's sshd stalls) blocks until *that* side gives up, which is
+// nowhere near timeout.
+//
+// The workaround is a timer instead of a deadline: the handshake runs on its
+// own goroutine, and if timeout elapses before it returns, raw is closed out
+// from under it and the hang turns into an error. Note the bound is soft, not
+// hard: raw is an SSH channel, not a socket, so closing it only *sends* a
+// close message — the blocked read unblocks when the jump host answers, or
+// when that connection's own keepalive tears the mux down. Against a healthy
+// jump host that is one round trip; against one that is TCP-alive but not
+// answering, it is bounded by Keepalive instead. The timer is stopped the instant the handshake
+// returns on its own, so once a connection is established nothing is left
+// armed to cut it later — that is the failure mode to avoid, and it is why
+// this must not be a deadline set once and left on raw.
+func newClientConnBounded(raw net.Conn, addr string, cfg *ssh.ClientConfig, timeout time.Duration) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	type result struct {
+		cc    ssh.Conn
+		chans <-chan ssh.NewChannel
+		reqs  <-chan *ssh.Request
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		cc, chans, reqs, err := ssh.NewClientConn(raw, addr, cfg)
+		done <- result{cc, chans, reqs, err}
+	}()
+
+	timer := time.AfterFunc(timeout, func() { _ = raw.Close() })
+	r := <-done
+	if !timer.Stop() {
+		// The timer already fired (and closed raw) by the time the
+		// handshake goroutine returned. Closing raw normally turns
+		// NewClientConn into an error, but if it won the race and reported
+		// success anyway, that success is riding a transport we just told
+		// to die — close it and report the timeout rather than hand back a
+		// client nothing can trust.
+		if r.err == nil {
+			_ = r.cc.Close()
+		}
+		return nil, nil, nil, fmt.Errorf("handshake did not complete within %s", timeout)
+	}
+	return r.cc, r.chans, r.reqs, r.err
 }
 
 // DialRemote opens a connection through the remote host, as `ssh -L` does:

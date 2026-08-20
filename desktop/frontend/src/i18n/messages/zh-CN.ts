@@ -187,10 +187,19 @@ export const zhCN = {
       genericSubtitle: "SSH 密钥",
     },
     proxy: {
-      jumpBadge: "需要跳板机",
+      jumpBadge: "经 {target}",
       commandBadge: "ProxyCommand",
-      jumpReason: "需要经过跳板机（ProxyJump {target}）：跳板机连接还没做，所以这台主机不能直接连。",
+      jumpReason: "经跳板机 {target} 连接。链路上每一跳都必须是 atterm 里已保存的主机——atterm 用那台主机自己的凭据登录它，绝不会把这台主机的凭据发过去。",
       commandReason: "配置了 ProxyCommand（{command}）：atterm 不会执行这条命令，所以这台主机不能直接连。",
+    },
+    hostKey: {
+      title: "未知的主机密钥",
+      direct: "未知的主机密钥。信任之前请先核对这个指纹：",
+      jumpHop: "这个指纹属于 {name}，是通往 {target} 途中的第 {hop} 跳，不是 {target} 本身。请对着 {name} 核对之后再信任：",
+      targetHop: "这个指纹属于 {target}，也就是你要连的那台主机（在链路上是第 {hop} 跳）。核对之后再信任：",
+      chainNote: "链路上每台机器都会单独询问一次；接受这一台不代表接受其它任何一台。",
+      accept: "接受并连接",
+      reject: "取消",
     },
     hostDrawer: {
       titleNew: "新建主机",

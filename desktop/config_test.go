@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -332,9 +334,17 @@ func TestDefaultShellExistenceCheck(t *testing.T) {
 	})
 
 	t.Run("absolute path that exists is used", func(t *testing.T) {
-		c := appConfig{DefaultShell: "/bin/sh"}
-		if got := c.DefaultShellOrDefault(); got != "/bin/sh" {
-			t.Errorf("got %q, want /bin/sh", got)
+		// A real file on whatever platform is running, not /bin/sh: this used
+		// to pass on Windows only because filepath.IsAbs rejected the POSIX
+		// path and skipped the check entirely — i.e. for the same reason the
+		// sibling case above was silently broken.
+		shell := filepath.Join(t.TempDir(), "shell")
+		if err := os.WriteFile(shell, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		c := appConfig{DefaultShell: shell}
+		if got := c.DefaultShellOrDefault(); got != shell {
+			t.Errorf("got %q, want %q", got, shell)
 		}
 	})
 

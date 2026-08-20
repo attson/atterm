@@ -3,6 +3,8 @@ package prefssync
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sort"
 	"testing"
 )
 
@@ -10,6 +12,11 @@ import (
 type fakeAdapter struct {
 	values map[string]json.RawMessage
 	meta   map[string]Meta
+
+	// writeValueErr, keyed by key, lets a test force WriteValue to fail for
+	// one key without disturbing the others -- used to pin the log-and-continue
+	// behaviour in Pull.
+	writeValueErr map[string]error
 }
 
 func newFake() *fakeAdapter {
@@ -20,6 +27,9 @@ func (f *fakeAdapter) ReadValue(key string) (json.RawMessage, bool) {
 	return v, ok
 }
 func (f *fakeAdapter) WriteValue(key string, v json.RawMessage) error {
+	if err := f.writeValueErr[key]; err != nil {
+		return err
+	}
 	f.values[key] = v
 	return nil
 }
@@ -122,7 +132,8 @@ func TestPull_ServerNewerOverwritesLocal(t *testing.T) {
 		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
 	}}
 	e := NewEngine(a, r)
-	if err := e.Pull(context.Background()); err != nil {
+	result, err := e.Pull(context.Background())
+	if err != nil {
 		t.Fatalf("Pull: %v", err)
 	}
 
@@ -134,9 +145,23 @@ func TestPull_ServerNewerOverwritesLocal(t *testing.T) {
 	if m.UpdatedAtLocal != 500 || m.Dirty {
 		t.Fatalf("meta: %+v", m)
 	}
+	if len(result.Adopted) != 1 || result.Adopted[0] != "locale_preference" {
+		t.Fatalf("Adopted = %v; want [locale_preference]", result.Adopted)
+	}
+	if len(result.Conflict) != 0 {
+		t.Fatalf("Conflict = %v; want empty", result.Conflict)
+	}
 }
 
-func TestPull_LocalDirtyNewerIsPreserved(t *testing.T) {
+// Named for the branch it actually exercises. Its fixture has local newer
+// than the server (800 > 500), so the outer "server is newer" condition never
+// opens and `Dirty` is never even read — this is the no-op branch, not the
+// dirty-conflict branch its old name (TestPull_LocalDirtyNewerIsPreserved)
+// promised. The real conflict branch is pinned by
+// TestPull_ServerNewerButLocalDirty_RecordsConflict below; a name that points
+// at the wrong branch is a trap for whoever next skims this file deciding
+// what is already covered.
+func TestPull_ServerNotNewer_LocalUnchanged(t *testing.T) {
 	a := newFake()
 	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
 	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 800, Dirty: true})
@@ -145,7 +170,8 @@ func TestPull_LocalDirtyNewerIsPreserved(t *testing.T) {
 		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
 	}}
 	e := NewEngine(a, r)
-	if err := e.Pull(context.Background()); err != nil {
+	result, err := e.Pull(context.Background())
+	if err != nil {
 		t.Fatalf("Pull: %v", err)
 	}
 
@@ -157,6 +183,52 @@ func TestPull_LocalDirtyNewerIsPreserved(t *testing.T) {
 	if !m.Dirty {
 		t.Fatalf("expected dirty kept")
 	}
+	// local.UpdatedAtLocal (800) > server.UpdatedAt (500): this is the no-op
+	// branch ("server.updated_at <= local.updated_at_local"), not the
+	// conflict branch -- the server simply isn't newer, so neither slice is
+	// touched. See TestPull_ServerNewerButLocalDirty_RecordsConflict below
+	// for the branch this test's name suggests but does not actually reach.
+	if len(result.Conflict) != 0 {
+		t.Fatalf("Conflict = %v; want empty (server was not newer)", result.Conflict)
+	}
+	if len(result.Adopted) != 0 {
+		t.Fatalf("Adopted = %v; want empty", result.Adopted)
+	}
+}
+
+// TestPull_ServerNewerButLocalDirty_RecordsConflict pins the branch that
+// used to be a bare `continue`: server.updated_at > local.updated_at_local
+// AND local is Dirty. Local wins for now (a later Push reconciles via LWW),
+// but the user must be told two devices disagreed and a timestamp picked
+// the winner -- that is the entire point of this task.
+func TestPull_ServerNewerButLocalDirty_RecordsConflict(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: true})
+
+	r := &fakeRelay{getReturn: []ServerItem{
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
+	}}
+	e := NewEngine(a, r)
+	result, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	v, _ := a.ReadValue("locale_preference")
+	if string(v) != `"en"` {
+		t.Fatalf("expected local preserved, got %s", v)
+	}
+	m := a.ReadMeta("locale_preference")
+	if !m.Dirty || m.UpdatedAtLocal != 100 {
+		t.Fatalf("expected local meta untouched, got %+v", m)
+	}
+	if len(result.Conflict) != 1 || result.Conflict[0] != "locale_preference" {
+		t.Fatalf("Conflict = %v; want [locale_preference] -- the user was never told two devices disagreed", result.Conflict)
+	}
+	if len(result.Adopted) != 0 {
+		t.Fatalf("Adopted = %v; want empty", result.Adopted)
+	}
 }
 
 func TestPull_ServerMissingKeyDoesNotTouchLocal(t *testing.T) {
@@ -164,12 +236,100 @@ func TestPull_ServerMissingKeyDoesNotTouchLocal(t *testing.T) {
 	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
 	r := &fakeRelay{getReturn: nil}
 	e := NewEngine(a, r)
-	if err := e.Pull(context.Background()); err != nil {
+	result, err := e.Pull(context.Background())
+	if err != nil {
 		t.Fatalf("Pull: %v", err)
 	}
 	v, _ := a.ReadValue("locale_preference")
 	if string(v) != `"en"` {
 		t.Fatalf("local wiped: %s", v)
+	}
+	if len(result.Adopted) != 0 || len(result.Conflict) != 0 {
+		t.Fatalf("expected both slices empty, got Adopted=%v Conflict=%v", result.Adopted, result.Conflict)
+	}
+}
+
+// TestPull_WriteValueErrorSkipsKeyAndContinues pins the log-and-continue
+// behaviour added when the key count went 8 -> 17 (see sync.go's comment on
+// this branch): a WriteValue failure for one key must not abort the loop or
+// report that key as adopted/conflicted, and every later key must still be
+// processed.
+func TestPull_WriteValueErrorSkipsKeyAndContinues(t *testing.T) {
+	a := newFake()
+	a.writeValueErr = map[string]error{"shortcut_bindings": errors.New("malformed payload")}
+	a.WriteMeta("shortcut_bindings", Meta{UpdatedAtLocal: 100, Dirty: false})
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: false})
+
+	r := &fakeRelay{getReturn: []ServerItem{
+		{Key: "shortcut_bindings", Value: json.RawMessage(`{bad json`), UpdatedAt: 500},
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
+	}}
+	e := NewEngine(a, r)
+	result, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	// The failing key is in neither slice.
+	for _, k := range result.Adopted {
+		if k == "shortcut_bindings" {
+			t.Fatalf("shortcut_bindings should not be Adopted after a WriteValue error: %v", result.Adopted)
+		}
+	}
+	for _, k := range result.Conflict {
+		if k == "shortcut_bindings" {
+			t.Fatalf("shortcut_bindings should not be Conflict after a WriteValue error: %v", result.Conflict)
+		}
+	}
+	// The later key still gets processed -- the loop did not abort.
+	if len(result.Adopted) != 1 || result.Adopted[0] != "locale_preference" {
+		t.Fatalf("Adopted = %v; want [locale_preference] -- one bad key must not take the rest down", result.Adopted)
+	}
+	v, _ := a.ReadValue("locale_preference")
+	if string(v) != `"zh-CN"` {
+		t.Fatalf("locale_preference not written: %s", v)
+	}
+}
+
+// TestPull_ResultSlicesAreSorted pins the deterministic-order requirement:
+// callers (and eventually the UI) must not need set gymnastics to compare
+// what Pull did.
+func TestPull_ResultSlicesAreSorted(t *testing.T) {
+	a := newFake()
+	a.WriteMeta("terminal_theme", Meta{UpdatedAtLocal: 100, Dirty: false})
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: false})
+	a.WriteMeta("default_shell", Meta{UpdatedAtLocal: 100, Dirty: true})
+	a.WriteMeta("ai_notifications_only", Meta{UpdatedAtLocal: 100, Dirty: true})
+
+	r := &fakeRelay{getReturn: []ServerItem{
+		{Key: "terminal_theme", Value: json.RawMessage(`"dark"`), UpdatedAt: 500},
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
+		{Key: "default_shell", Value: json.RawMessage(`"zsh"`), UpdatedAt: 500},
+		{Key: "ai_notifications_only", Value: json.RawMessage(`true`), UpdatedAt: 500},
+	}}
+	e := NewEngine(a, r)
+	result, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	wantAdopted := []string{"locale_preference", "terminal_theme"}
+	wantConflict := []string{"ai_notifications_only", "default_shell"}
+	if !sort.StringsAreSorted(result.Adopted) || len(result.Adopted) != len(wantAdopted) {
+		t.Fatalf("Adopted = %v; want sorted %v", result.Adopted, wantAdopted)
+	}
+	for i, k := range wantAdopted {
+		if result.Adopted[i] != k {
+			t.Fatalf("Adopted = %v; want %v", result.Adopted, wantAdopted)
+		}
+	}
+	if !sort.StringsAreSorted(result.Conflict) || len(result.Conflict) != len(wantConflict) {
+		t.Fatalf("Conflict = %v; want sorted %v", result.Conflict, wantConflict)
+	}
+	for i, k := range wantConflict {
+		if result.Conflict[i] != k {
+			t.Fatalf("Conflict = %v; want %v", result.Conflict, wantConflict)
+		}
 	}
 }
 

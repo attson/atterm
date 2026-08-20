@@ -84,6 +84,7 @@ export * from "./api/tasks";
 export * from "./api/updates";
 export * from "./api/recovery";
 export * from "./api/snippets";
+export * from "./api/sync";
 
 // ---- notification runtime (kept here alongside showNotification) ----
 

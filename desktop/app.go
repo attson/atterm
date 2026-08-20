@@ -277,7 +277,52 @@ type App struct {
 	sftpMu sync.Mutex
 	sftp   *sftpBrowser
 
-	prefsSync *prefssync.Engine
+	// prefsSync is layered behind the prefsSyncEngine interface (defined in
+	// prefs_sync_loop.go) rather than typed as *prefssync.Engine directly, so
+	// tests can substitute a fake without internal/prefssync growing any
+	// desktop-only test scaffolding.
+	prefsSync prefsSyncEngine
+
+	// prefsSyncCh and prefsSyncTaskCh feed the serial sync loop in
+	// prefs_sync_loop.go. That file is the only place allowed to call a
+	// method on prefsSync — see its file-level comment for why.
+	prefsSyncCh     chan syncRequest
+	prefsSyncTaskCh chan func(prefsSyncEngine)
+	// prefsSyncLoopDone is closed when runPrefsSyncLoop returns. Test-only
+	// signal — production code never reads it, see startPrefsSyncLoop.
+	prefsSyncLoopDone chan struct{}
+
+	// syncStatusMu guards the fields below it, which back GetSyncStatus /
+	// SyncNow (see prefs_sync_loop.go). Read from any goroutine (a Wails
+	// call from the frontend); written only by the serial sync loop
+	// goroutine, via recordSyncOutcome / setSyncBusy — never touched
+	// directly outside those two so there is exactly one writer.
+	syncStatusMu sync.Mutex
+	// syncBusy is true for the duration of one runSyncRequest/runSyncTask
+	// call on the loop goroutine -- surfaced as SyncStatus.State ==
+	// "syncing" (when a relay is actually configured; see syncOffline).
+	syncBusy bool
+	// syncLastSyncedAt is the ms timestamp of the most recent Pull or Push
+	// that returned no error. Zero means never.
+	syncLastSyncedAt int64
+	// syncLastError is the Error() text of the most recent failed Pull or
+	// Push. Cleared (set back to "") the next time either succeeds -- see
+	// recordSyncOutcome. This is deliberately not sticky: the whole point
+	// of this field, per markPrefDirtyAndPush's comment about
+	// ssh_hosts_encrypted staying silently broken for months, is that a
+	// failure must surface, and a success must be able to say so too.
+	syncLastError string
+	// syncLastEmitted is the last full SyncStatus value actually sent over
+	// the "sync:status" event, so emitSyncStatusIfChanged only fires on an
+	// observable change to *any* field -- not just State. Deduping on State
+	// alone let three edits made back-to-back while offline collapse into a
+	// single emitted event still carrying the PendingKeys count from before
+	// any of them landed: State stays "offline" throughout, but PendingKeys
+	// (and, for other transitions, LastSyncedAt/LastError) genuinely changes
+	// and the frontend needs to see that. SyncStatus's fields are all plain
+	// comparable types (string/int64/int), so the whole struct can be
+	// compared with == rather than a field-by-field diff.
+	syncLastEmitted SyncStatus
 
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
 	// the most recent successful LoginRemoteRelay / RegisterRemoteRelay.
@@ -472,15 +517,28 @@ func (a *App) startup(ctx context.Context) {
 	adapter := newAppConfigAdapter(a.cfgStore, a.accountKeyForSync)
 	relayClient := newHTTPRelayClient(a.cfgStore)
 	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
+	a.startPrefsSyncLoop()
 
-	// Trigger an initial PULL in the background if already logged in.
+	// Trigger an initial pull if already logged in. Goes through the serial
+	// loop (see prefs_sync_loop.go) like every other prefsSync call.
 	if cfg := a.cfgStore.Get(); cfg.RelaySessionToken != "" {
-		go func() {
-			if err := a.prefsSync.Pull(a.ctx); err == nil {
-				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
-			}
-		}()
+		a.enqueueSync(syncRequest{pull: true})
 	}
+
+	// Start the preference watch NOW, not in the applyRelayConfig above.
+	//
+	// applyRelayConfig -> applyRelayPrefsWatch returns early when
+	// a.prefsSync == nil (prefs_watch.go), and a.prefsSync is not constructed
+	// until sixteen lines further down this function — so on a cold boot the
+	// watch never started at all. It only came up on a LATER applyRelayConfig:
+	// a relay reconfigure or a login. Until the user happened to do one of
+	// those, a preference changed on another machine never arrived, which is
+	// indistinguishable from "sync is broken".
+	//
+	// Re-running it here is safe and not a double-start: applyRelayPrefsWatch
+	// cancels any existing watch before deciding whether to start one, so the
+	// earlier no-op call and this one collapse to a single live watch.
+	a.applyRelayPrefsWatch(a.cfgStore.Get())
 
 	// Auto-update background loop, gated on the persisted preference.
 	// New installs default to enabled (AutoCheckUpdatesOrDefault returns true).
@@ -552,6 +610,14 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	// otherwise. Done outside a.mu (reconcile uses its own lock and may touch
 	// the long-conn). No-op until startFeishu has run.
 	a.reconcileFeishuMode(a.ctx, cfg)
+	// Every caller of this function has just changed something that can flip
+	// sync between offline and online — pause, unpause, log in, log out, or
+	// a different relay. None of them enqueue any sync work, so the sync
+	// loop's own emitters never run and the Settings indicator would keep
+	// showing whatever it last saw. See syncOfflineChanged: it also drops
+	// the recorded error, which otherwise reappears red and stale the moment
+	// the config is online again with nothing yet synced.
+	a.syncOfflineChanged()
 }
 
 // applyRelayUplink (re)starts the uplink to match the given config. URL == ""
@@ -1788,27 +1854,8 @@ func (a *App) updatePref(key string, mutate func(*appConfig) error) error {
 	return nil
 }
 
-// markPrefDirtyAndPush stamps the meta for key with the current ms,
-// then triggers a background PUSH. A failed Push is not fatal to the local
-// write (the key stays dirty and the next Push retries it), but it must not
-// be silent: an unknown_key/invalid_value 400 poisons every subsequent Push
-// (every dirty key rides along in the same batch and fails with it), and
-// that silence is exactly why ssh_hosts_encrypted stayed broken for months
-// after joining syncedKeys — nothing ever surfaced the 400. Log at warn so
-// that failure mode is visible instead of invisible.
-func (a *App) markPrefDirtyAndPush(key string) {
-	if a.prefsSync == nil {
-		return
-	}
-	a.prefsSync.MarkDirty(key, time.Now().UnixMilli())
-	go func() {
-		if err := a.prefsSync.Push(a.ctx); err != nil {
-			logWarn("prefssync", "push after %s changed: %v", key, err)
-		} else {
-			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
-		}
-	}()
-}
+// markPrefDirtyAndPush moved to prefs_sync_loop.go, alongside every other
+// call into the prefs sync engine.
 
 // accountKeyForSync returns a copy of the unlocked E2EE account key, or nil
 // when E2EE is not active. Used by the prefssync adapter to seal/open the SSH

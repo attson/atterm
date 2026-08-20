@@ -19,7 +19,7 @@ func (a *App) applyRelayPrefsWatch(cfg appConfig) {
 		a.prefsWatchCancel()
 		a.prefsWatchCancel = nil
 	}
-	if cfg.RelayURL == "" || cfg.RelayPaused || cfg.RelaySessionToken == "" || a.prefsSync == nil {
+	if a.prefsSync == nil || a.syncOffline(cfg) {
 		a.mu.Unlock()
 		return
 	}
@@ -76,16 +76,25 @@ func (a *App) runRelayPrefsWatchOnce(ctx context.Context, url, token string, all
 		if f.Type != proto.TypePrefsChanged {
 			continue
 		}
-		if a.prefsSync == nil {
-			continue
-		}
-		if err := a.prefsSync.Pull(ctx); err != nil {
-			logWarn("prefs", "pull: %v", err)
-			continue
-		}
-		if a.eventsEmitter != nil {
-			a.eventsEmitter(a.ctx, "prefs:changed")
-		}
+		// Hands off to the serial sync loop (prefs_sync_loop.go) instead of
+		// pulling directly: this frame's ctx is a child of a.ctx
+		// (context.WithCancel(a.ctx) in applyRelayPrefsWatch above), cancelled
+		// early on a relay reconfigure, but the pull itself must run
+		// serialised against every other prefsSync caller, which only
+		// a.ctx-scoped work on the loop goroutine can do. Non-blocking, so a
+		// burst of change notifications coalesces into one pull instead of
+		// one per frame.
+		//
+		// Cost of routing through a.ctx instead of this connection's own ctx:
+		// a pull already queued when the user switches relays is no longer
+		// cut short, so it can finish against the *old* relay and reconcile
+		// relay A's values into local config after the switch. Bounded to one
+		// HTTP round trip, touches only keys that are not locally dirty (see
+		// prefssync.Engine.Pull), and is a no-op when logged out (base() in
+		// httpRelayClient returns "not logged in"). The real fix -- comparing
+		// a config generation or user id before reconciling -- belongs in
+		// internal/prefssync and is out of scope for this task.
+		a.enqueueSync(syncRequest{pull: true})
 	}
 }
 

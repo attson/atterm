@@ -602,6 +602,32 @@ export interface SnippetRunProgress {
   result: SnippetHostResult;
 }
 
+// SyncStatus mirrors desktop/prefs_sync_loop.go SyncStatus -- the payload of
+// GetSyncStatus and of the "sync:status" event, which fires on every state
+// transition. "offline" means no relay configured / paused / logged out and
+// is distinct from "error" on purpose: not being configured is not a
+// failure and must not render as one. last_error is only ever non-empty
+// when state is "error": GetSyncStatus suppresses it whenever state is
+// "offline", even if a stale error was recorded before the relay was logged
+// out of or paused, so a UI that renders last_error whenever it is present
+// (rather than gating on state === "error") stays correct too -- see the
+// Go-side GetSyncStatus and recordSyncOutcome.
+export interface SyncStatus {
+  state: "idle" | "syncing" | "offline" | "error";
+  last_synced_at: number; // ms, 0 = never
+  pending_keys: number;
+  last_error?: string;
+}
+
+// PullResult mirrors internal/prefssync.PullResult -- the payload of the
+// "sync:pulled" event, fired after a pull that actually adopted or
+// conflicted on at least one key (a no-op pull fires nothing). Both slices
+// are pref keys, sorted.
+export interface PullResult {
+  adopted: string[] | null;
+  conflict: string[] | null;
+}
+
 // AppBindings mirrors Go's exposed App.<Method> surface, one entry per
 // wails.MethodDescription in wailsjs/go/main/App.d.ts. Kept as a single
 // interface so the runtime lookup (bindings()) returns a typed value
@@ -749,6 +775,14 @@ export interface AppBindings {
   // Go-side existence, so an id-only lookup would fail on a fresh install.
   RunSnippetOnHosts(snippetLabel: string, snippetText: string, hostIDs: string[]): Promise<string>;
   CancelSnippetRun(runID: string): Promise<void>;
+  // GetSyncStatus reads the current cross-device preference sync state for
+  // first paint; "sync:status" (SyncStatus) then pushes every subsequent
+  // transition. SyncNow enqueues an immediate pull-then-push and only
+  // rejects for "cannot start" (offline) -- the sync's own outcome still
+  // arrives via "sync:status", not this call's resolution. See
+  // desktop/prefs_sync_loop.go.
+  GetSyncStatus(): Promise<SyncStatus>;
+  SyncNow(): Promise<void>;
   GetTaskPreset(): Promise<string>;
   SetTaskPreset(preset: PresetId): Promise<void>;
   GetTaskGroupBy(): Promise<string>;

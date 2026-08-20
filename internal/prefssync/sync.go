@@ -91,21 +91,45 @@ func NewEngine(a Adapter, r RelayClient) *Engine {
 	return &Engine{adapter: a, relay: r}
 }
 
+// PullResult reports what Pull actually did to each key it saw from the
+// server, so a caller can tell the user "this changed on another device"
+// instead of the sync staying invisible. Both slices are sorted so a
+// comparison never needs set gymnastics, and so a UI listing changed
+// settings gets a stable order for free.
+// Tagged snake_case to match the other payload this feature sends over the
+// Wails boundary (desktop's SyncStatus). Untagged, Go would ship Adopted and
+// Conflict while its sibling shipped last_synced_at, and the next person to
+// add a field would have to notice which convention this one happens to use.
+type PullResult struct {
+	Adopted  []string `json:"adopted"`  // server value taken; local had no competing edit
+	Conflict []string `json:"conflict"` // server was newer BUT local was dirty; local kept, a
+	// later Push will reconcile via LWW. Recording this is the whole point:
+	// before this field existed the user was never told two devices
+	// disagreed and a timestamp silently picked the winner.
+}
+
 // Pull fetches the server state and reconciles into local. Per-key rule:
 //   - server.updated_at > local.updated_at_local AND NOT dirty: adopt server
 //   - server.updated_at > local.updated_at_local AND dirty: preserve local
 //     (subsequent push will reconcile via LWW)
 //   - server.updated_at <= local.updated_at_local: no-op
 //   - key absent on server: leave local untouched
-func (e *Engine) Pull(ctx context.Context) error {
+func (e *Engine) Pull(ctx context.Context) (PullResult, error) {
+	var result PullResult
 	items, err := e.relay.Get(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
 	for _, it := range items {
 		local := e.adapter.ReadMeta(it.Key)
 		if it.UpdatedAt > local.UpdatedAtLocal {
 			if local.Dirty {
+				// This used to be a bare continue with no record of what
+				// happened: local wins for now, a later Push reconciles by
+				// last-writer-wins, but the user was never told two devices
+				// disagreed and a timestamp picked the winner. Record it so
+				// the UI can say so.
+				result.Conflict = append(result.Conflict, it.Key)
 				continue
 			}
 			// Log-and-continue, not return: with the key count going 8 -> 17
@@ -113,6 +137,9 @@ func (e *Engine) Pull(ctx context.Context) error {
 			// one key — e.g. a malformed shortcut_bindings payload — used to
 			// abort the whole Pull and silently skip every key after it in the
 			// response. One bad key must not take the rest of the sync down.
+			// A key that fails to write belongs in neither result slice: it
+			// was not adopted (the write failed) and it is not a conflict
+			// (local was not dirty).
 			if err := e.adapter.WriteValue(it.Key, it.Value); err != nil {
 				logging.Warn("prefssync", "pull: write %s: %v", it.Key, err)
 				continue
@@ -121,9 +148,12 @@ func (e *Engine) Pull(ctx context.Context) error {
 				logging.Warn("prefssync", "pull: write meta %s: %v", it.Key, err)
 				continue
 			}
+			result.Adopted = append(result.Adopted, it.Key)
 		}
 	}
-	return nil
+	sort.Strings(result.Adopted)
+	sort.Strings(result.Conflict)
+	return result, nil
 }
 
 // MarkDirty stamps the meta entry for key with the given timestamp and

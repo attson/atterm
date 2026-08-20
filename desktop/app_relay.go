@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/e2eeclient"
-
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // LoginRemoteRelay calls POST /api/auth/login on the given relay URL with the
@@ -95,40 +93,11 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	if err := saveRelayPassword(wsURL, email, password); err != nil {
 		logWarn("relay", "save relay password: %v", err)
 	}
-	if a.prefsSync != nil {
-		go func() {
-			if err := a.prefsSync.Pull(a.ctx); err != nil {
-				return
-			}
-			cfg := a.cfgStore.Get()
-			userID := cfg.RelaySessionUserID
-			if userID == "" || cfg.PrefsSeedMarkerFor(userID) {
-				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
-				return
-			}
-			a.prefsSync.SeedFromLocal(isPrefCustomized(cfg), time.Now().UnixMilli())
-			// Only mark the seed as done when Push actually succeeded. A failed
-			// Push leaves the seeded keys dirty locally, so marking the marker
-			// here anyway would make the seed permanently un-retryable: next
-			// launch would see PrefsSeedMarkerFor(userID)==true, skip
-			// SeedFromLocal entirely, and Pull would adopt whatever's on the
-			// relay (nothing, if this Push never landed) over the local values
-			// that never got a second chance to upload.
-			if err := a.prefsSync.Push(a.ctx); err != nil {
-				logWarn("prefssync", "seed push for user %s: %v", userID, err)
-				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
-				return
-			}
-
-			cfg2 := a.cfgStore.Get()
-			if cfg2.PrefsSeedMarkers == nil {
-				cfg2.PrefsSeedMarkers = map[string]bool{}
-			}
-			cfg2.PrefsSeedMarkers[userID] = true
-			_ = a.cfgStore.Set(cfg2)
-			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
-		}()
-	}
+	// Pull + (first-login) seed + push, run as one exclusive unit on the
+	// serial sync loop — see enqueuePostLoginSeed in prefs_sync_loop.go,
+	// which is also where the emit-on-every-branch behaviour this used to
+	// inline here now lives.
+	go a.enqueuePostLoginSeed()
 	return nil
 }
 

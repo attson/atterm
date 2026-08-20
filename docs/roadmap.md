@@ -472,9 +472,15 @@
 
 ### 30. 同步状态可见
 
-- [ ] 同步指示器
-- [ ] 「此项已在另一台设备更新」提示
-- [ ] 手动 push / pull
+> **前置条件：那个串行 goroutine 并不存在。** `internal/prefssync` 的 `Engine` 类型注释写着「NOT safe for concurrent calls — wire it into a serial goroutine via the desktop boot code」，但桌面端从来没建过它：四处独立调用，全程无锁，其中 `markPrefDirtyAndPush` 是**每次偏好设置都 `go Push()`**。而 `Push` 是一个跨网络往返（它自己的注释说「可能几秒」）的 check-then-act。本项要加用户触发的手动同步，等于把这个竞态交到用户手上，所以先把那个 goroutine 真的建出来，五处调用全部改道。设计见 [`2026-08-20-sync-visibility-design.md`](./superpowers/specs/2026-08-20-sync-visibility-design.md)。
+>
+> 顺带修掉一个用户能感觉到的既有 bug：`applyRelayConfig` 在 `startup` 里跑在 `prefsSync` 构造之前 16 行，而 `applyRelayPrefsWatch` 在 `prefsSync == nil` 时直接 return——**冷启动时偏好监听根本不起来**，只有改 relay 配置或重新登录才会起。在此之前，别的机器改的偏好要等到用户碰巧做了这两件事之一才会传过来，从外面看和「同步坏了」没有区别。
+
+- [x] 同步指示器（`idle` / `syncing` / `offline` / `error` 四态。**`offline` 不是错误**：没配 relay、暂停、未登录都算 offline，不显示红色——「你没设置过」不是故障。`error` 带上失败信息并在下次成功时清除；`markPrefDirtyAndPush` 的注释记着一次静默的 400 让 `ssh_hosts_encrypted` 坏了几个月，指示器就是让这种事不再隐形的地方。待推送计数是「你的改动没离开这台机器」这个信号，未同步时间走相对时间，与更新检查复用同一个 `formatAgo`）
+- [x] 「此项已在另一台设备更新」提示（`Pull` 现在汇报 `Adopted` 与 `Conflict` 两类。`Conflict` 是此前完全静默的一支：服务端更新但本地是 dirty，代码里只有一个裸 `continue`，本地暂时获胜、之后由 push 按时间戳裁决——用户从来不知道两台设备曾经不一致，也不知道是时间戳挑了赢家。提示按人类可读的设置名列出，不是 `terminal_font_head` 这种原始 key）
+- [x] 手动 push / pull（**只给一个按钮**。单独的 pull 不会丢东西但会把本地改动晾在原地，单独的 push 会在没看过远端的情况下覆盖更新的值；先 pull 后 push 是唯一始终安全的顺序，所以界面不提供不安全的那两半。同步进行中再点会合并，不会排出第二次往返）
+
+**刻意没做**：不做合并界面、不做冲突弹窗——last-writer-wins 仍是裁决规则，本项只是让它不再是秘密；为 `terminal_font_size` 打断用户做裁决不值得。不同步 `prefssync.SyncedKeys()` 之外的东西。不加新的定时同步，watcher 的节奏不变。移动端没有指示器：它读的是自己那套 HTTP prefs sync，不跑这个引擎。
 
 ### 31. 配置导出 / 导入
 

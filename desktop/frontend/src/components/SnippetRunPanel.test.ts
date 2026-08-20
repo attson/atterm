@@ -145,6 +145,43 @@ describe("SnippetRunPanel", () => {
     expect(w.find('[data-testid="snippet-run-cancel"]').exists()).toBe(false);
   });
 
+  it("does not replay a buffered event belonging to a different run", async () => {
+    let resolveRun!: (id: string) => void;
+    runSnippetOnHosts.mockReset().mockImplementation(
+      () => new Promise<string>((resolve) => { resolveRun = resolve; }),
+    );
+    const { w, events } = await mountPanel();
+
+    await w.find(`[data-testid="snippet-run-host-${HOST_A.id}"]`).setValue(true);
+    await w.find('[data-testid="snippet-run-start"]').trigger("click");
+    await flushPromises();
+
+    // A panel closed while run A was still emitting, then reopened to start
+    // run B, buffers A's stragglers during B's await window. The run_id
+    // filter on replay is the only thing standing between them and B's rows,
+    // so a terminal event from A must not resolve B's host.
+    events.emit("snippet:run:progress", {
+      run_id: "run-OLD",
+      result: {
+        host_id: HOST_A.id,
+        host_label: "alpha",
+        state: "ok",
+        exit_code: 0,
+        output: "stale output from the previous run",
+        truncated: false,
+      },
+    } satisfies SnippetRunProgress);
+    await flushPromises();
+
+    resolveRun("run-1");
+    await flushPromises();
+
+    const row = w.find(`[data-testid="snippet-run-row-${HOST_A.id}"]`);
+    expect(row.exists()).toBe(true);
+    expect(row.attributes("data-state")).toBe("pending");
+    expect(row.text()).not.toContain("stale output from the previous run");
+  });
+
   it("a failed row shows the exit code and output, and is not styled or worded as an error", async () => {
     const { w, events } = await mountPanel();
     await selectAndRun(w, [HOST_A.id]);
@@ -348,6 +385,43 @@ describe("SnippetRunPanel", () => {
       // MINOR F5: pin the exact per-host header format, not just relative
       // ordering — a bare "${label}" with no "=== ... ===" must fail this.
       expect(text).toBe("=== alpha ===\noutput-a\n\n=== beta ===\noutput-b");
+    } finally {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: original });
+    }
+  });
+
+  it("copy-all keeps the partial output an 'error' host printed before it dropped", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const original = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      const { w, events } = await mountPanel();
+      await selectAndRun(w, [HOST_A.id]);
+
+      // Go deliberately preserves whatever the host printed before the
+      // connection dropped (snippet_run.go: "worth keeping"). Copy-all is
+      // where a user takes that away to diagnose with, so dropping it here
+      // discards the most useful half of an "error" row.
+      events.emit("snippet:run:progress", {
+        run_id: "run-1",
+        result: {
+          host_id: HOST_A.id,
+          host_label: "alpha",
+          state: "error",
+          exit_code: 0,
+          output: "partial-before-drop",
+          truncated: false,
+          error: "run: dropped mid-command",
+        },
+      } satisfies SnippetRunProgress);
+      await flushPromises();
+
+      await w.find('[data-testid="snippet-run-copyall"]').trigger("click");
+      await flushPromises();
+
+      expect(writeText.mock.calls[0][0]).toBe(
+        "=== alpha ===\nrun: dropped mid-command\npartial-before-drop",
+      );
     } finally {
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: original });
     }

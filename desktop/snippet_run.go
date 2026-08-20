@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,7 +204,14 @@ func (a *App) RunSnippetOnHosts(snippetLabel string, snippetText string, hostIDs
 	if len(hostIDs) == 0 {
 		return "", errors.New("snippet run: no hosts selected")
 	}
-	if snippetText == "" {
+	// TrimSpace, not just != "": SettingsTemplates saves on `!e.text`, which
+	// is untrimmed, so a template holding nothing but spaces or a newline is
+	// storable today. Dispatching that to every selected host would open N
+	// SSH connections to run a blank command — the emptiest possible way to
+	// fail, and one the user would read as "it did nothing" rather than as an
+	// error. The text still goes to the remote verbatim; only the emptiness
+	// check ignores surrounding whitespace.
+	if strings.TrimSpace(snippetText) == "" {
 		return "", fmt.Errorf("snippet run: %q has no command text", snippetLabel)
 	}
 	// A repeated id in the selection would otherwise spawn two goroutines

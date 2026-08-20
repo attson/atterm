@@ -272,12 +272,23 @@ func TestRunSnippetOnHostsRejectsEmptySnippetText(t *testing.T) {
 			return sshclient.ExecResult{}, nil
 		}}, nil
 	}
-	runID, err := a.RunSnippetOnHosts(snippetTestTplLabel, "", hostIDs)
-	if err == nil {
-		t.Fatal("expected an error for empty snippet text")
-	}
-	if runID != "" {
-		t.Fatalf("expected empty run id on rejection, got %q", runID)
+	// Whitespace-only counts as empty. SettingsTemplates saves on an untrimmed
+	// `!e.text`, so " " and "\n" are both storable today, and dispatching one
+	// would open an SSH connection per host to run a blank command.
+	for _, text := range []string{"", " ", "\n", "\t  \n"} {
+		runID, err := a.RunSnippetOnHosts(snippetTestTplLabel, text, hostIDs)
+		if err == nil {
+			t.Fatalf("text %q: expected an error for a snippet with no command text", text)
+		}
+		// The label is what tells the user WHICH snippet was empty; without it
+		// the message names nothing they can act on. Pinning it here is also
+		// what keeps snippetLabel from decaying into a dead parameter.
+		if !strings.Contains(err.Error(), snippetTestTplLabel) {
+			t.Fatalf("text %q: error %q does not name the snippet %q", text, err, snippetTestTplLabel)
+		}
+		if runID != "" {
+			t.Fatalf("text %q: expected empty run id on rejection, got %q", text, runID)
+		}
 	}
 	time.Sleep(50 * time.Millisecond)
 	if atomic.LoadInt32(&dialCalls) != 0 {

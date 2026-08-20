@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/prefssync"
 )
@@ -803,6 +807,525 @@ func TestPreviewConfigImport_MalformedJSONRefused(t *testing.T) {
 	_, err := a.PreviewConfigImport("{not json")
 	if err == nil {
 		t.Fatal("PreviewConfigImport(\"{not json\"): err = nil, want an error")
+	}
+	assertStoreUnchanged(t, a, before)
+}
+
+// --- ApplyConfigImport (task 3) ---
+//
+// Everything below needs a real *prefssync.Engine wired to the isolated
+// config store, not the bare cfgStore-only App newImportTestApp builds:
+// task 3's whole point is that ApplyConfigImport writes through the App
+// setters, which mark PrefsMeta dirty via engine.MarkDirty and enqueue a
+// push via enqueueSync -- neither of which happens with a.prefsSync == nil.
+// applyPushRelay stands in for the network so no test here makes a real
+// HTTP call, while still exercising the real Engine.MarkDirty/Push/
+// enqueueSync/coalescing code paths exactly as production does.
+
+// applyPushRelay is a prefssync.RelayClient double that never talks to a
+// real relay. Put always fails (returns an error, no items): this is
+// deliberate, not an oversight -- if Put "succeeded" here, Engine.Push would
+// clear the very Dirty flags TestApplyConfigImport_WritesThroughSettersMarksDirty
+// asserts on, racing that assertion against the async sync loop for no
+// reason relevant to what these tests check. Put still counts every call it
+// receives, which is all TestApplyConfigImport_CoalescesIntoOnePush needs.
+type applyPushRelay struct {
+	mu    sync.Mutex
+	calls int
+
+	// delay holds each Put call up before it returns, mirroring
+	// fakePrefsSyncEngine.callDelay in prefs_sync_loop_test.go -- it exists
+	// so a test can deterministically keep one push "in flight" while more
+	// work is enqueued behind it.
+	delay time.Duration
+	// started, if non-nil, receives once per Put call right as it begins
+	// (before delay), so a test can know a push has actually started
+	// instead of guessing with a sleep.
+	started chan struct{}
+}
+
+func (f *applyPushRelay) Get(ctx context.Context) ([]prefssync.ServerItem, error) {
+	return nil, nil
+}
+
+func (f *applyPushRelay) Put(ctx context.Context, items []prefssync.ClientItem) ([]prefssync.ServerItem, error) {
+	f.mu.Lock()
+	f.calls++
+	delay := f.delay
+	f.mu.Unlock()
+
+	if f.started != nil {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+	}
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return nil, errors.New("applyPushRelay: Put refused (test double, no real relay)")
+}
+
+func (f *applyPushRelay) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// newApplyTestApp builds an App wired to a REAL *prefssync.Engine (the same
+// constructor production code uses -- see app.go's startup) over an
+// isolated config store and applyPushRelay, with the serial sync loop
+// actually running. This is what lets these tests assert the real
+// consequences of going through the App setters: PrefsMeta actually flips
+// Dirty (via the real appConfigAdapter/Engine.MarkDirty), and a real push is
+// actually enqueued and coalesced by the real enqueueSync.
+func newApplyTestApp(t *testing.T) (*App, *applyPushRelay) {
+	t.Helper()
+	useIsolatedKeyring(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cfgStore := newTestConfigStore(t)
+	relay := &applyPushRelay{}
+	adapter := newAppConfigAdapter(cfgStore, func() []byte { return nil })
+	a := &App{ctx: ctx, cfgStore: cfgStore, prefsSync: prefssync.NewEngine(adapter, relay)}
+	a.startPrefsSyncLoop()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-a.prefsSyncLoopDone:
+		case <-time.After(time.Second):
+		}
+	})
+	return a, relay
+}
+
+// mustMarshalExport is a small json.Marshal-and-check helper shared by the
+// Apply tests below, to keep each test's own export construction readable.
+func mustMarshalExport(t *testing.T, export ConfigExport) string {
+	t.Helper()
+	data, err := json.Marshal(export)
+	if err != nil {
+		t.Fatalf("marshal export: %v", err)
+	}
+	return string(data)
+}
+
+// TestApplyConfigImport_WritesThroughSettersMarksDirty pins spec §4 /
+// brief bullet 1 directly: every category ApplyConfigImport can write
+// (a scalar pref, an ssh host, a profile + its default) ends up in the
+// store AND with its sync key's PrefsMeta marked Dirty. Writing straight to
+// cfgStore (bypassing the setters) would change the store's value while
+// leaving Dirty false forever -- see
+// TestApplyConfigImport_DirectCfgStoreWriteFailsDirtyAssertion below for the
+// mutation that proves this test actually catches that.
+func TestApplyConfigImport_WritesThroughSettersMarksDirty(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+
+	fileHosts := sshHostsExportPayload{Hosts: []SSHHost{
+		{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"},
+	}}
+	fileProfiles := profilesExportPayload{
+		Profiles:         []SessionProfile{{ID: "p1", Name: "default"}},
+		DefaultProfileID: "p1",
+	}
+	rawHosts, _ := json.Marshal(fileHosts)
+	rawProfiles, _ := json.Marshal(fileProfiles)
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"terminal_theme": json.RawMessage(`"nord"`),
+			"ssh_hosts":      rawHosts,
+			"profiles":       rawProfiles,
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText, false)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+	if len(report.Applied) == 0 {
+		t.Fatal("report.Applied is empty; test setup produced no diffs to prove anything against")
+	}
+
+	cfg := a.cfgStore.Get()
+
+	if cfg.TerminalTheme != "nord" {
+		t.Fatalf("cfg.TerminalTheme = %q, want %q", cfg.TerminalTheme, "nord")
+	}
+	if m := cfg.PrefsMeta["terminal_theme"]; !m.Dirty {
+		t.Fatalf("PrefsMeta[%q].Dirty = false after ApplyConfigImport, want true -- SetTerminalTheme must mark it dirty", "terminal_theme")
+	}
+
+	if len(cfg.SSHHosts) != 1 || cfg.SSHHosts[0].ID != "h1" {
+		t.Fatalf("cfg.SSHHosts = %+v, want [h1]", cfg.SSHHosts)
+	}
+	if m := cfg.PrefsMeta["ssh_hosts_encrypted"]; !m.Dirty {
+		t.Fatalf("PrefsMeta[%q].Dirty = false after ApplyConfigImport, want true -- markSSHHostsDirty must run", "ssh_hosts_encrypted")
+	}
+
+	if len(cfg.Profiles) != 1 || cfg.Profiles[0].ID != "p1" || cfg.DefaultProfileID != "p1" {
+		t.Fatalf("cfg.Profiles/DefaultProfileID = %+v/%q, want [p1]/p1", cfg.Profiles, cfg.DefaultProfileID)
+	}
+	if m := cfg.PrefsMeta["profiles_encrypted"]; !m.Dirty {
+		t.Fatalf("PrefsMeta[%q].Dirty = false after ApplyConfigImport, want true -- SetProfiles/SetDefaultProfileID must mark it dirty", "profiles_encrypted")
+	}
+}
+
+// TestApplyConfigImport_ReparsesRawTextSameInputSameDecisions pins brief
+// bullet 5 / spec §5: Apply does its own parse of jsonText rather than
+// reusing a handle from a prior Preview call, so calling Preview and then
+// Apply on the *same bytes* must reach the same add/replace decisions --
+// there is no shared cached parse for the two to silently drift apart on.
+// Run twice on fresh, independently-built apps against the exact same
+// jsonText to show the decisions (and their order) are a pure function of
+// the input, not of some hidden handle state.
+func TestApplyConfigImport_ReparsesRawTextSameInputSameDecisions(t *testing.T) {
+	buildJSON := func(t *testing.T) (string, *App) {
+		a, _ := newApplyTestApp(t)
+		cfg := a.cfgStore.Get()
+		cfg.SSHHosts = []SSHHost{{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"}}
+		cfg.Profiles = []SessionProfile{{ID: "p1", Name: "default"}}
+		if err := a.cfgStore.Set(cfg); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		rawHosts, _ := json.Marshal(sshHostsExportPayload{Hosts: []SSHHost{
+			{ID: "h1", Host: "one.example.com", User: "deploy", AuthKind: "password"}, // replace
+			{ID: "h2", Host: "two.example.com", User: "root", AuthKind: "password"},   // add
+		}})
+		rawProfiles, _ := json.Marshal(profilesExportPayload{Profiles: []SessionProfile{
+			{ID: "p1", Name: "default"},   // unchanged
+			{ID: "p2", Name: "brand-new"}, // add
+		}})
+		jsonText := mustMarshalExport(t, ConfigExport{
+			Version:    configExportVersion,
+			ExportedAt: "2026-08-21T00:00:00Z",
+			AppVersion: "0.4.0",
+			Preferences: map[string]json.RawMessage{
+				"locale_preference": json.RawMessage(`"zh-CN"`),
+				"ssh_hosts":         rawHosts,
+				"profiles":          rawProfiles,
+			},
+		})
+		return jsonText, a
+	}
+
+	// Run 1: Preview only, capture the decisions it promises.
+	jsonText1, previewApp := buildJSON(t)
+	preview, err := previewApp.PreviewConfigImport(jsonText1)
+	if err != nil {
+		t.Fatalf("PreviewConfigImport: %v", err)
+	}
+	wantByKey := make(map[string]string, len(preview.Changes))
+	for _, c := range preview.Changes {
+		wantByKey[c.Key] = c.Action
+	}
+
+	// Run 2: a completely independent app, seeded identically, jsonText
+	// built the same way (a fresh string, not the same Go value as run 1's)
+	// -- Apply must reach the exact same per-key decisions Preview promised
+	// in run 1, proving it is re-deriving from the bytes, not trusting
+	// anything cached from a prior Preview call it never even sees here.
+	jsonText2, applyApp := buildJSON(t)
+	if jsonText1 != jsonText2 {
+		t.Fatalf("test setup non-deterministic: jsonText1 != jsonText2")
+	}
+	report, err := applyApp.ApplyConfigImport(jsonText2, false)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+
+	gotByKey := make(map[string]string, len(report.Applied))
+	for _, c := range report.Applied {
+		gotByKey[c.Key] = c.Action
+	}
+	for key, wantAction := range wantByKey {
+		if wantAction == "unchanged" {
+			continue // Apply never writes (or reports) unchanged entries
+		}
+		if gotByKey[key] != wantAction {
+			t.Errorf("report.Applied[%q].Action = %q, want %q (Preview's own decision for the same bytes)", key, gotByKey[key], wantAction)
+		}
+	}
+	for key := range gotByKey {
+		if _, ok := wantByKey[key]; !ok {
+			t.Errorf("report.Applied contains key %q that Preview never classified", key)
+		}
+	}
+
+	// And the actual written state matches what was previewed: h1 replaced
+	// with the file's data, h2 added, p1 unchanged (still "default"), p2
+	// added.
+	cfg := applyApp.cfgStore.Get()
+	hostsByID := make(map[string]SSHHost, len(cfg.SSHHosts))
+	for _, h := range cfg.SSHHosts {
+		hostsByID[h.ID] = h
+	}
+	if hostsByID["h1"].User != "deploy" {
+		t.Fatalf("h1.User = %q, want %q (replace)", hostsByID["h1"].User, "deploy")
+	}
+	if _, ok := hostsByID["h2"]; !ok {
+		t.Fatal("h2 missing after apply, want it added")
+	}
+}
+
+// TestApplyConfigImport_CoalescesIntoOnePush pins brief bullet 3 / spec §4's
+// coalescing half directly: ApplyConfigImport touches several distinct
+// synced keys (several scalar prefs, an ssh host, a profile+default) in one
+// call, each through its own setter -- and relies on enqueueSync's existing
+// coalescing (prefs_sync_loop.go) to collapse that burst into at most one
+// extra push round trip, rather than pushing once per key or implementing
+// its own batching.
+//
+// To make "at most one extra push" a deterministic assertion instead of a
+// scheduler-dependent one, this test primes a push that is ALREADY in
+// flight (delayed inside applyPushRelay.Put) before calling
+// ApplyConfigImport at all -- the exact technique
+// TestSyncLoopCoalescesWhileInFlight (prefs_sync_loop_test.go) uses to pin
+// the underlying mechanism. Because the primed push is guaranteed in flight
+// first, every one of ApplyConfigImport's own setter-driven enqueueSync
+// calls is guaranteed to land in the coalescing window, not race the sync
+// loop goroutine's own scheduling. Total Put calls once everything settles
+// must be exactly 2: the one primed call, plus ApplyConfigImport's five (or
+// more) setter calls all coalesced into the single pending slot behind it --
+// not 6. If ApplyConfigImport ever stopped relying on that coalescing --
+// say, by calling into the sync engine directly once per key instead of
+// going through enqueueSync/markPrefDirtyAndPush -- this test fails for a
+// reason that has nothing to do with import's own logic, which is the
+// point: coalescing is load-bearing here, not incidental.
+func TestApplyConfigImport_CoalescesIntoOnePush(t *testing.T) {
+	a, relay := newApplyTestApp(t)
+	relay.delay = 150 * time.Millisecond
+	relay.started = make(chan struct{}, 1)
+
+	// Prime an in-flight push on a key ApplyConfigImport's own file below
+	// never touches, so the two are cleanly attributable.
+	if err := a.SetTerminalFontHead("Priming Font"); err != nil {
+		t.Fatalf("SetTerminalFontHead (priming): %v", err)
+	}
+	select {
+	case <-relay.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("primed push never started")
+	}
+
+	fileHosts := sshHostsExportPayload{Hosts: []SSHHost{
+		{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"},
+	}}
+	fileProfiles := profilesExportPayload{
+		Profiles:         []SessionProfile{{ID: "p1", Name: "default"}},
+		DefaultProfileID: "p1",
+	}
+	rawHosts, _ := json.Marshal(fileHosts)
+	rawProfiles, _ := json.Marshal(fileProfiles)
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"locale_preference":     json.RawMessage(`"zh-CN"`),
+			"terminal_theme":        json.RawMessage(`"nord"`),
+			"notifications_enabled": json.RawMessage(`true`),
+			"ai_notifications_only": json.RawMessage(`true`),
+			"ssh_hosts":             rawHosts,
+			"profiles":              rawProfiles,
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText, false)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+	// Sanity: this import really did touch several distinct keys -- if it
+	// only changed one, "not one push per key" would be trivially true for
+	// the wrong reason.
+	if len(report.Applied) < 5 {
+		t.Fatalf("report.Applied = %+v, want at least 5 entries (test setup should give Apply real batching work)", report.Applied)
+	}
+
+	waitFor(t, 3*time.Second, "primed + coalesced pushes to both finish", func() bool {
+		return relay.callCount() >= 2
+	})
+	// Settle: give a wrongly-uncoalesced extra Put call time to land before
+	// the final count assertion below.
+	time.Sleep(300 * time.Millisecond)
+
+	if got := relay.callCount(); got != 2 {
+		t.Fatalf("relay Put calls = %d, want exactly 2 (1 primed + 1 coalesced covering all %d applied keys) -- ApplyConfigImport pushed once per key instead of relying on enqueueSync's coalescing", got, len(report.Applied))
+	}
+}
+
+// TestApplyConfigImport_LocalOnlyKept mirrors
+// TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal for the write
+// side: a host/key/profile that exists only locally (absent from the file)
+// must survive ApplyConfigImport untouched -- Preview reports no change for
+// it (nothing in Changes even names it), and Apply, driven off exactly
+// those Changes, has no path that could delete it.
+func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{
+		{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"},
+		{ID: "h2", Host: "two.example.com", User: "root", AuthKind: "password"}, // local-only
+	}
+	cfg.Profiles = []SessionProfile{
+		{ID: "p1", Name: "default"},
+		{ID: "p2", Name: "staging"}, // local-only
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	fileHosts := sshHostsExportPayload{Hosts: []SSHHost{
+		{ID: "h1", Host: "one.example.com", User: "deploy", AuthKind: "password"}, // replace
+		{ID: "h3", Host: "three.example.com", User: "root", AuthKind: "password"}, // add
+	}}
+	fileProfiles := profilesExportPayload{Profiles: []SessionProfile{
+		{ID: "p1", Name: "default"},           // unchanged
+		{ID: "p4", Name: "brand-new-profile"}, // add
+	}}
+	rawHosts, _ := json.Marshal(fileHosts)
+	rawProfiles, _ := json.Marshal(fileProfiles)
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"ssh_hosts": rawHosts,
+			"profiles":  rawProfiles,
+		},
+	})
+
+	if _, err := a.ApplyConfigImport(jsonText, false); err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+
+	cfg = a.cfgStore.Get()
+
+	hostsByID := make(map[string]SSHHost, len(cfg.SSHHosts))
+	for _, h := range cfg.SSHHosts {
+		hostsByID[h.ID] = h
+	}
+	if h, ok := hostsByID["h2"]; !ok || h.Host != "two.example.com" {
+		t.Fatalf("local-only host h2 missing or changed after apply: %+v", hostsByID)
+	}
+	if h, ok := hostsByID["h1"]; !ok || h.User != "deploy" {
+		t.Fatalf("h1 not replaced with file data: %+v", hostsByID)
+	}
+	if _, ok := hostsByID["h3"]; !ok {
+		t.Fatal("new host h3 not added")
+	}
+
+	profilesByID := make(map[string]SessionProfile, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		profilesByID[p.ID] = p
+	}
+	if p, ok := profilesByID["p2"]; !ok || p.Name != "staging" {
+		t.Fatalf("local-only profile p2 missing or changed after apply: %+v", profilesByID)
+	}
+	if _, ok := profilesByID["p4"]; !ok {
+		t.Fatal("new profile p4 not added")
+	}
+}
+
+// TestApplyConfigImport_ProfileEnvPreservedWhenLocalOnly is the Apply-side
+// companion to the Preview test of the same name: a SyncEnv==false
+// profile's local Env must survive an apply whose file entry has no Env at
+// all (the ordinary shape of an includeLocalEnv=false export), because
+// ApplyConfigImport routes profiles through mergeProfiles exactly like the
+// real cross-device pull path does.
+func TestApplyConfigImport_ProfileEnvPreservedWhenLocalOnly(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	cfg.Profiles = []SessionProfile{
+		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: false, Env: map[string]string{"TOKEN": "secret-local-value"}},
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	export, err := a.BuildConfigExport(false) // includeLocalEnv=false strips Env for SyncEnv==false profiles
+	if err != nil {
+		t.Fatalf("BuildConfigExport: %v", err)
+	}
+	// Give Preview/Apply something else to do too, so this isn't a no-op
+	// import that happens to leave Env alone because nothing ran at all.
+	export.Preferences["terminal_theme"], _ = json.Marshal("daylight")
+	jsonText := mustMarshalExport(t, export)
+
+	if _, err := a.ApplyConfigImport(jsonText, false); err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+
+	got := a.cfgStore.Get()
+	if len(got.Profiles) != 1 {
+		t.Fatalf("Profiles = %+v, want exactly 1", got.Profiles)
+	}
+	if got.Profiles[0].Env["TOKEN"] != "secret-local-value" {
+		t.Fatalf("p1.Env = %+v, want TOKEN=secret-local-value preserved (SyncEnv==false, file carried no Env)", got.Profiles[0].Env)
+	}
+}
+
+// TestApplyConfigImport_InvalidDefaultShellSkippedNeverPartiallyWrites is
+// the Apply-side companion to
+// TestPreviewConfigImport_InvalidDefaultShellSkipped: a default_shell value
+// SetDefaultShell would refuse must never be written, and -- because Apply
+// classifies via the very same Preview call -- it never reaches
+// applyScalarPref at all (it is not in preview.Changes to iterate over).
+func TestApplyConfigImport_InvalidDefaultShellSkippedNeverPartiallyWrites(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	before := a.cfgStore.Get().DefaultShell
+
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"default_shell": json.RawMessage(`"/definitely/not/a/real/shell/on/this/machine"`),
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText, false)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+	for _, c := range report.Applied {
+		if c.Key == "default_shell" {
+			t.Fatalf("default_shell reported as applied: %+v; SetDefaultShell would have refused this value", c)
+		}
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0], "default_shell") {
+		t.Fatalf("report.Skipped = %v, want exactly one entry naming default_shell", report.Skipped)
+	}
+	if got := a.cfgStore.Get().DefaultShell; got != before {
+		t.Fatalf("cfg.DefaultShell = %q, want unchanged %q", got, before)
+	}
+}
+
+// TestApplyConfigImport_UnknownVersionRefusedNothingWritten mirrors
+// TestPreviewConfigImport_RejectsUnknownVersion on the Apply side: Apply
+// calls PreviewConfigImport internally, which refuses an unknown
+// atterm_export version outright -- Apply must propagate that refusal
+// rather than falling through to writing whatever it could parse.
+func TestApplyConfigImport_UnknownVersionRefusedNothingWritten(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	before := storeSnapshot(t, a)
+
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:     configExportVersion + 1,
+		ExportedAt:  "2026-08-21T00:00:00Z",
+		AppVersion:  "0.4.0",
+		Preferences: map[string]json.RawMessage{"locale_preference": json.RawMessage(`"zh-CN"`)},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText, false)
+	if err == nil {
+		t.Fatal("ApplyConfigImport with an unknown version: err = nil, want an error")
+	}
+	if len(report.Applied) != 0 || len(report.Skipped) != 0 {
+		t.Fatalf("ApplyConfigImport on rejected version returned a non-empty report: %+v", report)
 	}
 	assertStoreUnchanged(t, a, before)
 }

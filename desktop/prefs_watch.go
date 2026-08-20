@@ -77,12 +77,23 @@ func (a *App) runRelayPrefsWatchOnce(ctx context.Context, url, token string, all
 			continue
 		}
 		// Hands off to the serial sync loop (prefs_sync_loop.go) instead of
-		// pulling directly: this frame's ctx is the watch connection's own
-		// (cancelled on relay-config change, independent of a.ctx), but the
-		// pull itself must run serialised against every other prefsSync
-		// caller, which only a.ctx-scoped work on the loop goroutine can do.
-		// Non-blocking, so a burst of change notifications coalesces into
-		// one pull instead of one per frame.
+		// pulling directly: this frame's ctx is a child of a.ctx
+		// (context.WithCancel(a.ctx) in applyRelayPrefsWatch above), cancelled
+		// early on a relay reconfigure, but the pull itself must run
+		// serialised against every other prefsSync caller, which only
+		// a.ctx-scoped work on the loop goroutine can do. Non-blocking, so a
+		// burst of change notifications coalesces into one pull instead of
+		// one per frame.
+		//
+		// Cost of routing through a.ctx instead of this connection's own ctx:
+		// a pull already queued when the user switches relays is no longer
+		// cut short, so it can finish against the *old* relay and reconcile
+		// relay A's values into local config after the switch. Bounded to one
+		// HTTP round trip, touches only keys that are not locally dirty (see
+		// prefssync.Engine.Pull), and is a no-op when logged out (base() in
+		// httpRelayClient returns "not logged in"). The real fix -- comparing
+		// a config generation or user id before reconciling -- belongs in
+		// internal/prefssync and is out of scope for this task.
 		a.enqueueSync(syncRequest{pull: true})
 	}
 }

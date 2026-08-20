@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -112,6 +113,27 @@ func (a *App) enqueueSync(req syncRequest) {
 	}
 }
 
+// dirtyPrefKeys returns the sorted set of keys currently marked dirty in
+// local config -- the same set prefssync.Engine.Push is about to collect
+// through its own adapter to build the PUT body. Reading it here from
+// a.cfgStore, rather than having Push report it, keeps this diagnostic out
+// of internal/prefssync entirely (redline #5): the sync package never learns
+// desktop cares about logging attribution.
+func (a *App) dirtyPrefKeys() []string {
+	if a.cfgStore == nil {
+		return nil
+	}
+	meta := a.cfgStore.Get().PrefsMeta
+	keys := make([]string, 0, len(meta))
+	for key, entry := range meta {
+		if entry.Dirty {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // runSyncRequest executes one coalesced request on the loop goroutine. A
 // panicking or erroring engine call must not take the loop down — the next
 // enqueued request still has to run — so both are contained here instead of
@@ -138,13 +160,19 @@ func (a *App) runSyncRequest(req syncRequest) {
 		// prefssync.Engine.Push), so by the time a coalesced request reaches
 		// here there is no single "the key that changed" left to name the
 		// way the old per-goroutine log line in markPrefDirtyAndPush did.
+		// Naming the setter that happened to trigger the enqueue would be worse
+		// than nothing: the trigger need not be the key the relay rejected, so
+		// snapshot the dirty set going into this push instead -- it is exactly
+		// the batch Push collects through the adapter, and names every key that
+		// could actually have caused the failure.
 		// What must not regress is that guarantee's point: a failed push is
 		// never silent. An unknown_key/invalid_value 400 poisons every
 		// dirty key riding along in the same batch, and staying silent
 		// about it is exactly how ssh_hosts_encrypted stayed broken for
 		// months after joining syncedKeys — nothing ever surfaced the 400.
+		dirty := a.dirtyPrefKeys()
 		if err := engine.Push(a.ctx); err != nil {
-			logWarn("prefssync", "push: %v", err)
+			logWarn("prefssync", "push failed (dirty: %v): %v", dirty, err)
 		} else {
 			a.emitPrefsChanged()
 		}
@@ -183,6 +211,14 @@ func (a *App) emitPrefsChanged() {
 // caller relies on the dirty stamp already being in place by the time this
 // function returns, before the setter's own return. Only the network side
 // — the push — is handed to the serial loop.
+//
+// The two calls below must stay in this order. enqueueSync hands the push
+// off to a different goroutine that can start running it immediately; if
+// MarkDirty ran second, that goroutine could call Push before this key's
+// dirty stamp exists, and the push already in flight would simply not
+// include this edit — silently, since Push doesn't know an edit is coming.
+// Swap the lines and nothing here fails to compile; only the loss of the
+// edit would give it away later.
 //
 // A failed push is not fatal to the local write (the key stays dirty and
 // the next push retries it), but it must not be silent: an

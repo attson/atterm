@@ -1,8 +1,37 @@
 import type { EventBus, PluginHostBridge, DirEntry, FileContent, FileMetaInfo } from "../../platform/types";
 
+// DirListing is what a source that can *cap* a listing returns. The local and
+// remote-session sources never cap, so they only implement listDir; the SSH
+// source does (internal/sftpfs MaxEntries = 2000), and a cap that the tree
+// cannot see is a cap the user cannot see — showing 12 entries out of 3000
+// with no indication is the exact failure the cap exists to prevent.
+export interface DirListing {
+  entries: DirEntry[];
+  truncated: boolean;
+  /** The real number of entries on the far side, so the panel can say
+   *  "showing 2000 of 3000" rather than only that something is missing. */
+  total: number;
+}
+
 export interface FileSystemBridge {
   readonly identity: string;
+  /** How many directories the filename search may walk on this source before
+   *  it stops and says so. Omitted means "use the search's own default", which
+   *  is sized for a local disk. A source where one listing is one network
+   *  round trip declares a much smaller budget: the search runs per keystroke
+   *  burst, and the user asked for a filename, not for a full remote crawl. */
+  readonly searchMaxDirs?: number;
+  /** Present on a source that will not delete a directory, and returns the
+   *  sentence explaining why for that path. The tree shows it instead of
+   *  opening a confirmation, so the user is not asked to agree to something
+   *  that is then refused. Absent — the local and remote-session answer —
+   *  means directory removal is offered as usual. */
+  readonly dirRemovalRefusal?: (path: string) => string;
   listDir(path: string): Promise<DirEntry[]>;
+  /** Optional richer listing for sources that cap. When present the tree
+   *  prefers it, so truncation reaches the UI instead of being silently
+   *  dropped on the way through listDir's plain array. */
+  listDirDetailed?(path: string): Promise<DirListing>;
   watchDir(path: string): Promise<number | string>;
   unwatchDir(id: number | string): Promise<void>;
   readFile(path: string, maxBytes?: number): Promise<FileContent>;

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../../lib/log";
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
-import { Pin, PinOff } from "lucide-vue-next";
+import { Pin, PinOff, Upload } from "lucide-vue-next";
 import { usePlatform } from "../../platform";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
@@ -14,6 +14,8 @@ import { openPath, closeTab, setViewMode, setDirty, type TabsState } from "./tab
 import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
 import { useFileRevealStore } from "./fileReveal";
 import { createRemoteSessionFS } from "./remoteSessionFS";
+import { createSSHHostFS, SSH_HOST_ROOT } from "./sshHostFS";
+import { listSFTPHosts, type SSHHost } from "../../lib/api";
 import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 // theme.css is loaded once from App.vue so its --ed-* vars are available
@@ -54,22 +56,61 @@ const { onMouseDown: onDividerDown } = useResizer({
   },
 });
 
+// --- data sources -----------------------------------------------------------
+//
+// Two of the three follow the active pane: this machine, and the host a remote
+// session runs on. The third does not — a saved SSH host is browsable because
+// it is saved, not because a terminal happens to be open on it — so it is a
+// deliberate selection that overrides the follow-the-pane default until the
+// user picks the default back.
+
+const sshHosts = ref<SSHHost[]>([]);
+const selectedSSHHostID = ref<string>("");
+
+// The source list is asked for rather than derived from the saved hosts: the
+// Go side hides the hosts atterm will not dial (a ProxyCommand host cannot be
+// connected at all), and it derives that from the same gate the browse path
+// runs, so the list and the refusal cannot drift apart.
+async function loadSSHSources() {
+  // The SSH source exists only where the Wails bindings do. Asking on a web or
+  // mobile build would throw on every panel mount and log a warning about a
+  // feature that build never had.
+  if (!platform.pluginHost) return;
+  try {
+    sshHosts.value = (await listSFTPHosts()) ?? [];
+  } catch (err) {
+    logWarn("file-explorer", "ssh sources unavailable", { error: errText(err) });
+    sshHosts.value = [];
+  }
+}
+void loadSSHSources();
+
+function sshHostLabel(h: SSHHost): string {
+  return h.alias || `${h.user}@${h.host}`;
+}
+
 const bridgeOwner = computed(() => {
+  if (selectedSSHHostID.value) {
+    return { identity: `ssh:${selectedSSHHostID.value}`, connection: null, sshHostID: selectedSSHHostID.value };
+  }
   if (!props.context.activeIsRemote.value) {
-    return { identity: platform.pluginHost ? "local" : null, connection: null };
+    return { identity: platform.pluginHost ? "local" : null, connection: null, sshHostID: "" };
   }
   const sessionID = props.context.activeSessionId.value;
   const connection = props.context.activeSessionConnection.value;
-  return { identity: sessionID && connection ? `remote:${sessionID}` : null, connection };
+  return { identity: sessionID && connection ? `remote:${sessionID}` : null, connection, sshHostID: "" };
 });
 
 // Preserve an optimistic cwd only for the filesystem that reported it. A
 // stale/null update from one bridge must never become another bridge's root.
 const lastCwds = ref<Record<string, string>>({});
 watch(
-  () => [props.context.activeCwd.value, bridgeOwner.value.identity] as const,
-  ([cwd, identity]) => {
-    if (cwd && identity) {
+  () => [props.context.activeCwd.value, bridgeOwner.value.identity, bridgeOwner.value.sshHostID] as const,
+  ([cwd, identity, sshHostID]) => {
+    // An SSH source has no cwd of its own, and the active pane's belongs to a
+    // different machine entirely. Recording it here would make a local path
+    // the root of a remote tree the moment the user switched sources.
+    if (cwd && identity && !sshHostID) {
       lastCwds.value = { ...lastCwds.value, [identity]: cwd };
     }
   },
@@ -77,6 +118,7 @@ watch(
 );
 
 const root = computed<string | null>(() => {
+  if (bridgeOwner.value.sshHostID) return SSH_HOST_ROOT;
   if (pinned.value) return pinned.value;
   const cur = props.context.activeCwd.value;
   if (cur) return cur;
@@ -90,15 +132,17 @@ const fsGeneration = ref(0);
 const fileNameSearch = ref("");
 
 watch(
-  () => [bridgeOwner.value.identity, bridgeOwner.value.connection] as const,
-  async ([identity, connection]) => {
-    const next = identity === "local"
-      ? platform.pluginHost
-        ? createLocalFSBridge(platform.pluginHost, platform.events)
-        : null
-      : identity && connection
-        ? createRemoteSessionFS(connection, identity)
-        : null;
+  () => [bridgeOwner.value.identity, bridgeOwner.value.connection, bridgeOwner.value.sshHostID] as const,
+  async ([identity, connection, sshHostID]) => {
+    const next = sshHostID
+      ? createSSHHostFS(sshHostID)
+      : identity === "local"
+        ? platform.pluginHost
+          ? createLocalFSBridge(platform.pluginHost, platform.events)
+          : null
+        : identity && connection
+          ? createRemoteSessionFS(connection, identity)
+          : null;
     const previous = fs.value;
     const identityChanged = previous?.identity !== next?.identity;
 
@@ -121,7 +165,67 @@ onBeforeUnmount(() => {
 });
 
 const fileRevealStore = useFileRevealStore();
-const fileTreeRef = ref<{ revealPath: (p: string) => Promise<boolean> } | null>(null);
+const fileTreeRef = ref<{
+  revealPath: (p: string) => Promise<boolean>;
+  refresh: () => void;
+  refreshDir: (dir: string) => Promise<void>;
+  /** The tree's currently selected directory — see FileTree.selectedDir. */
+  selectedDir: string;
+} | null>(null);
+
+// --- upload (SSH source only) -----------------------------------------------
+//
+// The panel's other write paths edit a file that is already there. This one
+// puts a new file on a machine that has no trash and no versioning, which is
+// why the executor refuses an upload onto an occupied path rather than
+// overwriting: the cost of the refusal is one more click, the cost of the
+// overwrite is unrecoverable. Everything this handler does with the refusal is
+// show the sentence the bridge produced for it.
+const uploadInput = ref<HTMLInputElement | null>(null);
+const uploading = ref(false);
+
+// Where an upload lands: the directory selected in the tree, falling back to
+// the root before anything has been selected.
+//
+// It is not the root unconditionally, which is what this used to be. An SSH
+// source opens at "/" because that is the one path that is never a lie about
+// the far side — but for any non-root login "/" is precisely the directory the
+// user cannot write to, so the single write this feature offers would have
+// been guaranteed to fail. The button's tooltip names this same path, so the
+// label and the behaviour cannot drift apart.
+const uploadTargetDir = computed<string | null>(() => fileTreeRef.value?.selectedDir ?? root.value);
+
+function pickUpload() {
+  uploadInput.value?.click();
+}
+
+async function onUploadPicked(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0] ?? null;
+  input.value = ""; // so picking the same file twice fires again
+  const bridge = fs.value;
+  const dir = uploadTargetDir.value;
+  if (!file || !bridge || !dir) return;
+  uploading.value = true;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const target = dir.endsWith("/") ? dir + file.name : `${dir}/${file.name}`;
+    await bridge.writeFile(target, bytes, null);
+    props.context.showToast(t("plugins.fileExplorer.sshUploadDone", { name: file.name, dir }));
+    // Re-list the directory that was written to, not the whole tree: this
+    // source has no change notification, and a full rebuild would collapse the
+    // user back to the root right after they uploaded somewhere below it.
+    void fileTreeRef.value?.refreshDir?.(dir);
+  } catch (err) {
+    // errText carries the bridge's actionable sentence for the default
+    // refusal ("... already exists ... rename it or delete it first"), not the
+    // raw already_exists token.
+    props.context.showToast(errText(err));
+    logWarn("file-explorer", "ssh upload failed", { error: errText(err) });
+  } finally {
+    uploading.value = false;
+  }
+}
 
 // Consume a reveal request from the terminal: expand/select the path in the
 // tree and, when it's a file, open a preview tab.
@@ -243,6 +347,17 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         <header class="fe-header">
           <span class="root-path" :title="root ?? ''">{{ root ?? t("plugins.fileExplorer.noActivePaneShort") }}</span>
           <button
+            v-if="bridgeOwner.sshHostID"
+            class="pin"
+            data-test="ssh-upload"
+            :disabled="uploading || !uploadTargetDir"
+            :title="t('plugins.fileExplorer.sshUpload', { dir: uploadTargetDir ?? '' })"
+            @click="pickUpload"
+          >
+            <Upload :size="14" :stroke-width="1.5" />
+          </button>
+          <button
+            v-else
             class="pin"
             :class="{ pinned: pinned !== null }"
             :title="pinned !== null ? t('plugins.fileExplorer.unpinFollow') : t('plugins.fileExplorer.pinCurrentCwd')"
@@ -251,6 +366,25 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             <component :is="pinned !== null ? Pin : PinOff" :size="14" :stroke-width="1.5" />
           </button>
         </header>
+        <div v-if="sshHosts.length > 0" class="source-picker">
+          <select
+            v-model="selectedSSHHostID"
+            data-test="fs-source"
+            :aria-label="t('plugins.fileExplorer.sourceLabel')"
+          >
+            <option value="">{{ t("plugins.fileExplorer.sourceActivePane") }}</option>
+            <option v-for="h in sshHosts" :key="h.id" :value="h.id">
+              {{ sshHostLabel(h) }}
+            </option>
+          </select>
+        </div>
+        <input
+          ref="uploadInput"
+          class="upload-input"
+          data-test="ssh-upload-input"
+          type="file"
+          @change="onUploadPicked"
+        >
         <div class="tree-search">
           <input
             v-model="fileNameSearch"
@@ -347,6 +481,34 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 }
 .pin:hover { opacity: 1; }
 .pin.pinned { opacity: 1; color: var(--ed-tab-active-bar, #539bf5); }
+
+.source-picker {
+  padding: 6px 8px 0;
+  background: var(--ed-tree-bg, #2d333b);
+}
+.source-picker select {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  box-sizing: border-box;
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 4px;
+  background: var(--ed-editor-bg, #22272e);
+  color: var(--ed-row-fg, #adbac7);
+  padding: 0 6px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+/* The file picker is opened by the toolbar button; a visible file input would
+   take more room in this narrow panel than the tree it sits above. */
+.upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 
 .tree-search {
   padding: 6px 8px;

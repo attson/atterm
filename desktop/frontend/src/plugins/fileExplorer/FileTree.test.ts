@@ -544,3 +544,128 @@ describe("FileTree — revealPath", () => {
     expect(isFile).toBe(false);
   });
 });
+
+describe("FileTree — a source whose listings cap, fail, or refuse", () => {
+  // A hand-built bridge rather than the local one: the behaviours below only
+  // exist on a source that caps a listing (SFTP does, at 2000 entries) or one
+  // where a failed listing is an ordinary outcome rather than a bug.
+  function cappingBridge(
+    tree: Record<string, { entries: Array<{ name: string; isDir: boolean }>; truncated?: boolean; total?: number }>,
+    overrides: Partial<FileSystemBridge> = {},
+  ): FileSystemBridge {
+    const listDirDetailed = vi.fn(async (path: string) => {
+      const node = tree[path];
+      if (!node) throw new Error(`no such directory: ${path}`);
+      return {
+        entries: node.entries,
+        truncated: !!node.truncated,
+        total: node.total ?? node.entries.length,
+      };
+    });
+    return {
+      identity: "capping",
+      listDir: async (path: string) => (await listDirDetailed(path)).entries,
+      listDirDetailed,
+      watchDir: vi.fn(async () => "w"),
+      unwatchDir: vi.fn(async () => {}),
+      readFile: vi.fn(),
+      fileMeta: vi.fn(),
+      openExternal: vi.fn(),
+      assetUrlFor: vi.fn(),
+      onDirChanged: () => () => {},
+      writeFile: vi.fn(),
+      createFile: vi.fn(),
+      rename: vi.fn(),
+      remove: vi.fn(),
+      mkdir: vi.fn(),
+      trash: vi.fn(),
+      ...overrides,
+    } as unknown as FileSystemBridge;
+  }
+
+  it("drops a truncation notice once the directory it describes is collapsed", async () => {
+    // The notice names rows on screen. Once the directory is closed those rows
+    // are gone and the notice reads as a complaint about the current listing.
+    const bridge = cappingBridge({
+      "/proj": { entries: [{ name: "big", isDir: true }] },
+      "/proj/big": { entries: [{ name: "a", isDir: false }], truncated: true, total: 3000 },
+    });
+    const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false } });
+    await flushPromises();
+
+    const big = w.find('.node[title="/proj/big"]');
+    await big.trigger("click");
+    await flushPromises();
+    expect(w.find('[data-test="listing-truncated"]').exists()).toBe(true);
+
+    await big.trigger("click");
+    await flushPromises();
+    expect(w.find('[data-test="listing-truncated"]').exists()).toBe(false);
+  });
+
+  it("shows why the root listing failed, and can be retried", async () => {
+    const bridge = cappingBridge({});
+    const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false } });
+    await flushPromises();
+
+    const banner = w.find('[data-test="tree-error"]');
+    expect(banner.exists()).toBe(true);
+    expect(banner.text()).toContain("no such directory: /proj");
+
+    const before = (bridge.listDirDetailed as ReturnType<typeof vi.fn>).mock.calls.length;
+    await w.find('[data-test="tree-error-retry"]').trigger("click");
+    await flushPromises();
+    expect((bridge.listDirDetailed as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("tells the user when expanding a directory failed, not just the log", async () => {
+    const bridge = cappingBridge({ "/proj": { entries: [{ name: "gone", isDir: true }] } });
+    const context = makeStubContext();
+    const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false, context } });
+    await flushPromises();
+
+    await w.find('.node[title="/proj/gone"]').trigger("click");
+    await flushPromises();
+
+    const toast = (context.showToast as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
+    expect(toast).toContain("/proj/gone");
+    // The directory stays closed rather than pretending to be empty.
+    expect(w.find('.node[title="/proj/gone"]').exists()).toBe(true);
+  });
+
+  it("refuses a directory delete outright when the source will not do it", async () => {
+    const refusal = "deleting a directory here would be permanent";
+    const bridge = cappingBridge(
+      { "/proj": { entries: [{ name: "sub", isDir: true }] }, "/proj/sub": { entries: [] } },
+      { dirRemovalRefusal: () => refusal },
+    );
+    const context = makeStubContext();
+    const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false, context } });
+    await flushPromises();
+
+    await w.find('.node[title="/proj/sub"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-delete"]').trigger("click");
+    await flushPromises();
+
+    expect(w.find('[data-test="confirm-dialog"]').exists()).toBe(false);
+    expect(bridge.remove).not.toHaveBeenCalled();
+    expect(context.showToast).toHaveBeenCalledWith(refusal);
+  });
+
+  it("still offers a file delete on that same source", async () => {
+    const bridge = cappingBridge(
+      { "/proj": { entries: [{ name: "one.log", isDir: false }] } },
+      { dirRemovalRefusal: () => "no" },
+    );
+    const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false, context: makeStubContext() } });
+    await flushPromises();
+
+    await w.find('.node[title="/proj/one.log"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-delete"]').trigger("click");
+    await flushPromises();
+
+    expect(w.find('[data-test="confirm-dialog"]').exists()).toBe(true);
+  });
+});

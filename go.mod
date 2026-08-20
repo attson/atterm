@@ -12,6 +12,11 @@ require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.6
 	github.com/oklog/ulid/v2 v2.1.1
+	// Pinned: v1.13.11 declares go 1.25 and needs x/crypto v0.54, which would
+	// move this module's Go directive and take x/crypto off v0.37.0. Nothing
+	// newer is needed here — lift the pin as soon as the directive moves for
+	// any other reason. Full rationale in internal/sftpfs's package doc.
+	github.com/pkg/sftp v1.13.9
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.37.0
@@ -44,6 +49,7 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
+	github.com/kr/fs v0.1.0 // indirect
 	github.com/labstack/echo/v4 v4.13.3 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect

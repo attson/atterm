@@ -138,6 +138,14 @@ async function onMenuAction(
     return;
   }
   if (action === "delete") {
+    // A source that will not delete a directory says so here, before the
+    // confirmation appears. Asking the user to agree to a delete and only then
+    // refusing it teaches them that the dialog means nothing.
+    const refusal = node.isDir ? props.fs.dirRemovalRefusal?.(node.path) : undefined;
+    if (refusal) {
+      props.context?.showToast?.(refusal);
+      return;
+    }
     deleteConfirm.value = { node, mode: anchor.shift ? "hard" : "trash" };
   }
 }
@@ -151,7 +159,10 @@ async function submitInline(name: string) {
     else if (intent.kind === "newFolder") await props.fs.mkdir(joinPath(intent.parentPath, name));
     else if (intent.kind === "rename") await props.fs.rename(intent.node.path, joinPath(parentDir(intent.node.path), name));
   } catch (err) {
+    // A refused create/rename used to be a log line only, so on a source where
+    // refusals are ordinary the row simply did not appear and nothing said why.
     logWarn("file-explorer", "inline action failed", { error: errText(err) });
+    props.context?.showToast?.(errText(err));
   }
 }
 
@@ -178,7 +189,11 @@ async function resolveDeleteConfirm(id: string) {
       }
     }
   } catch (err) {
+    // A delete that failed halfway through is exactly the case the user must
+    // hear about: the tree will not refresh itself on every source, so a
+    // silent failure is indistinguishable from a stale row.
     logWarn("file-explorer", "delete failed", { error: errText(err) });
+    props.context?.showToast?.(errText(err));
   }
 }
 
@@ -216,8 +231,56 @@ function isCurrent(fs: FileSystemBridge, root: string, showHidden: boolean, requ
     && props.showHidden === showHidden;
 }
 
+// truncations records the directories whose listing came back capped, keyed by
+// path. A source that caps (the SSH one does, at 2000 entries) has to say so
+// where the user is looking: a tree that quietly shows 2000 of 30000 files is
+// indistinguishable from a directory that really holds 2000, and every
+// conclusion drawn from it is wrong.
+const truncations = ref<Record<string, { shown: number; total: number }>>({});
+
+const truncationNotices = computed(() =>
+  Object.entries(truncations.value).map(([path, info]) => ({ path, ...info })),
+);
+
+function noteTruncation(path: string, truncated: boolean, shown: number, total: number) {
+  const had = path in truncations.value;
+  if (!truncated) {
+    if (had) {
+      const next = { ...truncations.value };
+      delete next[path];
+      truncations.value = next;
+    }
+    return;
+  }
+  truncations.value = { ...truncations.value, [path]: { shown, total } };
+}
+
+// A notice describes rows the user can see. Once a directory is collapsed (or
+// its subtree reloaded) those rows are gone, and a notice still naming that
+// path reads as a complaint about the listing currently on screen.
+function clearTruncationsUnder(parent: string, includeSelf: boolean) {
+  const next = { ...truncations.value };
+  let changed = false;
+  for (const path of Object.keys(next)) {
+    // The self case is decided first: isDescendant("/", "/") is true, because
+    // every path starts with "/", and a root reload must not wipe the notice
+    // it has just recorded for the root itself.
+    const keep = path === parent ? !includeSelf : !isDescendant(path, parent);
+    if (keep) continue;
+    delete next[path];
+    changed = true;
+  }
+  if (changed) truncations.value = next;
+}
+
 async function loadDir(fs: FileSystemBridge, path: string, showHidden: boolean): Promise<TreeNode[]> {
-  const entries = (await fs.listDir(path)) as DirEntry[];
+  // A source that can cap a listing reports it through listDirDetailed;
+  // listDir's plain array has nowhere to put the fact.
+  const listing = fs.listDirDetailed
+    ? await fs.listDirDetailed(path)
+    : { entries: (await fs.listDir(path)) as DirEntry[], truncated: false, total: 0 };
+  const entries = listing.entries as DirEntry[];
+  noteTruncation(path, listing.truncated, entries.length, listing.total);
   return entries
     .filter((e) => showHidden || !e.name.startsWith("."))
     .map((e) => ({
@@ -249,6 +312,7 @@ function isDescendant(path: string, parent: string): boolean {
 }
 
 function releaseDescendantState(parent: string) {
+  clearTruncationsUnder(parent, false);
   for (const [path, handle] of Array.from(watchHandles)) {
     if (!isDescendant(path, parent)) continue;
     watchHandles.delete(path);
@@ -288,16 +352,39 @@ function stopCurrentGeneration() {
   generation++;
   offDirChanged();
   offDirChanged = () => {};
+  truncations.value = {};
+  rootError.value = "";
   pendingExpands.clear();
   watchGenerations.clear();
   refreshGenerations.clear();
   releaseWatches();
 }
 
+// rootError holds why the root listing failed, for the one source where that
+// is an ordinary first-run outcome rather than a bug.
+//
+// On the local filesystem listing the root effectively never fails, so
+// swallowing the rejection cost nothing. Over SFTP the failures are "no saved
+// credential", "host key not in known_hosts", "the host is down", "sftp-server
+// is not installed", "the connection dropped; try again to reconnect" — every
+// one of them a sentence the Go side wrote for a user, and every one of them
+// previously rendered as an empty tree.
+const rootError = ref<string>("");
+
 async function refreshRoot(fs: FileSystemBridge, root: string, showHidden: boolean, request: number) {
   const refreshRequest = advanceRefreshGeneration(root);
-  const nodes = await loadDir(fs, root, showHidden);
+  let nodes: TreeNode[];
+  try {
+    nodes = await loadDir(fs, root, showHidden);
+  } catch (err) {
+    if (isCurrent(fs, root, showHidden, request) && refreshGenerations.get(root) === refreshRequest) {
+      rootError.value = t("plugins.fileExplorer.treeLoadFailed", { path: root, message: errText(err) });
+      rootNodes.value = [];
+    }
+    return;
+  }
   if (!isCurrent(fs, root, showHidden, request) || refreshGenerations.get(root) !== refreshRequest) return;
+  rootError.value = "";
   releaseDescendantState(root);
   rootNodes.value = nodes;
 }
@@ -355,7 +442,16 @@ watch(
     }
     searchLoading.value = true;
     try {
-      const result = await searchFileNames(fs, root, query, { showHidden });
+      // isCancelled, not just discarding the result: the walk is one listing
+      // per directory, and on a source where a listing is a network round trip
+      // a superseded search that keeps going is traffic nobody asked for.
+      // maxDirs comes from the source for the same reason — see
+      // FileSystemBridge.searchMaxDirs.
+      const result = await searchFileNames(fs, root, query, {
+        showHidden,
+        maxDirs: fs.searchMaxDirs,
+        isCancelled: () => disposed || searchGeneration !== request,
+      });
       if (disposed || searchGeneration !== request) return;
       searchResults.value = result.results;
       searchTruncated.value = result.truncated;
@@ -395,7 +491,22 @@ async function toggle(n: TreeNode) {
     try {
       if (n.children === null) {
         const refreshRequest = advanceRefreshGeneration(n.path);
-        const children = await loadDir(fs, n.path, showHidden);
+        // The listing gets its own catch. Folded into the one below it was
+        // reported as "watcher unavailable or cap reached", which names the
+        // wrong failure — and on a remote source the listing is by far the
+        // more likely of the two to fail, and the one the user can act on.
+        let children: TreeNode[];
+        try {
+          children = await loadDir(fs, n.path, showHidden);
+        } catch (err) {
+          if (isCurrentNode(fs, root, showHidden, request, n)) {
+            logWarn("file-explorer", "listing a directory failed", { path: n.path, error: errText(err) });
+            props.context?.showToast?.(
+              t("plugins.fileExplorer.treeLoadFailed", { path: n.path, message: errText(err) }),
+            );
+          }
+          return;
+        }
         if (
           !isCurrentNode(fs, root, showHidden, request, n)
           || watchGenerations.get(n.path) !== watchRequest
@@ -435,6 +546,7 @@ async function toggle(n: TreeNode) {
     advanceWatchGeneration(n.path);
     pendingExpands.delete(n.path);
     releaseDescendantState(n.path);
+    clearTruncationsUnder(n.path, true);
     collapseDescendants(n);
     n.expanded = false;
     const handle = watchHandles.get(n.path);
@@ -540,11 +652,50 @@ async function revealPath(path: string): Promise<boolean> {
   return !target.isDir;
 }
 
-defineExpose({ refresh: startGeneration, revealPath });
+/**
+ * selectedDir is the directory the user is currently working in: the selected
+ * node when it is a directory, the selected file's parent when it is a file,
+ * and the root when nothing is selected.
+ *
+ * It exists because the panel's upload lands somewhere, and "somewhere" has to
+ * be the place the user is looking at. Deriving it here rather than tracking a
+ * second selection in the host keeps one source of truth — the same
+ * selectedPath the context menu and Ctrl-C already act on.
+ */
+const selectedDir = computed<string>(() => {
+  const path = selectedPath.value;
+  if (!path) return props.root;
+  const node = findNode(rootNodes.value, path);
+  if (!node) return props.root;
+  return node.isDir ? path : parentDir(path);
+});
+
+/**
+ * refreshDir re-lists one directory in place, keeping the rest of the tree
+ * expanded. startGeneration would also show a newly written file, but only by
+ * throwing the whole tree away — which, now that a write can land anywhere in
+ * it and not just at the root, means collapsing the user back to the top the
+ * moment their upload succeeds.
+ */
+async function refreshDir(dir: string) {
+  try {
+    await refreshChanged(props.fs, props.root, props.showHidden, generation, dir);
+  } catch (err) {
+    logWarn("file-explorer", "refreshing a directory failed", { path: dir, error: errText(err) });
+  }
+}
+
+defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
 </script>
 
 <template>
   <div class="tree-wrap" tabindex="0" @click="closeMenu" @keydown="onTreeKeydown">
+    <div v-if="rootError" class="tree-error" data-test="tree-error">
+      <span class="tree-error-text">{{ rootError }}</span>
+      <button class="tree-error-retry" data-test="tree-error-retry" @click.stop="startGeneration">
+        {{ t("plugins.fileExplorer.retry") }}
+      </button>
+    </div>
     <div v-if="normalizedSearchQuery" class="search-results" data-test="file-search-results">
       <div v-if="searchLoading" class="search-status">{{ t("common.loading") }}</div>
       <div v-else-if="searchResults.length === 0" class="search-status">
@@ -566,22 +717,35 @@ defineExpose({ refresh: startGeneration, revealPath });
         {{ t("plugins.fileExplorer.searchTruncated") }}
       </div>
     </div>
-    <ul v-else class="tree-root">
-      <li v-for="n in rootNodes" :key="n.path">
-        <FileTreeNode
-          :node="n"
-          :level="0"
-          :selected-path="selectedPath"
-          :inline-intent="inlineIntent"
-          @toggle="toggle"
-          @click-file="clickFile"
-          @dblclick-file="dblClickFile"
-          @context="openMenuFromNode"
-          @inline-submit="submitInline"
-          @inline-cancel="cancelInline"
-        />
-      </li>
-    </ul>
+    <template v-else>
+      <ul class="tree-root">
+        <li v-for="n in rootNodes" :key="n.path">
+          <FileTreeNode
+            :node="n"
+            :level="0"
+            :selected-path="selectedPath"
+            :inline-intent="inlineIntent"
+            @toggle="toggle"
+            @click-file="clickFile"
+            @dblclick-file="dblClickFile"
+            @context="openMenuFromNode"
+            @inline-submit="submitInline"
+            @inline-cancel="cancelInline"
+          />
+        </li>
+      </ul>
+      <div
+        v-for="notice in truncationNotices"
+        :key="notice.path"
+        class="search-status"
+        data-test="listing-truncated"
+        :title="notice.path"
+      >
+        {{ t("plugins.fileExplorer.listingTruncated", {
+          path: notice.path, shown: notice.shown, total: notice.total,
+        }) }}
+      </div>
+    </template>
     <div
       v-if="menu"
       class="ctx-menu"
@@ -669,6 +833,31 @@ defineExpose({ refresh: startGeneration, revealPath });
   color: var(--ed-muted, rgba(173, 186, 199, 0.55));
   font-size: 12px;
 }
+.tree-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ed-error-border, rgba(248, 81, 73, 0.4));
+  border-radius: 4px;
+  background: var(--ed-error-bg, rgba(248, 81, 73, 0.08));
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tree-error-text { color: var(--ed-row-fg, #adbac7); word-break: break-word; }
+.tree-error-retry {
+  background: none;
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 4px;
+  color: var(--ed-row-fg, #adbac7);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.tree-error-retry:hover { background: var(--ed-row-hover, rgba(255, 255, 255, 0.06)); }
 .tree-root {
   list-style: none;
   margin: 0;

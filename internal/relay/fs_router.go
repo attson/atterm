@@ -2,10 +2,32 @@ package relay
 
 import (
 	"sync"
+	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 )
+
+// fsRequestTTL bounds how long a request route waits for a response before
+// the reaper treats it as abandoned.
+//
+// It must stay comfortably above the slowest legitimate FS operation: on a
+// local filesystem that's microseconds, but SFTP adds network round trips —
+// several of them for a large listing, and more again through a jump chain.
+// The connection itself is reused rather than renegotiated per op (design doc
+// §4.2), so this is round-trip margin, not handshake margin.
+//
+// The desktop's per-session worker pool does *not* contribute: it refuses
+// rather than queues (see fsBusyError), so a request either starts executing
+// immediately or is answered "busy" without ever occupying a registration
+// here. Do not size this TTL as though requests wait for a slot.
+//
+// 90s gives real margin above the spec's suggested 60s floor without leaving
+// a genuinely dead request registered for anywhere near a client's session
+// lifetime. Reaping one that was merely slow produces the hardest symptom to
+// diagnose — a click that does nothing, with no error anywhere — so err long.
+const fsRequestTTL = 90 * time.Second
 
 type fsRouteKey struct {
 	sessionID uuid.UUID
@@ -17,6 +39,10 @@ type fsClientRoute struct {
 	op         string
 	watchID    string
 	onOverflow func()
+	// registeredAt is only meaningful for entries in fsRouter.requests: it
+	// is what the reaper compares against fsRequestTTL. Watch routes carry
+	// a zero value and are never reaped by it — see registerWatch.
+	registeredAt time.Time
 }
 
 type fsOwnedWatch struct {
@@ -61,17 +87,20 @@ func (r *fsRouter) registerRequestRoute(sessionID uuid.UUID, request proto.FSReq
 	if request.RequestID == "" || out == nil {
 		return false
 	}
+	now := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.reapExpiredRequestsLocked(now)
 	key := fsRouteKey{sessionID: sessionID, id: request.RequestID}
 	if _, exists := r.requests[key]; exists {
 		return false
 	}
 	r.requests[key] = fsClientRoute{
-		out:        out,
-		op:         request.Op,
-		watchID:    request.WatchID,
-		onOverflow: onOverflow,
+		out:          out,
+		op:           request.Op,
+		watchID:      request.WatchID,
+		onOverflow:   onOverflow,
+		registeredAt: now,
 	}
 	return true
 }
@@ -152,6 +181,42 @@ func (r *fsRouter) unregisterSession(sessionID uuid.UUID) {
 	}
 }
 
+// reapExpiredRequests sweeps and logs request routes older than
+// fsRequestTTL, acquiring the lock itself. It is not run on a timer: the
+// router has no owning goroutine to hang one off (fsRouter instances are
+// created lazily per *Server via serverFSRouters, including bare literals
+// in tests), and a timer racing a response under a separate lock acquisition
+// is exactly the kind of race this task must not introduce. Instead every
+// call that already touches the requests map — register, and response
+// routing — sweeps first, for free, under the lock it already holds. The
+// tradeoff: a request that goes stale on a router nobody touches again
+// (e.g. the client never issues another FS op and never disconnects) stays
+// registered past its TTL until something does touch the map. That is
+// bounded by the existing unregisterClient/unregisterSession fallback, same
+// as before this change.
+//
+// Only requests are reaped. Watch routes are a different kind of
+// registration — a live subscription the client explicitly owns until
+// unwatch_dir or disconnect — and applying a single-shot RPC TTL to it would
+// silently kill directory live-updates while the user still has the folder
+// open, which is worse than the leak being fixed here.
+func (r *fsRouter) reapExpiredRequests(now time.Time) {
+	r.mu.Lock()
+	r.reapExpiredRequestsLocked(now)
+	r.mu.Unlock()
+}
+
+// reapExpiredRequestsLocked is reapExpiredRequests' body; callers must hold r.mu.
+func (r *fsRouter) reapExpiredRequestsLocked(now time.Time) {
+	for key, route := range r.requests {
+		if now.Sub(route.registeredAt) < fsRequestTTL {
+			continue
+		}
+		delete(r.requests, key)
+		logging.Warn("relay-fs", "reaped expired request session=%s request_id=%s op=%s age=%s", key.sessionID, key.id, route.op, now.Sub(route.registeredAt))
+	}
+}
+
 func (r *fsRouter) routeResponse(f proto.Frame) bool {
 	// Segment 0 only: the relay holds no key and must not see paths or
 	// file bytes. request_id / ok / watch_id are all it needs to route.
@@ -162,6 +227,11 @@ func (r *fsRouter) routeResponse(f proto.Frame) bool {
 
 	key := fsRouteKey{sessionID: f.SessionID, id: payload.RequestID}
 	r.mu.Lock()
+	// Sweep before the lookup, under the same lock: a response for `key`
+	// that is still within TTL can never be swept out from under this
+	// lookup, because the sweep uses the identical age comparison. There is
+	// no separate reaper goroutine that could race this delete.
+	r.reapExpiredRequestsLocked(time.Now())
 	route, ok := r.requests[key]
 	if !ok {
 		r.mu.Unlock()

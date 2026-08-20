@@ -23,9 +23,11 @@ import (
 // Until roadmap item 27 this function also refused ProxyJump. It no longer
 // does: a ProxyJump host goes through the chain builder in ssh_jump.go, which
 // dials each hop as its own saved host and verifies each hop's key. What has
-// not changed is that both entry points that dial a saved host — the terminal
-// (NewSshSessionByID) and the tunnel (StartForward) — gate on this one
-// function. Item 26's review confirmed that property deliberately, and the
+// not changed is that every entry point that dials a saved host gates on this
+// one function: the terminal (NewSshSessionByID) and the file explorer's SSH
+// source (roadmap item 28) both reach it through connectableSSHHost, and the
+// tunnel (StartForward) calls it directly, having already looked the host up
+// to find the rule. Item 26's review confirmed that property deliberately, and the
 // design's risk 4 is exactly what spreading it would cost: relaxing one path
 // and not the other gives "the terminal connects but the tunnel says
 // unsupported", which is worse than a uniform refusal.
@@ -36,6 +38,30 @@ func hostRunsProxyCommand(h SSHHost) (bool, string) {
 			h.Alias, h.ProxyCommand)
 	}
 	return false, ""
+}
+
+// connectableSSHHost resolves a saved host by id and refuses the ones atterm
+// will not dial at all.
+//
+// It exists so that a *third* consumer of that judgement — the file
+// explorer's SSH data source (roadmap item 28) — can ask the gate instead of
+// re-deciding. The invariant items 26 and 27 were both reviewed against is
+// that hostRunsProxyCommand has exactly the callers that dial a saved host and
+// no free-standing copies of its predicate; this keeps that literally true
+// (the count does not go up) while giving the source list and the browse path
+// one answer that cannot drift from the terminal's.
+//
+// Callers must run it *before* reading any credential and before any dial: the
+// point of hostRunsProxyCommand is that nothing happens for a host we refuse.
+func (a *App) connectableSSHHost(id string) (SSHHost, error) {
+	found, ok := a.findSSHHost(id)
+	if !ok {
+		return SSHHost{}, fmt.Errorf("no such host: %s", id)
+	}
+	if refused, reason := hostRunsProxyCommand(found); refused {
+		return SSHHost{}, errors.New(reason)
+	}
+	return found, nil
 }
 
 // findSSHHost looks a saved host up by ID.
@@ -92,16 +118,12 @@ func (a *App) NewSshSessionByID(id string, accepted AcceptedHostKey) (NewSession
 	if a.host == nil {
 		return NewSessionResp{}, fmt.Errorf("relay host not ready")
 	}
-	found, ok := a.findSSHHost(id)
-	if !ok {
-		return NewSessionResp{}, fmt.Errorf("no such host: %s", id)
-	}
-
 	// Refuse hosts that ssh_config marked as needing an arbitrary proxy
 	// command, before any credential read or dial. A ProxyJump host is not
 	// refused: NewSshSession builds its chain from SSHHostID below.
-	if refused, reason := hostRunsProxyCommand(found); refused {
-		return NewSessionResp{}, errors.New(reason)
+	found, err := a.connectableSSHHost(id)
+	if err != nil {
+		return NewSessionResp{}, err
 	}
 
 	req := SSHConnectReq{

@@ -76,6 +76,12 @@ type uplink struct {
 	// unchanged). Set by NewApp wiring (see desktop/app.go).
 	accountKey func() []byte
 
+	// fsExec, when non-nil, replaces the filesystem executor used by this
+	// connection's FS worker pool. Nil in production; tests set it to stand
+	// in for a filesystem slow enough to matter, which is how the read
+	// loop's liveness under a slow FS is asserted.
+	fsExec func(uuid.UUID, proto.FSRequestPayload) proto.Frame
+
 	// allowInsecure mirrors RelayConfig.AllowInsecureRelay: when true the
 	// uplink's WebSocket dial skips TLS certificate verification so it can
 	// reach a relay serving a self-signed certificate.
@@ -198,7 +204,12 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	sealingActive := u.accountKey != nil && len(u.accountKey()) >= e2eecrypto.SessionKeySize
 	remoteFS := newRemoteFS(newFSAccess(remoteFSAllowRoots(), !sealingActive), u.accountKey)
 	remoteFS.driverClientID = u.host.DriverClientID
+	remoteFS.exec = u.fsExec
 	defer remoteFS.close()
+	// Filesystem work runs on the pool, never on the read loop below: that
+	// loop also carries keystrokes, and one slow listing would freeze every
+	// session on this uplink.
+	fsPool := newFSWorkerPool(connCtx, out, u.rawRemotePermission, remoteFS, fsRequestsPerSession)
 
 	// Send first ANNOUNCE so the relay registers the host immediately.
 	if err := u.writeAnnounce(connCtx, conn); err != nil {
@@ -438,9 +449,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				logWarn("uplink", "fs_request_decode_failed session=%s error=%v", f.SessionID, err)
 				continue
 			}
-			if !handleRemoteFSRequest(connCtx, out, f.SessionID, u.rawRemotePermission, remoteFS, req) {
-				return nil
-			}
+			fsPool.submit(f.SessionID, req)
 		case proto.TypeClaimDriver:
 			logDebug("uplink", "inbound_recv type=CLAIM_DRIVER %s", desktopUplinkFrameLogDetails(f))
 			var cp proto.ClaimDriverPayload

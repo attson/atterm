@@ -9,6 +9,11 @@ export interface FileNameSearchOptions {
   showHidden: boolean;
   maxResults?: number;
   maxDirs?: number;
+  /** Asked before every listing. Returning true stops the walk immediately.
+   *  Without it a superseded search keeps issuing listings for a query nobody
+   *  is waiting for — free on a local disk, a round trip each on a remote
+   *  one, and the caller discarding the result does not stop the traffic. */
+  isCancelled?: () => boolean;
 }
 
 export interface FileNameSearchResponse {
@@ -33,6 +38,14 @@ const IGNORED_DIRS = new Set([
   "vendor",
 ]);
 
+// Kernel-backed directory trees, skipped only when they sit directly on the
+// filesystem root — which is where they are on Linux, and where an SSH source
+// starts. /proc alone is thousands of entries that are not files anybody is
+// searching for, and on a remote source each one costs a round trip. The
+// check is anchored to "/" so a project directory called proc/ or dev/ is
+// still searched.
+const PSEUDO_ROOT_DIRS = new Set(["proc", "sys", "dev", "run"]);
+
 function joinPath(parent: string, name: string): string {
   return parent.endsWith("/") ? parent + name : parent + "/" + name;
 }
@@ -52,12 +65,14 @@ export async function searchFileNames(
 
   const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
   const maxDirs = options.maxDirs ?? DEFAULT_MAX_DIRS;
+  const isCancelled = options.isCancelled ?? (() => false);
   const results: FileNameSearchResult[] = [];
   const queue = [root];
   let visitedDirs = 0;
   let truncated = false;
 
   while (queue.length > 0) {
+    if (isCancelled()) return { results: [], truncated: false };
     if (visitedDirs >= maxDirs || results.length >= maxResults) {
       truncated = true;
       break;
@@ -76,6 +91,7 @@ export async function searchFileNames(
       const childPath = joinPath(dir, entry.name);
       if (entry.isDir) {
         if (IGNORED_DIRS.has(entry.name)) continue;
+        if (dir === "/" && PSEUDO_ROOT_DIRS.has(entry.name)) continue;
         queue.push(childPath);
         continue;
       }

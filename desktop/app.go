@@ -271,6 +271,12 @@ type App struct {
 	// usable; it holds its own lock.
 	tunnels tunnelManager
 
+	// sftp holds the file explorer's SSH data source (see sftp_source.go).
+	// Built lazily by sftpBrowser() because App is constructed in a dozen
+	// shapes and none of them should have to remember this one.
+	sftpMu sync.Mutex
+	sftp   *sftpBrowser
+
 	prefsSync *prefssync.Engine
 
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
@@ -492,6 +498,16 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	if a.updater != nil {
 		a.updater.Stop()
+	}
+	// End file browsing before the tunnels: an SFTP session holds a reference
+	// on the same per-host connection a tunnel does, so releasing it first is
+	// what lets stopAll actually close the login rather than leave it held by
+	// a panel nobody is looking at any more.
+	a.sftpMu.Lock()
+	browser := a.sftp
+	a.sftpMu.Unlock()
+	if browser != nil {
+		browser.closeAll()
 	}
 	// Close forwarded local ports; a listener outliving the window would keep
 	// the port busy for whatever the user starts next.

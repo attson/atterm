@@ -436,7 +436,7 @@ func TestPreviewConfigImport_MalformedScalarSkippedRestContinues(t *testing.T) {
 		AppVersion: "0.4.0",
 		Preferences: map[string]json.RawMessage{
 			"terminal_font_size": json.RawMessage(`"not-a-number"`),
-			"terminal_theme":     json.RawMessage(`"dark"`),
+			"terminal_theme":     json.RawMessage(`"nord"`),
 		},
 	}
 	data, err := json.Marshal(export)
@@ -551,7 +551,7 @@ func TestPreviewConfigImport_Deterministic(t *testing.T) {
 		AppVersion: "0.4.0",
 		Preferences: map[string]json.RawMessage{
 			"locale_preference": json.RawMessage(`"zh-CN"`),
-			"terminal_theme":    json.RawMessage(`"dark"`),
+			"terminal_theme":    json.RawMessage(`"nord"`),
 			"profiles":          rawProfiles,
 			"ssh_hosts":         rawHosts,
 		},
@@ -942,7 +942,7 @@ func TestApplyConfigImport_WritesThroughSettersMarksDirty(t *testing.T) {
 		},
 	})
 
-	report, err := a.ApplyConfigImport(jsonText, false)
+	report, err := a.ApplyConfigImport(jsonText)
 	if err != nil {
 		t.Fatalf("ApplyConfigImport: %v", err)
 	}
@@ -1032,7 +1032,7 @@ func TestApplyConfigImport_ReparsesRawTextSameInputSameDecisions(t *testing.T) {
 	if jsonText1 != jsonText2 {
 		t.Fatalf("test setup non-deterministic: jsonText1 != jsonText2")
 	}
-	report, err := applyApp.ApplyConfigImport(jsonText2, false)
+	report, err := applyApp.ApplyConfigImport(jsonText2)
 	if err != nil {
 		t.Fatalf("ApplyConfigImport: %v", err)
 	}
@@ -1134,7 +1134,7 @@ func TestApplyConfigImport_CoalescesIntoOnePush(t *testing.T) {
 		},
 	})
 
-	report, err := a.ApplyConfigImport(jsonText, false)
+	report, err := a.ApplyConfigImport(jsonText)
 	if err != nil {
 		t.Fatalf("ApplyConfigImport: %v", err)
 	}
@@ -1163,12 +1163,24 @@ func TestApplyConfigImport_CoalescesIntoOnePush(t *testing.T) {
 // must survive ApplyConfigImport untouched -- Preview reports no change for
 // it (nothing in Changes even names it), and Apply, driven off exactly
 // those Changes, has no path that could delete it.
+//
+// Reviewer round 1 (MAJOR 2): the by-ID map assertions below don't, on
+// their own, rule out a duplicate-ID bug (e.g. a "replace" silently
+// appending instead of overwriting in place) -- a map built from a list
+// with a duplicate ID just silently keeps the last write, invisible to a
+// map-only check. The explicit len() assertions close that: an append-
+// instead-of-replace regression changes the slice length even though every
+// by-ID lookup above would still report the "right" values.
 func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 	a, _ := newApplyTestApp(t)
 	cfg := a.cfgStore.Get()
 	cfg.SSHHosts = []SSHHost{
 		{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"},
 		{ID: "h2", Host: "two.example.com", User: "root", AuthKind: "password"}, // local-only
+	}
+	cfg.SSHKeys = []SSHKey{
+		{ID: "k1", Name: "laptop-key"},
+		{ID: "k2", Name: "old-key"}, // local-only
 	}
 	cfg.Profiles = []SessionProfile{
 		{ID: "p1", Name: "default"},
@@ -1178,10 +1190,16 @@ func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 
-	fileHosts := sshHostsExportPayload{Hosts: []SSHHost{
-		{ID: "h1", Host: "one.example.com", User: "deploy", AuthKind: "password"}, // replace
-		{ID: "h3", Host: "three.example.com", User: "root", AuthKind: "password"}, // add
-	}}
+	fileHosts := sshHostsExportPayload{
+		Hosts: []SSHHost{
+			{ID: "h1", Host: "one.example.com", User: "deploy", AuthKind: "password"}, // replace
+			{ID: "h3", Host: "three.example.com", User: "root", AuthKind: "password"}, // add
+		},
+		Keys: []SSHKey{
+			{ID: "k1", Name: "laptop-key-renamed"}, // replace
+			{ID: "k3", Name: "brand-new-key"},      // add
+		},
+	}
 	fileProfiles := profilesExportPayload{Profiles: []SessionProfile{
 		{ID: "p1", Name: "default"},           // unchanged
 		{ID: "p4", Name: "brand-new-profile"}, // add
@@ -1198,11 +1216,25 @@ func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 		},
 	})
 
-	if _, err := a.ApplyConfigImport(jsonText, false); err != nil {
+	if _, err := a.ApplyConfigImport(jsonText); err != nil {
 		t.Fatalf("ApplyConfigImport: %v", err)
 	}
 
 	cfg = a.cfgStore.Get()
+
+	// Exact lengths first: h1,h2,h3 / k1,k2,k3 / p1,p2,p4 -- three each. A
+	// replace that appended instead of overwriting in place, or a
+	// duplicate-ID entry silently added twice, would inflate these counts
+	// even though the by-ID checks below would still look correct.
+	if len(cfg.SSHHosts) != 3 {
+		t.Fatalf("len(cfg.SSHHosts) = %d, want 3 (h1 replaced in place, h2 kept, h3 added): %+v", len(cfg.SSHHosts), cfg.SSHHosts)
+	}
+	if len(cfg.SSHKeys) != 3 {
+		t.Fatalf("len(cfg.SSHKeys) = %d, want 3 (k1 replaced in place, k2 kept, k3 added): %+v", len(cfg.SSHKeys), cfg.SSHKeys)
+	}
+	if len(cfg.Profiles) != 3 {
+		t.Fatalf("len(cfg.Profiles) = %d, want 3 (p1 unchanged, p2 kept, p4 added): %+v", len(cfg.Profiles), cfg.Profiles)
+	}
 
 	hostsByID := make(map[string]SSHHost, len(cfg.SSHHosts))
 	for _, h := range cfg.SSHHosts {
@@ -1216,6 +1248,20 @@ func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 	}
 	if _, ok := hostsByID["h3"]; !ok {
 		t.Fatal("new host h3 not added")
+	}
+
+	keysByID := make(map[string]SSHKey, len(cfg.SSHKeys))
+	for _, k := range cfg.SSHKeys {
+		keysByID[k.ID] = k
+	}
+	if k, ok := keysByID["k2"]; !ok || k.Name != "old-key" {
+		t.Fatalf("local-only key k2 missing or changed after apply: %+v", keysByID)
+	}
+	if k, ok := keysByID["k1"]; !ok || k.Name != "laptop-key-renamed" {
+		t.Fatalf("k1 not replaced with file data: %+v", keysByID)
+	}
+	if _, ok := keysByID["k3"]; !ok {
+		t.Fatal("new key k3 not added")
 	}
 
 	profilesByID := make(map[string]SessionProfile, len(cfg.Profiles))
@@ -1255,7 +1301,7 @@ func TestApplyConfigImport_ProfileEnvPreservedWhenLocalOnly(t *testing.T) {
 	export.Preferences["terminal_theme"], _ = json.Marshal("daylight")
 	jsonText := mustMarshalExport(t, export)
 
-	if _, err := a.ApplyConfigImport(jsonText, false); err != nil {
+	if _, err := a.ApplyConfigImport(jsonText); err != nil {
 		t.Fatalf("ApplyConfigImport: %v", err)
 	}
 
@@ -1287,7 +1333,7 @@ func TestApplyConfigImport_InvalidDefaultShellSkippedNeverPartiallyWrites(t *tes
 		},
 	})
 
-	report, err := a.ApplyConfigImport(jsonText, false)
+	report, err := a.ApplyConfigImport(jsonText)
 	if err != nil {
 		t.Fatalf("ApplyConfigImport: %v", err)
 	}
@@ -1320,7 +1366,7 @@ func TestApplyConfigImport_UnknownVersionRefusedNothingWritten(t *testing.T) {
 		Preferences: map[string]json.RawMessage{"locale_preference": json.RawMessage(`"zh-CN"`)},
 	})
 
-	report, err := a.ApplyConfigImport(jsonText, false)
+	report, err := a.ApplyConfigImport(jsonText)
 	if err == nil {
 		t.Fatal("ApplyConfigImport with an unknown version: err = nil, want an error")
 	}
@@ -1328,4 +1374,205 @@ func TestApplyConfigImport_UnknownVersionRefusedNothingWritten(t *testing.T) {
 		t.Fatalf("ApplyConfigImport on rejected version returned a non-empty report: %+v", report)
 	}
 	assertStoreUnchanged(t, a, before)
+}
+
+// TestApplyConfigImport_InvalidScalarSkippedRestApplied pins MAJOR 1's
+// combined fix at the reviewer's own measured scenario: four scalar keys
+// whose setters would accept the imported value, alongside one
+// terminal_theme value this build's terminalThemes map does not recognize
+// (e.g. exported by a newer build that added a theme this one hasn't
+// shipped yet). Before this fix, validateScalarPrefValue only reproduced
+// 2 of 8 setters' real acceptance checks (default_shell,
+// shortcut_bindings), so an unsupported theme would sail through Preview
+// as "replace" and then panic/misbehave inside SetTerminalTheme at Apply
+// time; separately, applyScalarPref's caller aborted the whole
+// ApplyConfigImport call on the first setter error, which would have
+// discarded the report for every key already written and pushed to other
+// devices in the same call. Both halves are pinned together here: the
+// three valid keys must land, be marked dirty, and be reported Applied;
+// the invalid theme must be reported Skipped with no error from
+// ApplyConfigImport itself and no write to cfg.TerminalTheme.
+func TestApplyConfigImport_InvalidScalarSkippedRestApplied(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"ai_notifications_only": json.RawMessage(`true`),
+			"locale_preference":     json.RawMessage(`"zh-CN"`),
+			"terminal_scrollback":   json.RawMessage(`5000`),
+			"terminal_theme":        json.RawMessage(`"theme-from-a-newer-build"`), // invalid
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+
+	appliedKeys := make(map[string]bool, len(report.Applied))
+	for _, c := range report.Applied {
+		appliedKeys[c.Key] = true
+	}
+	for _, want := range []string{"ai_notifications_only", "locale_preference", "terminal_scrollback"} {
+		if !appliedKeys[want] {
+			t.Errorf("report.Applied missing %q: %+v", want, report.Applied)
+		}
+	}
+	if appliedKeys["terminal_theme"] {
+		t.Error("report.Applied contains terminal_theme, want it skipped (unsupported theme)")
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0], "terminal_theme") {
+		t.Fatalf("report.Skipped = %v, want exactly one entry naming terminal_theme", report.Skipped)
+	}
+
+	cfg := a.cfgStore.Get()
+	if cfg.AINotificationsOnly == nil || !*cfg.AINotificationsOnly {
+		t.Errorf("cfg.AINotificationsOnly = %v, want true", cfg.AINotificationsOnly)
+	}
+	if cfg.LocalePreference != "zh-CN" {
+		t.Errorf("cfg.LocalePreference = %q, want zh-CN", cfg.LocalePreference)
+	}
+	if cfg.TerminalScrollback != 5000 {
+		t.Errorf("cfg.TerminalScrollback = %d, want 5000", cfg.TerminalScrollback)
+	}
+	if cfg.TerminalTheme == "theme-from-a-newer-build" {
+		t.Error("cfg.TerminalTheme was overwritten with the invalid value")
+	}
+	for _, key := range []string{"ai_notifications_only", "locale_preference", "terminal_scrollback"} {
+		if m := cfg.PrefsMeta[key]; !m.Dirty {
+			t.Errorf("PrefsMeta[%q].Dirty = false after ApplyConfigImport, want true", key)
+		}
+	}
+}
+
+// TestApplyConfigImport_ProfileMergedViaMergeProfilesRealSemantics pins
+// MAJOR 3 at exactly the shape reviewer round 1 hand-verified. Apply's
+// profile path must use mergeProfiles's REAL rule (profiles.go:226,
+// "len(in.Env) == 0" triggers Env preservation, unconditional on SyncEnv)
+// and not Preview's narrower profileMergeCandidate approximation
+// ("len(incoming.Env) == 0 && !incoming.SyncEnv", used only to classify
+// add/replace/unchanged for the UI). Every Apply-side profile test that
+// existed before this one used a SyncEnv==false profile, where the two
+// rules happen to agree — deleting the mergeProfiles call outright
+// (merged := incoming instead of merged := mergeProfiles(...)) does not
+// fail any of them. This scenario is SyncEnv==true on both sides, the file
+// entry carries no Env at all and a genuinely different Shell:
+// mergeProfiles preserves local Env regardless (its rule never looks at
+// SyncEnv); profileMergeCandidate would not (its rule requires
+// !incoming.SyncEnv). Only a caller that actually merges through
+// mergeProfiles produces the reviewer's verified outcome: Shell=/bin/bash
+// (from the file), Env={TOKEN:local} (preserved from local).
+//
+// The file's profilesExportPayload is hand-built here rather than produced
+// via BuildConfigExport: BuildConfigExport's includeLocalEnv=false path
+// only strips Env through stripUnsyncedEnv (profiles.go:47), which itself
+// only clears Env for SyncEnv==false profiles. A SyncEnv==true profile's
+// Env is never stripped by export, so this exact file shape (SyncEnv:true,
+// no Env) cannot arise from a normal export call — it is constructed
+// directly here, as if it arrived from some other machine that genuinely
+// never set Env for this profile.
+func TestApplyConfigImport_ProfileMergedViaMergeProfilesRealSemantics(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	cfg.Profiles = []SessionProfile{
+		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: true, Env: map[string]string{"TOKEN": "local"}},
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	rawProfiles, _ := json.Marshal(profilesExportPayload{Profiles: []SessionProfile{
+		{ID: "p1", Name: "default", Shell: "/bin/bash", SyncEnv: true}, // no Env at all, Shell genuinely changed
+	}})
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"profiles": rawProfiles,
+		},
+	})
+
+	if _, err := a.ApplyConfigImport(jsonText); err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+
+	got := a.cfgStore.Get()
+	if len(got.Profiles) != 1 {
+		t.Fatalf("Profiles = %+v, want exactly 1", got.Profiles)
+	}
+	p := got.Profiles[0]
+	if p.Shell != "/bin/bash" {
+		t.Fatalf("p1.Shell = %q, want %q (file's genuinely different value)", p.Shell, "/bin/bash")
+	}
+	if p.Env["TOKEN"] != "local" {
+		t.Fatalf("p1.Env = %+v, want TOKEN=local preserved via mergeProfiles's len(in.Env)==0 rule", p.Env)
+	}
+}
+
+// TestApplyConfigImport_MalformedListEntrySkippedRestApplied pins MAJOR 4:
+// one malformed entry in a list-shaped key (ssh_hosts or profiles) must not
+// stop the rest of that same key's batch from actually landing in the
+// store. Mirrors TestPreviewConfigImport_MalformedEntrySkippedRestContinues's
+// fixture, but asserts against a.cfgStore.Get() after Apply rather than
+// against preview.Changes — proving applySSHHostsImport/applyProfilesImport
+// themselves keep going past a batch validateSSHHostsPayload/
+// validateProfilesPayload already trimmed, not just that Preview classified
+// it correctly. A mutation that aborts either function's whole key on any
+// skipped entry (e.g. bailing out right after the validate call whenever it
+// returned a non-empty skipped slice) would leave every good entry in this
+// same batch unwritten while still passing every test that existed before
+// this one — the single-key TestApplyConfigImport_InvalidDefaultShellSkippedNeverPartiallyWrites
+// only covers a whole-key scalar rejection, not a partial-batch list one.
+func TestApplyConfigImport_MalformedListEntrySkippedRestApplied(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+
+	rawHosts := json.RawMessage(`{
+		"hosts": [
+			{"host": "missing-id.example.com", "user": "root", "auth_kind": "password"},
+			{"id": "hgood", "host": "good.example.com", "user": "root", "auth_kind": "password"}
+		],
+		"keys": [
+			{"id": "", "name": "no-id-key"},
+			{"id": "kgood", "name": "good-key"}
+		]
+	}`)
+	rawProfiles := json.RawMessage(`{
+		"profiles": [
+			{"id": "pbad", "name": ""},
+			{"id": "pgood", "name": "Good Profile"}
+		]
+	}`)
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"ssh_hosts": rawHosts,
+			"profiles":  rawProfiles,
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+	if len(report.Skipped) != 3 {
+		t.Fatalf("report.Skipped = %v, want 3 entries (bad host, bad key, bad profile)", report.Skipped)
+	}
+
+	cfg := a.cfgStore.Get()
+
+	if len(cfg.SSHHosts) != 1 || cfg.SSHHosts[0].ID != "hgood" {
+		t.Fatalf("cfg.SSHHosts = %+v, want exactly [hgood] (bad host must not block it)", cfg.SSHHosts)
+	}
+	if len(cfg.SSHKeys) != 1 || cfg.SSHKeys[0].ID != "kgood" {
+		t.Fatalf("cfg.SSHKeys = %+v, want exactly [kgood] (bad key must not block it)", cfg.SSHKeys)
+	}
+	if len(cfg.Profiles) != 1 || cfg.Profiles[0].ID != "pgood" {
+		t.Fatalf("cfg.Profiles = %+v, want exactly [pgood] (bad profile must not block it)", cfg.Profiles)
+	}
 }

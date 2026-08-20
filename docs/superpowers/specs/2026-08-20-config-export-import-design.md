@@ -116,7 +116,12 @@ same key.
   JSON. The frontend owns the save dialog.
 - `App.PreviewConfigImport(jsonText string) (ImportPreview, error)` — parses
   and diffs, changing nothing.
-- `App.ApplyConfigImport(jsonText string, includeLocalEnv bool) (ImportReport, error)`
+- `App.ApplyConfigImport(jsonText string) (ImportReport, error)` — no
+  `includeLocalEnv`: `Preview` doesn't take one either, and a lever Apply
+  had that Preview didn't would let the two disagree about what a file
+  produces. What a profile's `Env` ends up as is fully determined by
+  `mergeProfiles` from what the file actually contains and the profile's
+  own `SyncEnv`, not by a flag on the call.
 
 `Preview` and `Apply` both take the raw text and both parse it. Handing the
 frontend a parsed-and-cached handle would let the previewed bytes and the

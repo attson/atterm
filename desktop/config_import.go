@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/attson/atterm/internal/prefssync"
 )
@@ -100,20 +102,26 @@ func scalarPrefTarget(key string) any {
 }
 
 // validateScalarPrefValue runs the same acceptance check the real setter
-// would, for the two scalar keys that have one beyond "does it unmarshal
-// into the right Go type": default_shell (SetDefaultShell rejects a shell
-// missing from PATH) and shortcut_bindings (SetShortcutBindings rejects the
-// WHOLE map on a single malformed binding). Every other scalar key's setter
-// accepts whatever unmarshals into its type — see appConfigAdapter.WriteValue,
-// whose other cases have no such extra guard.
+// would. It is NOT limited to default_shell/shortcut_bindings — six more
+// scalar keys' setters reject values beyond "does it unmarshal into the
+// right Go type": SetLocalePreference (allow-list), SetTerminalTheme
+// (isSupportedTerminalTheme), SetTerminalCursorStyle
+// (isSupportedCursorStyle), SetTerminalFontSize/SetTerminalLineHeight/
+// SetTerminalScrollback (range checks). Every one of those checks is
+// reproduced here verbatim, calling the same named functions/constants the
+// setters use (isSupportedTerminalTheme, isSupportedCursorStyle,
+// terminalFontSizeMin/Max, terminalLineHeightMin/Max, terminalScrollbackMax
+// all live in config.go) so Preview and Apply cannot independently drift on
+// what counts as acceptable — the same guarantee validateDefaultShell/
+// validateShortcutBindings already gave those two keys.
 //
 // Without this, Preview would report "replace" for a file that
-// ApplyConfigImport (task 3, expected to call the real setters per spec §4)
-// then refuses outright — the same class of dishonesty MAJOR 2's Env fix
-// addresses for profiles, just from a validation angle instead of a merge
-// one. validateDefaultShell/validateShortcutBindings live in app.go and are
-// the exact functions SetDefaultShell/SetShortcutBindings call, so Preview
-// and Apply can never independently drift on what counts as acceptable.
+// ApplyConfigImport then refuses outright — e.g. a cross-build export
+// naming a terminal theme this build doesn't recognize. Reviewer round 1
+// caught that this list originally covered only 2 of 8 setters that
+// validate; a partial list here is exactly the failure mode
+// applyScalarPref's Skipped-not-abort behavior (below) exists to contain,
+// but catching it here means Preview and the Skipped reason line up.
 func validateScalarPrefValue(key string, target any) error {
 	switch key {
 	case "default_shell":
@@ -123,6 +131,36 @@ func validateScalarPrefValue(key string, target any) error {
 	case "shortcut_bindings":
 		if err := validateShortcutBindings(*target.(*map[string]string)); err != nil {
 			return err
+		}
+	case "locale_preference":
+		v := *target.(*string)
+		switch v {
+		case localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified:
+		default:
+			return errors.New("unsupported locale preference")
+		}
+	case "terminal_theme":
+		if !isSupportedTerminalTheme(*target.(*string)) {
+			return fmt.Errorf("bad terminal theme: %s", *target.(*string))
+		}
+	case "terminal_cursor_style":
+		if !isSupportedCursorStyle(*target.(*string)) {
+			return fmt.Errorf("bad cursor style: %s", *target.(*string))
+		}
+	case "terminal_font_size":
+		v := *target.(*int)
+		if v < terminalFontSizeMin || v > terminalFontSizeMax {
+			return fmt.Errorf("font size out of range: %d", v)
+		}
+	case "terminal_line_height":
+		v := *target.(*float64)
+		if v < terminalLineHeightMin || v > terminalLineHeightMax {
+			return fmt.Errorf("line height out of range: %v", v)
+		}
+	case "terminal_scrollback":
+		v := *target.(*int)
+		if v <= 0 || v > terminalScrollbackMax {
+			return fmt.Errorf("scrollback out of range: %d", v)
 		}
 	}
 	return nil
@@ -581,15 +619,20 @@ func newImportReport() ImportReport {
 // lands in the store, marks dirty, and enqueues a push (spec §4), rather
 // than only being type-checked.
 //
-// This function does not re-validate default_shell or shortcut_bindings
-// itself — SetDefaultShell/SetShortcutBindings do that internally (they are
-// literally what validateScalarPrefValue calls), and ApplyConfigImport only
-// ever reaches this function for a key PreviewConfigImport already ran
-// through validateScalarPrefValue and accepted. A setter refusing a value
-// that got this far would mean Preview and Apply independently disagreed
-// about what "valid" means for that key — surfaced as an error here rather
-// than silently dropped, so that disagreement cannot pass silently.
-func applyScalarPref(a *App, key string, raw json.RawMessage) error {
+// This function does not re-validate default_shell/shortcut_bindings/
+// terminal_theme/terminal_cursor_style/locale_preference/terminal_font_size/
+// terminal_line_height/terminal_scrollback itself — their setters do that
+// internally, and validateScalarPrefValue calls the exact same checks, so
+// ApplyConfigImport only ever reaches this function for a key
+// PreviewConfigImport already ran through validateScalarPrefValue and
+// accepted. A setter refusing a value that got this far would mean Preview
+// and Apply independently disagreed about what "valid" means for that key —
+// surfaced as an error to the caller (who skips it rather than aborting the
+// rest of the import, see ApplyConfigImport) rather than silently dropped,
+// so that disagreement cannot pass silently. It is a method on *App (not a
+// free function taking *App, as originally written) purely for symmetry
+// with applySSHHostsImport/applyProfilesImport, its two siblings.
+func (a *App) applyScalarPref(key string, raw json.RawMessage) error {
 	switch key {
 	case "locale_preference":
 		var v string
@@ -695,21 +738,29 @@ func applyScalarPref(a *App, key string, raw json.RawMessage) error {
 }
 
 // applySSHHostsImport writes the add/replace entries validateSSHHostsPayload
-// finds in raw into cfg.SSHHosts/cfg.SSHKeys by ID, then marks the shared
-// "ssh_hosts_encrypted" sync key dirty exactly once for both lists together
-// via markSSHHostsDirty — the same helper AddSSHHost / UpdateSSHHost /
-// AddSSHKey / UpdateSSHKey / DeleteSSHHost / DeleteSSHKey all call for this
-// key, so this still "goes through the app's existing dirty-marking/sync
-// machinery" even though it does not call any of those six methods
-// individually. That is a deliberate deviation, not an oversight:
+// finds in raw into cfg.SSHHosts/cfg.SSHKeys by ID, folds the
+// "ssh_hosts_encrypted" dirty-meta write into that same cfgStore.Set call,
+// then kicks the sync engine directly (markPrefDirtyAndPush) — the same
+// call markSSHHostsDirty makes, just without markSSHHostsDirty's own
+// separate Get/Set for meta alone (see below). Returns the "ssh_host:ID"/
+// "ssh_key:ID" keys it actually wrote, for ApplyConfigImport's report.
 //
-//   - AddSSHHost/AddSSHKey always mint a fresh ID (ulid.Make()) for the
-//     record they're given. Import needs the OPPOSITE: the file's own ID
-//     preserved verbatim, because that ID is what lets a second import of
-//     the same (or an updated) file recognize "this is the same host" on a
-//     later run. Calling AddSSHHost/AddSSHKey here would silently turn
-//     every import into a duplicate-add instead of the add/replace merge
-//     PreviewConfigImport already promised the caller.
+// This does NOT call AddSSHHost / UpdateSSHHost / AddSSHKey / UpdateSSHKey.
+// That is a deliberate deviation, not an oversight, and the decisive reason
+// is ID overwrite: AddSSHHost/AddSSHKey unconditionally replace the ID on
+// the record they're given with a fresh ulid.Make() — see ssh_hosts_store.go.
+// Import's whole merge-by-ID contract (previewSSHHosts: same ID -> replace,
+// new ID -> add, local-only ID -> kept) depends on the file's ID surviving
+// into the store untouched; routing through AddSSHHost would silently
+// discard every file ID and turn each entry into a duplicate-add instead of
+// the merge PreviewConfigImport already promised the caller. Two more
+// reasons compound this, in order of how much they'd break if ignored:
+//
+//   - AddSSHKey additionally requires a private-key PEM as part of its
+//     credential argument. A plaintext export carries no credential field
+//     for a key to begin with (see sshHostsExportPayload's comment in
+//     config_export.go) — there is no PEM here to give it. It is
+//     structurally uncallable from this path, not just undesirable.
 //   - UpdateSSHHost intentionally keeps the CURRENTLY STORED
 //     IdentityFile/ProxyJump/ProxyCommand regardless of what the caller
 //     passes (see its own doc comment: the UI drawer never edits those
@@ -720,26 +771,29 @@ func applyScalarPref(a *App, key string, raw json.RawMessage) error {
 //     plain reflect.DeepEqual over the whole struct already told the
 //     caller "replace" meant.
 //
-// Neither existing per-item setter's field-ownership rules fit a bulk,
-// full-record, ID-preserving import, so this writes cfg.SSHHosts/SSHKeys
-// directly (matching the exact add/replace/keep-if-absent contract
-// previewSSHHosts already established) and then reuses markSSHHostsDirty —
-// the one piece of the setters' behavior that import DOES need unchanged.
+// None of the four validates anything either, so nothing about "going
+// through the setter" would add a safety check here that
+// validateSSHHostsPayload doesn't already provide. Writing cfg.SSHHosts/
+// SSHKeys directly (matching the exact add/replace/keep-if-absent contract
+// previewSSHHosts already established) is the better shape for a bulk,
+// full-record, ID-preserving import than N per-item setter calls would be —
+// N UpdateSSHHost calls would also fire N markSSHHostsDirty ->
+// N MarkDirty read-modify-writes on the single "ssh_hosts_encrypted" key,
+// which prefs_sync_loop.go documents as lossy under concurrent writers.
 //
 // Never touches the OS keyring: a plaintext export carries no credential
-// field for a host or key to begin with (see sshHostsExportPayload's
-// comment in config_export.go), so there is no credential here to write or
-// roll back.
-func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]ImportChange) error {
+// field for a host or key to begin with, so there is no credential here to
+// write or roll back.
+func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, error) {
 	hosts, keys, _, err := validateSSHHostsPayload(raw)
 	if err != nil {
 		// PreviewConfigImport already reported this as Skipped (it runs the
 		// exact same parse); nothing new to apply.
-		return nil
+		return nil, nil
 	}
 
 	cfg := a.cfgStore.Get()
-	touched := false
+	var applied []string
 
 	hostIdx := make(map[string]int, len(cfg.SSHHosts))
 	for i, h := range cfg.SSHHosts {
@@ -756,7 +810,7 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 			cfg.SSHHosts = append(cfg.SSHHosts, h)
 			hostIdx[h.ID] = len(cfg.SSHHosts) - 1
 		}
-		touched = true
+		applied = append(applied, "ssh_host:"+h.ID)
 	}
 
 	keyIdx := make(map[string]int, len(cfg.SSHKeys))
@@ -774,17 +828,34 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 			cfg.SSHKeys = append(cfg.SSHKeys, k)
 			keyIdx[k.ID] = len(cfg.SSHKeys) - 1
 		}
-		touched = true
+		applied = append(applied, "ssh_key:"+k.ID)
 	}
 
-	if !touched {
-		return nil
+	if len(applied) == 0 {
+		return nil, nil
 	}
+
+	// Fold the dirty-meta write into the same cfg/Set call that persists
+	// the host/key changes, instead of calling markSSHHostsDirty()
+	// afterward (which would re-Get/re-Set for meta alone — a second
+	// on-disk persist for what is already one logical write on this bulk
+	// path). markPrefDirtyAndPush below is the same call markSSHHostsDirty
+	// makes when a.prefsSync != nil, so the sync engine's own dirty
+	// bookkeeping and push-enqueue are unchanged.
+	if cfg.PrefsMeta == nil {
+		cfg.PrefsMeta = map[string]prefsMetaEntry{}
+	}
+	m := cfg.PrefsMeta["ssh_hosts_encrypted"]
+	m.Dirty = true
+	m.UpdatedAtLocal = time.Now().UnixMilli()
+	cfg.PrefsMeta["ssh_hosts_encrypted"] = m
 	if err := a.cfgStore.Set(cfg); err != nil {
-		return err
+		return nil, err
 	}
-	a.markSSHHostsDirty()
-	return nil
+	if a.prefsSync != nil {
+		a.markPrefDirtyAndPush("ssh_hosts_encrypted")
+	}
+	return applied, nil
 }
 
 // applyProfilesImport writes the add/replace entries validateProfilesPayload
@@ -813,27 +884,27 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 // never actually triggers — nothing is ever missing from incoming — while
 // its Env-preservation branch still runs exactly as it does for a pull, for
 // the ids the file DOES mention.
-func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]ImportChange) error {
+func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, error) {
 	fileProfiles, defaultProfileID, _, err := validateProfilesPayload(raw)
 	if err != nil {
 		// PreviewConfigImport already reported this as Skipped.
-		return nil
+		return nil, nil
 	}
 
 	fileByID := make(map[string]bool, len(fileProfiles))
-	anyProfileChange := false
+	var applied []string
 	for _, p := range fileProfiles {
 		fileByID[p.ID] = true
 		if c, ok := actionable["profile:"+p.ID]; ok && c.Action != "unchanged" {
-			anyProfileChange = true
+			applied = append(applied, "profile:"+p.ID)
 		}
 	}
 	defaultChange, hasDefaultChange := actionable["profiles:default_profile_id"]
 	if hasDefaultChange && defaultChange.Action == "unchanged" {
 		hasDefaultChange = false
 	}
-	if !anyProfileChange && !hasDefaultChange {
-		return nil
+	if len(applied) == 0 && !hasDefaultChange {
+		return nil, nil
 	}
 
 	cfg := a.cfgStore.Get()
@@ -851,16 +922,17 @@ func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]Imp
 	merged := mergeProfiles(cfg.Profiles, incoming)
 
 	if err := a.SetProfiles(merged); err != nil {
-		return fmt.Errorf("apply profiles: %w", err)
+		return nil, fmt.Errorf("apply profiles: %w", err)
 	}
 
 	if hasDefaultChange {
 		resolved := resolveDefaultProfileID(defaultProfileID, merged)
 		if err := a.SetDefaultProfileID(resolved); err != nil {
-			return fmt.Errorf("apply default profile id: %w", err)
+			return applied, fmt.Errorf("apply default profile id: %w", err)
 		}
+		applied = append(applied, "profiles:default_profile_id")
 	}
-	return nil
+	return applied, nil
 }
 
 // ApplyConfigImport parses jsonText independently (see below) and writes
@@ -896,19 +968,24 @@ func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]Imp
 // regression in enqueueSync's coalescing shows up here too (see
 // TestApplyConfigImport_CoalescesIntoOnePush in config_import_test.go).
 //
-// includeLocalEnv mirrors BuildConfigExport/ExportConfig's parameter of the
-// same name for signature symmetry, but Apply does not branch on it: the
-// Env a profile ends up with is fully determined by mergeProfiles from what
-// the FILE actually contains (was it exported with includeLocalEnv=true) and
-// the profile's own SyncEnv, exactly as profileMergeCandidate already
-// predicted during Preview — and Preview takes no includeLocalEnv parameter
-// at all. Giving Apply a second lever that could pick a different outcome
-// than the one Preview already promised the caller is exactly the
-// Preview/Apply drift this whole feature is designed to avoid, so this
-// parameter is accepted (for API symmetry with the export half) and
-// otherwise ignored.
-func (a *App) ApplyConfigImport(jsonText string, includeLocalEnv bool) (ImportReport, error) {
-	_ = includeLocalEnv // see doc comment: intentionally not used, kept for signature symmetry with ExportConfig
+// There is no includeLocalEnv parameter (an earlier draft had one, mirroring
+// ExportConfig's — removed in review round 1). Preview takes no such
+// parameter, and what a profile's Env ends up as is fully determined by
+// mergeProfiles from what the FILE actually contains and the profile's own
+// SyncEnv, exactly as profileMergeCandidate already predicted during
+// Preview. A lever here that could pick a different outcome than the one
+// Preview already promised the caller is exactly the Preview/Apply drift
+// this whole feature is designed to avoid.
+//
+// A single scalar key whose setter refuses the imported value does not
+// abort the rest of the import: its error is appended to report.Skipped and
+// the loop continues, the same "one bad entry does not sink the batch" rule
+// design doc §3 states for malformed list entries. Earlier code returned
+// the error immediately instead, which meant every key already applied and
+// SYNCED to other devices before the bad one was silently thrown away along
+// with the report describing what had actually happened — see
+// TestApplyConfigImport_InvalidScalarSkippedRestApplied.
+func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
 	if a.cfgStore == nil {
 		return newImportReport(), fmt.Errorf("config store not ready")
 	}
@@ -945,17 +1022,34 @@ func (a *App) ApplyConfigImport(jsonText string, includeLocalEnv bool) (ImportRe
 		}
 	}
 
+	// appliedKeys records what applySSHHostsImport/applyProfilesImport
+	// actually wrote, keyed the same way as ImportChange.Key. The report
+	// below is built from this, not from blindly echoing every actionable
+	// preview.Changes entry with a list-key prefix — otherwise report.Applied
+	// would describe what Preview predicted, not what Apply did, and would
+	// silently start lying the moment either function returns early for a
+	// reason report.Skipped never learns about (see
+	// TestApplyConfigImport_MalformedListEntrySkippedRestApplied).
+	appliedKeys := make(map[string]bool)
 	if needSSH {
 		if raw, ok := export.Preferences["ssh_hosts"]; ok {
-			if err := a.applySSHHostsImport(raw, actionable); err != nil {
+			keys, err := a.applySSHHostsImport(raw, actionable)
+			if err != nil {
 				return report, err
+			}
+			for _, k := range keys {
+				appliedKeys[k] = true
 			}
 		}
 	}
 	if needProfiles {
 		if raw, ok := export.Preferences["profiles"]; ok {
-			if err := a.applyProfilesImport(raw, actionable); err != nil {
+			keys, err := a.applyProfilesImport(raw, actionable)
+			if err != nil {
 				return report, err
+			}
+			for _, k := range keys {
+				appliedKeys[k] = true
 			}
 		}
 	}
@@ -967,15 +1061,20 @@ func (a *App) ApplyConfigImport(jsonText string, includeLocalEnv bool) (ImportRe
 		switch {
 		case strings.HasPrefix(c.Key, "ssh_host:"), strings.HasPrefix(c.Key, "ssh_key:"),
 			strings.HasPrefix(c.Key, "profile:"), c.Key == "profiles:default_profile_id":
-			report.Applied = append(report.Applied, c)
+			if appliedKeys[c.Key] {
+				report.Applied = append(report.Applied, c)
+			} else {
+				report.Skipped = append(report.Skipped, fmt.Sprintf("%s: not applied", c.Key))
+			}
 			continue
 		}
 		raw, ok := export.Preferences[c.Key]
 		if !ok {
 			continue
 		}
-		if err := applyScalarPref(a, c.Key, raw); err != nil {
-			return report, fmt.Errorf("%s: %w", c.Key, err)
+		if err := a.applyScalarPref(c.Key, raw); err != nil {
+			report.Skipped = append(report.Skipped, fmt.Sprintf("%s: %v", c.Key, err))
+			continue
 		}
 		report.Applied = append(report.Applied, c)
 	}

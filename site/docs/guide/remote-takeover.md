@@ -9,7 +9,7 @@
 ## 会话侧栏
 
 - 右键会话行 → 「置顶」把重要会话抽到顶部虚拟 📌 组;集合按 `session_id` 存桌面本地 config,跨重启保留。
-- Header 内联搜索框(`Cmd/Ctrl+F` 聚焦,`Esc` 清空)按 title / cwd / current_command 即时过滤;折叠组命中时自动展开,全无匹配时显示空态提示。
+- Header 内联搜索框(`Cmd/Ctrl+Shift+F` 聚焦——`Cmd/Ctrl+F` 已改为打开终端 scrollback 搜索,`Esc` 清空)按 title / cwd / current_command 即时过滤;折叠组命中时自动展开,全无匹配时显示空态提示。
 - 置顶跨重启迁移:本机会话重启后被 recovery 重新 spawn 拿新 sid 时,pin 自动从旧 sid 迁到新 sid,不再漂成孤儿。
 
 > 首页的[交互 demo](/) 就是这套侧栏 + 终端的真实界面 —— 可以直接切换会话、搜索、置顶、在 idle 会话里敲命令。

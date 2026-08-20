@@ -374,7 +374,7 @@ desktop/frontend/src/
 │                                 终止的本地 session 数 + 远端 detach 数
 │   ├── RemoteSessionsDialog.vue cast 面板：以 tab 形式打开远端 session
 │   ├── TaskSidebar.vue    会话侧栏容器：header 内联 `<input type="search">`
-│                          （`Cmd/Ctrl+F` focus，`Esc` 清空）+ `defineExpose({
+│                          （`Cmd/Ctrl+Shift+F` focus，`Esc` 清空）+ `defineExpose({
 │                          focusSearch })`；`.title` ellipsis 应对窄侧栏
 │   ├── TaskGroupedList.vue 虚拟 📌 pinned 分组渲染 + 折叠组（既有
 │                          `useCollapsedGroups` 模式）+ `matchesSession`

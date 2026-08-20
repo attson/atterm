@@ -3,6 +3,7 @@ import source from "./TerminalView.vue?raw";
 import quickTemplatesSource from "../composables/useQuickTemplates.ts?raw";
 import paneSource from "./PaneGrid.vue?raw";
 import appSource from "../App.vue?raw";
+import searchBarSource from "./TerminalSearchBar.vue?raw";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import type { ContextMenuPlugin } from "../plugins/types";
 
@@ -1155,5 +1156,87 @@ describe("TerminalView programmatic focus", () => {
     expect(helperBody![0]).toMatch(/platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty/);
     expect(helperBody![0]).toMatch(/keyboardWanted\.value/);
     expect(helperBody![0]).toMatch(/focusTerminalIfDriver\(\)/);
+  });
+});
+
+describe("TerminalView scrollback search wiring", () => {
+  test("loads the search addon on the live terminal", () => {
+    expect(source).toContain('import { SearchAddon } from "xterm-addon-search"');
+    expect(source).toMatch(/searchAddon = new SearchAddon\(\);\s*term\.loadAddon\(searchAddon\)/);
+  });
+
+  test("keeps allowProposedApi on, which match decorations require", () => {
+    expect(source).toContain("allowProposedApi: true");
+  });
+
+  test("mirrors addon result changes into the bar's counters", () => {
+    const body = source.match(/searchAddon\.onDidChangeResults\(\(\{ resultIndex, resultCount \}\) => \{[\s\S]*?\n {2}\}\);/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/searchResultIndex\.value = resultIndex;/);
+    expect(body![0]).toMatch(/searchResultCount\.value = resultCount;/);
+  });
+
+  test("only the focused pane opens on a search request", () => {
+    expect(source).toContain("searchRequestSeq?: number");
+    const watchBody = source.match(/watch\(\s*\(\)\s*=>\s*props\.searchRequestSeq,[\s\S]*?\n\);/);
+    expect(watchBody).not.toBeNull();
+    expect(watchBody![0]).toMatch(/if \(!props\.focused\) return;/);
+    expect(watchBody![0]).toMatch(/searchOpen\.value = true;/);
+  });
+
+  test("onSearchFind clears decorations and resets both counters on an empty query", () => {
+    // This is the sole defense against highlights persisting after the input
+    // is cleared: xterm-addon-search has no "clear query" call of its own, so
+    // the empty-query branch here is what tears the decorations down.
+    const body = source.match(/function\s+onSearchFind\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/if \(!searchAddon\) return;/);
+    expect(body![0]).toMatch(/if \(!query\) \{[\s\S]*?searchAddon\.clearDecorations\(\);[\s\S]*?searchResultIndex\.value = -1;[\s\S]*?searchResultCount\.value = 0;[\s\S]*?return;[\s\S]*?\}/);
+    expect(body![0]).toMatch(/if \(dir === "next"\) searchAddon\.findNext\(query, opts\);/);
+    expect(body![0]).toMatch(/else searchAddon\.findPrevious\(query, opts\);/);
+  });
+
+  test("closing the search clears decorations and returns focus to the terminal", () => {
+    const body = source.match(/function\s+onSearchClose\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/searchOpen\.value = false;/);
+    expect(body![0]).toMatch(/searchAddon\?\.clearDecorations\(\);/);
+    // Not term?.focus() directly — a viewer pane has disableStdin, so taking
+    // xterm focus buys it nothing while risking the iOS soft-keyboard pop
+    // this file guards against elsewhere. Route through the same gated path
+    // as everywhere else (see "does not focus xterm while the pane is still
+    // a viewer" above, which pins exactly one direct term?.focus() call).
+    expect(body![0]).toMatch(/focusTerminalIfDriver\(\);/);
+    expect(body![0]).not.toMatch(/term\?\.focus\(\)/);
+  });
+
+  test("renders the search bar bound to the addon-backed state", () => {
+    expect(source).toContain("<TerminalSearchBar");
+    expect(source).toContain(':open="searchOpen"');
+    expect(source).toContain(':focus-seq="searchFocusSeq"');
+    expect(source).toContain(':result-index="searchResultIndex"');
+    expect(source).toContain(':result-count="searchResultCount"');
+    expect(source).toContain('@find="onSearchFind"');
+    expect(source).toContain('@close="onSearchClose"');
+  });
+
+  test("the search bar is positioned inside the terminal host", () => {
+    // The bar is `position: absolute`, and .term-view is the ancestor that
+    // establishes its positioning context (`position: absolute; inset: 0`
+    // per the comment in TerminalSearchBar.vue). If .term-view ever lost its
+    // `position`, the bar would resolve against a further-up ancestor and
+    // land in the page corner instead of over the pane — this is the only
+    // automated guard against that, since the manual visual pass was
+    // deliberately skipped for this feature.
+    expect(styleBlockFor(".term-view")).toMatch(/position:\s*absolute/);
+    expect(searchBarSource).toMatch(/position:\s*absolute/);
+  });
+
+  test("App drills a monotonic search request through PaneGrid", () => {
+    expect(appSource).toMatch(/const terminalSearchSeq = ref\(0\)/);
+    expect(appSource).toMatch(/onTerminalSearch: \(\) => \{\s*terminalSearchSeq\.value\+\+;/);
+    expect(appSource).toContain(':search-request-seq="terminalSearchSeq"');
+    expect(paneSource).toContain("searchRequestSeq?: number");
+    expect(paneSource).toContain(':search-request-seq="searchRequestSeq"');
   });
 });

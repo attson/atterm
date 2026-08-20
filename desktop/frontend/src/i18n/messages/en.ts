@@ -70,6 +70,13 @@ export const en = {
     pressSpaceToTakeBack: "press space to take back",
     takeControl: "Take control",
     clearBuffer: "clear buffer",
+    search: {
+      placeholder: "Find",
+      next: "Next match",
+      prev: "Previous match",
+      close: "Close search",
+      noResults: "No results",
+    },
     sendSelection: "send",
     pickImage: "image",
     pickFile: "file",
@@ -335,6 +342,7 @@ export const en = {
       previousTab: "Previous tab",
       nextTab: "Next tab",
       focusSidebarSearch: "Focus sidebar search",
+      terminalSearch: "Search terminal",
     },
     diagnostics: {
       tab: "Diagnostics",

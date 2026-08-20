@@ -3,8 +3,8 @@ import { ACTIONS, ACTION_BY_ID, DEFAULT_BINDINGS } from "./shortcutBindings";
 import { serialize, parse, type Mod } from "./shortcutBindings";
 
 describe("shortcutBindings registry", () => {
-  it("declares 12 actions", () => {
-    expect(ACTIONS).toHaveLength(12);
+  it("declares 13 actions", () => {
+    expect(ACTIONS).toHaveLength(13);
   });
 
   it("has unique action IDs", () => {
@@ -27,7 +27,7 @@ describe("shortcutBindings registry", () => {
     for (const a of ACTIONS) {
       expect(DEFAULT_BINDINGS[a.defaultBinding]).toBe(a.id);
     }
-    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(12);
+    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(13);
   });
 });
 
@@ -170,11 +170,11 @@ import { buildRoutingTable } from "./shortcutBindings";
 import { formatChord } from "./shortcutBindings";
 
 describe("buildRoutingTable", () => {
-  it("with empty overrides returns the default 12-entry table", () => {
+  it("with empty overrides returns the default 13-entry table", () => {
     const t = buildRoutingTable({});
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
     expect(t["Mod+KeyT"]).toBe("tab.new");
-    expect(Object.keys(t)).toHaveLength(12);
+    expect(Object.keys(t)).toHaveLength(13);
   });
 
   it("override removes the action's previous binding entry from the table", () => {
@@ -186,7 +186,7 @@ describe("buildRoutingTable", () => {
   it("empty override removes the action from the table entirely", () => {
     const t = buildRoutingTable({ "pane.close": "" });
     expect(t["Mod+KeyW"]).toBeUndefined();
-    expect(Object.keys(t)).toHaveLength(11);
+    expect(Object.keys(t)).toHaveLength(12);
   });
 
   it("two actions colliding on the same binding: last one written wins", () => {
@@ -205,7 +205,7 @@ describe("buildRoutingTable", () => {
     const t = buildRoutingTable({ "ghost.action": "Mod+KeyN" });
     // Defaults intact, override ignored
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
-    expect(Object.keys(t)).toHaveLength(12);
+    expect(Object.keys(t)).toHaveLength(13);
   });
 });
 
@@ -247,5 +247,32 @@ describe("formatChord (Control / non-mac)", () => {
     expect(formatChord("Mod+Minus", "Control")).toBe("Ctrl+-");
     expect(formatChord("Mod+Comma", "Control")).toBe("Ctrl+,");
     expect(formatChord("Mod+Slash", "Control")).toBe("Ctrl+/");
+  });
+});
+
+describe("terminal search binding", () => {
+  it("terminal.search is registered with Mod+KeyF in the pane group", () => {
+    const action = ACTION_BY_ID["terminal.search"];
+    expect(action).toBeDefined();
+    expect(action!.defaultBinding).toBe("Mod+KeyF");
+    expect(action!.group).toBe("pane");
+    expect(action!.labelKey).toBe("settings.shortcuts.terminalSearch");
+  });
+
+  it("sidebar.focus-search moved off Mod+KeyF to Mod+Shift+KeyF", () => {
+    expect(ACTION_BY_ID["sidebar.focus-search"]!.defaultBinding).toBe("Mod+Shift+KeyF");
+  });
+
+  it("no two actions share a default binding", () => {
+    const seen = new Map<string, string>();
+    for (const a of ACTIONS) {
+      expect(seen.has(a.defaultBinding)).toBe(false);
+      seen.set(a.defaultBinding, a.id);
+    }
+  });
+
+  it("DEFAULT_BINDINGS routes Mod+KeyF to terminal.search", () => {
+    expect(DEFAULT_BINDINGS["Mod+KeyF"]).toBe("terminal.search");
+    expect(DEFAULT_BINDINGS["Mod+Shift+KeyF"]).toBe("sidebar.focus-search");
   });
 });

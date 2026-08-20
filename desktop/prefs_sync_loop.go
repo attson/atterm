@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/attson/atterm/internal/prefssync"
 )
 
 // This file is the only place in desktop/ allowed to call a method on
@@ -28,7 +30,7 @@ import (
 // own reasons (a later task widens Pull's signature) to change on its own
 // schedule.
 type prefsSyncEngine interface {
-	Pull(ctx context.Context) error
+	Pull(ctx context.Context) (prefssync.PullResult, error)
 	Push(ctx context.Context) error
 	MarkDirty(key string, updatedAtLocalMs int64)
 	SeedFromLocal(isCustomized func(key string) bool, updatedAtLocalMs int64)
@@ -149,7 +151,12 @@ func (a *App) runSyncRequest(req syncRequest) {
 		}
 	}()
 	if req.pull {
-		if err := engine.Pull(a.ctx); err != nil {
+		// The result (which keys were adopted vs. left in conflict) is not
+		// consumed yet -- surfacing it to the UI is a later task in this
+		// plan. Widening the signature here so the engine can report it at
+		// all, and updating this one call site plus the desktop-side
+		// interface, is this task's whole scope.
+		if _, err := engine.Pull(a.ctx); err != nil {
 			logWarn("prefssync", "pull: %v", err)
 		} else {
 			a.emitPrefsChanged()
@@ -249,7 +256,7 @@ func (a *App) enqueuePostLoginSeed() {
 		return
 	}
 	task := func(engine prefsSyncEngine) {
-		if err := engine.Pull(a.ctx); err != nil {
+		if _, err := engine.Pull(a.ctx); err != nil {
 			return
 		}
 		cfg := a.cfgStore.Get()

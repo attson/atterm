@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/attson/atterm/internal/prefssync"
 )
 
 // fakePrefsSyncEngine is the prefsSyncEngine substitute every test in this
@@ -69,7 +71,7 @@ func (f *fakePrefsSyncEngine) track() func() {
 	return func() { atomic.AddInt32(&f.inFlight, -1) }
 }
 
-func (f *fakePrefsSyncEngine) Pull(ctx context.Context) error {
+func (f *fakePrefsSyncEngine) Pull(ctx context.Context) (prefssync.PullResult, error) {
 	done := f.track()
 	defer done()
 
@@ -86,7 +88,7 @@ func (f *fakePrefsSyncEngine) Pull(ctx context.Context) error {
 	if doPanic {
 		panic("fakePrefsSyncEngine: pull panic")
 	}
-	return err
+	return prefssync.PullResult{}, err
 }
 
 func (f *fakePrefsSyncEngine) Push(ctx context.Context) error {

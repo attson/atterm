@@ -9,9 +9,10 @@
 // v-if renders nothing at all when it's false -- see SyncStatusIndicator.vue
 // for the same shape of gate (and why "renders nothing" beats a
 // confidently-broken UI: that component's own comment cites two prior fix
-// rounds for exactly this class of mistake). SettingsGeneral.vue also gates
-// mounting this component (`v-if="caps.wailsBindings"`) as defense in depth;
-// that external gate is not the only one.
+// rounds for exactly this class of mistake). SettingsDialog.vue's
+// diag-merged block also only mounts this component when
+// `caps.wailsBindings` is true (the whole block, alongside Logging and
+// Diagnostics) as defense in depth; that external gate is not the only one.
 import { computed, ref } from "vue";
 import { useI18n } from "../i18n/useI18n";
 import { usePlatform } from "../platform";
@@ -97,7 +98,7 @@ function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(reader.error ?? new Error("could not read file"));
+    reader.onerror = () => reject(reader.error ?? new Error(t("settings.configio.import.fileReadError")));
     reader.readAsText(file);
   });
 }

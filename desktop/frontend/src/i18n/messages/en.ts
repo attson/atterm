@@ -395,9 +395,10 @@ export const en = {
       },
     },
     configio: {
+      title: "Import & export",
       export: {
         title: "Export",
-        hint: "Save your preferences, SSH hosts, and session profiles to a JSON file you can move to another machine.",
+        hint: "Save your preferences, SSH hosts, and session profiles to a JSON file you can move to another machine. Your SSH passwords and private keys are never included in this file.",
         includeEnvLabel: "Include profile environment variables that aren't set to sync — these can contain API tokens and other secrets",
         button: "Export…",
         exporting: "Exporting…",
@@ -405,10 +406,11 @@ export const en = {
       },
       import: {
         title: "Import",
-        hint: "Choose a previously exported JSON file. Nothing is applied until you confirm.",
+        hint: "Choose a previously exported JSON file. Nothing is applied until you confirm. Imported SSH hosts arrive without their credential — you'll need to re-enter the password or pick a private key for them here afterward.",
         pickFile: "Choose file…",
         fileLabel: "File: {name}",
         previewing: "Reading file…",
+        fileReadError: "Could not read file",
         previewError: "Could not read this file: {error}",
         previewTitle: "Preview — nothing applied yet",
         changesAdd: "Add",

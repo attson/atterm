@@ -11,11 +11,17 @@ export function AddSSHKey(arg1:string,arg2:string,arg3:string):Promise<main.SSHK
 
 export function AppendFrontendLogs(arg1:Array<main.FrontendLogRecord>):Promise<number>;
 
+export function ApplyConfigImport(arg1:string):Promise<main.ImportReport>;
+
 export function BeginFeishuPair():Promise<string>;
 
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;
 
+export function BuildConfigExport(arg1:boolean):Promise<main.ConfigExport>;
+
 export function CancelDownload():Promise<void>;
+
+export function CancelSnippetRun(arg1:string):Promise<void>;
 
 export function CheckUpdate():Promise<void>;
 
@@ -37,6 +43,8 @@ export function DiscardRecoverySnapshot():Promise<void>;
 
 export function DownloadVersion(arg1:string):Promise<void>;
 
+export function ExportConfig(arg1:boolean):Promise<string>;
+
 export function ExportDiagnostics(arg1:string):Promise<string>;
 
 export function FetchRelayMe():Promise<main.RelayMe>;
@@ -54,6 +62,8 @@ export function GetAutoCheckUpdates():Promise<boolean>;
 export function GetClipboardPastePayload():Promise<main.ClipboardPastePayload>;
 
 export function GetCommandNotifyThresholdSeconds():Promise<number>;
+
+export function GetDefaultProfileID():Promise<string>;
 
 export function GetDefaultShell():Promise<string>;
 
@@ -87,6 +97,8 @@ export function GetPinnedSessionIds():Promise<Array<string>>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;
 
+export function GetProfiles():Promise<Array<main.SessionProfile>>;
+
 export function GetPtyInputDebugEnabled():Promise<boolean>;
 
 export function GetQuickTemplates():Promise<Array<main.QuickTemplate>>;
@@ -100,6 +112,8 @@ export function GetShellIntegrationEnabled():Promise<boolean>;
 export function GetShortcutBindings():Promise<Record<string, string>>;
 
 export function GetStartupError():Promise<main.StartupError>;
+
+export function GetSyncStatus():Promise<main.SyncStatus>;
 
 export function GetTaskGroupBy():Promise<string>;
 
@@ -135,13 +149,19 @@ export function GetWebglRendererEnabled():Promise<boolean>;
 
 export function HasAccountKey():Promise<boolean>;
 
+export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
+
 export function InstallUpdate():Promise<void>;
+
+export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
 
 export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
 
 export function ListRemoteSessions():Promise<string>;
+
+export function ListSFTPHosts():Promise<Array<main.SSHHost>>;
 
 export function ListSSHHosts():Promise<Array<main.SSHHost>>;
 
@@ -163,9 +183,13 @@ export function NewSession(arg1:main.NewSessionReq):Promise<main.NewSessionResp>
 
 export function NewSshSession(arg1:main.SSHConnectReq):Promise<main.NewSessionResp>;
 
-export function NewSshSessionByID(arg1:string):Promise<main.NewSessionResp>;
+export function NewSshSessionByID(arg1:string,arg2:main.AcceptedHostKey):Promise<main.NewSessionResp>;
 
 export function PickLogFilePath():Promise<string>;
+
+export function PreviewConfigImport(arg1:string):Promise<main.ImportPreview>;
+
+export function PreviewSSHConfigImport():Promise<main.SSHConfigImportPreview>;
 
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
@@ -189,6 +213,26 @@ export function RemoveKnownHost(arg1:string):Promise<void>;
 
 export function RevokeRelaySession(arg1:string):Promise<void>;
 
+export function RunSnippetOnHosts(arg1:string,arg2:string,arg3:Array<string>):Promise<string>;
+
+export function SFTPCreateFile(arg1:string,arg2:string):Promise<main.FileMetaInfo>;
+
+export function SFTPDisconnect(arg1:string):Promise<void>;
+
+export function SFTPFileMeta(arg1:string,arg2:string):Promise<main.FileMetaInfo>;
+
+export function SFTPListDir(arg1:string,arg2:string):Promise<main.SFTPListing>;
+
+export function SFTPMkdir(arg1:string,arg2:string):Promise<main.FileMetaInfo>;
+
+export function SFTPReadFile(arg1:string,arg2:string,arg3:number):Promise<main.FileContent>;
+
+export function SFTPRemove(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
+export function SFTPRename(arg1:string,arg2:string,arg3:string):Promise<main.FileMetaInfo>;
+
+export function SFTPWriteFile(arg1:string,arg2:string,arg3:Array<number>,arg4:number,arg5:boolean):Promise<main.FileMetaInfo>;
+
 export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
 export function SendFeishuTestCard(arg1:string):Promise<void>;
@@ -198,6 +242,8 @@ export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
 export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
+
+export function SetDefaultProfileID(arg1:string):Promise<void>;
 
 export function SetDefaultShell(arg1:string):Promise<void>;
 
@@ -218,6 +264,8 @@ export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 export function SetPinnedSessionIds(arg1:Array<string>):Promise<void>;
 
 export function SetPluginConfig(arg1:main.PluginConfig):Promise<void>;
+
+export function SetProfiles(arg1:Array<main.SessionProfile>):Promise<void>;
 
 export function SetPtyInputDebugEnabled(arg1:boolean):Promise<void>;
 
@@ -267,9 +315,15 @@ export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;
 
+export function StartForward(arg1:string,arg2:string):Promise<void>;
+
 export function StartWidget():Promise<void>;
 
+export function StopForward(arg1:string,arg2:string):Promise<void>;
+
 export function StopWidget():Promise<void>;
+
+export function SyncNow():Promise<void>;
 
 export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main.TranslateHTTPResponse>;
 

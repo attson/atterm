@@ -364,9 +364,10 @@ export const zhCN = {
       },
     },
     configio: {
+      title: "导入与导出",
       export: {
         title: "导出",
-        hint: "将偏好设置、SSH 主机和会话配置导出为 JSON 文件，可拷贝到另一台设备上使用。",
+        hint: "将偏好设置、SSH 主机和会话配置导出为 JSON 文件，可拷贝到另一台设备上使用。文件中不会包含你的 SSH 密码或私钥。",
         includeEnvLabel: "包含未设置同步的会话配置环境变量（可能含有 API token 等敏感信息）",
         button: "导出…",
         exporting: "导出中…",
@@ -374,10 +375,11 @@ export const zhCN = {
       },
       import: {
         title: "导入",
-        hint: "选择之前导出的 JSON 文件。确认前不会应用任何更改。",
+        hint: "选择之前导出的 JSON 文件。确认前不会应用任何更改。导入的 SSH 主机不含凭据 — 导入后需要在这里为它们重新填写密码或选择私钥。",
         pickFile: "选择文件…",
         fileLabel: "文件：{name}",
         previewing: "正在读取文件…",
+        fileReadError: "无法读取文件",
         previewError: "无法读取该文件：{error}",
         previewTitle: "预览 — 尚未应用",
         changesAdd: "新增",

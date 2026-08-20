@@ -325,6 +325,73 @@ func TestIsPrefCustomizedProfiles(t *testing.T) {
 	}
 }
 
+// TestIsPrefCustomizedSSHHosts is the sibling TestIsPrefCustomizedProfiles
+// had and this key did not. The switch's own comment says any key not named
+// in it "is silently treated as never customized and gets overwritten by
+// whatever SeedFromLocal finds on the relay (including nothing at all)" —
+// and ssh_hosts_encrypted was not named, while profiles_encrypted was.
+//
+// The consequence is not cosmetic. On first login from a machine that
+// already has hosts: SeedFromLocal never marks the key dirty, so the hosts
+// are never uploaded; and because their local stamp stays 0, a relay already
+// holding an older set from another machine wins Pull's comparison and
+// replaces them.
+//
+// Keys count too: a machine can hold imported SSH keys with no hosts yet.
+func TestIsPrefCustomizedSSHHosts(t *testing.T) {
+	withHosts := isPrefCustomized(appConfig{SSHHosts: []SSHHost{{ID: "h1", Host: "example.com", User: "u"}}})
+	if !withHosts("ssh_hosts_encrypted") {
+		t.Error("a non-empty host list must count as customized — otherwise first login can replace it with a relay's older set")
+	}
+	withKeys := isPrefCustomized(appConfig{SSHKeys: []SSHKey{{ID: "k1", Name: "work"}}})
+	if !withKeys("ssh_hosts_encrypted") {
+		t.Error("imported SSH keys must count as customized even with no hosts yet")
+	}
+	isVirgin := isPrefCustomized(appConfig{})
+	if isVirgin("ssh_hosts_encrypted") {
+		t.Error("an untouched config must not count as customized")
+	}
+}
+
+// TestIsPrefCustomizedNamesEverySyncedKey stops the next omission being
+// silent. The switch is a deny-list by construction — its default is false —
+// so a key added to SyncedKeys() without a case here inherits exactly the bug
+// ssh_hosts_encrypted had, and nothing fails.
+func TestIsPrefCustomizedNamesEverySyncedKey(t *testing.T) {
+	// Every field a case reads, set to something non-zero, so a key that IS
+	// handled reports customized and a key that is NOT falls through to the
+	// default and reports false.
+	blink := true
+	enabled := true
+	thresh := 30
+	cfg := appConfig{
+		LocalePreference:              "zh-CN",
+		QuickTemplates:                []QuickTemplate{{ID: "t", Label: "t", Text: "t"}},
+		NotificationsEnabled:          &enabled,
+		AINotificationsOnly:           &enabled,
+		CommandNotifyThresholdSeconds: &thresh,
+		ShellIntegrationEnabled:       &enabled,
+		PinnedSessionIDs:              []string{"s"},
+		TerminalTheme:                 "dark",
+		TerminalFontHead:              "Menlo",
+		TerminalFontSize:              16,
+		TerminalLineHeight:            1.2,
+		TerminalCursorStyle:           "bar",
+		TerminalCursorBlink:           &blink,
+		TerminalScrollback:            9000,
+		DefaultShell:                  "/bin/zsh",
+		ShortcutBindings:              map[string]string{"tab.new": "Mod+KeyP"},
+		Profiles:                      []SessionProfile{{ID: "p", Name: "P"}},
+		SSHHosts:                      []SSHHost{{ID: "h", Host: "e.com", User: "u"}},
+	}
+	isCustom := isPrefCustomized(cfg)
+	for _, key := range prefssync.SyncedKeys() {
+		if !isCustom(key) {
+			t.Errorf("%s is in SyncedKeys() but isPrefCustomized has no case for it, so SeedFromLocal will treat it as never customized and first login can overwrite it from the relay", key)
+		}
+	}
+}
+
 // TestAdapterProfilesEncryptedNoAccountKeySkips mirrors
 // TestAdapterSSHHostsNoAccountKeySkips: without an account key,
 // profiles_encrypted must behave as "local only" on both sides — ReadValue

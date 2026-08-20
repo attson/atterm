@@ -227,6 +227,12 @@ type App struct {
 	// (tests set a temp path). Empty → ~/.ssh/known_hosts.
 	sshKnownHostsPath string
 
+	// tunnels owns the running SSH port forwards (see ssh_tunnels.go). It is
+	// deliberately independent of host/relayHost: a tunnel is not a session,
+	// so it never enters the registry or a subscriber count. Zero value is
+	// usable; it holds its own lock.
+	tunnels tunnelManager
+
 	prefsSync *prefssync.Engine
 
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
@@ -295,7 +301,26 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 		verifyPublicKey: parseUpdateVerifyPublicKey(UpdateVerifyPublicKey),
 	})
 	a.widget = newWidgetProcess(a.handleWidgetEvent)
+	a.observeConfigStore()
 	return a
+}
+
+// observeConfigStore hangs the config-driven reconciles off the store's
+// post-commit observer.
+//
+// Today that is exactly one thing: running port-forward tunnels have to follow
+// the saved rules, because deleting a rule (in the drawer, by deleting the
+// host, or on another device that syncs the deletion here) has to stop the
+// tunnel — nothing else can, since the tunnels tab renders from the saved
+// rules and an orphan therefore has no row. See tunnelManager.reconcile.
+//
+// It is wired here and in startup because a.cfgStore can be supplied either
+// way; calling it twice just replaces the observer with an identical one.
+func (a *App) observeConfigStore() {
+	if a.cfgStore == nil {
+		return
+	}
+	a.cfgStore.setOnCommit(func(c appConfig) { a.tunnels.reconcile(c.SSHHosts) })
 }
 
 // startup is called when the Wails runtime is ready. Boot the in-process
@@ -312,6 +337,7 @@ func (a *App) startup(ctx context.Context) {
 	if a.cfgStore == nil {
 		a.cfgStore = loadConfig()
 	}
+	a.observeConfigStore()
 	h, err := startRelayHost(a.cfgStore)
 	if err != nil {
 		a.setStartupFatalError("start relay host", err)
@@ -429,6 +455,9 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.updater != nil {
 		a.updater.Stop()
 	}
+	// Close forwarded local ports; a listener outliving the window would keep
+	// the port busy for whatever the user starts next.
+	a.tunnels.stopAll()
 	if a.logger != nil {
 		_ = a.logger.Close()
 		a.logger = nil

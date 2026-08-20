@@ -1,6 +1,9 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { Server, Plus, X, Pencil, Trash2, Search, Zap, KeyRound, Upload, FileUp, FileDown } from "lucide-vue-next";
+import {
+  Server, Plus, X, Pencil, Trash2, Search, Zap, KeyRound, Upload, FileUp, FileDown,
+  Network, Play, Square, RefreshCw,
+} from "lucide-vue-next";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
 import { readPrivateKeyFile } from "../lib/sshKeyFile";
@@ -20,9 +23,14 @@ import {
   deleteSSHKey,
   previewSSHConfigImport,
   importSSHHosts,
+  startForward,
+  stopForward,
+  listActiveForwards,
   type SSHHost,
   type SSHKey,
   type SSHConfigImportPreview,
+  type ForwardRule,
+  type ActiveForward,
 } from "../lib/api";
 
 const emit = defineEmits<{
@@ -32,7 +40,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-type Tab = "hosts" | "keys";
+type Tab = "hosts" | "keys" | "tunnels";
 const activeTab = ref<Tab>("hosts");
 
 const hosts = ref<SSHHost[]>([]);
@@ -52,14 +60,24 @@ async function reload() {
 function swallowStrayDrag(e: Event) {
   e.preventDefault();
 }
+// Active tunnels are polled while the panel is open rather than pushed: the
+// interesting transitions (a dropped SSH connection stopping every tunnel on
+// it) happen in Go with no event to subscribe to, and this panel is a modal
+// the user has open for seconds at a time.
+const FORWARD_POLL_MS = 3000;
+let forwardsPoll: ReturnType<typeof setInterval> | undefined;
+
 onMounted(() => {
   window.addEventListener("dragover", swallowStrayDrag);
   window.addEventListener("drop", swallowStrayDrag);
   void reload();
+  void refreshActiveForwards();
+  forwardsPoll = setInterval(() => void refreshActiveForwards(), FORWARD_POLL_MS);
 });
 onBeforeUnmount(() => {
   window.removeEventListener("dragover", swallowStrayDrag);
   window.removeEventListener("drop", swallowStrayDrag);
+  if (forwardsPoll !== undefined) clearInterval(forwardsPoll);
 });
 
 // ---- Hosts ----
@@ -303,6 +321,7 @@ function openNewHost() {
   fAuthKind.value = "password";
   fPassword.value = "";
   fKeyID.value = keys.value[0]?.id ?? "";
+  fForwards.value = [];
   hostDrawer.value = true;
 }
 function openEditHost(h: SSHHost) {
@@ -317,6 +336,7 @@ function openEditHost(h: SSHHost) {
   fAuthKind.value = h.auth_kind;
   fPassword.value = "";
   fKeyID.value = h.key_id ?? keys.value[0]?.id ?? "";
+  fForwards.value = cloneForwards(h.forwards);
   hostDrawer.value = true;
 }
 function closeHostDrawer() {
@@ -340,6 +360,12 @@ async function saveHost() {
     tags: fTags.value,
     auth_kind: fAuthKind.value,
     key_id: fAuthKind.value === "key" ? fKeyID.value : undefined,
+    // The drawer owns Forwards, and UpdateSSHHost lets the caller's value
+    // win — including an empty list, so deleting the last rule is a saveable
+    // edit. The flip side is that a payload built without this line deletes
+    // every rule the host had, on every device. That is the shape of the
+    // item-25 bug that silently stripped proxy_jump; it is pinned by a test.
+    forwards: cloneForwards(fForwards.value),
   };
   const cred = { password: fAuthKind.value === "password" ? fPassword.value : undefined };
   const hasNewCred = fAuthKind.value === "password" && fPassword.value !== "";
@@ -368,6 +394,212 @@ async function removeHost(id: string) {
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : String(e);
   }
+}
+
+// ---- Port forwarding: rules editor (host drawer) ----
+// Rules are configuration, tunnels are an action, and this is the
+// configuration half (design doc §5.3). The drawer owns the whole list: it is
+// copied out of the record on open and copied back on save, so adding,
+// editing and deleting a rule are all just edits to fForwards.
+const fForwards = ref<ForwardRule[]>([]);
+
+// cloneForwards deep-copies and normalises. The optional string fields become
+// "" so a v-model can never write undefined into the save payload, and so
+// editing a rule never mutates the loaded host record in place.
+function cloneForwards(list: ForwardRule[] | undefined): ForwardRule[] {
+  return (list ?? []).map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    bind_addr: r.bind_addr ?? "",
+    bind_port: r.bind_port ?? "",
+    target_host: r.target_host ?? "",
+    target_port: r.target_port ?? "",
+    note: r.note ?? "",
+  }));
+}
+
+// Rule IDs are minted here because the Go side does not assign them:
+// StartForward looks a rule up by (hostID, ruleID), so a rule saved without
+// one could never be started.
+function newForwardRuleID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `fwd-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function addForwardRule() {
+  fForwards.value = [
+    ...fForwards.value,
+    {
+      id: newForwardRuleID(),
+      kind: "local",
+      // Spelled out rather than left empty: the safe value should be visible
+      // in the field the user is about to change.
+      bind_addr: "127.0.0.1",
+      bind_port: "",
+      target_host: "",
+      target_port: "",
+      note: "",
+    },
+  ];
+}
+function removeForwardRule(id: string) {
+  fForwards.value = fForwards.value.filter((r) => r.id !== id);
+}
+function setForwardKind(rule: ForwardRule, kind: ForwardRule["kind"]) {
+  rule.kind = kind;
+}
+function forwardKindHint(kind: string): string {
+  if (kind === "remote") return t("ssh.forwards.kindRemoteHint");
+  if (kind === "dynamic") return t("ssh.forwards.kindDynamicHint");
+  return t("ssh.forwards.kindLocalHint");
+}
+
+// isLoopbackBind mirrors defaultForwardBindAddr's contract: empty means the
+// backend fills in 127.0.0.1, and only loopback keeps the listener private to
+// this machine.
+// The 127/8 test is anchored at both ends and spelled out octet by octet on
+// purpose: /^127\./ also matches the hostname 127.0.0.1.example.com, which
+// resolves anywhere its owner likes and would have suppressed the warning.
+// net.Listen would refuse that value with a clear error rather than bind
+// anything wide, so this is not a hole — but a check that only claims what it
+// can prove costs nothing.
+function isLoopbackBind(addr: string | undefined): boolean {
+  const a = (addr ?? "").trim().toLowerCase();
+  if (a === "") return true;
+  if (a === "localhost" || a === "::1" || a === "[::1]") return true;
+  const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(a);
+  return m !== null && m.slice(1).every((o) => Number(o) <= 255);
+}
+
+// forwardBindWarning is the §5.1 warning, and it is deliberately three
+// different sentences. A non-loopback *local* rule hands one service to
+// everyone on the network with no SSH credential; a non-loopback *dynamic*
+// rule is an unauthenticated SOCKS5 open proxy into everything the SSH host
+// can reach, using our credential. Warning about the second with the first's
+// wording would understate it by a lot. There is deliberately no "allow LAN
+// access" toggle: this is a value the user types, not a convenience switch.
+function forwardBindWarning(r: ForwardRule): string {
+  if (isLoopbackBind(r.bind_addr)) return "";
+  const addr = (r.bind_addr ?? "").trim();
+  if (r.kind === "dynamic") return t("ssh.forwards.warnDynamic", { addr });
+  if (r.kind === "remote") return t("ssh.forwards.warnRemote", { addr });
+  return t("ssh.forwards.warnLocal", { addr });
+}
+
+// ---- Port forwarding: active tunnels (Tunnels tab) ----
+const activeForwards = ref<ActiveForward[]>([]);
+const forwardBusyKey = ref("");
+
+function forwardKey(hostID: string, ruleID: string): string {
+  return `${hostID}/${ruleID}`;
+}
+
+async function refreshActiveForwards() {
+  try {
+    activeForwards.value = (await listActiveForwards()) ?? [];
+  } catch {
+    // This runs on a timer. Writing a transport hiccup into errorMsg would
+    // wipe whatever message the user is currently reading, so a failed poll
+    // just leaves the previous snapshot on screen.
+  }
+}
+
+// activeByKey indexes *every* entry, running or not: ListActiveForwards also
+// returns tunnels that stopped by themselves (a dropped SSH connection), and
+// losing those would erase the only place their reason is shown.
+const activeByKey = computed(() => {
+  const m = new Map<string, ActiveForward>();
+  for (const a of activeForwards.value) m.set(forwardKey(a.host_id, a.rule_id), a);
+  return m;
+});
+function forwardState(hostID: string, ruleID: string): ActiveForward | undefined {
+  return activeByKey.value.get(forwardKey(hostID, ruleID));
+}
+function isForwardRunning(hostID: string, ruleID: string): boolean {
+  return forwardState(hostID, ruleID)?.running === true;
+}
+
+const forwardHosts = computed(() => hosts.value.filter((h) => (h.forwards?.length ?? 0) > 0));
+const runningForwardCount = computed(() => activeForwards.value.filter((a) => a.running).length);
+
+function forwardKindLabel(kind: string): string {
+  if (kind === "remote") return t("ssh.forwards.kindRemote");
+  if (kind === "dynamic") return t("ssh.forwards.kindDynamic");
+  return t("ssh.forwards.kindLocal");
+}
+
+// The listen address of a *running* tunnel comes from ActiveForward, not from
+// the rule: that is the listener's real resolved address, so a defaulted or
+// ephemeral bind reports what it actually became.
+function forwardListenText(h: SSHHost, r: ForwardRule): string {
+  const a = forwardState(h.id, r.id);
+  if (a?.running && a.listen_addr) return a.listen_addr;
+  const addr = (r.bind_addr ?? "").trim() || "127.0.0.1";
+  return `${addr}:${(r.bind_port ?? "").trim()}`;
+}
+function forwardTargetText(h: SSHHost, r: ForwardRule): string {
+  const a = forwardState(h.id, r.id);
+  if (a?.running) {
+    return a.target?.trim() ? a.target : t("ssh.forwards.dynamicTarget");
+  }
+  // A dynamic rule has no configured destination at all — the SOCKS client
+  // names one per connection — so printing target_host:target_port here would
+  // be inventing a route that does not exist.
+  if (r.kind === "dynamic") return t("ssh.forwards.dynamicTarget");
+  return `${(r.target_host ?? "").trim()}:${(r.target_port ?? "").trim()}`;
+}
+function forwardStateLabel(h: SSHHost, r: ForwardRule): string {
+  const a = forwardState(h.id, r.id);
+  if (!a) return t("ssh.forwards.stateIdle");
+  return a.running ? t("ssh.forwards.stateRunning") : t("ssh.forwards.stateStopped");
+}
+function forwardStateClass(h: SSHHost, r: ForwardRule): string {
+  const a = forwardState(h.id, r.id);
+  if (!a) return "idle";
+  return a.running ? "running" : "stopped";
+}
+
+// startRule is the only thing that brings a tunnel up — nothing starts on
+// connect (§5.3), because a tunnel occupies a local port and opening a
+// terminal must not silently grab 5432.
+async function startRule(h: SSHHost, r: ForwardRule) {
+  // The backend refuses a proxied host too (same gate as NewSshSessionByID);
+  // stopping here is what makes the disabled button honest rather than
+  // decorative.
+  if (isProxied(h) || forwardBusyKey.value) return;
+  errorMsg.value = "";
+  forwardBusyKey.value = forwardKey(h.id, r.id);
+  try {
+    await startForward(h.id, r.id);
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    forwardBusyKey.value = "";
+    await refreshActiveForwards();
+  }
+}
+
+// stopRule closes a running tunnel and also clears an entry that already
+// stopped by itself, which is why the dead-tunnel row offers it as "dismiss".
+async function stopRule(h: SSHHost, r: ForwardRule) {
+  if (forwardBusyKey.value) return;
+  errorMsg.value = "";
+  forwardBusyKey.value = forwardKey(h.id, r.id);
+  try {
+    await stopForward(h.id, r.id);
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    forwardBusyKey.value = "";
+    await refreshActiveForwards();
+  }
+}
+
+function openTunnelsTab() {
+  activeTab.value = "tunnels";
+  void refreshActiveForwards();
 }
 
 // ---- Key drawer ----
@@ -581,6 +813,10 @@ async function confirmConfigImport() {
             class="tab" :class="{ on: activeTab === 'keys' }"
             data-test="ssh-tab-keys" @click="activeTab = 'keys'"
           ><KeyRound :size="14" /> {{ t("ssh.tabKeys") }} <span class="tab-count">{{ keys.length }}</span></button>
+          <button
+            class="tab" :class="{ on: activeTab === 'tunnels' }"
+            data-test="ssh-tab-tunnels" @click="openTunnelsTab"
+          ><Network :size="14" /> {{ t("ssh.forwards.tab") }} <span class="tab-count">{{ runningForwardCount }}</span></button>
         </div>
         <div v-if="activeTab === 'hosts'" class="search">
           <Search :size="13" class="search-icon" />
@@ -596,8 +832,11 @@ async function confirmConfigImport() {
         <button v-if="activeTab === 'hosts'" class="new-btn" data-test="ssh-new-host" @click="openNewHost">
           <Plus :size="14" /> {{ t("ssh.newHost") }}
         </button>
-        <button v-else class="new-btn" data-test="ssh-key-new" @click="openNewKey">
+        <button v-else-if="activeTab === 'keys'" class="new-btn" data-test="ssh-key-new" @click="openNewKey">
           <Plus :size="14" /> {{ t("ssh.newKey") }}
+        </button>
+        <button v-else class="new-btn ghost" data-test="ssh-tunnels-refresh" @click="refreshActiveForwards">
+          <RefreshCw :size="14" /> {{ t("ssh.forwards.refresh") }}
         </button>
         <button class="close-x" :title="t('common.close')" @click="$emit('close')"><X :size="16" /></button>
       </header>
@@ -697,6 +936,88 @@ async function confirmConfigImport() {
         </div>
       </div>
 
+      <!-- TUNNELS TAB -->
+      <div v-show="activeTab === 'tunnels'" class="ssh-body">
+        <div v-if="forwardHosts.length === 0" class="empty" data-test="ssh-tunnels-empty">
+          <Network :size="40" class="empty-icon" />
+          <p class="empty-title">{{ t("ssh.forwards.emptyTitle") }}</p>
+          <p class="empty-sub">{{ t("ssh.forwards.emptySub") }}</p>
+        </div>
+        <section
+          v-for="h in forwardHosts" :key="h.id" class="fwd-host"
+          :data-test="`ssh-tunnel-host-${h.id}`"
+        >
+          <header class="fwd-host-head">
+            <span class="fwd-host-name">{{ hostLabel(h) }}</span>
+            <span class="fwd-host-sub">{{ h.user }}@{{ h.host }}</span>
+            <span
+              v-if="isProxied(h)" class="proxy-badge"
+              :data-test="`ssh-tunnel-proxy-${h.id}`"
+            >{{ proxyLabel(h) }}</span>
+          </header>
+          <!-- Spelled out, not just a tooltip on a greyed button: the reason a
+               tunnel cannot start here has nothing to do with the rule. -->
+          <p
+            v-if="isProxied(h)" class="fwd-proxy-reason"
+            :data-test="`ssh-tunnel-proxy-reason-${h.id}`"
+          >{{ t("ssh.forwards.proxyBlocked") }} {{ proxyReason(h) }}</p>
+          <ul class="fwd-list">
+            <li
+              v-for="r in h.forwards" :key="r.id" class="fwd-row"
+              :data-test="`ssh-tunnel-row-${h.id}-${r.id}`"
+            >
+              <div class="fwd-row-main">
+                <div class="fwd-row-title">
+                  <span class="fwd-kind">{{ forwardKindLabel(r.kind) }}</span>
+                  <span v-if="r.note" class="fwd-note">{{ r.note }}</span>
+                </div>
+                <div class="fwd-row-route">
+                  {{ forwardListenText(h, r) }} → {{ forwardTargetText(h, r) }}
+                </div>
+                <div v-if="forwardState(h.id, r.id)" class="fwd-row-conns">
+                  {{ t("ssh.forwards.conns", { count: forwardState(h.id, r.id)?.conns ?? 0 }) }}
+                </div>
+                <p
+                  v-if="forwardState(h.id, r.id)?.error" class="fwd-row-error"
+                  :data-test="`ssh-tunnel-error-${h.id}-${r.id}`"
+                >{{ forwardState(h.id, r.id)?.error }}</p>
+              </div>
+              <span
+                class="fwd-state" :class="forwardStateClass(h, r)"
+                :data-test="`ssh-tunnel-state-${h.id}-${r.id}`"
+              >{{ forwardStateLabel(h, r) }}</span>
+              <div class="fwd-row-actions">
+                <!-- A stopped-with-an-error entry gets a restart and a
+                     dismiss, never a stop: its listener is already gone. -->
+                <button
+                  v-if="isForwardRunning(h.id, r.id)" class="act danger"
+                  :data-test="`ssh-tunnel-stop-${h.id}-${r.id}`"
+                  :title="t('ssh.forwards.stop')"
+                  :disabled="forwardBusyKey !== ''"
+                  @click="stopRule(h, r)"
+                ><Square :size="13" /></button>
+                <template v-else>
+                  <button
+                    class="act connect"
+                    :data-test="`ssh-tunnel-start-${h.id}-${r.id}`"
+                    :title="isProxied(h) ? proxyReason(h) : t('ssh.forwards.start')"
+                    :disabled="isProxied(h) || forwardBusyKey !== ''"
+                    @click="startRule(h, r)"
+                  ><Play :size="13" /></button>
+                  <button
+                    v-if="forwardState(h.id, r.id)" class="act"
+                    :data-test="`ssh-tunnel-dismiss-${h.id}-${r.id}`"
+                    :title="t('ssh.forwards.dismiss')"
+                    :disabled="forwardBusyKey !== ''"
+                    @click="stopRule(h, r)"
+                  ><X :size="13" /></button>
+                </template>
+              </div>
+            </li>
+          </ul>
+        </section>
+      </div>
+
       <SessionRowMenu
         :open="hostMenu.open" :x="hostMenu.x" :y="hostMenu.y" :items="hostMenuItems"
         @close="closeHostMenu" @select="onHostMenuSelect"
@@ -777,6 +1098,90 @@ async function confirmConfigImport() {
                 </button>
               </div>
             </template>
+
+            <!-- PORT FORWARDING RULES -->
+            <div class="fwd-section" data-test="ssh-forwards-section">
+              <div class="fwd-section-head">
+                <span class="fl">{{ t("ssh.forwards.sectionTitle") }}</span>
+                <button class="btn sm" type="button" data-test="ssh-forward-add" @click.prevent="addForwardRule">
+                  <Plus :size="13" /> {{ t("ssh.forwards.add") }}
+                </button>
+              </div>
+              <p class="hint">{{ t("ssh.forwards.sectionHint") }}</p>
+              <p v-if="fForwards.length === 0" class="hint" data-test="ssh-forwards-none">
+                {{ t("ssh.forwards.noRules") }}
+              </p>
+              <div
+                v-for="r in fForwards" :key="r.id" class="fwd-rule"
+                :data-test="`ssh-forward-rule-${r.id}`"
+              >
+                <div class="fwd-rule-head">
+                  <div class="seg sm">
+                    <button
+                      type="button" :class="{ on: r.kind === 'local' }"
+                      :data-test="`ssh-forward-kind-local-${r.id}`"
+                      @click.prevent="setForwardKind(r, 'local')"
+                    >{{ t("ssh.forwards.kindLocal") }}</button>
+                    <button
+                      type="button" :class="{ on: r.kind === 'remote' }"
+                      :data-test="`ssh-forward-kind-remote-${r.id}`"
+                      @click.prevent="setForwardKind(r, 'remote')"
+                    >{{ t("ssh.forwards.kindRemote") }}</button>
+                    <button
+                      type="button" :class="{ on: r.kind === 'dynamic' }"
+                      :data-test="`ssh-forward-kind-dynamic-${r.id}`"
+                      @click.prevent="setForwardKind(r, 'dynamic')"
+                    >{{ t("ssh.forwards.kindDynamic") }}</button>
+                  </div>
+                  <button
+                    type="button" class="act danger"
+                    :data-test="`ssh-forward-remove-${r.id}`"
+                    :title="t('ssh.forwards.remove')"
+                    @click.prevent="removeForwardRule(r.id)"
+                  ><Trash2 :size="13" /></button>
+                </div>
+                <p class="hint">{{ forwardKindHint(r.kind) }}</p>
+                <div class="field-row">
+                  <label class="field grow">
+                    <span class="fl">{{ t("ssh.forwards.bindAddr") }}</span>
+                    <input
+                      :data-test="`ssh-forward-bind-addr-${r.id}`" v-model="r.bind_addr"
+                      placeholder="127.0.0.1" spellcheck="false" autocomplete="off"
+                    />
+                  </label>
+                  <label class="field port">
+                    <span class="fl">{{ t("ssh.forwards.bindPort") }}</span>
+                    <input :data-test="`ssh-forward-bind-port-${r.id}`" v-model="r.bind_port" autocomplete="off" />
+                  </label>
+                </div>
+                <!-- Dynamic has no configured destination: the SOCKS5 client
+                     names one per connection, so these fields would be a lie. -->
+                <div v-if="r.kind !== 'dynamic'" class="field-row">
+                  <label class="field grow">
+                    <span class="fl">{{ t("ssh.forwards.targetHost") }}</span>
+                    <input
+                      :data-test="`ssh-forward-target-host-${r.id}`" v-model="r.target_host"
+                      spellcheck="false" autocomplete="off"
+                    />
+                  </label>
+                  <label class="field port">
+                    <span class="fl">{{ t("ssh.forwards.targetPort") }}</span>
+                    <input :data-test="`ssh-forward-target-port-${r.id}`" v-model="r.target_port" autocomplete="off" />
+                  </label>
+                </div>
+                <label class="field">
+                  <span class="fl">{{ t("ssh.forwards.label") }}</span>
+                  <input
+                    :data-test="`ssh-forward-note-${r.id}`" v-model="r.note"
+                    :placeholder="t('ssh.forwards.labelPlaceholder')" autocomplete="off"
+                  />
+                </label>
+                <p
+                  v-if="forwardBindWarning(r)" class="fwd-warn"
+                  :data-test="`ssh-forward-bind-warning-${r.id}`"
+                >{{ forwardBindWarning(r) }}</p>
+              </div>
+            </div>
           </div>
           <div class="drawer-foot">
             <button class="btn ghost" @click="closeHostDrawer">{{ t("common.cancel") }}</button>
@@ -1115,4 +1520,38 @@ async function confirmConfigImport() {
 .config-note { margin: 6px 0 0; font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
 .config-foot { flex-direction: column; align-items: stretch; gap: 8px; }
 .foot-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* --- port forwarding: rules editor (host drawer) --- */
+.fwd-section { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.fwd-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fwd-section-head .fl { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.fwd-rule { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+.fwd-rule-head { display: flex; align-items: center; gap: 8px; }
+.fwd-rule-head .seg { flex: 1; }
+.seg.sm button { font-size: 11px; padding: 4px 0; }
+.fwd-warn {
+  margin: 0; padding: 8px 9px; font-size: 11px; line-height: 1.5;
+  color: var(--warn, #d29922); background: rgba(210, 153, 34, 0.1);
+  border: 1px solid rgba(210, 153, 34, 0.32); border-radius: 6px;
+}
+
+/* --- port forwarding: active tunnels --- */
+.fwd-host { margin-bottom: 16px; }
+.fwd-host-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.fwd-host-name { font-size: 13px; font-weight: 600; color: var(--fg); }
+.fwd-host-sub { font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); }
+.fwd-proxy-reason { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: var(--warn, #d29922); }
+.fwd-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fwd-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.fwd-row-main { flex: 1; min-width: 0; }
+.fwd-row-title { display: flex; align-items: center; gap: 6px; }
+.fwd-kind { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.fwd-note { font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fwd-row-route { margin-top: 3px; font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); word-break: break-all; }
+.fwd-row-conns { margin-top: 2px; font-size: 10px; color: var(--fg-dim); }
+.fwd-row-error { margin: 5px 0 0; font-size: 11px; line-height: 1.5; color: var(--bad); }
+.fwd-state { flex: none; font-size: 10px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); background: rgba(139, 148, 158, 0.14); }
+.fwd-state.running { color: var(--good, #3fb950); border-color: rgba(63, 185, 80, 0.35); background: rgba(63, 185, 80, 0.12); }
+.fwd-state.stopped { color: var(--bad); border-color: rgba(248, 81, 73, 0.35); background: rgba(248, 81, 73, 0.12); }
+.fwd-row-actions { flex: none; display: flex; gap: 4px; align-items: center; }
 </style>

@@ -15,6 +15,10 @@ type KnownHostEntry struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
+// knownHostsPath is the known_hosts file every SSH dial verifies against:
+// a.sshKnownHostsPath when set (tests point it at a temp file), otherwise
+// ~/.ssh/known_hosts. The terminal path and the tunnel path share it, so a
+// fingerprint accepted through the TOFU dialog is the one a tunnel trusts.
 func (a *App) knownHostsPath() string {
 	if a.sshKnownHostsPath != "" {
 		return a.sshKnownHostsPath

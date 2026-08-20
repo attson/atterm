@@ -58,6 +58,16 @@ type SSHHost struct {
 	IdentityFile string `json:"identity_file,omitempty"`
 	ProxyJump    string `json:"proxy_jump,omitempty"`
 	ProxyCommand string `json:"proxy_command,omitempty"`
+
+	// Forwards are this host's port-forwarding rules (see ssh_tunnels.go).
+	// They are configuration only: nothing here starts on connect, because a
+	// tunnel occupies a local port and opening a terminal must not silently
+	// grab 5432. StartForward/StopForward are the only things that act on
+	// them.
+	//
+	// They ride the existing sealed ssh_hosts_encrypted blob like every other
+	// field — no new sync mechanism.
+	Forwards []ForwardRule `json:"forwards,omitempty"`
 }
 
 // sshCredential is JSON-encoded into a single keyring entry keyed by host ID.
@@ -120,12 +130,23 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 // UpdateSSHHost replaces the non-secret fields of the host with matching ID.
 // If cred is non-nil the credential is replaced too; nil leaves it untouched.
 //
-// The UI *owns* Alias, Host, Port, User, Tags, AuthKind, KeyID and Note, so
+// The UI *owns* Alias, Host, Port, User, Tags, AuthKind, KeyID, Forwards and Note, so
 // whatever the caller passes wins — including the empty string, because
 // clearing a label or a tag list is a legitimate edit. The drawer has a
 // control for all of them except Note, which has no editor today and simply
 // rides through the form's round trip; it stays on this list because the
-// store must keep honouring a caller that does clear it.
+// store must keep honouring a caller that does clear it. Forwards is on the
+// list for the same reason: deleting a host's last forward rule has to be a
+// saveable edit, so the caller's value wins — which also means a caller that
+// drops the field on the floor clears the rules. The drawer's save payload
+// therefore always carries Forwards (SshHostsPanel.vue's saveHost), and a
+// test pins it.
+//
+// A rule leaving this list is not only a config edit: it may have a tunnel
+// running on it. configStore.Set's onCommit observer runs
+// tunnelManager.reconcile afterwards, which stops any tunnel whose rule is
+// gone — see reconcile's doc comment for why that has to be in the store and
+// not in the UI.
 //
 // The UI does *not* own IdentityFile, ProxyJump or ProxyCommand. Those three
 // are derived from ~/.ssh/config by import, have no editor in the drawer, and
@@ -176,6 +197,11 @@ func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
 
 // DeleteSSHHost removes the host and its credential. A missing credential is
 // treated as already deleted (idempotent).
+//
+// Any tunnel still running on this host is stopped by the reconcile that
+// configStore.Set triggers — which matters most here, because the credential
+// is wiped a line later and a surviving tunnel would be a live authenticated
+// SSH connection to a host atterm no longer has any record of.
 func (a *App) DeleteSSHHost(id string) error {
 	if a.cfgStore == nil {
 		return fmt.Errorf("config store not ready")

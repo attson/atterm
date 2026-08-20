@@ -31,6 +31,7 @@ func TestBoundSliceMethodsNeverMarshalNull(t *testing.T) {
 		{"ListSSHKeys", func() any { return a.ListSSHKeys() }},
 		{"GetPasteboardFileURLs", func() any { return a.GetPasteboardFileURLs() }},
 		{"ListShells", func() any { return a.ListShells() }},
+		{"ListActiveForwards", func() any { return a.ListActiveForwards() }},
 	}
 
 	for _, tc := range cases {

@@ -378,12 +378,24 @@
 
 ### 26. 端口转发
 
-- [ ] 本地转发
-- [ ] 远程转发
-- [ ] 动态 SOCKS
-- [ ] 转发规则存进 host 记录随 vault 同步
-- [ ] 活跃隧道状态面板
-- [ ] 隧道生命周期独立管理，不混进 uplink 的订阅计数（红线 #2）
+> 设计见 [`2026-08-17-ssh-port-forwarding-design.md`](./superpowers/specs/2026-08-17-ssh-port-forwarding-design.md)。
+>
+> **跳板机上的转发不支持。** 带 `ProxyJump` / `ProxyCommand` 的主机起隧道会在发起 dial 之前直接被拒——第 27 项的跳板链路还没做，在那之前这类主机连隧道都开不了，更不用说经它转发。
+>
+> **SOCKS5 只实现了 `CONNECT`。** 动态转发是自己写的最小 SOCKS5 服务端（标准库没有服务端实现），只支持 `NO AUTHENTICATION` + `CONNECT`，地址类型覆盖 IPv4 / IPv6 / DOMAINNAME；`UDP ASSOCIATE` 与 `BIND` 均未实现，收到时按 RFC 1928 回一个规规矩矩的 `X'07' Command not supported`，不断链、不 panic，但也不代理这两类流量。
+>
+> **隧道不会随连接自动起。** 打开一个到主机的终端不会顺带拉起它保存的转发规则——一条规则占用一个本地端口，自动起会让「开个终端」变成「悄悄抢了 5432」。所有隧道都要显式调用 `StartForward`。
+>
+> **连接掉线不会自动重连。** 底层 SSH 连接断开时，规则状态直接标记为已停止并附带原因（在活跃隧道面板可见），不会自己重试重连。
+>
+> 转发规则随 `SSHHost.Forwards`（`[]ForwardRule`）走既有的整块 `ssh_hosts_encrypted` sealed JSON 同步，没有新建同步机制。第 21 项的教训是这类假设必须验证：`desktop/ssh_hosts_sync_fields_test.go` 新增的 `TestSealOpenSSHHostsRoundTripForwards` 用真实 seal → open 往返、每个字段都带 canary 值证明规则不丢，`TestSealOpenSSHHostsRoundTripForwardsEmpty` 确认没有规则的主机也能正常往返；relay 的 `allowedPreferenceKeys`（`internal/userstore/preferences.go:37`）本来就已经放行 `ssh_hosts_encrypted`——这张表是按 key 整体放行/拒绝，不看 key 内部的字段，所以给 `SSHHost` 加 `Forwards` 字段不需要、也不会触碰这张表。
+
+- [x] 本地转发
+- [x] 远程转发
+- [x] 动态 SOCKS（仅 `CONNECT`，见上）
+- [x] 转发规则存进 host 记录随 vault 同步
+- [x] 活跃隧道状态面板
+- [x] 隧道生命周期独立管理，不混进 uplink 的订阅计数（红线 #2）
 
 ### 27. ProxyJump / 跳板机链
 

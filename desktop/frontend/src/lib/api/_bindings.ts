@@ -112,6 +112,51 @@ export interface SSHHost {
   identity_file?: string;
   proxy_jump?: string;
   proxy_command?: string;
+  // forwards are this host's port-forwarding rules (desktop/ssh_tunnels.go).
+  // Configuration only — nothing starts on connect; StartForward is the only
+  // thing that acts on them. UpdateSSHHost lets the caller's value win, so a
+  // save payload that drops this field deletes every rule on every device.
+  forwards?: ForwardRule[];
+}
+
+// ForwardRule mirrors desktop/ssh_tunnels.go ForwardRule — one saved
+// port-forwarding rule on an SSHHost.
+//
+// bind_addr empty means 127.0.0.1 (defaultForwardBindAddr). Anything else is a
+// deliberate, dangerous choice the UI has to warn about: the listener stops
+// being loopback-only and the rule syncs to every device.
+//
+// target_host / target_port are the far side of a local or remote forward and
+// are unused by "dynamic", where the SOCKS5 client names a destination per
+// connection.
+export interface ForwardRule {
+  id: string;
+  kind: "local" | "remote" | "dynamic";
+  bind_addr?: string;
+  bind_port: string;
+  target_host?: string;
+  target_port?: string;
+  note?: string;
+}
+
+// ActiveForward mirrors desktop/ssh_tunnels.go ActiveForward — the view of one
+// tunnel this app is holding.
+//
+// It also carries tunnels that stopped *on their own* (running false, error
+// set) so a lost SSH connection stays visible. Branch on `running`: rendering
+// one of those as live claims a listener that no longer exists.
+export interface ActiveForward {
+  host_id: string;
+  rule_id: string;
+  kind: string;
+  // listen_addr is the listener's real resolved address, so an ephemeral or
+  // defaulted bind reports what it actually became.
+  listen_addr: string;
+  target?: string;
+  conns: number;
+  started_at: number;
+  running: boolean;
+  error?: string;
 }
 
 // SSHCredential mirrors desktop sshCredential — only a password now; private
@@ -468,6 +513,9 @@ export interface AppBindings {
   AddSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost>;
   UpdateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void>;
   DeleteSSHHost(id: string): Promise<void>;
+  StartForward(hostID: string, ruleID: string): Promise<void>;
+  StopForward(hostID: string, ruleID: string): Promise<void>;
+  ListActiveForwards(): Promise<ActiveForward[]>;
   PreviewSSHConfigImport(): Promise<SSHConfigImportPreview>;
   ImportSSHHosts(hosts: SSHHost[]): Promise<number>;
   ListSSHKeys(): Promise<SSHKey[]>;

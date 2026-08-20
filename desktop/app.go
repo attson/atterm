@@ -297,6 +297,19 @@ type App struct {
 	// strict context check. Same pattern as uplink.eventsEmit.
 	eventsEmitter func(ctx context.Context, name string, data ...interface{})
 
+	// snippetDialer opens the connection a batch snippet run executes a
+	// command over (see snippet_run.go). Defaults to dialSnippetConn in
+	// NewApp; tests substitute a fake so the batch-run tests don't need a
+	// live SSH server, the same injectability pattern eventsEmitter uses and
+	// for the same reason.
+	snippetDialer func(context.Context, SSHHost) (snippetConn, error)
+
+	// snippetRunsMu guards snippetRuns. Its own lock rather than mu: a batch
+	// run's lifetime has nothing to do with the uplink/prefs state mu already
+	// serializes, and sharing it would block one on the other for no reason.
+	snippetRunsMu sync.Mutex
+	snippetRuns   map[string]*snippetRun
+
 	// windowActivator raises and focuses the main window for user-driven
 	// actions arriving outside the main webview (for example the widget child
 	// process). Injectable so event-routing tests do not need a live Wails UI.
@@ -339,6 +352,7 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 		eventsEmitter:   wailsruntime.EventsEmit,
 		windowActivator: activateMainWindow,
 	}
+	a.snippetDialer = a.dialSnippetConn
 	a.updater = newUpdater(updaterConfig{
 		current:         Version,
 		repo:            "attson/atterm",

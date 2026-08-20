@@ -7,6 +7,7 @@ import { readPrivateKeyFile } from "../lib/sshKeyFile";
 import { sshCommandFor } from "../lib/sshCommand";
 import { allHostTags, hostHasAllTags, normalizeTags, parseTagInput } from "../lib/hostTags";
 import { fallbackCopyText } from "../lib/terminalCopy";
+import { useI18n } from "../i18n/useI18n";
 import {
   listSSHHosts,
   addSSHHost,
@@ -28,6 +29,8 @@ const emit = defineEmits<{
   (e: "connected", sessionId: string): void;
   (e: "close"): void;
 }>();
+
+const { t } = useI18n();
 
 type Tab = "hosts" | "keys";
 const activeTab = ref<Tab>("hosts");
@@ -131,7 +134,7 @@ function hostLabel(h: SSHHost): string {
 }
 function hostSubtitle(h: SSHHost): string {
   const port = h.port && h.port !== "22" ? `:${h.port}` : "";
-  const auth = h.auth_kind === "key" ? "key" : "password";
+  const auth = h.auth_kind === "key" ? t("ssh.subtitleAuthKey") : t("ssh.subtitleAuthPassword");
   return `${h.user}@${h.host}${port} · ${auth}`;
 }
 
@@ -148,17 +151,17 @@ function isProxied(h: ProxyFields): boolean {
 }
 // Short pill text for the host row / preview row.
 function proxyLabel(h: ProxyFields): string {
-  return h.proxy_jump ? "Jump host required" : "ProxyCommand";
+  return h.proxy_jump ? t("ssh.proxy.jumpBadge") : t("ssh.proxy.commandBadge");
 }
 // Full sentence for tooltips and the error line. Branches on which field is
 // actually set — naming ProxyJump at a ProxyCommand-only host sends the user
 // looking for a config line they do not have.
 function proxyReason(h: ProxyFields): string {
   if (h.proxy_jump) {
-    return `Needs a jump host (ProxyJump ${h.proxy_jump}) — jump-host support is not implemented yet, so this host cannot be connected directly.`;
+    return t("ssh.proxy.jumpReason", { target: h.proxy_jump });
   }
   if (h.proxy_command) {
-    return `Configured with a ProxyCommand (${h.proxy_command}) — atterm never runs that command, so this host cannot be connected directly.`;
+    return t("ssh.proxy.commandReason", { command: h.proxy_command });
   }
   return "";
 }
@@ -193,13 +196,15 @@ const hostMenu = ref<{ open: boolean; x: number; y: number; host: SSHHost | null
   host: null,
 });
 
-const hostMenuItems: MenuItem[] = [
-  { key: "connect", label: "Connect" },
-  { key: "edit", label: "Edit Host Details" },
-  { key: "duplicate", label: "Duplicate" },
-  { key: "copy-ssh", label: "Copy SSH command" },
-  { key: "remove", label: "Remove", separatorBefore: true },
-];
+// Computed, not a module-level const: the labels have to re-resolve when the
+// user switches language while the panel is open.
+const hostMenuItems = computed<MenuItem[]>(() => [
+  { key: "connect", label: t("ssh.hosts.menuConnect") },
+  { key: "edit", label: t("ssh.hosts.menuEdit") },
+  { key: "duplicate", label: t("ssh.hosts.menuDuplicate") },
+  { key: "copy-ssh", label: t("ssh.hosts.menuCopySsh") },
+  { key: "remove", label: t("ssh.hosts.menuRemove"), separatorBefore: true },
+]);
 
 function openHostMenu(e: MouseEvent, h: SSHHost) {
   hostMenu.value = { open: true, x: e.clientX, y: e.clientY, host: h };
@@ -234,6 +239,11 @@ async function onHostMenuSelect(key: string) {
 // keyring and cannot be read back, so a password host's copy starts without
 // one — open the drawer in that case rather than leaving a host that silently
 // fails to connect.
+//
+// The " copy" suffix is deliberately not translated: it becomes the stored
+// alias, which syncs to every other device. Localizing it would mean the same
+// host reads differently depending on which machine duplicated it, and the
+// user can rename it in the drawer anyway.
 async function duplicateHost(h: SSHHost) {
   errorMsg.value = "";
   const copy: SSHHost = {
@@ -566,61 +576,61 @@ async function confirmConfigImport() {
           <button
             class="tab" :class="{ on: activeTab === 'hosts' }"
             data-test="ssh-tab-hosts" @click="activeTab = 'hosts'"
-          ><Server :size="14" /> Hosts <span class="tab-count">{{ hosts.length }}</span></button>
+          ><Server :size="14" /> {{ t("ssh.tabHosts") }} <span class="tab-count">{{ hosts.length }}</span></button>
           <button
             class="tab" :class="{ on: activeTab === 'keys' }"
             data-test="ssh-tab-keys" @click="activeTab = 'keys'"
-          ><KeyRound :size="14" /> Keys <span class="tab-count">{{ keys.length }}</span></button>
+          ><KeyRound :size="14" /> {{ t("ssh.tabKeys") }} <span class="tab-count">{{ keys.length }}</span></button>
         </div>
         <div v-if="activeTab === 'hosts'" class="search">
           <Search :size="13" class="search-icon" />
-          <input v-model="query" data-test="ssh-search" placeholder="Filter hosts…" spellcheck="false" autocomplete="off" />
+          <input v-model="query" data-test="ssh-search" :placeholder="t('ssh.filterPlaceholder')" spellcheck="false" autocomplete="off" />
         </div>
         <div v-else class="search-spacer" />
         <button
           v-if="activeTab === 'hosts'" class="new-btn ghost"
           data-test="ssh-config-import-open" @click="openConfigImport"
         >
-          <FileDown :size="14" /> Import from ~/.ssh/config
+          <FileDown :size="14" /> {{ t("ssh.configImport.open") }}
         </button>
         <button v-if="activeTab === 'hosts'" class="new-btn" data-test="ssh-new-host" @click="openNewHost">
-          <Plus :size="14" /> New Host
+          <Plus :size="14" /> {{ t("ssh.newHost") }}
         </button>
         <button v-else class="new-btn" data-test="ssh-key-new" @click="openNewKey">
-          <Plus :size="14" /> New Key
+          <Plus :size="14" /> {{ t("ssh.newKey") }}
         </button>
-        <button class="close-x" title="Close" @click="$emit('close')"><X :size="16" /></button>
+        <button class="close-x" :title="t('common.close')" @click="$emit('close')"><X :size="16" /></button>
       </header>
 
       <p v-if="errorMsg" class="ssh-error" data-test="ssh-hosts-error">{{ errorMsg }}</p>
       <p v-if="configImportResult !== null" class="ssh-success" data-test="ssh-config-import-result">
-        Imported {{ configImportResult }} host(s)
+        {{ t("ssh.importedHosts", { count: configImportResult }) }}
       </p>
 
       <!-- HOSTS TAB -->
       <div v-show="activeTab === 'hosts'" class="ssh-body">
         <div v-if="hosts.length === 0" class="empty">
           <Server :size="40" class="empty-icon" />
-          <p class="empty-title">No saved hosts</p>
-          <p class="empty-sub">Add a host to connect and take it over from any device.</p>
-          <button class="new-btn ghost" @click="openNewHost"><Plus :size="14" /> New Host</button>
+          <p class="empty-title">{{ t("ssh.hosts.emptyTitle") }}</p>
+          <p class="empty-sub">{{ t("ssh.hosts.emptySub") }}</p>
+          <button class="new-btn ghost" @click="openNewHost"><Plus :size="14" /> {{ t("ssh.newHost") }}</button>
         </div>
         <template v-else>
           <div v-if="availableTags.length" class="tag-bar" data-test="ssh-tag-filter-bar">
             <button
-              v-for="t in availableTags" :key="t"
-              class="tag-pill" :class="{ on: selectedTags.includes(t) }"
-              :data-test="`ssh-tag-filter-${t}`" @click="toggleTagFilter(t)"
-            >{{ t }}</button>
+              v-for="tag in availableTags" :key="tag"
+              class="tag-pill" :class="{ on: selectedTags.includes(tag) }"
+              :data-test="`ssh-tag-filter-${tag}`" @click="toggleTagFilter(tag)"
+            >{{ tag }}</button>
             <button
               v-if="selectedTags.length" class="tag-clear"
               data-test="ssh-tag-filter-clear" @click="clearTagFilters"
-            ><X :size="11" /> Clear</button>
+            ><X :size="11" /> {{ t("ssh.hosts.clearTags") }}</button>
           </div>
           <div v-if="filteredHosts.length === 0" class="empty" data-test="ssh-hosts-no-match">
             <Server :size="40" class="empty-icon" />
-            <p class="empty-title">No hosts match</p>
-            <p class="empty-sub">Loosen the filter or clear the selected tags.</p>
+            <p class="empty-title">{{ t("ssh.hosts.noMatchTitle") }}</p>
+            <p class="empty-sub">{{ t("ssh.hosts.noMatchSub") }}</p>
           </div>
             <div v-else class="card-grid">
               <article
@@ -644,20 +654,20 @@ async function confirmConfigImport() {
                   </div>
                   <div v-if="h.tags?.length" class="card-tags">
                     <span
-                      v-for="t in h.tags" :key="t" class="card-tag"
-                      :data-test="`ssh-host-tag-${h.id}-${t}`"
-                    >{{ t }}</span>
+                      v-for="tag in h.tags" :key="tag" class="card-tag"
+                      :data-test="`ssh-host-tag-${h.id}-${tag}`"
+                    >{{ tag }}</span>
                   </div>
                 </div>
                 <div class="card-actions">
                   <button
                     class="act connect" :data-test="`ssh-connect-${h.id}`"
                     :disabled="connectingId === h.id || isProxied(h)"
-                    :title="isProxied(h) ? proxyReason(h) : 'Connect'"
+                    :title="isProxied(h) ? proxyReason(h) : t('common.connect')"
                     @click.stop="connect(h.id)"
                   ><Zap :size="13" /></button>
-                  <button class="act" title="Edit" @click.stop="openEditHost(h)"><Pencil :size="13" /></button>
-                  <button class="act danger" :data-test="`ssh-delete-${h.id}`" title="Delete" @click.stop="removeHost(h.id)"><Trash2 :size="13" /></button>
+                  <button class="act" :title="t('ssh.edit')" @click.stop="openEditHost(h)"><Pencil :size="13" /></button>
+                  <button class="act danger" :data-test="`ssh-delete-${h.id}`" :title="t('common.delete')" @click.stop="removeHost(h.id)"><Trash2 :size="13" /></button>
                 </div>
               </article>
             </div>
@@ -668,20 +678,20 @@ async function confirmConfigImport() {
       <div v-show="activeTab === 'keys'" class="ssh-body">
         <div v-if="keys.length === 0" class="empty">
           <KeyRound :size="40" class="empty-icon" />
-          <p class="empty-title">No keys yet</p>
-          <p class="empty-sub">Add a private key here, then reference it from a host.</p>
-          <button class="new-btn ghost" @click="openNewKey"><Plus :size="14" /> New Key</button>
+          <p class="empty-title">{{ t("ssh.keys.emptyTitle") }}</p>
+          <p class="empty-sub">{{ t("ssh.keys.emptySub") }}</p>
+          <button class="new-btn ghost" @click="openNewKey"><Plus :size="14" /> {{ t("ssh.newKey") }}</button>
         </div>
         <div v-else class="card-grid">
           <article v-for="k in keys" :key="k.id" class="card">
             <div class="card-glyph"><KeyRound :size="16" /></div>
             <div class="card-main">
               <div class="card-label">{{ k.name }}</div>
-              <div class="card-sub">{{ k.key_type ? "Type " + k.key_type : "SSH key" }}</div>
+              <div class="card-sub">{{ k.key_type ? t("ssh.keys.typeLabel", { type: k.key_type }) : t("ssh.keys.genericSubtitle") }}</div>
             </div>
             <div class="card-actions">
-              <button class="act" title="Edit" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
-              <button class="act danger" :data-test="`ssh-key-delete-${k.id}`" title="Delete" @click.stop="removeKey(k.id)"><Trash2 :size="13" /></button>
+              <button class="act" :title="t('ssh.edit')" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
+              <button class="act danger" :data-test="`ssh-key-delete-${k.id}`" :title="t('common.delete')" @click.stop="removeKey(k.id)"><Trash2 :size="13" /></button>
             </div>
           </article>
         </div>
@@ -695,29 +705,29 @@ async function confirmConfigImport() {
       <!-- HOST DRAWER -->
       <transition name="drawer">
         <aside v-if="hostDrawer" class="drawer">
-          <div class="drawer-head"><span>{{ hostEditId ? "Edit Host" : "New Host" }}</span><button class="close-x" @click="closeHostDrawer"><X :size="15" /></button></div>
+          <div class="drawer-head"><span>{{ hostEditId ? t("ssh.hostDrawer.titleEdit") : t("ssh.hostDrawer.titleNew") }}</span><button class="close-x" @click="closeHostDrawer"><X :size="15" /></button></div>
           <div class="drawer-body">
-            <label class="field"><span class="fl">Address</span><input data-test="ssh-add-host" v-model="fHost" placeholder="IP or hostname" spellcheck="false" autocomplete="off" /></label>
+            <label class="field"><span class="fl">{{ t("ssh.hostDrawer.address") }}</span><input data-test="ssh-add-host" v-model="fHost" :placeholder="t('ssh.hostDrawer.addressPlaceholder')" spellcheck="false" autocomplete="off" /></label>
             <div class="field-row">
-              <label class="field grow"><span class="fl">Label</span><input data-test="ssh-add-alias" v-model="fAlias" placeholder="optional" autocomplete="off" /></label>
-              <label class="field port"><span class="fl">Port</span><input data-test="ssh-add-port" v-model="fPort" autocomplete="off" /></label>
+              <label class="field grow"><span class="fl">{{ t("ssh.hostDrawer.label") }}</span><input data-test="ssh-add-alias" v-model="fAlias" :placeholder="t('ssh.hostDrawer.labelPlaceholder')" autocomplete="off" /></label>
+              <label class="field port"><span class="fl">{{ t("ssh.hostDrawer.port") }}</span><input data-test="ssh-add-port" v-model="fPort" autocomplete="off" /></label>
             </div>
             <label class="field tag-field">
-              <span class="fl">Tags</span>
+              <span class="fl">{{ t("ssh.hostDrawer.tags") }}</span>
               <div class="tag-editor">
                 <span
-                  v-for="t in fTags" :key="t" class="chip"
-                  :data-test="`ssh-add-tag-chip-${t}`"
+                  v-for="tag in fTags" :key="tag" class="chip"
+                  :data-test="`ssh-add-tag-chip-${tag}`"
                 >
-                  {{ t }}
+                  {{ tag }}
                   <button
-                    type="button" class="chip-x" :data-test="`ssh-add-tag-remove-${t}`"
-                    :title="`Remove ${t}`" @click.prevent="removeFormTag(t)"
+                    type="button" class="chip-x" :data-test="`ssh-add-tag-remove-${tag}`"
+                    :title="t('ssh.hostDrawer.removeTag', { tag })" @click.prevent="removeFormTag(tag)"
                   ><X :size="10" /></button>
                 </span>
                 <input
                   class="tag-input" data-test="ssh-add-tag-input" v-model="fTagInput"
-                  :placeholder="fTags.length ? '' : 'comma separated'"
+                  :placeholder="fTags.length ? '' : t('ssh.hostDrawer.tagsPlaceholder')"
                   autocomplete="off" spellcheck="false"
                   @focus="tagMenuOpen = true" @input="tagMenuOpen = true" @blur="onTagBlur"
                   @keydown.enter.prevent="commitTagInput"
@@ -726,51 +736,51 @@ async function confirmConfigImport() {
                 />
                 <ul v-if="tagMenuOpen && tagSuggestions.length" class="combo-menu" data-test="ssh-tag-menu">
                   <li
-                    v-for="t in tagSuggestions" :key="t"
-                    class="combo-opt" :data-test="`ssh-tag-opt-${t}`"
-                    @mousedown.prevent="pickTag(t)"
-                  >{{ t }}</li>
+                    v-for="tag in tagSuggestions" :key="tag"
+                    class="combo-opt" :data-test="`ssh-tag-opt-${tag}`"
+                    @mousedown.prevent="pickTag(tag)"
+                  >{{ tag }}</li>
                 </ul>
               </div>
             </label>
-            <label class="field"><span class="fl">Username</span><input data-test="ssh-add-user" v-model="fUser" placeholder="user" autocomplete="off" /></label>
+            <label class="field"><span class="fl">{{ t("ssh.hostDrawer.username") }}</span><input data-test="ssh-add-user" v-model="fUser" :placeholder="t('ssh.hostDrawer.usernamePlaceholder')" autocomplete="off" /></label>
             <div class="seg">
-              <button :class="{ on: fAuthKind === 'password' }" data-test="ssh-auth-password" @click="fAuthKind = 'password'">Password</button>
-              <button :class="{ on: fAuthKind === 'key' }" data-test="ssh-auth-key" @click="fAuthKind = 'key'">Key</button>
+              <button :class="{ on: fAuthKind === 'password' }" data-test="ssh-auth-password" @click="fAuthKind = 'password'">{{ t("ssh.hostDrawer.authPassword") }}</button>
+              <button :class="{ on: fAuthKind === 'key' }" data-test="ssh-auth-key" @click="fAuthKind = 'key'">{{ t("ssh.hostDrawer.authKey") }}</button>
             </div>
             <!-- Read-only: ssh_config's IdentityFile is recorded as a path,
                  never read. Showing it is the whole point of recording it —
                  it tells the user which key to go import. -->
             <p v-if="editingHost?.identity_file" class="identity-hint" data-test="ssh-host-identity-file">
-              <span class="fl">From ~/.ssh/config</span>
+              <span class="fl">{{ t("ssh.hostDrawer.identityFileLabel") }}</span>
               <code>{{ editingHost.identity_file }}</code>
-              <span class="hint">Import this key under Keys, then select it below.</span>
+              <span class="hint">{{ t("ssh.hostDrawer.identityFileHint") }}</span>
             </p>
             <p v-if="editingHost && isProxied(editingHost)" class="identity-hint proxy" data-test="ssh-host-drawer-proxy">
               {{ proxyReason(editingHost) }}
             </p>
             <label v-if="fAuthKind === 'password'" class="field">
-              <span class="fl">Password<template v-if="hostEditId"> <em>(leave blank to keep)</em></template></span>
+              <span class="fl">{{ t("ssh.hostDrawer.password") }}<template v-if="hostEditId"> <em>{{ t("ssh.hostDrawer.keepBlank") }}</em></template></span>
               <input data-test="ssh-add-password" type="password" v-model="fPassword" autocomplete="off" />
             </label>
             <template v-else>
               <label v-if="keys.length" class="field">
-                <span class="fl">Key</span>
+                <span class="fl">{{ t("ssh.hostDrawer.keyPicker") }}</span>
                 <div data-test="ssh-add-keyid">
-                  <SelectDropdown v-model="fKeyID" :options="keyOptions" aria-label="SSH key" />
+                  <SelectDropdown v-model="fKeyID" :options="keyOptions" :aria-label="t('ssh.hostDrawer.keyPickerAria')" />
                 </div>
               </label>
               <div v-else class="empty-keys-hint">
-                <p class="hint">No keys yet.</p>
+                <p class="hint">{{ t("ssh.hostDrawer.noKeys") }}</p>
                 <button class="btn primary sm" data-test="ssh-host-add-key" @click="jumpToNewKey">
-                  <Plus :size="13" /> Add a key
+                  <Plus :size="13" /> {{ t("ssh.hostDrawer.addKey") }}
                 </button>
               </div>
             </template>
           </div>
           <div class="drawer-foot">
-            <button class="btn ghost" @click="closeHostDrawer">Cancel</button>
-            <button class="btn primary" data-test="ssh-add-submit" :disabled="!canSaveHost" @click="saveHost">{{ hostEditId ? "Save" : "Add Host" }}</button>
+            <button class="btn ghost" @click="closeHostDrawer">{{ t("common.cancel") }}</button>
+            <button class="btn primary" data-test="ssh-add-submit" :disabled="!canSaveHost" @click="saveHost">{{ hostEditId ? t("common.save") : t("ssh.hostDrawer.submitNew") }}</button>
           </div>
         </aside>
       </transition>
@@ -778,19 +788,21 @@ async function confirmConfigImport() {
       <!-- KEY DRAWER -->
       <transition name="drawer">
         <aside v-if="keyDrawer" class="drawer">
-          <div class="drawer-head"><span>{{ keyEditId ? "Edit Key" : "New Key" }}</span><button class="close-x" @click="closeKeyDrawer"><X :size="15" /></button></div>
+          <div class="drawer-head"><span>{{ keyEditId ? t("ssh.keyDrawer.titleEdit") : t("ssh.keyDrawer.titleNew") }}</span><button class="close-x" @click="closeKeyDrawer"><X :size="15" /></button></div>
           <div class="drawer-body">
-            <label class="field"><span class="fl">Name</span><input data-test="ssh-key-name" v-model="kName" placeholder="e.g. aws" autocomplete="off" /></label>
+            <label class="field"><span class="fl">{{ t("ssh.keyDrawer.name") }}</span><input data-test="ssh-key-name" v-model="kName" :placeholder="t('ssh.keyDrawer.namePlaceholder')" autocomplete="off" /></label>
             <label class="field">
-              <span class="fl">Private key (PEM)<template v-if="keyEditId"> <em>(leave blank to keep)</em></template></span>
+              <span class="fl">{{ t("ssh.keyDrawer.pem") }}<template v-if="keyEditId"> <em>{{ t("ssh.keyDrawer.keepBlank") }}</em></template></span>
+              <!-- The placeholder is the literal PEM header the user is
+                   expected to paste, not prose — it stays untranslated. -->
               <textarea data-test="ssh-key-pem" v-model="kPem" rows="6" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
             </label>
             <label class="field">
-              <span class="fl">Passphrase</span>
+              <span class="fl">{{ t("ssh.keyDrawer.passphrase") }}</span>
               <input data-test="ssh-key-passphrase" type="password" v-model="kPassphrase" autocomplete="off" />
             </label>
             <p v-if="kNeedsPassphrase" class="enc-hint" data-test="ssh-key-encrypted-hint">
-              This key is encrypted — enter its passphrase above.
+              {{ t("ssh.keyDrawer.encryptedHint") }}
             </p>
 
             <div class="import-block">
@@ -807,16 +819,16 @@ async function confirmConfigImport() {
                 @drop.prevent="onKeyFileDropped"
               >
                 <FileUp :size="20" class="dropzone-icon" />
-                <span>Drag and drop a private key file to import</span>
+                <span>{{ t("ssh.keyDrawer.dropzone") }}</span>
               </div>
               <button class="btn import" type="button" data-test="ssh-key-import-btn" @click="pickKeyFile">
-                <Upload :size="13" /> Import from key file
+                <Upload :size="13" /> {{ t("ssh.keyDrawer.importFromFile") }}
               </button>
             </div>
           </div>
           <div class="drawer-foot">
-            <button class="btn ghost" @click="closeKeyDrawer">Cancel</button>
-            <button class="btn primary" data-test="ssh-key-submit" :disabled="!canSaveKey" @click="saveKey">{{ keyEditId ? "Save" : "Add Key" }}</button>
+            <button class="btn ghost" @click="closeKeyDrawer">{{ t("common.cancel") }}</button>
+            <button class="btn primary" data-test="ssh-key-submit" :disabled="!canSaveKey" @click="saveKey">{{ keyEditId ? t("common.save") : t("ssh.keyDrawer.submitNew") }}</button>
           </div>
         </aside>
       </transition>
@@ -825,12 +837,12 @@ async function confirmConfigImport() {
       <transition name="drawer">
         <aside v-if="configImportDrawer" class="drawer wide" data-test="ssh-config-import-drawer">
           <div class="drawer-head">
-            <span>Import from ~/.ssh/config</span>
+            <span>{{ t("ssh.configImport.title") }}</span>
             <button class="close-x" @click="closeConfigImportDrawer"><X :size="15" /></button>
           </div>
           <div class="drawer-body">
             <div v-if="configImportLoading" class="empty" data-test="ssh-config-import-loading">
-              <p class="empty-sub">Reading ~/.ssh/config…</p>
+              <p class="empty-sub">{{ t("ssh.configImport.loading") }}</p>
             </div>
             <p v-else-if="configPreviewError" class="ssh-error inline" data-test="ssh-config-import-error">
               {{ configPreviewError }}
@@ -841,12 +853,12 @@ async function confirmConfigImport() {
                 class="empty" data-test="ssh-config-import-empty"
               >
                 <FileDown :size="36" class="empty-icon" />
-                <p class="empty-title">No importable hosts</p>
-                <p class="empty-sub">No usable Host entries were found in ~/.ssh/config.</p>
+                <p class="empty-title">{{ t("ssh.configImport.emptyTitle") }}</p>
+                <p class="empty-sub">{{ t("ssh.configImport.emptySub") }}</p>
               </div>
               <template v-else>
                 <p v-if="previewEntries.length" class="config-section-title">
-                  Importable hosts ({{ previewEntries.length }})
+                  {{ t("ssh.configImport.importableTitle", { count: previewEntries.length }) }}
                 </p>
                 <ul v-if="previewEntries.length" class="config-entry-list">
                   <li
@@ -866,19 +878,19 @@ async function confirmConfigImport() {
                         <span
                           v-if="willOverwrite(e)" class="overwrite-badge"
                           :data-test="`ssh-config-entry-overwrite-${i}`"
-                          title="A saved host already uses this label — importing updates it in place"
-                        >Updates existing</span>
+                          :title="t('ssh.configImport.overwriteTitle')"
+                        >{{ t("ssh.configImport.overwriteBadge") }}</span>
                         <span
                           v-if="isProxied(e)" class="proxy-badge"
                           :data-test="`ssh-config-entry-proxy-${i}`"
                           :title="proxyReason(e)"
-                        >{{ proxyLabel(e) }} — not directly connectable</span>
+                        >{{ t("ssh.configImport.proxyBadge", { label: proxyLabel(e) }) }}</span>
                       </span>
                     </label>
                   </li>
                 </ul>
                 <template v-if="previewSkipped.length">
-                  <p class="config-section-title">Skipped ({{ previewSkipped.length }})</p>
+                  <p class="config-section-title">{{ t("ssh.configImport.skippedTitle", { count: previewSkipped.length }) }}</p>
                   <ul class="config-skipped" data-test="ssh-config-import-skipped">
                     <li v-for="(s, i) in previewSkipped" :key="`${s.alias}-${i}`" class="skip-row">
                       <span class="skip-alias">{{ s.alias }}</span>
@@ -887,6 +899,8 @@ async function confirmConfigImport() {
                   </ul>
                 </template>
               </template>
+              <!-- Backend-authored: PreviewSSHConfigImport returns this note
+                   already worded, so it is rendered verbatim, not keyed. -->
               <p class="config-note">{{ configPreview.note }}</p>
             </template>
           </div>
@@ -895,12 +909,12 @@ async function confirmConfigImport() {
               {{ configConfirmError }}
             </p>
             <div class="foot-actions">
-              <button class="btn ghost" @click="closeConfigImportDrawer">Cancel</button>
+              <button class="btn ghost" @click="closeConfigImportDrawer">{{ t("common.cancel") }}</button>
               <button
                 class="btn primary" data-test="ssh-config-import-confirm"
                 :disabled="!canImportConfigSelection || configImporting"
                 @click="confirmConfigImport"
-              >{{ configImporting ? "Importing…" : `Import selected hosts (${configSelected.size})` }}</button>
+              >{{ configImporting ? t("ssh.configImport.importing") : t("ssh.configImport.confirm", { count: configSelected.size }) }}</button>
             </div>
           </div>
         </aside>

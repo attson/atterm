@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import SshHostsPanel from "./SshHostsPanel.vue";
+import { resetI18nForTest } from "../i18n";
 
 const listSSHHosts = vi.fn();
 const addSSHHost = vi.fn();
@@ -27,7 +28,14 @@ vi.mock("../lib/api", () => ({
   importSSHHosts: (...a: unknown[]) => importSSHHosts(...a),
 }));
 
+// The panel renders through the i18n layer, so every assertion below that
+// reads UI text reads a *resolved* string, not a key. Pin the locale to en so
+// those assertions stay stable: they are written against the English messages
+// on purpose (asserting on keys instead would stop catching a key that resolves
+// to nothing, which is the failure mode worth pinning). The proxy-marker and
+// skip-reason assertions in particular have to keep matching real words.
 beforeEach(() => {
+  resetI18nForTest();
   listSSHHosts.mockReset().mockResolvedValue([]);
   addSSHHost.mockReset();
   updateSSHHost.mockReset();

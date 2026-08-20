@@ -977,4 +977,18 @@ export const zhCN = {
       failed: "（已失败）",
     },
   },
+  snippets: {
+    runOnHosts: "在多台主机上运行…",
+    selectHosts: "选择主机",
+    running: "运行中…",
+    ok: "成功",
+    failed: "失败",
+    error: "出错",
+    exitCode: "退出码 {code}",
+    truncated: "输出已截断",
+    copyAll: "复制全部",
+    cancel: "取消",
+    noHostsSelected: "请至少选择一台主机",
+    hostKeyUntrusted: "主机密钥尚未信任。先在终端里连接这台主机一次并接受指纹，再重新运行。",
+  },
 } as const satisfies Messages;

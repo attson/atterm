@@ -140,11 +140,20 @@ func validateScalarPrefValue(key string, target any) error {
 			return errors.New("unsupported locale preference")
 		}
 	case "terminal_theme":
-		if !isSupportedTerminalTheme(*target.(*string)) {
+		// TrimSpace first, because SetTerminalTheme does (app.go) — it trims,
+		// then validates, then stores the trimmed value. Validating the raw
+		// string here would make this check STRICTER than the setter it is
+		// supposed to mirror: "  nord  " is a value the user can set by hand
+		// and the setter happily stores as "nord", but preview would report
+		// it Skipped. A validator that refuses what its setter accepts is the
+		// worse direction of the two to be wrong in — it silently drops the
+		// user's data instead of failing loudly.
+		if !isSupportedTerminalTheme(strings.TrimSpace(*target.(*string))) {
 			return fmt.Errorf("bad terminal theme: %s", *target.(*string))
 		}
 	case "terminal_cursor_style":
-		if !isSupportedCursorStyle(*target.(*string)) {
+		// Same as terminal_theme above: SetTerminalCursorStyle trims first.
+		if !isSupportedCursorStyle(strings.TrimSpace(*target.(*string))) {
 			return fmt.Errorf("bad cursor style: %s", *target.(*string))
 		}
 	case "terminal_font_size":

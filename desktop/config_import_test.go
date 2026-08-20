@@ -1576,3 +1576,49 @@ func TestApplyConfigImport_MalformedListEntrySkippedRestApplied(t *testing.T) {
 		t.Fatalf("cfg.Profiles = %+v, want exactly [pgood] (bad profile must not block it)", cfg.Profiles)
 	}
 }
+
+// A validator must not be stricter than the setter it mirrors.
+// SetTerminalTheme and SetTerminalCursorStyle both TrimSpace before
+// validating and store the trimmed value, so "  nord  " is a value the user
+// can set by hand. Before this test, validateScalarPrefValue checked the raw
+// string and reported it Skipped — preview refusing what the app itself
+// accepts, which silently drops the user's data rather than failing loudly.
+func TestValidateScalarPrefValue_TrimsLikeTheSettersDo(t *testing.T) {
+	cases := []struct {
+		key   string
+		value string
+	}{
+		{"terminal_theme", `"  nord  "`},
+		{"terminal_cursor_style", `"  bar  "`},
+	}
+	for _, tc := range cases {
+		target := scalarPrefTarget(tc.key)
+		if target == nil {
+			t.Fatalf("%s: no scalar target", tc.key)
+		}
+		if err := json.Unmarshal([]byte(tc.value), target); err != nil {
+			t.Fatalf("%s: unmarshal %s: %v", tc.key, tc.value, err)
+		}
+		if err := validateScalarPrefValue(tc.key, target); err != nil {
+			t.Errorf("%s = %s was rejected (%v), but its setter trims and accepts it", tc.key, tc.value, err)
+		}
+	}
+}
+
+// applyScalarPref's error path is defensive: while Preview and Apply share
+// validateScalarPrefValue, a value that reaches Apply has already been
+// accepted, so the error return is unreachable through PreviewConfigImport.
+// It exists for the day the two drift apart. Calling it directly is the only
+// way to prove the path returns an error at all rather than silently
+// swallowing a setter refusal — which is what ApplyConfigImport's
+// continue-and-record branch depends on.
+func TestApplyScalarPref_ReturnsTheSettersRefusal(t *testing.T) {
+	a := &App{cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	err := a.applyScalarPref("terminal_theme", json.RawMessage(`"definitely-not-a-theme"`))
+	if err == nil {
+		t.Fatal("applyScalarPref accepted a theme the setter rejects; ApplyConfigImport would then record it as applied")
+	}
+	if !strings.Contains(err.Error(), "theme") {
+		t.Fatalf("error = %q, want it to name the offending setting", err)
+	}
+}

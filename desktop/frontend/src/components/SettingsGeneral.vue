@@ -22,6 +22,7 @@ import { useI18n } from "../i18n/useI18n";
 import { TERMINAL_THEMES, getTerminalTheme } from "../lib/terminalThemes";
 import SelectDropdown from "./SelectDropdown.vue";
 import SettingsTerminalAppearance, { type TerminalAppearanceState } from "./SettingsTerminalAppearance.vue";
+import SettingsConfigIO from "./SettingsConfigIO.vue";
 import { usePlatform } from "../platform";
 import { enablePushFlow, disablePushFlow, type EnableReason } from "@shared/api/push-flow";
 import { testPush } from "@shared/api/push";
@@ -604,6 +605,12 @@ async function onChange() {
       </button>
       <p v-if="pushError" class="error" data-testid="push-error">{{ pushError }}</p>
     </section>
+
+    <!-- Desktop-only (ExportConfig/Preview/ApplyConfigImport are Wails
+         bindings with no web/Capacitor equivalent). SettingsConfigIO.vue
+         self-gates internally too -- this is defense in depth, matching
+         SyncStatusIndicator's precedent in SettingsDialog.vue. -->
+    <SettingsConfigIO v-if="caps.wailsBindings" />
   </div>
 </template>
 

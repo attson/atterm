@@ -343,7 +343,13 @@ func TestRunSnippetOnHostsTimesOutOneHostWithoutStallingTheRun(t *testing.T) {
 		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
 			if h.ID == slow {
 				dl, ok := ctx.Deadline()
-				deadlineCh <- ok && time.Until(dl) <= wantHostTimeout && time.Until(dl) > 0
+				// Bounded on BOTH sides. An upper bound alone passes just as
+				// happily against a 1-second timeout as against the real one,
+				// so it catches only half of "someone changed the constant".
+				// The lower bound is slack enough (50s) to absorb scheduling
+				// between WithTimeout and this read.
+				remaining := time.Until(dl)
+				deadlineCh <- ok && remaining <= wantHostTimeout && remaining >= wantHostTimeout-10*time.Second
 				select {
 				case <-unblock:
 				case <-ctx.Done():
@@ -543,9 +549,20 @@ func TestRunSnippetOnHostsClosesEveryConn(t *testing.T) {
 	drainTerminal(t, events, hostIDs)
 
 	want := int32(len(hostIDs) - 1) // every host except the one whose dial failed
-	if got := atomic.LoadInt32(&closed); got != want {
-		t.Fatalf("closed %d connections, want %d", got, want)
+	// Poll rather than read once. conn.Close runs in a defer registered after
+	// the terminal event is emitted, so a host can be drained here while its
+	// Close is still a scheduling instant away — a single read fails ~25% of
+	// the time under -count=20. The bound still fails the test if a Close
+	// genuinely never happens; it only refuses to race the last one.
+	deadline := time.Now().Add(2 * time.Second)
+	var got int32
+	for time.Now().Before(deadline) {
+		if got = atomic.LoadInt32(&closed); got == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
+	t.Fatalf("closed %d connections, want %d", got, want)
 }
 
 // TestRunSnippetOnHostsPrunesCompletedRunFromMap pins MAJOR 1: snippetRuns
@@ -772,6 +789,29 @@ func TestRunSnippetOnHostsResolvesLabelForHostsStillQueued(t *testing.T) {
 // TestRunSnippetOnHostsDedupesDuplicateHostIDs pins MINOR 11: a repeated id in
 // the selection must not spawn a second goroutine that silently loses the
 // race for the one results-map entry and reports nothing.
+func TestDedupeHostIDsKeepsFirstOccurrenceOrder(t *testing.T) {
+	got := dedupeHostIDs([]string{"b", "a", "b", "c", "a"})
+	want := []string{"b", "a", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("dedupeHostIDs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dedupeHostIDs = %v, want %v (order must be first-occurrence: the UI lists hosts in the order the user picked them)", got, want)
+		}
+	}
+	if got := dedupeHostIDs(nil); len(got) != 0 {
+		t.Fatalf("dedupeHostIDs(nil) = %v, want empty", got)
+	}
+}
+
+// Pins that a repeated host id does not double-dial. Note what this does NOT
+// pin: removing the dedupe call from RunSnippetOnHosts leaves it green,
+// because markRunning already lets only one goroutine per id past, and the
+// loser returns before dialling. The only thing dedupe changes is transient —
+// N duplicates burning N semaphore slots on goroutines that do nothing — and
+// that is not deterministically observable from out here. The dedupe helper
+// itself is pinned by TestDedupeHostIDsKeepsFirstOccurrenceOrder above.
 func TestRunSnippetOnHostsDedupesDuplicateHostIDs(t *testing.T) {
 	a, hostIDs, events := newSnippetTestApp(t, 2)
 	var dialCalls int32

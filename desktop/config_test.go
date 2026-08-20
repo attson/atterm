@@ -345,3 +345,33 @@ func TestDefaultShellExistenceCheck(t *testing.T) {
 		}
 	})
 }
+
+// TestCrossPlatformAbsShellPaths pins the case CI caught and macOS/Linux
+// cannot: default_shell syncs between machines, so the value arriving here may
+// be absolute under the *other* platform's rules. filepath.IsAbs only knows
+// the rules it was compiled for, and skipping the existence check is exactly
+// wrong on the platform where the path is guaranteed not to resolve.
+func TestCrossPlatformAbsShellPaths(t *testing.T) {
+	for _, s := range []string{
+		"/opt/homebrew/bin/fish", // POSIX, as seen from Windows
+		`C:\Windows\System32\cmd.exe`,
+		"C:/Windows/System32/cmd.exe",
+		`\\server\share\pwsh.exe`,
+	} {
+		if !isCrossPlatformAbs(s) {
+			t.Errorf("%q must be recognised as absolute under one of the two conventions", s)
+		}
+	}
+	for _, s := range []string{"fish", "bin/fish", ""} {
+		if isCrossPlatformAbs(s) {
+			t.Errorf("%q is a bare name, not an absolute path", s)
+		}
+	}
+
+	// The whole point: a path absolute under the other platform's rules and
+	// absent here must fall back rather than reach the launcher.
+	c := appConfig{DefaultShell: `C:\definitely\not\here\pwsh.exe`}
+	if got := c.DefaultShellOrDefault(); got != defaultShellAuto {
+		t.Errorf("got %q, want %q", got, defaultShellAuto)
+	}
+}

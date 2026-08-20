@@ -454,12 +454,36 @@ func (c appConfig) PrefsSeedMarkerFor(userID string) bool {
 // Validation lives on the read side deliberately. Rejecting on write would
 // leave the synced value sitting in config.json while silently not taking
 // effect, which is harder to diagnose than falling back.
+// isCrossPlatformAbs reports whether s looks like an absolute path under either
+// POSIX or Windows rules. filepath.IsAbs only knows the rules of the platform
+// it is compiled for, which is wrong for any value that travels between
+// machines.
+func isCrossPlatformAbs(s string) bool {
+	if filepath.IsAbs(s) {
+		return true
+	}
+	if strings.HasPrefix(s, "/") { // POSIX path seen on Windows
+		return true
+	}
+	// Windows path seen elsewhere: drive letter, or a UNC share.
+	if len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/') {
+		return true
+	}
+	return strings.HasPrefix(s, `\\`)
+}
+
 func (c appConfig) DefaultShellOrDefault() string {
 	shell := strings.TrimSpace(c.DefaultShell)
 	if shell == "" || strings.EqualFold(shell, defaultShellAuto) {
 		return defaultShellAuto
 	}
-	if filepath.IsAbs(shell) {
+	// "Absolute" has to mean absolute by *either* convention, because this value
+	// syncs between machines: a Mac's /opt/homebrew/bin/fish is not
+	// filepath.IsAbs on Windows, so trusting filepath alone would skip the
+	// check on the one platform where the path is guaranteed not to exist and
+	// hand the launcher a shell it can never start. The reverse holds too —
+	// C:\...\pwsh.exe reaching a Linux box.
+	if isCrossPlatformAbs(shell) {
 		if _, err := os.Stat(shell); err != nil {
 			logWarn("config", "configured shell %q is not present on this machine; falling back to auto", shell)
 			return defaultShellAuto

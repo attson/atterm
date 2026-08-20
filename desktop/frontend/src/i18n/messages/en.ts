@@ -1039,6 +1039,30 @@ export const en = {
     pendingKeys: "{count} change(s) waiting to sync",
     pulledAdopted: "Updated from another device: {keys}",
     pulledConflict: "Kept this device's version (changed elsewhere too): {keys}",
+    // keys.* maps internal/prefssync.SyncedKeys() raw keys to the
+    // human-readable setting name shown in the notice above -- see
+    // SyncStatusIndicator.vue's keyLabel(). Never show the raw key
+    // (e.g. "terminal_font_head") to a user.
+    keys: {
+      locale_preference: "Language",
+      quick_templates: "Quick templates",
+      notifications_enabled: "Notifications",
+      ai_notifications_only: "AI-only notifications",
+      command_notify_threshold_seconds: "Command-finished notification threshold",
+      shell_integration_enabled: "Shell integration",
+      pinned_session_ids: "Pinned sessions",
+      ssh_hosts_encrypted: "SSH hosts",
+      terminal_theme: "Terminal theme",
+      terminal_font_head: "Terminal font",
+      terminal_font_size: "Terminal font size",
+      terminal_line_height: "Terminal line height",
+      terminal_cursor_style: "Cursor style",
+      terminal_cursor_blink: "Cursor blink",
+      terminal_scrollback: "Scrollback lines",
+      default_shell: "Default shell",
+      shortcut_bindings: "Keyboard shortcuts",
+      profiles_encrypted: "Session profiles",
+    },
   },
 };
 

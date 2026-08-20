@@ -24,6 +24,7 @@ import SettingsTasks from "./SettingsTasks.vue";
 import SettingsFeishu from "./SettingsFeishu.vue";
 import SettingsDevices from "./SettingsDevices.vue";
 import SettingsReceivedFiles from "./SettingsReceivedFiles.vue";
+import SyncStatusIndicator from "./SyncStatusIndicator.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 import { useI18n } from "../i18n/useI18n";
@@ -288,6 +289,12 @@ function onSaveClick() {
     <div class="settings-dialog">
       <header class="settings-header">
         <h2>{{ t("settings.title") }}</h2>
+        <!-- Desktop-only (design doc §6 "No mobile indicator"): SyncNow /
+             GetSyncStatus are Wails-only bindings, and mobile syncs prefs
+             over HTTP through a wholly separate path
+             (lib/prefsSync.capacitor.ts), so there is nothing for this
+             engine's status to report there. -->
+        <SyncStatusIndicator v-if="caps.wailsBindings" class="header-sync-indicator" />
         <button class="close-btn" @click="close" :disabled="relayRef?.saving">×</button>
       </header>
 
@@ -535,6 +542,11 @@ function onSaveClick() {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--fg-dim);
+}
+.header-sync-indicator {
+  flex: 1;
+  min-width: 0;
+  margin: 0 16px;
 }
 .close-btn {
   background: transparent;

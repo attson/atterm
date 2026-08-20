@@ -122,6 +122,8 @@ vi.mock("../lib/api", () => ({
   pickLogFilePath: vi.fn().mockResolvedValue("/tmp/log"),
   setLoggingConfig: vi.fn().mockResolvedValue(undefined),
   getHostInfo: vi.fn().mockResolvedValue({ platform: "darwin", arch: "arm64", buildType: "production" }),
+  getSyncStatus: vi.fn().mockResolvedValue({ state: "idle", last_synced_at: 0, pending_keys: 0 }),
+  syncNow: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { mount, flushPromises } from "@vue/test-utils";
@@ -254,6 +256,25 @@ describe("SettingsDialog caps gating", () => {
     __setPlatformForTests(platform);
     const w = mountDialog({ ...baseProps, initialTab: "relay" });
     expect(w.find(".settings-nav-item.active").text()).toBe(en.settings.tabs.general);
+  });
+
+  // The sync status indicator is desktop-only (design doc §6 "No mobile
+  // indicator"): GetSyncStatus/SyncNow are Wails-only, and mobile syncs
+  // prefs over HTTP via a wholly separate path (prefsSync.capacitor.ts).
+  it("shows the sync status indicator in the header on Wails (wailsBindings=true)", async () => {
+    platform.caps = { ...platform.caps, wailsBindings: true };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    await flushPromises();
+    expect(w.find('[data-testid="sync-indicator"]').exists()).toBe(true);
+  });
+
+  it("hides the sync status indicator on non-wails platforms (web/capacitor)", async () => {
+    platform.caps = { ...platform.caps, wailsBindings: false };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    await flushPromises();
+    expect(w.find('[data-testid="sync-indicator"]').exists()).toBe(false);
   });
 });
 

@@ -484,9 +484,17 @@
 
 ### 31. 配置导出 / 导入
 
-- [ ] 导出为明文 JSON 文件，不经 relay
-- [ ] 从 JSON 文件导入
-- [ ] 覆盖原 Backlog 的「主题导入导出」
+> **导出永远不写凭据，而最省事的实现会泄漏全部。** `sealSSHHosts` 打包的是四样东西：`SSHHost` 记录、从系统 keyring 读出的 `map[hostID]sshCredential`、`SSHKey` 记录，以及 `map[keyID]sshKeySecret`——私钥本体。对两台同一用户的桌面之间同步这是对的；写进明文文件是灾难。「解封那两个加密 key、把结果 dump 出来」只有一行，泄漏一切。导出改为直接从 config 读 host 与 key **记录**，全程不碰凭据加载器（`SSHHost` 和 `SSHKey{ID,Name,KeyType}` 本身不含任何秘密）。设计见 [`2026-08-20-config-export-import-design.md`](./superpowers/specs/2026-08-20-config-export-import-design.md)。
+>
+> 这条守卫的测试本身出过一次问题，值得记下来：私钥断言拿多行 PEM 去比对 `json.Marshal` 的输出，而后者会把换行转义成 `\n`——泄漏的私钥**永远匹配不上**。它看起来能用，只是因为密码断言（无换行）先 `t.Fatalf` 短路了。现在断言的是 PEM 的单行 base64 片段，且 passphrase 也真的被种进 keyring 并断言，三种秘密各自变异验证过。
+
+- [x] 导出为明文 JSON 文件，不经 relay（只导出用户**确实设置过**的项——判断复用 `isPrefCustomized`，因为「零值即未设置」；否则把新机器的 `terminal_font_size: 0` 导进配置好的机器会经 setter 推给所有其他设备。`SessionProfile.Env` 走 `stripUnsyncedEnv` 同一个 helper，默认剥离，只有一个显式勾选框可以带上，且默认关闭）
+- [x] 从 JSON 文件导入（**合并，永不覆盖式恢复**：按 ID 合并，同 ID 替换、新 ID 新增，**文件里没有的本地条目保留**。不提供 wipe-and-restore 模式——它招致的失败「导入一份不完整的文件、丢掉它没提到的每一台主机」不可恢复。先预览后确认，预览不改动任何东西；单条畸形跳过并计数，其余照常导入。未知 `atterm_export` 版本直接拒绝，不做尽力解析）
+- [x] 覆盖原 Backlog 的「主题导入导出」
+
+**导入经既有 setter 写入**，不直接写 configStore——否则导入的值会一直对其他设备不可见，直到别的操作碰巧动到同一个 key。由此带出一条：六个 setter 会做校验（locale、主题、字号、行高、光标样式、scrollback），预览必须跑同一套校验并把不合格项报成 skipped，**且应用失败时继续而不是中止**。中止过一次的后果不是「某个 key 没导入」，而是前面的 key 已经落盘**并推送到所有其他设备**，用户拿到一份既不是文件、也不是原状的配置——而任何跨版本的文件都会触发它，因为主题列表和尺寸范围在不同构建间会变。
+
+**刻意没做**：不导出任何凭据，不提供选项、不提供警告后开关；不做加密导出格式（roadmap 要的就是明文，而想要加密的人要的其实是 relay 的 E2EE）；不经 relay；不做逐 key 勾选界面。
 
 ### 32. 移动端消费 profile 与主机清单
 

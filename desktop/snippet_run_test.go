@@ -13,7 +13,7 @@ import (
 	"github.com/attson/atterm/internal/sshclient"
 )
 
-const snippetTestTplID = "tpl1"
+const snippetTestTplLabel = "Test"
 const snippetTestTplText = "echo hi"
 
 // fakeSnippetConn adapts per-call functions to snippetConn for tests.
@@ -33,9 +33,9 @@ func (c fakeSnippetConn) Close() error {
 	return nil
 }
 
-// newSnippetTestApp builds an App with n saved hosts ("h0".."h{n-1}"), one
-// quick template, and a channel fed with every "snippet:run:progress"
-// payload — the only way these tests can observe a run's outcome, since
+// newSnippetTestApp builds an App with n saved hosts ("h0".."h{n-1}") and a
+// channel fed with every "snippet:run:progress" payload — the only way
+// these tests can observe a run's outcome, since
 // RunSnippetOnHosts/CancelSnippetRun report nothing beyond a run id and an
 // error.
 func newSnippetTestApp(t *testing.T, n int) (*App, []string, chan SnippetRunProgress) {
@@ -51,7 +51,6 @@ func newSnippetTestApp(t *testing.T, n int) (*App, []string, chan SnippetRunProg
 	}
 	cfg := a.cfgStore.Get()
 	cfg.SSHHosts = hosts
-	cfg.QuickTemplates = []QuickTemplate{{ID: snippetTestTplID, Label: "Test", Text: snippetTestTplText}}
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
@@ -124,7 +123,7 @@ func TestRunSnippetOnHostsCapsConcurrencyAtEight(t *testing.T) {
 		}}, nil
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 
@@ -185,7 +184,7 @@ func TestRunSnippetOnHostsIsolatesOneHostFailure(t *testing.T) {
 		}}, nil
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	got := drainTerminal(t, events, hostIDs)
@@ -213,7 +212,7 @@ func TestRunSnippetOnHostsNonZeroExitIsFailedNotError(t *testing.T) {
 			return sshclient.ExecResult{ExitCode: 7, Output: []byte("nope")}, nil
 		}}, nil
 	}
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	got := drainTerminal(t, events, hostIDs)[hostIDs[0]]
@@ -235,7 +234,7 @@ func TestRunSnippetOnHostsEmitsRunningThenTerminalPerHost(t *testing.T) {
 			return sshclient.ExecResult{ExitCode: 0}, nil
 		}}, nil
 	}
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 
@@ -264,7 +263,7 @@ func TestRunSnippetOnHostsEmitsRunningThenTerminalPerHost(t *testing.T) {
 	}
 }
 
-func TestRunSnippetOnHostsRejectsUnknownSnippet(t *testing.T) {
+func TestRunSnippetOnHostsRejectsEmptySnippetText(t *testing.T) {
 	a, hostIDs, _ := newSnippetTestApp(t, 1)
 	dialCalls := int32(0)
 	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
@@ -273,9 +272,9 @@ func TestRunSnippetOnHostsRejectsUnknownSnippet(t *testing.T) {
 			return sshclient.ExecResult{}, nil
 		}}, nil
 	}
-	runID, err := a.RunSnippetOnHosts("does-not-exist", hostIDs)
+	runID, err := a.RunSnippetOnHosts(snippetTestTplLabel, "", hostIDs)
 	if err == nil {
-		t.Fatal("expected an error for an unknown snippet id")
+		t.Fatal("expected an error for empty snippet text")
 	}
 	if runID != "" {
 		t.Fatalf("expected empty run id on rejection, got %q", runID)
@@ -288,7 +287,7 @@ func TestRunSnippetOnHostsRejectsUnknownSnippet(t *testing.T) {
 
 func TestRunSnippetOnHostsRejectsEmptyHostList(t *testing.T) {
 	a, _, _ := newSnippetTestApp(t, 0)
-	runID, err := a.RunSnippetOnHosts(snippetTestTplID, nil)
+	runID, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, nil)
 	if err == nil {
 		t.Fatal("expected an error for an empty host list")
 	}
@@ -309,7 +308,7 @@ func TestRunSnippetOnHostsUnknownHostBecomesErrorResult(t *testing.T) {
 		}}, nil
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, all); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, all); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	got := drainTerminal(t, events, all)
@@ -361,7 +360,7 @@ func TestRunSnippetOnHostsTimesOutOneHostWithoutStallingTheRun(t *testing.T) {
 	}
 
 	start := time.Now()
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
@@ -424,7 +423,7 @@ func TestCancelSnippetRunLeavesFinishedResultsAlone(t *testing.T) {
 		}}, nil
 	}
 
-	runID, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs)
+	runID, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs)
 	if err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
@@ -543,7 +542,7 @@ func TestRunSnippetOnHostsClosesEveryConn(t *testing.T) {
 		}, nil
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	drainTerminal(t, events, hostIDs)
@@ -577,7 +576,7 @@ func TestRunSnippetOnHostsPrunesCompletedRunFromMap(t *testing.T) {
 		}}, nil
 	}
 
-	runID, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs)
+	runID, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs)
 	if err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
@@ -626,7 +625,7 @@ func TestRunSnippetOnHostsPassesTemplateTextAndOutputCap(t *testing.T) {
 		}}, nil
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	drainTerminal(t, events, hostIDs)
@@ -658,7 +657,7 @@ func TestRunSnippetOnHostsKeepsPartialOutputOnRunError(t *testing.T) {
 		}}, nil
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	got := drainTerminal(t, events, hostIDs)[hostIDs[0]]
@@ -699,7 +698,7 @@ func TestRunSnippetOnHostsResolvesPendingHostsWhenParentContextEnds(t *testing.T
 		}}, nil
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	for i := 0; i < snippetMaxConcurrentHosts; i++ {
@@ -751,7 +750,7 @@ func TestRunSnippetOnHostsResolvesLabelForHostsStillQueued(t *testing.T) {
 		}}, nil
 	}
 
-	runID, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs)
+	runID, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, hostIDs)
 	if err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
@@ -823,7 +822,7 @@ func TestRunSnippetOnHostsDedupesDuplicateHostIDs(t *testing.T) {
 	}
 
 	dup := append(append([]string{}, hostIDs...), hostIDs[0]) // hostIDs[0] listed twice
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, dup); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, dup); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	drainTerminal(t, events, hostIDs)
@@ -846,11 +845,6 @@ func TestRunSnippetOnHostsSuppressesTOFUAndSurfacesReadableMessage(t *testing.T)
 	a := newJumpTestApp(t) // trusts nothing — the host's key is "unknown"
 	host := addServerHost(t, a, "unseen", srv, "u", "pw", "")
 
-	cfg := a.cfgStore.Get()
-	cfg.QuickTemplates = []QuickTemplate{{ID: snippetTestTplID, Label: "Test", Text: snippetTestTplText}}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
 	events := make(chan SnippetRunProgress, 16)
 	a.eventsEmitter = func(_ context.Context, name string, data ...interface{}) {
 		if name != "snippet:run:progress" || len(data) == 0 {
@@ -861,7 +855,7 @@ func TestRunSnippetOnHostsSuppressesTOFUAndSurfacesReadableMessage(t *testing.T)
 		}
 	}
 
-	if _, err := a.RunSnippetOnHosts(snippetTestTplID, []string{host.ID}); err != nil {
+	if _, err := a.RunSnippetOnHosts(snippetTestTplLabel, snippetTestTplText, []string{host.ID}); err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
 	got := drainTerminal(t, events, []string{host.ID})[host.ID]

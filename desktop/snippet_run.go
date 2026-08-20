@@ -181,18 +181,30 @@ func (r *snippetRun) cancelPending(reason string) []SnippetHostResult {
 	return changed
 }
 
-// RunSnippetOnHosts runs the quick template identified by snippetID on every
-// host in hostIDs, fanning out with a bound on how many run at once, and
-// returns a run id progress events are tagged with (see SnippetRunProgress).
-// It returns as soon as the run is registered — callers get results only
-// through the event stream, never by blocking here.
+// RunSnippetOnHosts runs snippetText (labelled snippetLabel for anything that
+// needs a human-readable name) on every host in hostIDs, fanning out with a
+// bound on how many run at once, and returns a run id progress events are
+// tagged with (see SnippetRunProgress). It returns as soon as the run is
+// registered — callers get results only through the event stream, never by
+// blocking here.
 //
-// Rejecting an unknown snippet or an empty host list here, before any
+// The caller passes the snippet's text directly rather than an id to look
+// up: the frontend's quick templates can be its own DEFAULT_TEMPLATES
+// fallback with no Go-side existence at all (nothing has been saved to
+// config yet), so an id-only lookup here would fail for exactly the users
+// who have never customised a template — i.e. every fresh install. The
+// frontend already resolves id -> text before calling in, and is the only
+// caller in-process, so there is no boundary an id would have protected.
+//
+// Rejecting empty snippet text or an empty host list here, before any
 // goroutine starts, is what "starts nothing" means: a run id is only ever
 // handed out for a run that is actually going to try every host in the list.
-func (a *App) RunSnippetOnHosts(snippetID string, hostIDs []string) (string, error) {
+func (a *App) RunSnippetOnHosts(snippetLabel string, snippetText string, hostIDs []string) (string, error) {
 	if len(hostIDs) == 0 {
 		return "", errors.New("snippet run: no hosts selected")
+	}
+	if snippetText == "" {
+		return "", fmt.Errorf("snippet run: %q has no command text", snippetLabel)
 	}
 	// A repeated id in the selection would otherwise spawn two goroutines
 	// racing over one results-map entry: the second's markRunning always
@@ -201,11 +213,6 @@ func (a *App) RunSnippetOnHosts(snippetID string, hostIDs []string) (string, err
 	// anywhere to explain the discrepancy. Deduping up front means every
 	// surviving id gets exactly one goroutine and one outcome.
 	hostIDs = dedupeHostIDs(hostIDs)
-
-	tpl, ok := findQuickTemplate(a.GetQuickTemplates(), snippetID)
-	if !ok {
-		return "", fmt.Errorf("snippet run: unknown snippet %q", snippetID)
-	}
 
 	dial := a.snippetDialer
 	if dial == nil {
@@ -242,7 +249,7 @@ func (a *App) RunSnippetOnHosts(snippetID string, hostIDs []string) (string, err
 	var wg sync.WaitGroup
 	wg.Add(len(hostIDs))
 	for _, hostID := range hostIDs {
-		go a.runSnippetOnOneHost(runCtx, run, dial, tpl, hostID, sem, &wg)
+		go a.runSnippetOnOneHost(runCtx, run, dial, snippetText, hostID, sem, &wg)
 	}
 	// The run's own context is only ever read by its hosts' goroutines; once
 	// every one of them has returned there is nothing left to cancel, and
@@ -308,7 +315,7 @@ func (a *App) runSnippetOnOneHost(
 	runCtx context.Context,
 	run *snippetRun,
 	dial func(context.Context, SSHHost) (snippetConn, error),
-	tpl QuickTemplate,
+	cmdText string,
 	hostID string,
 	sem chan struct{},
 	wg *sync.WaitGroup,
@@ -374,7 +381,7 @@ func (a *App) runSnippetOnOneHost(
 	// that could ever close it.
 	defer func() { _ = conn.Close() }()
 
-	res, err := conn.Run(hostCtx, tpl.Text, snippetMaxOutputBytes)
+	res, err := conn.Run(hostCtx, cmdText, snippetMaxOutputBytes)
 	if err != nil {
 		// Run's own contract: err != nil means "we don't know what it did",
 		// never "it exited non-zero" — but res.Output may still hold whatever
@@ -432,16 +439,6 @@ func (a *App) CancelSnippetRun(runID string) error {
 		a.emitSnippetProgress(run.id, result)
 	}
 	return nil
-}
-
-// findQuickTemplate looks a saved quick template up by id.
-func findQuickTemplate(templates []QuickTemplate, id string) (QuickTemplate, bool) {
-	for _, t := range templates {
-		if t.ID == id {
-			return t, true
-		}
-	}
-	return QuickTemplate{}, false
 }
 
 // dialSnippetConn is the production snippetDialer: it goes through

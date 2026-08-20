@@ -737,12 +737,17 @@ export interface AppBindings {
   SetHookInstallEnabled(on: boolean): Promise<void>;
   GetQuickTemplates(): Promise<import('../templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('../templates').QuickTemplate[]): Promise<void>;
-  // RunSnippetOnHosts starts a batch run of one quick template across
+  // RunSnippetOnHosts starts a batch run of snippetText (labelled
+  // snippetLabel for anything that needs a human-readable name) across
   // several saved hosts and returns immediately with a run id; results only
   // ever arrive through the "snippet:run:progress" event (SnippetRunProgress
   // above). CancelSnippetRun moves every host still queued or in flight to
   // "error" — hosts already at a terminal state are left alone.
-  RunSnippetOnHosts(snippetID: string, hostIDs: string[]): Promise<string>;
+  //
+  // Takes the snippet's label + text directly rather than an id: templates
+  // that still fall back to DEFAULT_TEMPLATES (never customized) have no
+  // Go-side existence, so an id-only lookup would fail on a fresh install.
+  RunSnippetOnHosts(snippetLabel: string, snippetText: string, hostIDs: string[]): Promise<string>;
   CancelSnippetRun(runID: string): Promise<void>;
   GetTaskPreset(): Promise<string>;
   SetTaskPreset(preset: PresetId): Promise<void>;

@@ -1017,6 +1017,7 @@ export const en = {
   snippets: {
     runOnHosts: "Run on hosts…",
     selectHosts: "Select hosts",
+    pending: "Pending",
     running: "Running…",
     ok: "OK",
     failed: "Failed",
@@ -1026,8 +1027,6 @@ export const en = {
     copyAll: "Copy all",
     cancel: "Cancel",
     noHostsSelected: "Select at least one host",
-    hostKeyUntrusted:
-      "Host key not trusted yet. Open a terminal to this host once and accept the fingerprint, then run the snippet again.",
   },
 };
 

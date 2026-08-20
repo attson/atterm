@@ -12,7 +12,7 @@ import {
   type SnippetRunProgress,
 } from '../lib/api'
 
-const props = defineProps<{ snippetId: string }>()
+const props = defineProps<{ snippetLabel: string; snippetText: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const { t } = useI18n()
@@ -65,11 +65,23 @@ async function startRun() {
       truncated: false,
     }
   })
+  // Go can spawn host goroutines and emit "running"/a terminal event before
+  // this promise resolves with the run id — runId.value is still null at
+  // that point, so onProgress buffers them here instead of dropping them.
+  // Discard anything buffered by a previous, superseded start attempt.
+  pendingEvents = []
   try {
-    runId.value = await runSnippetOnHosts(props.snippetId, hostIds)
+    const id = await runSnippetOnHosts(props.snippetLabel, props.snippetText, hostIds)
+    runId.value = id
+    const buffered = pendingEvents
+    pendingEvents = []
+    for (const p of buffered) {
+      if (p.run_id === id) applyProgress(p)
+    }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : String(e)
     rows.value = []
+    pendingEvents = []
   } finally {
     starting.value = false
   }
@@ -88,43 +100,39 @@ async function cancelRun() {
   }
 }
 
-// The Go side (desktop/snippet_run.go snippetHostKeyError) bakes the host and
-// fingerprint straight into a hardcoded English sentence — it is not routed
-// through i18n at all, unlike every other string this panel shows. Recognize
-// that one shape by the exact substring its own test pins ("not trusted
-// yet") and swap in the localized copy instead of leaving Chinese-locale
-// users staring at raw English about a TOFU prompt they cannot act on from
-// here anyway.
-function isHostKeyUntrusted(msg: string): boolean {
-  return msg.includes('not trusted yet')
-}
-function errorText(r: SnippetHostResult): string {
-  const msg = r.error ?? ''
-  return isHostKeyUntrusted(msg) ? t('snippets.hostKeyUntrusted') : msg
-}
-
-// failed = ran, exited non-zero (ExitCode/Output meaningful).
-// error = never ran at all (message only, no exit code, no output).
+// failed = ran, exited non-zero (ExitCode/Output meaningful; exit code is
+// rendered once, by the separate .row-exitcode span in the template — not
+// composed into this label too).
+// error = never ran at all (message only, no exit code). Go's message
+// (desktop/snippet_run.go) is rendered verbatim: it is already the most
+// diagnosable form (host, fingerprint, remedy where relevant), and every
+// other Go-side error in this panel already surfaces in English too, so
+// there is nothing to localize here without losing information.
 // Conflating these is exactly what desktop/snippet_run.go's separate states
 // exist to prevent, so this stays a plain state-keyed switch rather than any
 // shared "problem" fallthrough.
 function stateLabel(r: SnippetHostResult): string {
   switch (r.state) {
     case 'pending':
-      return '—'
+      return t('snippets.pending')
     case 'running':
       return t('snippets.running')
     case 'ok':
       return t('snippets.ok')
     case 'failed':
-      return `${t('snippets.failed')} · ${t('snippets.exitCode', { code: r.exit_code })}`
+      return t('snippets.failed')
     case 'error':
-      return `${t('snippets.error')} · ${errorText(r)}`
+      return `${t('snippets.error')} · ${r.error ?? ''}`
   }
 }
 
 function rowCopyText(r: SnippetHostResult): string {
-  if (r.state === 'error') return errorText(r)
+  if (r.state === 'error') {
+    const msg = r.error ?? ''
+    // Go preserves partial output before a connection drop even on a
+    // never-finished run (snippet_run.go) — keep it in copy-all too.
+    return r.output ? `${msg}\n${r.output}` : msg
+  }
   return r.output
 }
 // Exposed for tests to pin the exact format independent of clipboard plumbing.
@@ -141,16 +149,30 @@ async function copyAll() {
   fallbackCopyText(text)
 }
 
-// snippet:run:progress is pushed once a host enters "running" and again on
-// its terminal state; there is no separate "list results" call (see
-// SnippetRunProgress in lib/api/_bindings.ts). Guard on run_id so a stale
-// event from a superseded run (or, in tests, one addressed to a run this
-// panel never started) cannot overwrite a live row.
-function onProgress(data: unknown) {
-  const p = data as SnippetRunProgress
-  if (!runId.value || p.run_id !== runId.value) return
+let pendingEvents: SnippetRunProgress[] = []
+
+function applyProgress(p: SnippetRunProgress) {
   const idx = rows.value.findIndex((r) => r.host_id === p.result.host_id)
   if (idx >= 0) rows.value[idx] = p.result
+}
+
+// snippet:run:progress is pushed once a host enters "running" and again on
+// its terminal state; there is no separate "list results" call (see
+// SnippetRunProgress in lib/api/_bindings.ts). Go spawns host goroutines and
+// can emit before the RunSnippetOnHosts promise resolves with a run id, so
+// while runId.value is still null (startRun is awaiting it) events are
+// buffered here instead of dropped — startRun replays them, filtered by the
+// resolved run_id, once it has one. Once resolved, guard on run_id so a
+// stale event from a superseded run (or, in tests, one addressed to a run
+// this panel never started) cannot overwrite a live row.
+function onProgress(data: unknown) {
+  const p = data as SnippetRunProgress
+  if (!runId.value) {
+    pendingEvents.push(p)
+    return
+  }
+  if (p.run_id !== runId.value) return
+  applyProgress(p)
 }
 
 let progressOff: (() => void) | null = null
@@ -225,7 +247,7 @@ defineExpose({ buildCopyAllText })
               :data-testid="`snippet-run-exitcode-${row.host_id}`"
             >{{ t('snippets.exitCode', { code: row.exit_code }) }}</span>
             <pre
-              v-if="row.state === 'ok' || row.state === 'failed'"
+              v-if="row.state === 'ok' || row.state === 'failed' || (row.state === 'error' && row.output)"
               class="row-output"
               :data-testid="`snippet-run-output-${row.host_id}`"
             >{{ row.output }}</pre>

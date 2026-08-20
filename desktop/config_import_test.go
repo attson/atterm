@@ -1622,3 +1622,275 @@ func TestApplyScalarPref_ReturnsTheSettersRefusal(t *testing.T) {
 		t.Fatalf("error = %q, want it to name the offending setting", err)
 	}
 }
+
+// TestApplyConfigImport_ProfileImportSyncEnvTravelsWithPreservedEnv pins the
+// whole-branch-review MAJOR 1 fix at the reviewer's own reproduction:
+// machine A's profile p1 is SyncEnv:true with no Env of its own (the
+// ordinary shape for a profile whose source machine never set that var).
+// Machine B's same-ID p1 is SyncEnv:false with a real secret in Env. B
+// imports A's file. mergeProfiles preserves B's local Env (file carried
+// none), and before this fix nothing kept SyncEnv in lock-step with it, so
+// the merged profile ended up SyncEnv:true (from the file) with B's secret
+// Env still attached -- a combination that could never have been reached by
+// any local edit, because SetSessionProfiles's own SyncEnv toggle always
+// clears Env in the same call. B's very next export with the default
+// includeLocalEnv=false would then ship that secret in a plaintext file,
+// because stripUnsyncedEnv only strips SyncEnv==false profiles. This test
+// pins both halves: the merged record's SyncEnv must stay false (B's own
+// choice), and a follow-up BuildConfigExport(false) must not contain the
+// secret anywhere in its output.
+func TestApplyConfigImport_ProfileImportSyncEnvTravelsWithPreservedEnv(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	const secret = "sk-super-secret-value"
+	cfg.Profiles = []SessionProfile{
+		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: false, Env: map[string]string{"OPENAI_API_KEY": secret}},
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// Machine A's file: same profile ID, SyncEnv:true, no Env at all, and a
+	// genuinely different Shell so "profile:p1" actually shows up as a
+	// replace (otherwise this would be a no-op import that proves nothing).
+	rawProfiles, _ := json.Marshal(profilesExportPayload{Profiles: []SessionProfile{
+		{ID: "p1", Name: "default", Shell: "/bin/bash", SyncEnv: true},
+	}})
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"profiles": rawProfiles,
+		},
+	})
+
+	if _, err := a.ApplyConfigImport(jsonText); err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+
+	got := a.cfgStore.Get()
+	if len(got.Profiles) != 1 {
+		t.Fatalf("Profiles = %+v, want exactly 1", got.Profiles)
+	}
+	p := got.Profiles[0]
+	if p.Shell != "/bin/bash" {
+		t.Fatalf("p1.Shell = %q, want %q (file's genuinely different value should still land)", p.Shell, "/bin/bash")
+	}
+	if p.SyncEnv {
+		t.Fatalf("p1.SyncEnv = true after import, want false (B's local choice) — the incoming file's SyncEnv must not travel without its own Env")
+	}
+	if p.Env["OPENAI_API_KEY"] != secret {
+		t.Fatalf("p1.Env = %+v, want OPENAI_API_KEY=%s preserved", p.Env, secret)
+	}
+
+	export, err := a.BuildConfigExport(false) // default includeLocalEnv=false
+	if err != nil {
+		t.Fatalf("BuildConfigExport: %v", err)
+	}
+	exportBytes, err := json.Marshal(export)
+	if err != nil {
+		t.Fatalf("marshal export: %v", err)
+	}
+	if strings.Contains(string(exportBytes), secret) {
+		t.Fatalf("plaintext export contains the secret env value; SyncEnv must have been promoted to true by the import\nexport: %s", exportBytes)
+	}
+}
+
+// TestApplyConfigImport_UnresolvableDefaultProfileIDKeepsLocalDefault pins
+// the whole-branch-review MAJOR 2 fix: a file's default_profile_id that
+// does not name any profile present in the post-merge result (e.g. the file
+// was hand-edited, or its referenced profile got skipped upstream) must
+// leave the local default untouched and say so by name in report.Skipped —
+// never silently clear it via SetDefaultProfileID(""). Before this fix,
+// resolveDefaultProfileID("") was passed straight to SetDefaultProfileID,
+// wiping the local default while report.Applied still claimed the replace
+// Preview had promised.
+func TestApplyConfigImport_UnresolvableDefaultProfileIDKeepsLocalDefault(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "default"}}
+	cfg.DefaultProfileID = "p1"
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	rawProfiles, _ := json.Marshal(profilesExportPayload{
+		Profiles:         []SessionProfile{{ID: "p1", Name: "default"}}, // unchanged, just to have a valid payload
+		DefaultProfileID: "pBad",                                        // never present locally or in the file's own profile list
+	})
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"profiles": rawProfiles,
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+
+	if got := a.cfgStore.Get().DefaultProfileID; got != "p1" {
+		t.Fatalf("cfg.DefaultProfileID = %q after unresolvable import, want unchanged %q", got, "p1")
+	}
+	for _, c := range report.Applied {
+		if c.Key == "profiles:default_profile_id" {
+			t.Fatalf("report.Applied contains profiles:default_profile_id = %+v, but the write never happened -- report must not claim it", c)
+		}
+	}
+	found := false
+	for _, s := range report.Skipped {
+		if strings.Contains(s, "profiles:default_profile_id") && strings.Contains(s, "pBad") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("report.Skipped = %v, want an entry naming profiles:default_profile_id and the unresolved id %q", report.Skipped, "pBad")
+	}
+}
+
+// TestApplyConfigImport_SSHHostReplaceChangingTargetClearsCredential pins
+// the whole-branch-review MAJOR 3 fix: replacing an existing host ID's
+// record wholesale (config_import.go's applySSHHostsImport) never touched
+// the OS keyring on its own, so a password stored for one machine silently
+// became the credential offered to whatever machine the imported record's
+// Host/Port/User now pointed at -- reusing an ID with a changed Host was
+// enough to repoint a real credential at an attacker-controlled address
+// with no visible signal in Preview (hostDetail used to render the alias
+// only, unchanged across this exact case). This test seeds a real
+// keyring-backed credential for host h1, imports a file that keeps h1's ID
+// and alias but changes its Host, and asserts the stored credential is gone
+// afterward.
+func TestApplyConfigImport_SSHHostReplaceChangingTargetClearsCredential(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{
+		{ID: "h1", Alias: "prod", Host: "trusted.example.com", Port: "22", User: "root", AuthKind: "password"},
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := sshCredentialSlot("h1").Save(sshCredential{Password: "correct-horse-battery-staple"}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+
+	rawHosts, _ := json.Marshal(sshHostsExportPayload{Hosts: []SSHHost{
+		// Same ID and alias, different Host -- the silent-rebind shape.
+		{ID: "h1", Alias: "prod", Host: "attacker.example.com", Port: "22", User: "root", AuthKind: "password"},
+	}})
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"ssh_hosts": rawHosts,
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+	applied := false
+	for _, c := range report.Applied {
+		if c.Key == "ssh_host:h1" {
+			applied = true
+		}
+	}
+	if !applied {
+		t.Fatalf("report.Applied = %+v, want ssh_host:h1 (test setup produced no diff to prove anything against)", report.Applied)
+	}
+
+	if got := a.cfgStore.Get().SSHHosts; len(got) != 1 || got[0].Host != "attacker.example.com" {
+		t.Fatalf("cfg.SSHHosts = %+v, want h1.Host = attacker.example.com (the record write itself must still happen)", got)
+	}
+
+	cred, err := sshCredentialSlot("h1").Load()
+	if err != nil {
+		t.Fatalf("Load stale credential slot: %v", err)
+	}
+	if cred != (sshCredential{}) {
+		t.Fatalf("sshCredentialSlot(\"h1\") still holds %+v after a target-changing replace; it must be cleared so the old password can't authenticate against the new host", cred)
+	}
+}
+
+// TestApplyConfigImport_SSHHostReplaceSameTargetKeepsCredential is the
+// control case for the MAJOR 3 fix above: a replace that leaves Host, Port,
+// and User untouched (only Tags changed here) must NOT clear the stored
+// credential -- it still authenticates the same endpoint it always did.
+// Without this control, a mutation that cleared every replaced host's
+// credential unconditionally (not just target-changing ones) would still
+// pass the test above.
+func TestApplyConfigImport_SSHHostReplaceSameTargetKeepsCredential(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{
+		{ID: "h1", Alias: "prod", Host: "trusted.example.com", Port: "22", User: "root", AuthKind: "password"},
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := sshCredentialSlot("h1").Save(sshCredential{Password: "correct-horse-battery-staple"}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+
+	rawHosts, _ := json.Marshal(sshHostsExportPayload{Hosts: []SSHHost{
+		// Same ID, same Host/Port/User -- only Tags changed.
+		{ID: "h1", Alias: "prod", Host: "trusted.example.com", Port: "22", User: "root", AuthKind: "password", Tags: []string{"prod"}},
+	}})
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"ssh_hosts": rawHosts,
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText)
+	if err != nil {
+		t.Fatalf("ApplyConfigImport: %v", err)
+	}
+	applied := false
+	for _, c := range report.Applied {
+		if c.Key == "ssh_host:h1" {
+			applied = true
+		}
+	}
+	if !applied {
+		t.Fatalf("report.Applied = %+v, want ssh_host:h1 (test setup produced no diff to prove anything against)", report.Applied)
+	}
+
+	cred, err := sshCredentialSlot("h1").Load()
+	if err != nil {
+		t.Fatalf("Load credential slot: %v", err)
+	}
+	if cred.Password != "correct-horse-battery-staple" {
+		t.Fatalf("sshCredentialSlot(\"h1\") = %+v after a same-target replace, want the original credential kept", cred)
+	}
+}
+
+// TestValidateScalarPrefValue_RejectsNullCursorBlink pins the
+// whole-branch-review MINOR 4 fix: terminal_cursor_blink's target is a
+// **bool (see scalarPrefTarget's own comment on why nil must stay
+// distinguishable from false), so a hand-edited file's
+// "terminal_cursor_blink": null unmarshals into a nil *bool exactly like
+// applyScalarPref's own decode does. Before this fix, validateScalarPrefValue
+// had no case for the key, so Preview reported "add"/"replace" for a value
+// Apply would then refuse with "value is null" -- the two disagreeing about
+// the same imported value, same as every other key already covered here.
+func TestValidateScalarPrefValue_RejectsNullCursorBlink(t *testing.T) {
+	target := scalarPrefTarget("terminal_cursor_blink")
+	if target == nil {
+		t.Fatal("terminal_cursor_blink: no scalar target")
+	}
+	if err := json.Unmarshal([]byte(`null`), target); err != nil {
+		t.Fatalf("unmarshal null: %v", err)
+	}
+	if err := validateScalarPrefValue("terminal_cursor_blink", target); err == nil {
+		t.Fatal("validateScalarPrefValue accepted a null terminal_cursor_blink; applyScalarPref would then refuse it and Preview/Apply would disagree")
+	}
+}

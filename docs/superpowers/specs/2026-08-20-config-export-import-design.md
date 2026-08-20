@@ -110,6 +110,19 @@ sync meta untouched and the imported values would sit locally forever,
 invisible to every other device, until something else happened to touch the
 same key.
 
+`ssh_hosts` is the one approved exception: `UpdateSSHHost`'s per-item setter
+unconditionally re-preserves `IdentityFile`/`ProxyJump`/`ProxyCommand` from
+the already-stored record, which is exactly wrong for import (a file entry
+legitimately clearing one of those fields would otherwise be silently
+overwritten back to the local value). `applySSHHostsImport` writes the host
+list to `cfgStore` directly and marks `ssh_hosts_encrypted` dirty itself —
+the same store write and dirty bookkeeping the setter would have done, just
+without the setter's field-preservation behavior that only makes sense for
+in-app edits. It still owns clearing a host's OS-keyring credential when a
+replace changes that host's `Host`/`Port`/`User` (see the whole-branch
+review's MAJOR 3 fix), matching `DeleteSSHHost`'s own credential-clear
+pattern rather than routing through it.
+
 ## 5. Surface
 
 - `App.ExportConfig(includeLocalEnv bool) (string, error)` — returns the

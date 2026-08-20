@@ -171,6 +171,18 @@ func validateScalarPrefValue(key string, target any) error {
 		if v <= 0 || v > terminalScrollbackMax {
 			return fmt.Errorf("scrollback out of range: %d", v)
 		}
+	case "terminal_cursor_blink":
+		// scalarPrefTarget gives this key a **bool (see its comment on why:
+		// nil vs. false have to stay distinguishable). json.Unmarshal of a
+		// JSON `null` leaves the pointed-to *bool nil, same as applyScalarPref's
+		// own `var v *bool; json.Unmarshal(raw, &v)` does. Without this case,
+		// a hand-edited file's "terminal_cursor_blink": null sailed through
+		// Preview as "add"/"replace" and was then refused by applyScalarPref —
+		// a whole-review MINOR: the two must not disagree about the same
+		// value, same as every other key here.
+		if *target.(**bool) == nil {
+			return errors.New("value is null")
+		}
 	}
 	return nil
 }
@@ -497,12 +509,32 @@ func listAction[T any](local map[string]T, id string, incoming T) string {
 }
 
 // hostDetail renders a one-line human label for an ImportChange on an SSH
-// host, preferring the alias the user gave it over the bare hostname.
+// host. It always includes the connection target (user@host[:port]), not
+// just the alias — whole-branch review round: a "replace" can silently
+// repoint an ID at a different Host/Port/User while keeping the same alias,
+// which (before this fix) made the preview detail byte-identical for "this
+// host's target moved" and "nothing about this host changed". A user
+// approving an import cannot tell those apart from the alias alone; the
+// target has to be visible in the same line the alias is.
 func hostDetail(h SSHHost) string {
-	if h.Alias != "" {
-		return h.Alias
+	target := h.User + "@" + h.Host
+	if h.Port != "" {
+		target += ":" + h.Port
 	}
-	return h.Host
+	if h.Alias != "" {
+		return h.Alias + " (" + target + ")"
+	}
+	return target
+}
+
+// hostTargetChanged reports whether replacing old with incoming would point
+// an existing host ID at a different machine — a changed Host, Port, or
+// User. Used by applySSHHostsImport to decide whether the ID's stored
+// keyring credential must be cleared on a "replace" (see its doc comment):
+// none of these three fields changing means the credential still
+// authenticates the same endpoint it always did.
+func hostTargetChanged(old, incoming SSHHost) bool {
+	return old.Host != incoming.Host || old.Port != incoming.Port || old.User != incoming.User
 }
 
 // knownImportKeys lists every top-level key PreviewConfigImport can
@@ -790,9 +822,18 @@ func (a *App) applyScalarPref(key string, raw json.RawMessage) error {
 // N MarkDirty read-modify-writes on the single "ssh_hosts_encrypted" key,
 // which prefs_sync_loop.go documents as lossy under concurrent writers.
 //
-// Never touches the OS keyring: a plaintext export carries no credential
-// field for a host or key to begin with, so there is no credential here to
-// write or roll back.
+// This never WRITES a keyring credential — a plaintext export carries no
+// credential field for a host or key to begin with, so there is nothing
+// here to write or roll back. It does, however, CLEAR one: whole-branch
+// review round caught that replacing an existing host ID whose Host, Port,
+// or User differs from the file's version otherwise leaves that ID's
+// stored password/key exactly where it was, now authenticating a
+// DIFFERENT machine — reusing the ID is enough to silently repoint a
+// credential at whatever endpoint the file names, e.g. an attacker's box,
+// with no prompt and (before hostDetail's own fix, see above) no visible
+// change in the preview if the alias happened to stay the same. Losing a
+// stored credential on a host whose address moved is the safe failure;
+// silently pointing it at a new machine is not — see hostTargetChanged.
 func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, error) {
 	hosts, keys, _, err := validateSSHHostsPayload(raw)
 	if err != nil {
@@ -803,6 +844,7 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 
 	cfg := a.cfgStore.Get()
 	var applied []string
+	var credentialsToClear []string
 
 	hostIdx := make(map[string]int, len(cfg.SSHHosts))
 	for i, h := range cfg.SSHHosts {
@@ -814,6 +856,9 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 			continue
 		}
 		if idx, exists := hostIdx[h.ID]; exists {
+			if hostTargetChanged(cfg.SSHHosts[idx], h) {
+				credentialsToClear = append(credentialsToClear, h.ID)
+			}
 			cfg.SSHHosts[idx] = h
 		} else {
 			cfg.SSHHosts = append(cfg.SSHHosts, h)
@@ -864,6 +909,23 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 	if a.prefsSync != nil {
 		a.markPrefDirtyAndPush("ssh_hosts_encrypted")
 	}
+
+	// Clear stale credentials AFTER the host records themselves are
+	// persisted: the record write is what the caller actually asked for,
+	// and must not be rolled back just because a keyring clear failed. A
+	// clear failure is still surfaced as an error (matching DeleteSSHHost's
+	// own handling of the same Clear call) rather than swallowed, because a
+	// credential left attached to a host whose target moved is exactly the
+	// silent-rebind this whole guard exists to prevent.
+	var clearErrs error
+	for _, id := range credentialsToClear {
+		if err := sshCredentialSlot(id).Clear(); err != nil {
+			clearErrs = errors.Join(clearErrs, fmt.Errorf("clear stale credential for %s: %w", id, err))
+		}
+	}
+	if clearErrs != nil {
+		return applied, clearErrs
+	}
 	return applied, nil
 }
 
@@ -893,11 +955,33 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 // never actually triggers — nothing is ever missing from incoming — while
 // its Env-preservation branch still runs exactly as it does for a pull, for
 // the ids the file DOES mention.
-func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, error) {
+//
+// Whole-branch review round: SyncEnv travels WITH the Env it governs.
+// mergeProfiles keeps a local profile's Env when the incoming entry has none
+// (profiles.go:226), but it only touches the Env field — SyncEnv comes from
+// incoming untouched. That is exactly right for a PULL, where SyncEnv is
+// itself part of the synced, sealed record. It is wrong for IMPORT: a file
+// entry with SyncEnv:true and no Env (the ordinary shape of a profile whose
+// SOURCE machine never had that env var, not one that opted out of syncing
+// it) would otherwise silently flip a local SyncEnv:false profile's
+// never-sync flag to true while keeping its local secret Env — and the very
+// next plaintext export of THIS machine (default includeLocalEnv=false)
+// would then ship that Env, because stripUnsyncedEnv only strips
+// SyncEnv==false profiles. Reproduced by the reviewer: machine A's profile
+// SyncEnv:true/no-Env imported onto machine B's same-ID
+// SyncEnv:false/Env:{OPENAI_API_KEY:...} promotes the key into B's next
+// export. Fixed below by re-pointing each file profile's SyncEnv at its
+// local counterpart's SyncEnv whenever mergeProfiles is about to preserve
+// that counterpart's Env — the same condition mergeProfiles itself checks,
+// duplicated here rather than threaded through mergeProfiles because the
+// pull path's promotion behavior is correct for pull and out of scope (see
+// mergeProfiles's own doc comment); what changed is that import now feeds a
+// plaintext file, so only the import path needs the extra guard.
+func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, []string, error) {
 	fileProfiles, defaultProfileID, _, err := validateProfilesPayload(raw)
 	if err != nil {
 		// PreviewConfigImport already reported this as Skipped.
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	fileByID := make(map[string]bool, len(fileProfiles))
@@ -913,10 +997,29 @@ func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]Imp
 		hasDefaultChange = false
 	}
 	if len(applied) == 0 && !hasDefaultChange {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	cfg := a.cfgStore.Get()
+
+	// SyncEnv-travels-with-Env guard (see doc comment above): for every file
+	// profile mergeProfiles is about to preserve local Env for — same
+	// condition mergeProfiles checks, len(p.Env)==0 && local has Env — pin
+	// its SyncEnv to the local value too, so the merged record's SyncEnv and
+	// Env always describe the same machine's choice, never a mix of file
+	// SyncEnv with local Env.
+	localByID := make(map[string]SessionProfile, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		localByID[p.ID] = p
+	}
+	for i := range fileProfiles {
+		p := &fileProfiles[i]
+		if len(p.Env) == 0 {
+			if l, ok := localByID[p.ID]; ok && len(l.Env) > 0 {
+				p.SyncEnv = l.SyncEnv
+			}
+		}
+	}
 
 	// incoming = every file-derived profile, plus every local-only profile
 	// (id not mentioned by the file) carried over verbatim — see the
@@ -931,17 +1034,39 @@ func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]Imp
 	merged := mergeProfiles(cfg.Profiles, incoming)
 
 	if err := a.SetProfiles(merged); err != nil {
-		return nil, fmt.Errorf("apply profiles: %w", err)
+		return nil, nil, fmt.Errorf("apply profiles: %w", err)
 	}
 
+	var skipped []string
 	if hasDefaultChange {
 		resolved := resolveDefaultProfileID(defaultProfileID, merged)
-		if err := a.SetDefaultProfileID(resolved); err != nil {
-			return applied, fmt.Errorf("apply default profile id: %w", err)
+		if resolved == "" {
+			// defaultProfileID was requested (hasDefaultChange only becomes
+			// true when previewProfiles saw a non-empty file
+			// default_profile_id — see its own doc comment) but does not
+			// name any profile present in the merged result: e.g. the file's
+			// referenced profile was itself skipped upstream for a missing
+			// name, or the file was hand-edited to reference an id that
+			// doesn't exist. Preview's classification of this key is purely
+			// "does the file's default_profile_id string differ from the
+			// current one" (previewProfiles never checks it resolves), so
+			// Preview can promise "replace -> X" for an X that can never
+			// actually be written. Silently calling SetDefaultProfileID("")
+			// here would CLEAR the local default — the same "import never
+			// wipes" rule design doc §3 states for list entries, extended to
+			// this scalar-shaped field. Keep the local default untouched and
+			// report why, naming the id that didn't resolve, instead of the
+			// generic "not applied" ApplyConfigImport's fallback would
+			// otherwise produce.
+			skipped = append(skipped, fmt.Sprintf("profiles:default_profile_id: %q not present in the merged profile list, local default kept", defaultProfileID))
+		} else {
+			if err := a.SetDefaultProfileID(resolved); err != nil {
+				return applied, skipped, fmt.Errorf("apply default profile id: %w", err)
+			}
+			applied = append(applied, "profiles:default_profile_id")
 		}
-		applied = append(applied, "profiles:default_profile_id")
 	}
-	return applied, nil
+	return applied, skipped, nil
 }
 
 // ApplyConfigImport parses jsonText independently (see below) and writes
@@ -1051,14 +1176,26 @@ func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
 			}
 		}
 	}
+	// explicitSkips holds keys applyProfilesImport already gave a specific,
+	// named-reason Skipped entry for (currently only an unresolvable
+	// profiles:default_profile_id — see its doc comment), so the generic
+	// "not applied" fallback below doesn't also fire for the same key and
+	// produce two Skipped lines describing one thing.
+	explicitSkips := make(map[string]bool)
 	if needProfiles {
 		if raw, ok := export.Preferences["profiles"]; ok {
-			keys, err := a.applyProfilesImport(raw, actionable)
+			keys, skipped, err := a.applyProfilesImport(raw, actionable)
 			if err != nil {
 				return report, err
 			}
 			for _, k := range keys {
 				appliedKeys[k] = true
+			}
+			for _, s := range skipped {
+				report.Skipped = append(report.Skipped, s)
+				if strings.HasPrefix(s, "profiles:default_profile_id:") {
+					explicitSkips["profiles:default_profile_id"] = true
+				}
 			}
 		}
 	}
@@ -1070,9 +1207,12 @@ func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
 		switch {
 		case strings.HasPrefix(c.Key, "ssh_host:"), strings.HasPrefix(c.Key, "ssh_key:"),
 			strings.HasPrefix(c.Key, "profile:"), c.Key == "profiles:default_profile_id":
-			if appliedKeys[c.Key] {
+			switch {
+			case appliedKeys[c.Key]:
 				report.Applied = append(report.Applied, c)
-			} else {
+			case explicitSkips[c.Key]:
+				// Already reported above with a specific reason.
+			default:
 				report.Skipped = append(report.Skipped, fmt.Sprintf("%s: not applied", c.Key))
 			}
 			continue

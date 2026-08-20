@@ -406,7 +406,7 @@ export const en = {
       },
       import: {
         title: "Import",
-        hint: "Choose a previously exported JSON file. Nothing is applied until you confirm. Imported SSH hosts arrive without their credential — you'll need to re-enter the password or pick a private key for them here afterward.",
+        hint: "Choose a previously exported JSON file. Nothing is applied until you confirm. Imported SSH hosts never bring a credential with them: new hosts need a password or key added here afterward, and if an existing host's address changed, its saved credential is cleared for safety and needs to be re-entered too.",
         pickFile: "Choose file…",
         fileLabel: "File: {name}",
         previewing: "Reading file…",

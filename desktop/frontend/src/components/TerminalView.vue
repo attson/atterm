@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { errText, logDebug, logError, logWarn } from "../lib/log";
+import { errText, logDebug, logError, logInfo, logWarn } from "../lib/log";
 import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
@@ -1597,12 +1597,27 @@ async function ensureTerm() {
   if (webglEnabled) {
     try {
       const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
+      // Context loss silently drops the pane back to the DOM renderer, which
+      // reads to the user as "it got slow on its own". Without a line here
+      // there is nothing in the log to distinguish that from a pane that
+      // never had WebGL to begin with.
+      webgl.onContextLoss(() => {
+        logWarn("term", "WebGL context lost, falling back to DOM");
+        webgl.dispose();
+      });
       term.loadAddon(webgl);
     } catch (err) {
       logWarn("term", "WebGL renderer unavailable, falling back to DOM", { error: errText(err) });
     }
   }
+  // Report the renderer that actually attached, not the preference that was
+  // asked for: the two diverge whenever addon construction throws, and the
+  // diagnostics bundle only carries the preference. The DOM renderer builds
+  // rows out of div/span, so a canvas under .xterm-screen means WebGL won.
+  logInfo("term", "renderer active", {
+    webgl: !!term.element?.querySelector("canvas"),
+    configured: webglEnabled,
+  });
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });

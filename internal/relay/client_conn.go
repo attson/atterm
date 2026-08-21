@@ -43,6 +43,11 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			sess.Unsubscribe(sub)
 		}
 	}()
+	// A client that disconnects mid-request must not leave a
+	// TypeSessionCreate route registered forever — the TTL sweep would
+	// eventually clear it, but there's no reason to wait: nothing will ever
+	// read targetedOut again once this connection is gone.
+	defer s.sessionCreateRoutes().unregisterClient(targetedOut)
 	defer func() {
 		routes := s.fsRoutes()
 		if sess != nil && sess.DriverFromUpstream() {
@@ -67,7 +72,14 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		routes.unregisterClient(targetedOut)
 	}()
 
-	// Outgoing pump (started after ATTACH).
+	// Outgoing pump. Runs for the whole connection lifetime, not just after
+	// ATTACH: a TypeSessionCreate reply must reach targetedOut before (and
+	// possibly without ever) attaching to a session, so unlike the old
+	// ATTACH-gated startWriter this cannot wait for ATTACH to start draining
+	// targetedOut. subOut/subDone start as nil channels — a nil channel in a
+	// select case simply never fires, which is what keeps the loop safe
+	// before ATTACH — and become live the moment ATTACH sends the new
+	// subscriber over attachSignal.
 	writerCtx, cancelWriter := context.WithCancel(ctx)
 	defer cancelWriter()
 	targetedOverflow := func() {
@@ -75,86 +87,90 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		cancelWriter()
 		_ = c.CloseNow()
 	}
+	attachSignal := make(chan *session.Subscriber, 1)
 
-	startWriter := func() {
-		go func() {
-			ticker := time.NewTicker(clientPingPeriod)
-			pacer := newReplayPacer(replayPaceBytes)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-writerCtx.Done():
+	go func() {
+		var subOut <-chan proto.Frame
+		var subDone <-chan struct{}
+		ticker := time.NewTicker(clientPingPeriod)
+		pacer := newReplayPacer(replayPaceBytes)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-writerCtx.Done():
+				return
+			case newSub := <-attachSignal:
+				subOut = newSub.Out()
+				subDone = newSub.Done()
+			case <-subDone:
+				// The subscription ended, which is not the same as the session
+				// ending: it also covers the relay letting this client go.
+				// Naming it "session ended" sent at least one debugging
+				// session chasing a session that was alive the whole time.
+				_ = c.Close(websocket.StatusGoingAway, "subscription ended")
+				return
+			case f := <-targetedOut:
+				s.debugFrame("client", "send", f)
+				ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+				err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
+				cancel()
+				if err != nil {
+					// A write that cannot complete inside clientWriteWait
+					// means the client stopped draining its socket — a
+					// renderer whose main thread is stuck parsing a flood
+					// looks exactly like this. Closing here is what the
+					// user sees as "reconnecting", so say it at a level
+					// they can actually find.
+					logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
+						f.SessionID, frameTypeName(f.Type), err)
+					_ = c.CloseNow()
 					return
-				case <-sub.Done():
-					// The subscription ended, which is not the same as the session
-					// ending: it also covers the relay letting this client go.
-					// Naming it "session ended" sent at least one debugging
-					// session chasing a session that was alive the whole time.
-					_ = c.Close(websocket.StatusGoingAway, "subscription ended")
+				}
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+				err := c.Ping(ctx)
+				cancel()
+				if err != nil {
+					s.debugf("client ping_failed error=%q", err)
+					// If only the writer side notices a dead browser, tear
+					// down the websocket so the reader loop unblocks and the
+					// subscriber is removed. Otherwise mirror sessions can stay
+					// stuck above zero subscribers and never issue another
+					// STREAM_REQUEST.
+					_ = c.CloseNow()
 					return
-				case f := <-targetedOut:
-					s.debugFrame("client", "send", f)
-					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
-					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
-					cancel()
-					if err != nil {
-						// A write that cannot complete inside clientWriteWait
-						// means the client stopped draining its socket — a
-						// renderer whose main thread is stuck parsing a flood
-						// looks exactly like this. Closing here is what the
-						// user sees as "reconnecting", so say it at a level
-						// they can actually find.
-						logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
-							f.SessionID, frameTypeName(f.Type), err)
-						_ = c.CloseNow()
+				}
+			case f := <-subOut:
+				s.debugFrame("client", "send", f)
+				ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+				err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
+				cancel()
+				if err != nil {
+					// Same close as the targeted path above: the live
+					// stream is where a client drowning in output actually
+					// stalls, so this is the line that explains a
+					// "reconnecting" badge on a purely local session.
+					logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
+						f.SessionID, frameTypeName(f.Type), err)
+					_ = c.CloseNow()
+					return
+				}
+				if pacer.observe(f) {
+					timer := time.NewTimer(2 * time.Millisecond)
+					select {
+					case <-writerCtx.Done():
+						timer.Stop()
 						return
-					}
-				case <-ticker.C:
-					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
-					err := c.Ping(ctx)
-					cancel()
-					if err != nil {
-						s.debugf("client ping_failed error=%q", err)
-						// If only the writer side notices a dead browser, tear
-						// down the websocket so the reader loop unblocks and the
-						// subscriber is removed. Otherwise mirror sessions can stay
-						// stuck above zero subscribers and never issue another
-						// STREAM_REQUEST.
-						_ = c.CloseNow()
+					case <-subDone:
+						timer.Stop()
+						_ = c.Close(websocket.StatusGoingAway, "subscription ended")
 						return
-					}
-				case f := <-sub.Out():
-					s.debugFrame("client", "send", f)
-					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
-					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
-					cancel()
-					if err != nil {
-						// Same close as the targeted path above: the live
-						// stream is where a client drowning in output actually
-						// stalls, so this is the line that explains a
-						// "reconnecting" badge on a purely local session.
-						logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
-							f.SessionID, frameTypeName(f.Type), err)
-						_ = c.CloseNow()
-						return
-					}
-					if pacer.observe(f) {
-						timer := time.NewTimer(2 * time.Millisecond)
-						select {
-						case <-writerCtx.Done():
-							timer.Stop()
-							return
-						case <-sub.Done():
-							timer.Stop()
-							_ = c.Close(websocket.StatusGoingAway, "subscription ended")
-							return
-						case <-timer.C:
-						}
+					case <-timer.C:
 					}
 				}
 			}
-		}()
-	}
+		}
+	}()
 
 	for {
 		f, err := readFrame(ctx, c)
@@ -235,7 +251,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				_ = s.cfg.Store.SetSeen(context.Background(), ownerUserID,
 					[]string{sess.ID.String()}, time.Now().Unix())
 			}
-			startWriter()
+			attachSignal <- sub
 
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage, proto.TypePasteFile:
 			if sess == nil {
@@ -291,6 +307,42 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				}
 			}
 			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
+
+		case proto.TypeSessionCreate:
+			// No ATTACH required: this asks a desktop to fork a brand new
+			// session, so there is nothing to attach to yet. sess may be nil.
+			var req proto.SessionCreatePayload
+			if err := json.Unmarshal(f.Payload, &req); err != nil || req.RequestID == "" || req.HostID == "" || req.ProfileID == "" {
+				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "invalid_request")
+				continue
+			}
+			routes := s.sessionCreateRoutes()
+			host, ok := routes.lookupHost(req.HostID)
+			// "unknown_host_id" covers both a host_id nobody announced and a
+			// host_id that belongs to a different owner. Collapsing those two
+			// cases into one message is deliberate: host_id is an opaque
+			// per-machine UUID the relay never displays, but distinguishing
+			// "doesn't exist" from "not yours" would still let a client probe
+			// which host ids exist for users it does not own — the same
+			// enumeration risk the cross-user gate exists to close.
+			if !ok || (ownerUserID != "" && host.ownerUserID != ownerUserID) {
+				reason := "unknown_host"
+				if ok {
+					reason = "not_owner"
+				}
+				s.debugf("client session_create_denied host_id=%q reason=%s", req.HostID, reason)
+				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "unknown_host_id")
+				continue
+			}
+			if !routes.registerRequest(req.RequestID, targetedOut, host.out) {
+				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "duplicate_request_id")
+				continue
+			}
+			if !sendSessionCreateFrame(host.out, f) {
+				routes.unregisterRequest(req.RequestID, targetedOut)
+				s.debugf("client session_create_drop reason=uplink_unavailable host_id=%q request_id=%s", req.HostID, req.RequestID)
+				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "upstream_unavailable")
+			}
 
 		case proto.TypeFSRequest:
 			if sess == nil {
@@ -399,6 +451,26 @@ func (s *Server) sendFSClientError(out chan<- proto.Frame, onOverflow func(), se
 	}
 	if !sendFSFrameToRoute(fsClientRoute{out: out, onOverflow: onOverflow}, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
 		s.debugf("client fs_error_drop session=%s request_id=%s", sessionID, requestID)
+	}
+}
+
+// sendSessionCreateError answers a rejected/failed TypeSessionCreate
+// directly, without going through the requests table: these are relay-side
+// refusals the request never got registered for (or, for duplicate_request_id,
+// registration deliberately failed), so there is nothing to route later.
+func (s *Server) sendSessionCreateError(out chan<- proto.Frame, onOverflow func(), requestID, message string) {
+	payload, err := json.Marshal(proto.SessionCreatedPayload{
+		RequestID: requestID,
+		Error:     message,
+	})
+	if err != nil {
+		return
+	}
+	if !sendSessionCreateFrame(out, proto.Frame{Type: proto.TypeSessionCreated, Payload: payload}) {
+		if onOverflow != nil {
+			onOverflow()
+		}
+		s.debugf("client session_create_error_drop request_id=%s message=%s", requestID, message)
 	}
 }
 

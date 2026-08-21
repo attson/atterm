@@ -28,12 +28,33 @@ function mountPanel(wailsBindings = true) {
 
 // jsdom's input.files is read-only; override it, then fire change (same
 // trick SshHostsPanel.test.ts uses for its own file-picker input).
+// Wait for the read to finish rather than draining a fixed number of turns.
+//
+// jsdom has no Blob.prototype.text, so this component takes its FileReader
+// fallback (the path older WebKit takes, which is why the fallback exists),
+// and jsdom fires onload from a queued task that need not land within one
+// turn on a busy machine. Two flushPromises calls do not even yield a
+// macrotask, so this was strictly more fragile than SshHostsPanel's version
+// of the same helper — which did lose about one full-suite run in eight.
+// Verified by deferring FileReader.onload a few turns: 7 of 17 tests failed
+// with the old helper and none with this one.
+//
+// The read always ends in a preview or a preview error, so wait for one.
 async function pickFile(w: ReturnType<typeof mount>, file: File) {
   const input = w.find('[data-testid="configio-import-file-input"]');
   Object.defineProperty(input.element, "files", { value: [file], configurable: true });
   await input.trigger("change");
-  await flushPromises();
-  await flushPromises();
+
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 0));
+    await flushPromises();
+    await w.vm.$nextTick();
+    const settled =
+      w.find('[data-testid="configio-preview"]').exists() ||
+      w.find('[data-testid="configio-preview-error"]').exists();
+    if (settled || Date.now() > deadline) return;
+  }
 }
 
 function samplePreview(overrides: Partial<ImportPreview> = {}): ImportPreview {

@@ -530,10 +530,36 @@ async function mountWithKeyDrawer() {
 
 // The import path reads the file through FileReader, which settles on a
 // macrotask — flushPromises alone (microtasks only) would sample too early.
+// Wait for the file read to actually finish, rather than draining a fixed
+// number of turns and hoping.
+//
+// jsdom has no Blob.prototype.text, so lib/sshKeyFile.ts takes its FileReader
+// fallback — the same path iOS's older WebKit takes, which is why the fallback
+// exists and why these tests should keep exercising it. jsdom's FileReader
+// fires onload from a queued task that is not guaranteed to land within one
+// macrotask turn when the machine is busy.
+//
+// The previous version drained exactly once (setTimeout 0 + flushPromises +
+// nextTick). That held on an idle box and lost roughly one full-suite run in
+// eight, always here and never when this file ran alone — because running
+// alone is the idle case. It was a bet, not a wait.
+//
+// Every caller ends with either the PEM populated or an error shown, so that
+// is the signal to wait for.
 async function settleFileRead(wrapper: ReturnType<typeof mount>) {
-  await new Promise((r) => setTimeout(r, 0));
-  await flushPromises();
-  await wrapper.vm.$nextTick();
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 0));
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    const pem = wrapper.find('[data-test="ssh-key-pem"]');
+    const err = wrapper.find('[data-test="ssh-hosts-error"]');
+    const settled =
+      (pem.exists() && (pem.element as HTMLTextAreaElement).value !== "") ||
+      (err.exists() && err.text().trim() !== "");
+    if (settled || Date.now() > deadline) return;
+  }
 }
 
 // jsdom's input.files is read-only; override it, then fire change.

@@ -1219,6 +1219,11 @@ function onSwitchTab(delta: number) {
   gotoTab(tabs.value[next].id);
 }
 
+function onSwitchTabTo(index: number) {
+  const t = tabs.value[index - 1];
+  if (t) gotoTab(t.id);
+}
+
 // `remote` defaults true because the only sessions that reach the create-a-pane
 // branch below are ones not currently displayed — and by construction those are
 // remote: every local session is put into a pane in the same step that spawns
@@ -1439,6 +1444,7 @@ useTerminalShortcuts(
     onFocusPane,
     onNewTab: () => { if (caps.localPty) startNewTab(); },
     onSwitchTab,
+    onSwitchTabTo,
     onToggleTaskSidebar: () => setSidebarCollapsedAndPersist(!sidebarCollapsed.value),
     onFocusSidebarSearch: () => {
       void taskSidebarRef.value?.focusSearch();

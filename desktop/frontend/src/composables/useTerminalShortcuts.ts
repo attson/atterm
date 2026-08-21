@@ -21,6 +21,9 @@ export interface ShortcutHandlers {
   onToggleTaskSidebar?: () => void;
   onFocusSidebarSearch?: () => void;
   onTerminalSearch?: () => void;
+  // Mod+Digit1..9 selects the Nth tab (1-based). Built-in fallback, not a
+  // configurable action — see the comment in handler().
+  onSwitchTabTo?: (index: number) => void;
 }
 
 export interface ShortcutOptions {
@@ -69,10 +72,23 @@ export function useTerminalShortcuts(
     const key = serialize(e, mod);
     if (key === null) return;
     const actionId = route.value[key];
-    if (!actionId) return;
-    if (!dispatch(actionId, handlers)) return;
-    e.preventDefault();
-    e.stopPropagation();
+    if (actionId) {
+      if (!dispatch(actionId, handlers)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // Mod+Digit1..9 -> Nth tab. Checked only after the routing table misses,
+    // so a user who rebinds some Mod+Digit chord to a registry action keeps
+    // their binding. Hardcoded rather than registered because the registry
+    // models one binding per action and nine select-tab-N settings rows
+    // would drown the shortcuts UI.
+    const tabSelect = key.match(/^Mod\+Digit([1-9])$/);
+    if (tabSelect && handlers.onSwitchTabTo) {
+      handlers.onSwitchTabTo(Number(tabSelect[1]));
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 
   document.addEventListener("keydown", handler, { capture: true });

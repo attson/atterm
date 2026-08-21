@@ -887,3 +887,35 @@ func TestSessionCreateDeniedForReadOnlyScope(t *testing.T) {
 	}
 	assertNoUplinkSessionCreate(t, ctx, uplink)
 }
+
+// Mirrors TestFSRouterResponseOverflowInvokesCallback. The callback matters
+// more here than it does for FS: routeResponse deletes the route before it
+// sends, so a full requester channel drops the reply with nothing left to
+// retry against, and the client waits out its whole 30s timeout in silence.
+// The fs_router sibling has had this test since that router was written; this
+// one shipped without it, and deleting the callback survived the entire relay
+// suite.
+func TestSessionCreateRouterResponseOverflowInvokesCallback(t *testing.T) {
+	r := newSessionCreateRouter()
+	clientOut := make(chan proto.Frame, 1)
+	clientOut <- proto.Frame{Type: proto.TypeMeta} // fill it
+	fromHost := make(chan proto.Frame, 1)
+	overflow := make(chan struct{}, 1)
+
+	if !r.registerRequestRoute("req-overflow", clientOut, fromHost, func() { overflow <- struct{}{} }) {
+		t.Fatal("request route was not registered")
+	}
+
+	payload, err := json.Marshal(proto.SessionCreatedPayload{RequestID: "req-overflow", OK: true, SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if r.routeResponse(proto.Frame{Type: proto.TypeSessionCreated, Payload: payload}, fromHost) {
+		t.Fatal("response was reported delivered to a full channel")
+	}
+	select {
+	case <-overflow:
+	default:
+		t.Fatal("overflow callback was not invoked; the client would sit through its full timeout with no reply and no signal")
+	}
+}

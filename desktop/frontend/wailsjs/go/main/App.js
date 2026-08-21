@@ -14,6 +14,10 @@ export function AppendFrontendLogs(arg1) {
   return window['go']['main']['App']['AppendFrontendLogs'](arg1);
 }
 
+export function ApplyConfigImport(arg1) {
+  return window['go']['main']['App']['ApplyConfigImport'](arg1);
+}
+
 export function BeginFeishuPair() {
   return window['go']['main']['App']['BeginFeishuPair']();
 }
@@ -22,8 +26,16 @@ export function BroadcastCommandFinished(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['BroadcastCommandFinished'](arg1, arg2, arg3, arg4);
 }
 
+export function BuildConfigExport(arg1) {
+  return window['go']['main']['App']['BuildConfigExport'](arg1);
+}
+
 export function CancelDownload() {
   return window['go']['main']['App']['CancelDownload']();
+}
+
+export function CancelSnippetRun(arg1) {
+  return window['go']['main']['App']['CancelSnippetRun'](arg1);
 }
 
 export function CheckUpdate() {
@@ -66,6 +78,10 @@ export function DownloadVersion(arg1) {
   return window['go']['main']['App']['DownloadVersion'](arg1);
 }
 
+export function ExportConfig(arg1) {
+  return window['go']['main']['App']['ExportConfig'](arg1);
+}
+
 export function ExportDiagnostics(arg1) {
   return window['go']['main']['App']['ExportDiagnostics'](arg1);
 }
@@ -100,6 +116,10 @@ export function GetClipboardPastePayload() {
 
 export function GetCommandNotifyThresholdSeconds() {
   return window['go']['main']['App']['GetCommandNotifyThresholdSeconds']();
+}
+
+export function GetDefaultProfileID() {
+  return window['go']['main']['App']['GetDefaultProfileID']();
 }
 
 export function GetDefaultShell() {
@@ -166,6 +186,10 @@ export function GetPluginConfig() {
   return window['go']['main']['App']['GetPluginConfig']();
 }
 
+export function GetProfiles() {
+  return window['go']['main']['App']['GetProfiles']();
+}
+
 export function GetPtyInputDebugEnabled() {
   return window['go']['main']['App']['GetPtyInputDebugEnabled']();
 }
@@ -192,6 +216,10 @@ export function GetShortcutBindings() {
 
 export function GetStartupError() {
   return window['go']['main']['App']['GetStartupError']();
+}
+
+export function GetSyncStatus() {
+  return window['go']['main']['App']['GetSyncStatus']();
 }
 
 export function GetTaskGroupBy() {
@@ -262,8 +290,16 @@ export function HasAccountKey() {
   return window['go']['main']['App']['HasAccountKey']();
 }
 
+export function ImportSSHHosts(arg1) {
+  return window['go']['main']['App']['ImportSSHHosts'](arg1);
+}
+
 export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
+}
+
+export function ListActiveForwards() {
+  return window['go']['main']['App']['ListActiveForwards']();
 }
 
 export function ListKnownHosts() {
@@ -276,6 +312,10 @@ export function ListRelaySessions() {
 
 export function ListRemoteSessions() {
   return window['go']['main']['App']['ListRemoteSessions']();
+}
+
+export function ListSFTPHosts() {
+  return window['go']['main']['App']['ListSFTPHosts']();
 }
 
 export function ListSSHHosts() {
@@ -318,12 +358,20 @@ export function NewSshSession(arg1) {
   return window['go']['main']['App']['NewSshSession'](arg1);
 }
 
-export function NewSshSessionByID(arg1) {
-  return window['go']['main']['App']['NewSshSessionByID'](arg1);
+export function NewSshSessionByID(arg1, arg2) {
+  return window['go']['main']['App']['NewSshSessionByID'](arg1, arg2);
 }
 
 export function PickLogFilePath() {
   return window['go']['main']['App']['PickLogFilePath']();
+}
+
+export function PreviewConfigImport(arg1) {
+  return window['go']['main']['App']['PreviewConfigImport'](arg1);
+}
+
+export function PreviewSSHConfigImport() {
+  return window['go']['main']['App']['PreviewSSHConfigImport']();
 }
 
 export function ProbeRelayVersion(arg1, arg2) {
@@ -370,6 +418,46 @@ export function RevokeRelaySession(arg1) {
   return window['go']['main']['App']['RevokeRelaySession'](arg1);
 }
 
+export function RunSnippetOnHosts(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunSnippetOnHosts'](arg1, arg2, arg3);
+}
+
+export function SFTPCreateFile(arg1, arg2) {
+  return window['go']['main']['App']['SFTPCreateFile'](arg1, arg2);
+}
+
+export function SFTPDisconnect(arg1) {
+  return window['go']['main']['App']['SFTPDisconnect'](arg1);
+}
+
+export function SFTPFileMeta(arg1, arg2) {
+  return window['go']['main']['App']['SFTPFileMeta'](arg1, arg2);
+}
+
+export function SFTPListDir(arg1, arg2) {
+  return window['go']['main']['App']['SFTPListDir'](arg1, arg2);
+}
+
+export function SFTPMkdir(arg1, arg2) {
+  return window['go']['main']['App']['SFTPMkdir'](arg1, arg2);
+}
+
+export function SFTPReadFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SFTPReadFile'](arg1, arg2, arg3);
+}
+
+export function SFTPRemove(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SFTPRemove'](arg1, arg2, arg3);
+}
+
+export function SFTPRename(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SFTPRename'](arg1, arg2, arg3);
+}
+
+export function SFTPWriteFile(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SFTPWriteFile'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function SaveRecoverySnapshot(arg1) {
   return window['go']['main']['App']['SaveRecoverySnapshot'](arg1);
 }
@@ -388,6 +476,10 @@ export function SetAutoCheckUpdates(arg1) {
 
 export function SetCommandNotifyThresholdSeconds(arg1) {
   return window['go']['main']['App']['SetCommandNotifyThresholdSeconds'](arg1);
+}
+
+export function SetDefaultProfileID(arg1) {
+  return window['go']['main']['App']['SetDefaultProfileID'](arg1);
 }
 
 export function SetDefaultShell(arg1) {
@@ -428,6 +520,10 @@ export function SetPinnedSessionIds(arg1) {
 
 export function SetPluginConfig(arg1) {
   return window['go']['main']['App']['SetPluginConfig'](arg1);
+}
+
+export function SetProfiles(arg1) {
+  return window['go']['main']['App']['SetProfiles'](arg1);
 }
 
 export function SetPtyInputDebugEnabled(arg1) {
@@ -526,12 +622,24 @@ export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
 }
 
+export function StartForward(arg1, arg2) {
+  return window['go']['main']['App']['StartForward'](arg1, arg2);
+}
+
 export function StartWidget() {
   return window['go']['main']['App']['StartWidget']();
 }
 
+export function StopForward(arg1, arg2) {
+  return window['go']['main']['App']['StopForward'](arg1, arg2);
+}
+
 export function StopWidget() {
   return window['go']['main']['App']['StopWidget']();
+}
+
+export function SyncNow() {
+  return window['go']['main']['App']['SyncNow']();
 }
 
 export function TranslateOpenAIChat(arg1) {

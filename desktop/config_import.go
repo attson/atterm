@@ -1,0 +1,1243 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/attson/atterm/internal/prefssync"
+)
+
+// ImportChange describes what applying the import would do to a single
+// preference key or list entry. Action is one of "add" (nothing here
+// locally), "replace" (a local entry with the same ID/key differs), or
+// "unchanged" (present locally and byte-for-byte the same). There is no
+// "remove"/"delete" action — see PreviewConfigImport's comment for why that
+// omission is structural, not an oversight.
+type ImportChange struct {
+	Key    string `json:"key"`
+	Action string `json:"action"` // "add" | "replace" | "unchanged"
+	Detail string `json:"detail,omitempty"`
+}
+
+// ImportPreview is what PreviewConfigImport returns: what WOULD happen if
+// the file were applied, computed without touching the config store.
+// Changes is built in a deterministic order — top-level preference keys
+// sorted lexically, list entries (hosts/keys/profiles) within a key in the
+// order the file's own JSON arrays list them — so running Preview twice on
+// the same file byte-for-byte always produces the same slice, and a test
+// (or a UI list) never needs set gymnastics to compare two previews.
+//
+// Both fields are always non-nil, even when there is nothing to report —
+// "nothing to change" is the ordinary success path a file re-imported onto
+// its own source machine hits every time, not an edge case. A nil slice
+// marshals to JSON null; the sibling PreviewSSHConfigImport
+// (ssh_config_import.go) makes() both of its slices for the same reason,
+// so a frontend reading preview.changes.length never has to special-case
+// null first.
+type ImportPreview struct {
+	Changes []ImportChange `json:"changes"`
+	Skipped []string       `json:"skipped"` // malformed entries, with a reason
+}
+
+// newImportPreview returns an ImportPreview with both slices already
+// allocated empty rather than nil — see ImportPreview's doc comment for why
+// every return path from PreviewConfigImport, including its error returns,
+// uses this instead of the zero value.
+func newImportPreview() ImportPreview {
+	return ImportPreview{Changes: []ImportChange{}, Skipped: []string{}}
+}
+
+// ImportReport is what ApplyConfigImport returns: what it actually wrote,
+// mirroring ImportPreview's shape (Applied plays the role Changes plays for
+// Preview) but naming the field for what already happened rather than what
+// would happen. "unchanged" entries never appear in Applied — there was
+// nothing to write — matching ImportPreview.Changes only ever counting as a
+// "change" what's already add/replace.
+type ImportReport struct {
+	Applied []ImportChange `json:"applied"`
+	Skipped []string       `json:"skipped"`
+}
+
+// scalarPrefTarget returns a pointer to a fresh zero value of the Go type
+// appConfigAdapter.WriteValue expects for key, or nil for a key WriteValue
+// doesn't handle. It exists purely to type-check an inbound scalar value
+// during preview — json.Unmarshal into the wrong shape (e.g.
+// terminal_font_size as a string) is exactly the "malformed individual
+// entry" case bullet 4 of the brief asks for, and it has to be caught here,
+// before Apply, because Preview promises not to touch the store at all.
+//
+// The switch's cases and target types are kept in lockstep with
+// appConfigAdapter.WriteValue by hand (see prefssync_adapter.go) rather than
+// shared code, because WriteValue's job is "unmarshal AND assign into c",
+// inseparable from a live store; duplicating just the shape here is what
+// keeps Preview from calling WriteValue (and thus Set) at all.
+func scalarPrefTarget(key string) any {
+	switch key {
+	case "locale_preference", "terminal_theme", "terminal_font_head",
+		"terminal_cursor_style", "default_shell":
+		return new(string)
+	case "quick_templates":
+		return new([]QuickTemplate)
+	case "notifications_enabled", "ai_notifications_only", "shell_integration_enabled":
+		return new(bool)
+	case "command_notify_threshold_seconds":
+		return new(int)
+	case "pinned_session_ids":
+		return new([]string)
+	case "terminal_font_size", "terminal_scrollback":
+		return new(int)
+	case "terminal_line_height":
+		return new(float64)
+	case "terminal_cursor_blink":
+		return new(*bool)
+	case "shortcut_bindings":
+		return new(map[string]string)
+	}
+	return nil
+}
+
+// validateScalarPrefValue runs the same acceptance check the real setter
+// would. It is NOT limited to default_shell/shortcut_bindings — six more
+// scalar keys' setters reject values beyond "does it unmarshal into the
+// right Go type": SetLocalePreference (allow-list), SetTerminalTheme
+// (isSupportedTerminalTheme), SetTerminalCursorStyle
+// (isSupportedCursorStyle), SetTerminalFontSize/SetTerminalLineHeight/
+// SetTerminalScrollback (range checks). Every one of those checks is
+// reproduced here verbatim, calling the same named functions/constants the
+// setters use (isSupportedTerminalTheme, isSupportedCursorStyle,
+// terminalFontSizeMin/Max, terminalLineHeightMin/Max, terminalScrollbackMax
+// all live in config.go) so Preview and Apply cannot independently drift on
+// what counts as acceptable — the same guarantee validateDefaultShell/
+// validateShortcutBindings already gave those two keys.
+//
+// Without this, Preview would report "replace" for a file that
+// ApplyConfigImport then refuses outright — e.g. a cross-build export
+// naming a terminal theme this build doesn't recognize. Reviewer round 1
+// caught that this list originally covered only 2 of 8 setters that
+// validate; a partial list here is exactly the failure mode
+// applyScalarPref's Skipped-not-abort behavior (below) exists to contain,
+// but catching it here means Preview and the Skipped reason line up.
+func validateScalarPrefValue(key string, target any) error {
+	switch key {
+	case "default_shell":
+		if _, err := validateDefaultShell(*target.(*string)); err != nil {
+			return err
+		}
+	case "shortcut_bindings":
+		if err := validateShortcutBindings(*target.(*map[string]string)); err != nil {
+			return err
+		}
+	case "locale_preference":
+		v := *target.(*string)
+		switch v {
+		case localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified:
+		default:
+			return errors.New("unsupported locale preference")
+		}
+	case "terminal_theme":
+		// TrimSpace first, because SetTerminalTheme does (app.go) — it trims,
+		// then validates, then stores the trimmed value. Validating the raw
+		// string here would make this check STRICTER than the setter it is
+		// supposed to mirror: "  nord  " is a value the user can set by hand
+		// and the setter happily stores as "nord", but preview would report
+		// it Skipped. A validator that refuses what its setter accepts is the
+		// worse direction of the two to be wrong in — it silently drops the
+		// user's data instead of failing loudly.
+		if !isSupportedTerminalTheme(strings.TrimSpace(*target.(*string))) {
+			return fmt.Errorf("bad terminal theme: %s", *target.(*string))
+		}
+	case "terminal_cursor_style":
+		// Same as terminal_theme above: SetTerminalCursorStyle trims first.
+		if !isSupportedCursorStyle(strings.TrimSpace(*target.(*string))) {
+			return fmt.Errorf("bad cursor style: %s", *target.(*string))
+		}
+	case "terminal_font_size":
+		v := *target.(*int)
+		if v < terminalFontSizeMin || v > terminalFontSizeMax {
+			return fmt.Errorf("font size out of range: %d", v)
+		}
+	case "terminal_line_height":
+		v := *target.(*float64)
+		if v < terminalLineHeightMin || v > terminalLineHeightMax {
+			return fmt.Errorf("line height out of range: %v", v)
+		}
+	case "terminal_scrollback":
+		v := *target.(*int)
+		if v <= 0 || v > terminalScrollbackMax {
+			return fmt.Errorf("scrollback out of range: %d", v)
+		}
+	case "terminal_cursor_blink":
+		// scalarPrefTarget gives this key a **bool (see its comment on why:
+		// nil vs. false have to stay distinguishable). json.Unmarshal of a
+		// JSON `null` leaves the pointed-to *bool nil, same as applyScalarPref's
+		// own `var v *bool; json.Unmarshal(raw, &v)` does. Without this case,
+		// a hand-edited file's "terminal_cursor_blink": null sailed through
+		// Preview as "add"/"replace" and was then refused by applyScalarPref —
+		// a whole-review MINOR: the two must not disagree about the same
+		// value, same as every other key here.
+		if *target.(**bool) == nil {
+			return errors.New("value is null")
+		}
+	}
+	return nil
+}
+
+// jsonEqual reports whether a and b decode to the same value, ignoring
+// incidental formatting (whitespace, key order, 5 vs 5.0). It underlies
+// "unchanged" vs "replace": a byte-diff would report every re-export of an
+// identical value as changed just because MarshalIndent's spacing differs.
+func jsonEqual(a, b json.RawMessage) bool {
+	var va, vb any
+	if json.Unmarshal(a, &va) != nil || json.Unmarshal(b, &vb) != nil {
+		return false
+	}
+	return reflect.DeepEqual(va, vb)
+}
+
+// previewScalarPref classifies one non-list preference key. customized
+// mirrors BuildConfigExport's own gate (isPrefCustomized): a key the local
+// store never explicitly set is reported as "add" even if the zero value it
+// would compare against happens to equal the imported one, for the same
+// reason isPrefCustomized exists on the export side — "unset" and "set to
+// the zero value" are different facts, and only isPrefCustomized can tell
+// them apart.
+func previewScalarPref(current func(string) (json.RawMessage, bool), customized func(string) bool, key string, raw json.RawMessage) (ImportChange, error) {
+	target := scalarPrefTarget(key)
+	if target == nil {
+		return ImportChange{}, fmt.Errorf("unknown preference key")
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return ImportChange{}, err
+	}
+	if err := validateScalarPrefValue(key, target); err != nil {
+		return ImportChange{}, err
+	}
+
+	if !customized(key) {
+		return ImportChange{Key: key, Action: "add"}, nil
+	}
+	if curRaw, ok := current(key); ok && jsonEqual(curRaw, raw) {
+		return ImportChange{Key: key, Action: "unchanged"}, nil
+	}
+	return ImportChange{Key: key, Action: "replace"}, nil
+}
+
+// validateSSHHostsPayload parses raw as an sshHostsExportPayload and applies
+// the "id and the id-appropriate name field must be non-empty; a duplicate
+// id within the file keeps the first occurrence" validity rule, trimming
+// whitespace from every id it keeps.
+//
+// Factored out of previewSSHHosts (rather than left inline) so
+// ApplyConfigImport (task 3) can call the exact same function instead of
+// re-deriving the rule: a second, hand-copied version of "what counts as a
+// malformed host/key entry" is exactly how Preview and Apply drift into
+// disagreeing about the same file — see the brief's item 1.
+func validateSSHHostsPayload(raw json.RawMessage) (hosts []SSHHost, keys []SSHKey, skipped []string, err error) {
+	var payload sshHostsExportPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, nil, nil, err
+	}
+
+	seenHosts := make(map[string]bool, len(payload.Hosts))
+	for _, h := range payload.Hosts {
+		id := strings.TrimSpace(h.ID)
+		host := strings.TrimSpace(h.Host)
+		switch {
+		case id == "":
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: host %q missing id", h.Alias))
+			continue
+		case host == "":
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: host id=%s missing host", id))
+			continue
+		case seenHosts[id]:
+			// Mirrors filterValidProfiles' duplicate-in-payload rule (see
+			// profiles.go): first occurrence wins, later ones are malformed
+			// input rather than a legitimate second entry with the same ID.
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: host id=%s duplicate in file, first occurrence kept", id))
+			continue
+		}
+		seenHosts[id] = true
+		// Use the trimmed id in the compared value itself, not just as the
+		// map key: leaving h.ID untrimmed would compare a whitespace-padded
+		// ID against the local record's clean one, and reflect.DeepEqual
+		// would call every such entry "replace" even when nothing else
+		// differs.
+		h.ID = id
+		hosts = append(hosts, h)
+	}
+
+	seenKeys := make(map[string]bool, len(payload.Keys))
+	for _, k := range payload.Keys {
+		id := strings.TrimSpace(k.ID)
+		name := strings.TrimSpace(k.Name)
+		switch {
+		case id == "":
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: key %q missing id", k.Name))
+			continue
+		case name == "":
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: key id=%s missing name", id))
+			continue
+		case seenKeys[id]:
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: key id=%s duplicate in file, first occurrence kept", id))
+			continue
+		}
+		seenKeys[id] = true
+		k.ID = id
+		keys = append(keys, k)
+	}
+
+	return hosts, keys, skipped, nil
+}
+
+// previewSSHHosts diffs an incoming "ssh_hosts" payload (sshHostsExportPayload)
+// against cfg.SSHHosts/cfg.SSHKeys by ID.
+//
+// A local host/key whose ID does not appear in the file produces no change
+// at all — it is neither "unchanged" (it was never compared) nor removed.
+// That silence is the point: import only ever adds or replaces entries the
+// file actually mentions, so PreviewConfigImport never has to special-case
+// "this host wasn't in the file" as a kind of change, and ApplyConfigImport
+// (task 3) has nothing here suggesting a delete is ever appropriate.
+//
+// Hosts and keys are exported verbatim (unlike profiles — see
+// previewProfiles for why that one needs a merge-aware comparison), so a
+// straight reflect.DeepEqual against the local record is honest here.
+func previewSSHHosts(cfg appConfig, raw json.RawMessage) ([]ImportChange, []string) {
+	hosts, keys, skipped, err := validateSSHHostsPayload(raw)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("ssh_hosts: %v", err)}
+	}
+
+	localHosts := make(map[string]SSHHost, len(cfg.SSHHosts))
+	for _, h := range cfg.SSHHosts {
+		localHosts[h.ID] = h
+	}
+	localKeys := make(map[string]SSHKey, len(cfg.SSHKeys))
+	for _, k := range cfg.SSHKeys {
+		localKeys[k.ID] = k
+	}
+
+	var changes []ImportChange
+	for _, h := range hosts {
+		changes = append(changes, ImportChange{
+			Key:    "ssh_host:" + h.ID,
+			Action: listAction(localHosts, h.ID, h),
+			Detail: hostDetail(h),
+		})
+	}
+	for _, k := range keys {
+		changes = append(changes, ImportChange{
+			Key:    "ssh_key:" + k.ID,
+			Action: listAction(localKeys, k.ID, k),
+			Detail: k.Name,
+		})
+	}
+
+	return changes, skipped
+}
+
+// profileMergeCandidate returns what incoming would look like after the
+// Env-preservation rule ApplyConfigImport is expected to apply (mirroring
+// mergeProfiles's rule in profiles.go, minus its delete-if-absent half,
+// which does not apply here — see previewProfiles). If incoming has no Env
+// and did not opt into syncing it, local's Env survives; otherwise
+// incoming's Env (possibly empty) is authoritative.
+//
+// This exists because BuildConfigExport strips Env for SyncEnv==false
+// profiles by default (stripUnsyncedEnv), so the raw file entry for such a
+// profile looks like it has no Env at all — comparing that raw entry
+// against local directly would report "replace" (env wiped) for a profile
+// where env-preserving apply would in fact leave Env untouched. A "replace"
+// there reads to a user as "my API tokens get overwritten", which is the
+// opposite of what happens.
+func profileMergeCandidate(local, incoming SessionProfile) SessionProfile {
+	if len(incoming.Env) == 0 && !incoming.SyncEnv {
+		incoming.Env = local.Env
+	}
+	return incoming
+}
+
+// profileDiffFields lists the SessionProfile fields that differ between
+// local and merged (the profileMergeCandidate result), by JSON field name,
+// for ImportChange.Detail on a "replace" — so a UI (or a human reading
+// Skipped/Changes) can tell "just the shell changed" from "everything did"
+// without a full struct dump.
+func profileDiffFields(local, merged SessionProfile) []string {
+	var diffs []string
+	if local.Name != merged.Name {
+		diffs = append(diffs, "name")
+	}
+	if local.Shell != merged.Shell {
+		diffs = append(diffs, "shell")
+	}
+	if local.Cwd != merged.Cwd {
+		diffs = append(diffs, "cwd")
+	}
+	if local.StartupCmd != merged.StartupCmd {
+		diffs = append(diffs, "startup_cmd")
+	}
+	if local.SyncEnv != merged.SyncEnv {
+		diffs = append(diffs, "sync_env")
+	}
+	if !reflect.DeepEqual(local.Env, merged.Env) {
+		diffs = append(diffs, "env")
+	}
+	return diffs
+}
+
+// validateProfilesPayload parses raw as a profilesExportPayload and applies
+// the same "empty id/name and duplicate id are malformed" rule
+// filterValidProfiles (profiles.go) applies to an inbound sync payload —
+// same rule, reimplemented rather than called, because filterValidProfiles
+// logs and returns a filtered slice while callers here need a per-entry
+// reason string for ImportPreview.Skipped. DefaultProfileID travels back
+// unfiltered: it is validated against the merged profile list downstream
+// (resolveDefaultProfileID), not here.
+//
+// Factored out of previewProfiles so ApplyConfigImport (task 3) validates
+// and dedupes the exact same way Preview classified the file — see
+// validateSSHHostsPayload's comment for why a second copy of this rule is
+// the wrong move.
+func validateProfilesPayload(raw json.RawMessage) (profiles []SessionProfile, defaultProfileID string, skipped []string, err error) {
+	var payload profilesExportPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, "", nil, err
+	}
+
+	seen := make(map[string]bool, len(payload.Profiles))
+	for _, p := range payload.Profiles {
+		id := strings.TrimSpace(p.ID)
+		name := strings.TrimSpace(p.Name)
+		switch {
+		case id == "":
+			skipped = append(skipped, fmt.Sprintf("profiles: profile %q missing id", p.Name))
+			continue
+		case name == "":
+			skipped = append(skipped, fmt.Sprintf("profiles: profile id=%s missing name", id))
+			continue
+		case seen[id]:
+			skipped = append(skipped, fmt.Sprintf("profiles: profile id=%s duplicate in file, first occurrence kept", id))
+			continue
+		}
+		seen[id] = true
+		p.ID = id
+		profiles = append(profiles, p)
+	}
+
+	return profiles, payload.DefaultProfileID, skipped, nil
+}
+
+// previewProfiles diffs an incoming "profiles" payload (profilesExportPayload)
+// against cfg.Profiles by ID, applying the same "absent from file == kept,
+// not removed" rule previewSSHHosts does.
+//
+// Comparison goes through profileMergeCandidate rather than a literal
+// reflect.DeepEqual against the file entry: BuildConfigExport strips Env
+// for SyncEnv==false profiles by default, so the file's own content for
+// such a profile is not what apply would actually produce (see
+// profileMergeCandidate's comment). Preview reports what apply DOES, not
+// what the file happens to say.
+func previewProfiles(cfg appConfig, raw json.RawMessage) ([]ImportChange, []string) {
+	profiles, defaultProfileID, skipped, err := validateProfilesPayload(raw)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("profiles: %v", err)}
+	}
+
+	localByID := make(map[string]SessionProfile, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		localByID[p.ID] = p
+	}
+
+	var changes []ImportChange
+	for _, p := range profiles {
+		if existing, ok := localByID[p.ID]; ok {
+			merged := profileMergeCandidate(existing, p)
+			if reflect.DeepEqual(existing, merged) {
+				changes = append(changes, ImportChange{Key: "profile:" + p.ID, Action: "unchanged", Detail: p.Name})
+			} else {
+				changes = append(changes, ImportChange{
+					Key:    "profile:" + p.ID,
+					Action: "replace",
+					Detail: strings.Join(profileDiffFields(existing, merged), ", "),
+				})
+			}
+		} else {
+			changes = append(changes, ImportChange{Key: "profile:" + p.ID, Action: "add", Detail: p.Name})
+		}
+	}
+
+	if defaultProfileID != "" {
+		action := "unchanged"
+		switch {
+		case cfg.DefaultProfileID == "":
+			action = "add"
+		case cfg.DefaultProfileID != defaultProfileID:
+			action = "replace"
+		}
+		changes = append(changes, ImportChange{
+			Key:    "profiles:default_profile_id",
+			Action: action,
+			Detail: defaultProfileID,
+		})
+	}
+
+	return changes, skipped
+}
+
+// listAction is the shared "add vs replace vs unchanged" rule for a
+// by-ID list entry: absent locally -> add, present and identical ->
+// unchanged, present and different -> replace. T is compared via
+// reflect.DeepEqual (SSHHost, SSHKey are plain structs of comparable/slice
+// fields, no funcs or channels), so a shallow == can't be used here — a
+// struct with a slice field isn't comparable with ==. Profiles do NOT use
+// this — see previewProfiles/profileMergeCandidate for why their comparison
+// needs an extra merge step first.
+func listAction[T any](local map[string]T, id string, incoming T) string {
+	existing, ok := local[id]
+	if !ok {
+		return "add"
+	}
+	if reflect.DeepEqual(existing, incoming) {
+		return "unchanged"
+	}
+	return "replace"
+}
+
+// hostDetail renders a one-line human label for an ImportChange on an SSH
+// host. It always includes the connection target (user@host[:port]), not
+// just the alias — whole-branch review round: a "replace" can silently
+// repoint an ID at a different Host/Port/User while keeping the same alias,
+// which (before this fix) made the preview detail byte-identical for "this
+// host's target moved" and "nothing about this host changed". A user
+// approving an import cannot tell those apart from the alias alone; the
+// target has to be visible in the same line the alias is.
+func hostDetail(h SSHHost) string {
+	target := h.User + "@" + h.Host
+	if h.Port != "" {
+		target += ":" + h.Port
+	}
+	if h.Alias != "" {
+		return h.Alias + " (" + target + ")"
+	}
+	return target
+}
+
+// hostTargetChanged reports whether replacing old with incoming would point
+// an existing host ID at a different machine — a changed Host, Port, or
+// User. Used by applySSHHostsImport to decide whether the ID's stored
+// keyring credential must be cleared on a "replace" (see its doc comment):
+// none of these three fields changing means the credential still
+// authenticates the same endpoint it always did.
+func hostTargetChanged(old, incoming SSHHost) bool {
+	return old.Host != incoming.Host || old.Port != incoming.Port || old.User != incoming.User
+}
+
+// knownImportKeys lists every top-level key PreviewConfigImport can
+// classify: every prefssync synced key except the two sealed ones (which
+// never appear in a plaintext export — see BuildConfigExport), plus the two
+// unsealed re-homed names ("ssh_hosts", "profiles") that replace them on
+// disk.
+//
+// Derived from prefssync.SyncedKeys() rather than a second hand-written
+// list: a hand-written copy (matching BuildConfigExport's own `handled`
+// list, guarded only by TestBuildConfigExport_HandlesEverySyncedKey) can
+// drift silently — adding a key to prefssync.syncedKeys would leave this
+// list stale with every existing test still green, since a key this
+// function doesn't recognize simply lands in Skipped as "unknown
+// preference key" instead of failing loudly. Deriving instead of copying
+// removes the possibility of that drift outright, rather than adding a
+// test to guard against it.
+func knownImportKeys() map[string]bool {
+	keys := map[string]bool{
+		"ssh_hosts": true,
+		"profiles":  true,
+	}
+	for _, k := range prefssync.SyncedKeys() {
+		if k == "ssh_hosts_encrypted" || k == "profiles_encrypted" {
+			continue
+		}
+		keys[k] = true
+	}
+	return keys
+}
+
+// PreviewConfigImport parses jsonText as a ConfigExport (see
+// config_export.go for the on-disk shape) and reports what applying it
+// WOULD change, without changing anything: it never calls a.cfgStore.Set,
+// directly or indirectly, and every read goes through a.cfgStore.Get()
+// snapshots or the read-only halves of newAppConfigAdapter. A future
+// ApplyConfigImport (task 3) is expected to call this function first and
+// reuse its Changes to decide what to write — Preview computing the same
+// answer twice, once here and once silently inside Apply, is how the two
+// would drift apart.
+//
+// An unknown Version is refused outright rather than parsed best-effort.
+// configExportVersion travels with the file precisely so a future format
+// change can be detected (see its comment in config_export.go); silently
+// parsing a Preferences shape this build doesn't understand as if it were
+// the current one is how an import would drop fields it never recognized,
+// with no error to say so.
+//
+// Every preference key is handled independently: a malformed key (bad
+// version aside) is recorded in Skipped and the rest of the file is still
+// previewed. This mirrors prefssync.Engine.Pull's per-key rule (see its
+// doc comment) — Pull used to abort the whole pull on one bad key and
+// silently skip everything after it in the response; the same shape of bug
+// is just as possible here across preference keys in one file.
+func (a *App) PreviewConfigImport(jsonText string) (ImportPreview, error) {
+	if a.cfgStore == nil {
+		return newImportPreview(), fmt.Errorf("config store not ready")
+	}
+
+	var export ConfigExport
+	if err := json.Unmarshal([]byte(jsonText), &export); err != nil {
+		return newImportPreview(), fmt.Errorf("parse config export: %w", err)
+	}
+	if export.Version != configExportVersion {
+		return newImportPreview(), fmt.Errorf("unsupported config export version %d (this build reads version %d)", export.Version, configExportVersion)
+	}
+
+	cfg := a.cfgStore.Get()
+	customized := isPrefCustomized(cfg)
+	// accountKey is fixed to nil for the same reason BuildConfigExport fixes
+	// it to nil (see its comment): a plaintext export never carries
+	// ssh_hosts_encrypted/profiles_encrypted, only their unsealed
+	// replacements "ssh_hosts"/"profiles", handled below by their own
+	// preview functions instead of this adapter.
+	adapter := newAppConfigAdapter(a.cfgStore, func() []byte { return nil })
+	known := knownImportKeys()
+
+	keys := make([]string, 0, len(export.Preferences))
+	for k := range export.Preferences {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // deterministic order: see ImportPreview's doc comment
+
+	preview := newImportPreview()
+	for _, key := range keys {
+		raw := export.Preferences[key]
+		if !known[key] {
+			preview.Skipped = append(preview.Skipped, fmt.Sprintf("%s: unknown preference key", key))
+			continue
+		}
+		switch key {
+		case "ssh_hosts":
+			changes, skipped := previewSSHHosts(cfg, raw)
+			preview.Changes = append(preview.Changes, changes...)
+			preview.Skipped = append(preview.Skipped, skipped...)
+		case "profiles":
+			changes, skipped := previewProfiles(cfg, raw)
+			preview.Changes = append(preview.Changes, changes...)
+			preview.Skipped = append(preview.Skipped, skipped...)
+		default:
+			change, err := previewScalarPref(adapter.ReadValue, customized, key, raw)
+			if err != nil {
+				preview.Skipped = append(preview.Skipped, fmt.Sprintf("%s: %v", key, err))
+				continue
+			}
+			preview.Changes = append(preview.Changes, change)
+		}
+	}
+
+	return preview, nil
+}
+
+// newImportReport returns an ImportReport with both slices already
+// allocated empty rather than nil — same reasoning as newImportPreview.
+func newImportReport() ImportReport {
+	return ImportReport{Applied: []ImportChange{}, Skipped: []string{}}
+}
+
+// applyScalarPref unmarshals raw into the Go type key's setter expects and
+// calls that setter. It is the write-side twin of scalarPrefTarget +
+// previewScalarPref: same key set, same shapes, but assigning through the
+// real App method instead of a throwaway target — so the value actually
+// lands in the store, marks dirty, and enqueues a push (spec §4), rather
+// than only being type-checked.
+//
+// This function does not re-validate default_shell/shortcut_bindings/
+// terminal_theme/terminal_cursor_style/locale_preference/terminal_font_size/
+// terminal_line_height/terminal_scrollback itself — their setters do that
+// internally, and validateScalarPrefValue calls the exact same checks, so
+// ApplyConfigImport only ever reaches this function for a key
+// PreviewConfigImport already ran through validateScalarPrefValue and
+// accepted. A setter refusing a value that got this far would mean Preview
+// and Apply independently disagreed about what "valid" means for that key —
+// surfaced as an error to the caller (who skips it rather than aborting the
+// rest of the import, see ApplyConfigImport) rather than silently dropped,
+// so that disagreement cannot pass silently. It is a method on *App (not a
+// free function taking *App, as originally written) purely for symmetry
+// with applySSHHostsImport/applyProfilesImport, its two siblings.
+func (a *App) applyScalarPref(key string, raw json.RawMessage) error {
+	switch key {
+	case "locale_preference":
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetLocalePreference(v)
+	case "terminal_theme":
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetTerminalTheme(v)
+	case "terminal_font_head":
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetTerminalFontHead(v)
+	case "terminal_font_size":
+		var v int
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetTerminalFontSize(v)
+	case "terminal_line_height":
+		var v float64
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetTerminalLineHeight(v)
+	case "terminal_cursor_style":
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetTerminalCursorStyle(v)
+	case "terminal_cursor_blink":
+		var v *bool
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		if v == nil {
+			return fmt.Errorf("terminal_cursor_blink: value is null")
+		}
+		return a.SetTerminalCursorBlink(*v)
+	case "terminal_scrollback":
+		var v int
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetTerminalScrollback(v)
+	case "default_shell":
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetDefaultShell(v)
+	case "shortcut_bindings":
+		var v map[string]string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetShortcutBindings(v)
+	case "quick_templates":
+		var v []QuickTemplate
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetQuickTemplates(v)
+	case "notifications_enabled":
+		var v bool
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetNotificationsEnabled(v)
+	case "ai_notifications_only":
+		var v bool
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetAINotificationsOnly(v)
+	case "command_notify_threshold_seconds":
+		var v int
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetCommandNotifyThresholdSeconds(v)
+	case "shell_integration_enabled":
+		var v bool
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetShellIntegrationEnabled(v)
+	case "pinned_session_ids":
+		var v []string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetPinnedSessionIds(v)
+	}
+	return fmt.Errorf("unknown preference key")
+}
+
+// applySSHHostsImport writes the add/replace entries validateSSHHostsPayload
+// finds in raw into cfg.SSHHosts/cfg.SSHKeys by ID, folds the
+// "ssh_hosts_encrypted" dirty-meta write into that same cfgStore.Set call,
+// then kicks the sync engine directly (markPrefDirtyAndPush) — the same
+// call markSSHHostsDirty makes, just without markSSHHostsDirty's own
+// separate Get/Set for meta alone (see below). Returns the "ssh_host:ID"/
+// "ssh_key:ID" keys it actually wrote, for ApplyConfigImport's report.
+//
+// This does NOT call AddSSHHost / UpdateSSHHost / AddSSHKey / UpdateSSHKey.
+// That is a deliberate deviation, not an oversight, and the decisive reason
+// is ID overwrite: AddSSHHost/AddSSHKey unconditionally replace the ID on
+// the record they're given with a fresh ulid.Make() — see ssh_hosts_store.go.
+// Import's whole merge-by-ID contract (previewSSHHosts: same ID -> replace,
+// new ID -> add, local-only ID -> kept) depends on the file's ID surviving
+// into the store untouched; routing through AddSSHHost would silently
+// discard every file ID and turn each entry into a duplicate-add instead of
+// the merge PreviewConfigImport already promised the caller. Two more
+// reasons compound this, in order of how much they'd break if ignored:
+//
+//   - AddSSHKey additionally requires a private-key PEM as part of its
+//     credential argument. A plaintext export carries no credential field
+//     for a key to begin with (see sshHostsExportPayload's comment in
+//     config_export.go) — there is no PEM here to give it. It is
+//     structurally uncallable from this path, not just undesirable.
+//   - UpdateSSHHost intentionally keeps the CURRENTLY STORED
+//     IdentityFile/ProxyJump/ProxyCommand regardless of what the caller
+//     passes (see its own doc comment: the UI drawer never edits those
+//     three fields, only ssh_config import does). That rule is correct for
+//     the drawer's save button; it is wrong for a "replace" import, whose
+//     file carries another machine's complete record including those three
+//     fields — silently reverting them would contradict what Preview's
+//     plain reflect.DeepEqual over the whole struct already told the
+//     caller "replace" meant.
+//
+// None of the four validates anything either, so nothing about "going
+// through the setter" would add a safety check here that
+// validateSSHHostsPayload doesn't already provide. Writing cfg.SSHHosts/
+// SSHKeys directly (matching the exact add/replace/keep-if-absent contract
+// previewSSHHosts already established) is the better shape for a bulk,
+// full-record, ID-preserving import than N per-item setter calls would be —
+// N UpdateSSHHost calls would also fire N markSSHHostsDirty ->
+// N MarkDirty read-modify-writes on the single "ssh_hosts_encrypted" key,
+// which prefs_sync_loop.go documents as lossy under concurrent writers.
+//
+// This never WRITES a keyring credential — a plaintext export carries no
+// credential field for a host or key to begin with, so there is nothing
+// here to write or roll back. It does, however, CLEAR one: whole-branch
+// review round caught that replacing an existing host ID whose Host, Port,
+// or User differs from the file's version otherwise leaves that ID's
+// stored password/key exactly where it was, now authenticating a
+// DIFFERENT machine — reusing the ID is enough to silently repoint a
+// credential at whatever endpoint the file names, e.g. an attacker's box,
+// with no prompt and (before hostDetail's own fix, see above) no visible
+// change in the preview if the alias happened to stay the same. Losing a
+// stored credential on a host whose address moved is the safe failure;
+// silently pointing it at a new machine is not — see hostTargetChanged.
+func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]ImportChange) (applied []string, skipped []string, err error) {
+	hosts, keys, _, err := validateSSHHostsPayload(raw)
+	if err != nil {
+		// PreviewConfigImport already reported this as Skipped (it runs the
+		// exact same parse); nothing new to apply.
+		return nil, nil, nil
+	}
+
+	cfg := a.cfgStore.Get()
+	var credentialsToClear []string
+
+	hostIdx := make(map[string]int, len(cfg.SSHHosts))
+	for i, h := range cfg.SSHHosts {
+		hostIdx[h.ID] = i
+	}
+	for _, h := range hosts {
+		c, ok := actionable["ssh_host:"+h.ID]
+		if !ok || c.Action == "unchanged" {
+			continue
+		}
+		if idx, exists := hostIdx[h.ID]; exists {
+			if hostTargetChanged(cfg.SSHHosts[idx], h) {
+				credentialsToClear = append(credentialsToClear, h.ID)
+			}
+			cfg.SSHHosts[idx] = h
+		} else {
+			cfg.SSHHosts = append(cfg.SSHHosts, h)
+			hostIdx[h.ID] = len(cfg.SSHHosts) - 1
+		}
+		applied = append(applied, "ssh_host:"+h.ID)
+	}
+
+	keyIdx := make(map[string]int, len(cfg.SSHKeys))
+	for i, k := range cfg.SSHKeys {
+		keyIdx[k.ID] = i
+	}
+	for _, k := range keys {
+		c, ok := actionable["ssh_key:"+k.ID]
+		if !ok || c.Action == "unchanged" {
+			continue
+		}
+		if idx, exists := keyIdx[k.ID]; exists {
+			cfg.SSHKeys[idx] = k
+		} else {
+			cfg.SSHKeys = append(cfg.SSHKeys, k)
+			keyIdx[k.ID] = len(cfg.SSHKeys) - 1
+		}
+		applied = append(applied, "ssh_key:"+k.ID)
+	}
+
+	if len(applied) == 0 {
+		return nil, nil, nil
+	}
+
+	// Fold the dirty-meta write into the same cfg/Set call that persists
+	// the host/key changes, instead of calling markSSHHostsDirty()
+	// afterward (which would re-Get/re-Set for meta alone — a second
+	// on-disk persist for what is already one logical write on this bulk
+	// path). markPrefDirtyAndPush below is the same call markSSHHostsDirty
+	// makes when a.prefsSync != nil, so the sync engine's own dirty
+	// bookkeeping and push-enqueue are unchanged.
+	if cfg.PrefsMeta == nil {
+		cfg.PrefsMeta = map[string]prefsMetaEntry{}
+	}
+	m := cfg.PrefsMeta["ssh_hosts_encrypted"]
+	m.Dirty = true
+	m.UpdatedAtLocal = time.Now().UnixMilli()
+	cfg.PrefsMeta["ssh_hosts_encrypted"] = m
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return nil, nil, err
+	}
+	if a.prefsSync != nil {
+		a.markPrefDirtyAndPush("ssh_hosts_encrypted")
+	}
+
+	// Clear stale credentials AFTER the host records themselves are
+	// persisted: the record write is what the caller actually asked for,
+	// and must not be rolled back just because a keyring clear failed.
+	//
+	// A failure here is REPORTED, not returned. Returning it aborted the
+	// rest of the import — and by this point the host records are already
+	// written and already pushed to every other device, so aborting bought
+	// nothing and left profiles and scalar prefs unapplied with an empty
+	// report: the "a config that is neither the file nor the original"
+	// outcome this feature spent a whole review round eliminating. The user
+	// still has to know, because a credential left attached to a host whose
+	// target moved is the silent rebind this guard exists to prevent — so it
+	// goes in Skipped, where they will read it, rather than into an error
+	// that discards the work already done.
+	clear := a.clearSSHCredential
+	if clear == nil {
+		clear = func(id string) error { return sshCredentialSlot(id).Clear() }
+	}
+	for _, id := range credentialsToClear {
+		if err := clear(id); err != nil {
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: could not clear the stored credential for host id=%s after its address changed — it is still attached to the new address: %v", id, err))
+		}
+	}
+	return applied, skipped, nil
+}
+
+// applyProfilesImport writes the add/replace entries validateProfilesPayload
+// finds in raw through mergeProfiles (profiles.go) — the SAME function the
+// real cross-device pull path (appConfigAdapter.WriteValue's
+// "profiles_encrypted" case) uses, so a local profile's Env, for a profile
+// with SyncEnv == false, survives an import exactly the way it survives a
+// pull (see profileMergeCandidate's comment for why the raw file entry is
+// not what apply should compare against or write).
+//
+// mergeProfiles's own doc comment states a rule that looks like it
+// contradicts import's contract: "ID absent from incoming -> the profile
+// was deleted on the other machine; delete it here too." That is correct
+// for a PULL, where "incoming" is the complete, authoritative profile list
+// for the account (openProfiles decodes the full sealed list every time,
+// nothing is ever partial). It is wrong for IMPORT: previewProfiles's own
+// contract (design doc §3) is "a local entry absent from the file is KEPT,
+// never deleted" — an imported file is a merge input, not assumed to be a
+// complete inventory of every profile the user owns.
+//
+// The reconciliation: this function does not hand mergeProfiles the file's
+// list directly as "incoming". It builds that argument as the file's
+// validated profiles PLUS every local profile whose ID the file does not
+// mention, carried over verbatim. Every local ID is then present in
+// "incoming" one way or another, so mergeProfiles's delete-if-absent branch
+// never actually triggers — nothing is ever missing from incoming — while
+// its Env-preservation branch still runs exactly as it does for a pull, for
+// the ids the file DOES mention.
+//
+// Whole-branch review round: SyncEnv travels WITH the Env it governs.
+// mergeProfiles keeps a local profile's Env when the incoming entry has none
+// (profiles.go:226), but it only touches the Env field — SyncEnv comes from
+// incoming untouched. That is exactly right for a PULL, where SyncEnv is
+// itself part of the synced, sealed record. It is wrong for IMPORT: a file
+// entry with SyncEnv:true and no Env (the ordinary shape of a profile whose
+// SOURCE machine never had that env var, not one that opted out of syncing
+// it) would otherwise silently flip a local SyncEnv:false profile's
+// never-sync flag to true while keeping its local secret Env — and the very
+// next plaintext export of THIS machine (default includeLocalEnv=false)
+// would then ship that Env, because stripUnsyncedEnv only strips
+// SyncEnv==false profiles. Reproduced by the reviewer: machine A's profile
+// SyncEnv:true/no-Env imported onto machine B's same-ID
+// SyncEnv:false/Env:{OPENAI_API_KEY:...} promotes the key into B's next
+// export. Fixed below by re-pointing each file profile's SyncEnv at its
+// local counterpart's SyncEnv whenever mergeProfiles is about to preserve
+// that counterpart's Env — the same condition mergeProfiles itself checks,
+// duplicated here rather than threaded through mergeProfiles because the
+// pull path's promotion behavior is correct for pull and out of scope (see
+// mergeProfiles's own doc comment); what changed is that import now feeds a
+// plaintext file, so only the import path needs the extra guard.
+func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, []string, error) {
+	fileProfiles, defaultProfileID, _, err := validateProfilesPayload(raw)
+	if err != nil {
+		// PreviewConfigImport already reported this as Skipped.
+		return nil, nil, nil
+	}
+
+	fileByID := make(map[string]bool, len(fileProfiles))
+	var applied []string
+	for _, p := range fileProfiles {
+		fileByID[p.ID] = true
+		if c, ok := actionable["profile:"+p.ID]; ok && c.Action != "unchanged" {
+			applied = append(applied, "profile:"+p.ID)
+		}
+	}
+	defaultChange, hasDefaultChange := actionable["profiles:default_profile_id"]
+	if hasDefaultChange && defaultChange.Action == "unchanged" {
+		hasDefaultChange = false
+	}
+	if len(applied) == 0 && !hasDefaultChange {
+		return nil, nil, nil
+	}
+
+	cfg := a.cfgStore.Get()
+
+	// SyncEnv-travels-with-Env guard (see doc comment above): for every file
+	// profile mergeProfiles is about to preserve local Env for — same
+	// condition mergeProfiles checks, len(p.Env)==0 && local has Env — pin
+	// its SyncEnv to the local value too, so the merged record's SyncEnv and
+	// Env always describe the same machine's choice, never a mix of file
+	// SyncEnv with local Env.
+	localByID := make(map[string]SessionProfile, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		localByID[p.ID] = p
+	}
+	for i := range fileProfiles {
+		p := &fileProfiles[i]
+		if len(p.Env) == 0 {
+			if l, ok := localByID[p.ID]; ok && len(l.Env) > 0 {
+				p.SyncEnv = l.SyncEnv
+			}
+		}
+	}
+
+	// incoming = every file-derived profile, plus every local-only profile
+	// (id not mentioned by the file) carried over verbatim — see the
+	// reconciliation note above.
+	incoming := make([]SessionProfile, 0, len(fileProfiles)+len(cfg.Profiles))
+	incoming = append(incoming, fileProfiles...)
+	for _, local := range cfg.Profiles {
+		if !fileByID[local.ID] {
+			incoming = append(incoming, local)
+		}
+	}
+	merged := mergeProfiles(cfg.Profiles, incoming)
+
+	if err := a.SetProfiles(merged); err != nil {
+		return nil, nil, fmt.Errorf("apply profiles: %w", err)
+	}
+
+	var skipped []string
+	if hasDefaultChange {
+		resolved := resolveDefaultProfileID(defaultProfileID, merged)
+		if resolved == "" {
+			// defaultProfileID was requested (hasDefaultChange only becomes
+			// true when previewProfiles saw a non-empty file
+			// default_profile_id — see its own doc comment) but does not
+			// name any profile present in the merged result: e.g. the file's
+			// referenced profile was itself skipped upstream for a missing
+			// name, or the file was hand-edited to reference an id that
+			// doesn't exist. Preview's classification of this key is purely
+			// "does the file's default_profile_id string differ from the
+			// current one" (previewProfiles never checks it resolves), so
+			// Preview can promise "replace -> X" for an X that can never
+			// actually be written. Silently calling SetDefaultProfileID("")
+			// here would CLEAR the local default — the same "import never
+			// wipes" rule design doc §3 states for list entries, extended to
+			// this scalar-shaped field. Keep the local default untouched and
+			// report why, naming the id that didn't resolve, instead of the
+			// generic "not applied" ApplyConfigImport's fallback would
+			// otherwise produce.
+			skipped = append(skipped, fmt.Sprintf("profiles:default_profile_id: %q not present in the merged profile list, local default kept", defaultProfileID))
+		} else {
+			if err := a.SetDefaultProfileID(resolved); err != nil {
+				return applied, skipped, fmt.Errorf("apply default profile id: %w", err)
+			}
+			applied = append(applied, "profiles:default_profile_id")
+		}
+	}
+	return applied, skipped, nil
+}
+
+// ApplyConfigImport parses jsonText independently (see below) and writes
+// every add/replace entry PreviewConfigImport reports through the same App
+// setters a user action would use — never into a.cfgStore directly (spec
+// §4) — so an imported value lands in the store, marks its sync key dirty,
+// and rides the existing enqueueSync coalescing (prefs_sync_loop.go) out to
+// other devices, exactly like any other settings change.
+//
+// Apply calls PreviewConfigImport first and reuses its Changes to decide
+// what to write, rather than re-deriving the add/replace/unchanged/skip
+// classification itself — the two must never independently disagree about
+// the same file (see PreviewConfigImport's own doc comment). It then parses
+// jsonText a SECOND time, on its own, into a fresh ConfigExport: Apply is
+// never handed a cached/parsed handle from a caller-side Preview call, so
+// "what the user was shown" and "what gets written" are always two parses
+// of the exact same bytes, never a struct passed between two calls that
+// could drift onto different bytes in between (spec §5).
+//
+// "unchanged" entries are never written — same store, same value, nothing
+// to do. Every other entry is dispatched to its write path below: scalar
+// keys each go through their own named setter (applyScalarPref); every
+// ssh_host:*/ssh_key:* entry is batched into one applySSHHostsImport call;
+// every profile:*/profiles:default_profile_id entry is batched into one
+// applyProfilesImport call. That batching is what keeps this function from
+// producing more markPrefDirtyAndPush/markSSHHostsDirty calls than
+// necessary on its own — but ApplyConfigImport does NOT attempt to reduce
+// that count to a single push itself. It still calls one setter per changed
+// scalar key, same as a user changing N settings in the UI one at a time
+// would. What actually collapses that burst into (at most) one extra sync
+// round trip is enqueueSync's existing coalescing (prefs_sync_loop.go) —
+// Apply relies on that machinery rather than reimplementing batching, so a
+// regression in enqueueSync's coalescing shows up here too (see
+// TestApplyConfigImport_CoalescesIntoOnePush in config_import_test.go).
+//
+// There is no includeLocalEnv parameter (an earlier draft had one, mirroring
+// ExportConfig's — removed in review round 1). Preview takes no such
+// parameter, and what a profile's Env ends up as is fully determined by
+// mergeProfiles from what the FILE actually contains and the profile's own
+// SyncEnv, exactly as profileMergeCandidate already predicted during
+// Preview. A lever here that could pick a different outcome than the one
+// Preview already promised the caller is exactly the Preview/Apply drift
+// this whole feature is designed to avoid.
+//
+// A single scalar key whose setter refuses the imported value does not
+// abort the rest of the import: its error is appended to report.Skipped and
+// the loop continues, the same "one bad entry does not sink the batch" rule
+// design doc §3 states for malformed list entries. Earlier code returned
+// the error immediately instead, which meant every key already applied and
+// SYNCED to other devices before the bad one was silently thrown away along
+// with the report describing what had actually happened — see
+// TestApplyConfigImport_InvalidScalarSkippedRestApplied.
+func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
+	if a.cfgStore == nil {
+		return newImportReport(), fmt.Errorf("config store not ready")
+	}
+
+	preview, err := a.PreviewConfigImport(jsonText)
+	if err != nil {
+		return newImportReport(), err
+	}
+
+	// Apply's own, independent parse of the raw text — see the doc comment
+	// above for why this is not the same ConfigExport PreviewConfigImport
+	// decoded inside its own call above.
+	var export ConfigExport
+	if err := json.Unmarshal([]byte(jsonText), &export); err != nil {
+		return newImportReport(), fmt.Errorf("parse config export: %w", err)
+	}
+
+	report := newImportReport()
+	report.Skipped = preview.Skipped
+
+	actionable := make(map[string]ImportChange, len(preview.Changes))
+	needSSH := false
+	needProfiles := false
+	for _, c := range preview.Changes {
+		if c.Action == "unchanged" {
+			continue
+		}
+		actionable[c.Key] = c
+		switch {
+		case strings.HasPrefix(c.Key, "ssh_host:"), strings.HasPrefix(c.Key, "ssh_key:"):
+			needSSH = true
+		case strings.HasPrefix(c.Key, "profile:"), c.Key == "profiles:default_profile_id":
+			needProfiles = true
+		}
+	}
+
+	// appliedKeys records what applySSHHostsImport/applyProfilesImport
+	// actually wrote, keyed the same way as ImportChange.Key. The report
+	// below is built from this, not from blindly echoing every actionable
+	// preview.Changes entry with a list-key prefix — otherwise report.Applied
+	// would describe what Preview predicted, not what Apply did, and would
+	// silently start lying the moment either function returns early for a
+	// reason report.Skipped never learns about (see
+	// TestApplyConfigImport_MalformedListEntrySkippedRestApplied).
+	appliedKeys := make(map[string]bool)
+	if needSSH {
+		if raw, ok := export.Preferences["ssh_hosts"]; ok {
+			keys, sshSkips, err := a.applySSHHostsImport(raw, actionable)
+			if err != nil {
+				return report, err
+			}
+			for _, k := range keys {
+				appliedKeys[k] = true
+			}
+			// Post-write problems the host import could not fix but the user
+			// must see (a keyring clear that failed). They are not a reason
+			// to abandon the rest of the import: the records they refer to
+			// are already written and already pushed.
+			report.Skipped = append(report.Skipped, sshSkips...)
+		}
+	}
+	// explicitSkips holds keys applyProfilesImport already gave a specific,
+	// named-reason Skipped entry for (currently only an unresolvable
+	// profiles:default_profile_id — see its doc comment), so the generic
+	// "not applied" fallback below doesn't also fire for the same key and
+	// produce two Skipped lines describing one thing.
+	explicitSkips := make(map[string]bool)
+	if needProfiles {
+		if raw, ok := export.Preferences["profiles"]; ok {
+			keys, skipped, err := a.applyProfilesImport(raw, actionable)
+			if err != nil {
+				return report, err
+			}
+			for _, k := range keys {
+				appliedKeys[k] = true
+			}
+			for _, s := range skipped {
+				report.Skipped = append(report.Skipped, s)
+				if strings.HasPrefix(s, "profiles:default_profile_id:") {
+					explicitSkips["profiles:default_profile_id"] = true
+				}
+			}
+		}
+	}
+
+	for _, c := range preview.Changes {
+		if c.Action == "unchanged" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(c.Key, "ssh_host:"), strings.HasPrefix(c.Key, "ssh_key:"),
+			strings.HasPrefix(c.Key, "profile:"), c.Key == "profiles:default_profile_id":
+			switch {
+			case appliedKeys[c.Key]:
+				report.Applied = append(report.Applied, c)
+			case explicitSkips[c.Key]:
+				// Already reported above with a specific reason.
+			default:
+				report.Skipped = append(report.Skipped, fmt.Sprintf("%s: not applied", c.Key))
+			}
+			continue
+		}
+		raw, ok := export.Preferences[c.Key]
+		if !ok {
+			continue
+		}
+		if err := a.applyScalarPref(c.Key, raw); err != nil {
+			report.Skipped = append(report.Skipped, fmt.Sprintf("%s: %v", c.Key, err))
+			continue
+		}
+		report.Applied = append(report.Applied, c)
+	}
+
+	return report, nil
+}

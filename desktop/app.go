@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -260,6 +261,18 @@ type App struct {
 
 	// writeFile is os.WriteFile in production; tests substitute a stub.
 	writeFile writeFileFunc
+
+	// saveDialog is wailsruntime.SaveFileDialog in production; ExportConfig's
+	// tests substitute a stub so they never need a bound Wails frontend (see
+	// saveDialogFunc in config_export.go).
+	saveDialog saveDialogFunc
+
+	// clearSSHCredential removes a host's stored credential. Injectable for
+	// the same reason writeFile and saveDialog are: the real implementation
+	// talks to the OS keychain, which a test cannot make fail on demand —
+	// and the behaviour worth pinning is precisely what happens WHEN it
+	// fails. Defaults to sshCredentialSlot(id).Clear() in NewApp.
+	clearSSHCredential func(id string) error
 
 	// sshKnownHostsPath overrides the known_hosts file used by NewSshSession
 	// (tests set a temp path). Empty → ~/.ssh/known_hosts.
@@ -1199,12 +1212,30 @@ func (a *App) GetDefaultShell() string {
 	return a.cfgStore.Get().DefaultShellOrDefault()
 }
 
-func (a *App) SetDefaultShell(shell string) error {
+// validateDefaultShell normalizes and validates a candidate default-shell
+// value: "" and any case-insensitive spelling of "auto" normalize to
+// defaultShellAuto and always pass; anything else must resolve via
+// exec.LookPath on THIS machine. Factored out of SetDefaultShell so
+// PreviewConfigImport (config_import.go) can run the exact same check
+// against an inbound file before promising a "replace" that
+// ApplyConfigImport — which is expected to call SetDefaultShell — would
+// then refuse. Two copies of this rule would drift the moment either one
+// changed what counts as a valid shell.
+func validateDefaultShell(shell string) (string, error) {
 	shell = strings.TrimSpace(shell)
 	if shell == "" || strings.EqualFold(shell, defaultShellAuto) {
-		shell = defaultShellAuto
-	} else if _, err := exec.LookPath(shell); err != nil {
-		return fmt.Errorf("default shell not found: %s", shell)
+		return defaultShellAuto, nil
+	}
+	if _, err := exec.LookPath(shell); err != nil {
+		return "", fmt.Errorf("default shell not found: %s", shell)
+	}
+	return shell, nil
+}
+
+func (a *App) SetDefaultShell(shell string) error {
+	shell, err := validateDefaultShell(shell)
+	if err != nil {
+		return err
 	}
 	return a.updatePref("default_shell", func(cfg *appConfig) error {
 		cfg.DefaultShell = shell
@@ -1238,14 +1269,35 @@ func (a *App) GetShortcutBindings() map[string]string {
 // argument before updatePref's mutate callback ever assigns it — mutate
 // returning an error means updatePref never calls cfgStore.Set, so the
 // config on disk (and in memory) is exactly what it was before this call.
-func (a *App) SetShortcutBindings(bindings map[string]string) error {
-	for actionID, binding := range bindings {
+// validateShortcutBindings reports the first rule SetShortcutBindings would
+// reject — an empty action id, or a binding string isValidShortcutBinding
+// rejects — checked in sorted action-id order so the reported violation is
+// deterministic rather than whatever order Go's map iteration happens to
+// produce. Factored out for the same reason validateDefaultShell is: shared
+// by SetShortcutBindings (which rejects the whole incoming map on any single
+// violation) and PreviewConfigImport, which must report that same
+// all-or-nothing refusal instead of promising a "replace" apply would
+// actually error on.
+func validateShortcutBindings(bindings map[string]string) error {
+	ids := make([]string, 0, len(bindings))
+	for actionID := range bindings {
+		ids = append(ids, actionID)
+	}
+	sort.Strings(ids)
+	for _, actionID := range ids {
 		if actionID == "" {
 			return errors.New("shortcutBindings: action id must be non-empty")
 		}
-		if !isValidShortcutBinding(binding) {
-			return fmt.Errorf("shortcutBindings[%q]: malformed binding %q", actionID, binding)
+		if !isValidShortcutBinding(bindings[actionID]) {
+			return fmt.Errorf("shortcutBindings[%q]: malformed binding %q", actionID, bindings[actionID])
 		}
+	}
+	return nil
+}
+
+func (a *App) SetShortcutBindings(bindings map[string]string) error {
+	if err := validateShortcutBindings(bindings); err != nil {
+		return err
 	}
 	return a.updatePref("shortcut_bindings", func(cfg *appConfig) error {
 		cfg.ShortcutBindings = bindings

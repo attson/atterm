@@ -628,6 +628,40 @@ export interface PullResult {
   conflict: string[] | null;
 }
 
+// ImportChange mirrors desktop/config_import.go ImportChange -- one entry of
+// an ImportPreview.changes / ImportReport.applied list, describing what
+// applying (or having applied) one imported preference/list entry did.
+// Action is one of "add" (nothing here locally), "replace" (a local entry
+// with the same id/key differs), or "unchanged" (byte-for-byte identical) --
+// there is no "remove"/"delete", by design (see the Go type's doc comment).
+export interface ImportChange {
+  key: string;
+  action: "add" | "replace" | "unchanged";
+  detail?: string;
+}
+
+// ImportPreview mirrors desktop/config_import.go ImportPreview, the result
+// of PreviewConfigImport -- what applying a file WOULD change, computed
+// without touching the config store. Both fields are always present on the
+// wire, never null: newImportPreview() (Go) allocates both slices empty
+// rather than leaving them nil specifically so `preview.changes.length`
+// never needs a null check first. Declared here as plain arrays, not
+// optional/nullable, to keep that guarantee honest on this side too.
+export interface ImportPreview {
+  changes: ImportChange[];
+  skipped: string[]; // malformed entries, each with a human-readable reason
+}
+
+// ImportReport mirrors desktop/config_import.go ImportReport, the result of
+// ApplyConfigImport -- what it actually wrote. Same non-null guarantee as
+// ImportPreview; applied plays the role changes plays for ImportPreview, but
+// naming the field for what already happened. "unchanged" entries never
+// appear here -- there was nothing to write.
+export interface ImportReport {
+  applied: ImportChange[];
+  skipped: string[];
+}
+
 // AppBindings mirrors Go's exposed App.<Method> surface, one entry per
 // wails.MethodDescription in wailsjs/go/main/App.d.ts. Kept as a single
 // interface so the runtime lookup (bindings()) returns a typed value
@@ -754,6 +788,22 @@ export interface AppBindings {
   BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;
   GetDiagnostics(userAgent: string): Promise<DiagnosticsPayload>;
   ExportDiagnostics(content: string): Promise<string>;
+  // ExportConfig mirrors ExportDiagnostics's cancel semantics: opens a
+  // native save dialog and returns the path written to, or ("", nil) when
+  // the user dismissed the dialog without picking a path -- not an error.
+  // includeLocalEnv controls whether profile Env survives for profiles with
+  // sync_env === false (see desktop/config_export.go's BuildConfigExport).
+  ExportConfig(includeLocalEnv: boolean): Promise<string>;
+  // PreviewConfigImport parses jsonText and reports what applying it WOULD
+  // change, without writing anything -- see desktop/config_import.go's doc
+  // comment. Rejects for a parse error or an export version this build
+  // doesn't understand.
+  PreviewConfigImport(jsonText: string): Promise<ImportPreview>;
+  // ApplyConfigImport re-parses jsonText independently and writes every
+  // add/replace entry PreviewConfigImport would report. Unlike ExportConfig,
+  // it takes no includeLocalEnv -- by import time the file either contains
+  // env or it does not (removed in Go-side review round 1).
+  ApplyConfigImport(jsonText: string): Promise<ImportReport>;
   GetFeishuStatus(): Promise<FeishuStatusResp>;
   SetFeishuCredentials(c: FeishuCredentials): Promise<void>;
   BeginFeishuPair(): Promise<string>;

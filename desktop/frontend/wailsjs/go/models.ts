@@ -211,6 +211,48 @@ export namespace main {
 	        this.captured_at_unix = source["captured_at_unix"];
 	    }
 	}
+	export class AcceptedHostKey {
+	    host: string;
+	    fingerprint: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AcceptedHostKey(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.fingerprint = source["fingerprint"];
+	    }
+	}
+	export class ActiveForward {
+	    host_id: string;
+	    rule_id: string;
+	    kind: string;
+	    listen_addr: string;
+	    target?: string;
+	    conns: number;
+	    started_at: number;
+	    running: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ActiveForward(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host_id = source["host_id"];
+	        this.rule_id = source["rule_id"];
+	        this.kind = source["kind"];
+	        this.listen_addr = source["listen_addr"];
+	        this.target = source["target"];
+	        this.conns = source["conns"];
+	        this.started_at = source["started_at"];
+	        this.running = source["running"];
+	        this.error = source["error"];
+	    }
+	}
 	export class ClipboardPastePayload {
 	    kind: string;
 	    text?: string;
@@ -231,6 +273,24 @@ export namespace main {
 	        this.content_type = source["content_type"];
 	        this.data_base64 = source["data_base64"];
 	        this.reason = source["reason"];
+	    }
+	}
+	export class ConfigExport {
+	    atterm_export: number;
+	    exported_at: string;
+	    app_version: string;
+	    preferences: Record<string, Array<number>>;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConfigExport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.atterm_export = source["atterm_export"];
+	        this.exported_at = source["exported_at"];
+	        this.app_version = source["app_version"];
+	        this.preferences = source["preferences"];
 	    }
 	}
 	export class ConfigSummary {
@@ -471,6 +531,30 @@ export namespace main {
 	        this.isBinary = source["isBinary"];
 	    }
 	}
+	export class ForwardRule {
+	    id: string;
+	    kind: string;
+	    bind_addr?: string;
+	    bind_port: string;
+	    target_host?: string;
+	    target_port?: string;
+	    note?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ForwardRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.bind_addr = source["bind_addr"];
+	        this.bind_port = source["bind_port"];
+	        this.target_host = source["target_host"];
+	        this.target_port = source["target_port"];
+	        this.note = source["note"];
+	    }
+	}
 	export class FrontendLogRecord {
 	    timestamp_ms: number;
 	    level: string;
@@ -504,6 +588,86 @@ export namespace main {
 	        this.host = source["host"];
 	        this.user = source["user"];
 	    }
+	}
+	export class ImportChange {
+	    key: string;
+	    action: string;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.action = source["action"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class ImportPreview {
+	    changes: ImportChange[];
+	    skipped: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.changes = this.convertValues(source["changes"], ImportChange);
+	        this.skipped = source["skipped"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ImportReport {
+	    applied: ImportChange[];
+	    skipped: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.applied = this.convertValues(source["applied"], ImportChange);
+	        this.skipped = source["skipped"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class KnownHostEntry {
 	    host: string;
@@ -563,6 +727,7 @@ export namespace main {
 	    cwd?: string;
 	    cols?: number;
 	    rows?: number;
+	    profile_id?: string;
 	    ai_kind?: string;
 	    initial_ai_session_id?: string;
 	    initial_ai_command_line?: string;
@@ -578,6 +743,7 @@ export namespace main {
 	        this.cwd = source["cwd"];
 	        this.cols = source["cols"];
 	        this.rows = source["rows"];
+	        this.profile_id = source["profile_id"];
 	        this.ai_kind = source["ai_kind"];
 	        this.initial_ai_session_id = source["initial_ai_session_id"];
 	        this.initial_ai_command_line = source["initial_ai_command_line"];
@@ -1008,34 +1174,54 @@ export namespace main {
 	        this.is_current = source["is_current"];
 	    }
 	}
-	export class SSHConnectReq {
-	    host: string;
-	    port?: string;
-	    user: string;
-	    auth_kind: string;
-	    password?: string;
-	    private_key?: string;
-	    passphrase?: string;
-	    cols?: number;
-	    rows?: number;
-	    accept_host_key?: boolean;
+	export class SFTPListing {
+	    path: string;
+	    entries: DirEntry[];
+	    truncated: boolean;
+	    total: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new SSHConnectReq(source);
+	        return new SFTPListing(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.host = source["host"];
-	        this.port = source["port"];
-	        this.user = source["user"];
-	        this.auth_kind = source["auth_kind"];
-	        this.password = source["password"];
-	        this.private_key = source["private_key"];
-	        this.passphrase = source["passphrase"];
-	        this.cols = source["cols"];
-	        this.rows = source["rows"];
-	        this.accept_host_key = source["accept_host_key"];
+	        this.path = source["path"];
+	        this.entries = this.convertValues(source["entries"], DirEntry);
+	        this.truncated = source["truncated"];
+	        this.total = source["total"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SSHConfigImportSkipped {
+	    alias: string;
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHConfigImportSkipped(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.alias = source["alias"];
+	        this.reason = source["reason"];
 	    }
 	}
 	export class SSHHost {
@@ -1048,6 +1234,10 @@ export namespace main {
 	    key_id?: string;
 	    tags?: string[];
 	    note?: string;
+	    identity_file?: string;
+	    proxy_jump?: string;
+	    proxy_command?: string;
+	    forwards?: ForwardRule[];
 	
 	    static createFrom(source: any = {}) {
 	        return new SSHHost(source);
@@ -1064,8 +1254,98 @@ export namespace main {
 	        this.key_id = source["key_id"];
 	        this.tags = source["tags"];
 	        this.note = source["note"];
+	        this.identity_file = source["identity_file"];
+	        this.proxy_jump = source["proxy_jump"];
+	        this.proxy_command = source["proxy_command"];
+	        this.forwards = this.convertValues(source["forwards"], ForwardRule);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SSHConfigImportPreview {
+	    entries: SSHHost[];
+	    skipped: SSHConfigImportSkipped[];
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHConfigImportPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.entries = this.convertValues(source["entries"], SSHHost);
+	        this.skipped = this.convertValues(source["skipped"], SSHConfigImportSkipped);
+	        this.note = source["note"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class SSHConnectReq {
+	    host: string;
+	    port?: string;
+	    user: string;
+	    auth_kind: string;
+	    password?: string;
+	    private_key?: string;
+	    passphrase?: string;
+	    cols?: number;
+	    rows?: number;
+	    accepted_host_key_host?: string;
+	    accepted_host_key_fingerprint?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHConnectReq(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.auth_kind = source["auth_kind"];
+	        this.password = source["password"];
+	        this.private_key = source["private_key"];
+	        this.passphrase = source["passphrase"];
+	        this.cols = source["cols"];
+	        this.rows = source["rows"];
+	        this.accepted_host_key_host = source["accepted_host_key_host"];
+	        this.accepted_host_key_fingerprint = source["accepted_host_key_fingerprint"];
 	    }
 	}
+	
 	export class SSHKey {
 	    id: string;
 	    name: string;
@@ -1080,6 +1360,30 @@ export namespace main {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.key_type = source["key_type"];
+	    }
+	}
+	export class SessionProfile {
+	    id: string;
+	    name: string;
+	    shell?: string;
+	    cwd?: string;
+	    startup_cmd?: string;
+	    env?: Record<string, string>;
+	    sync_env?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionProfile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.shell = source["shell"];
+	        this.cwd = source["cwd"];
+	        this.startup_cmd = source["startup_cmd"];
+	        this.env = source["env"];
+	        this.sync_env = source["sync_env"];
 	    }
 	}
 	
@@ -1109,6 +1413,24 @@ export namespace main {
 	        this.fatal = source["fatal"];
 	        this.message = source["message"];
 	        this.log_path = source["log_path"];
+	    }
+	}
+	export class SyncStatus {
+	    state: string;
+	    last_synced_at: number;
+	    pending_keys: number;
+	    last_error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SyncStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.last_synced_at = source["last_synced_at"];
+	        this.pending_keys = source["pending_keys"];
+	        this.last_error = source["last_error"];
 	    }
 	}
 	

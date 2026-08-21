@@ -18,6 +18,7 @@ import SettingsUpdates from "./SettingsUpdates.vue";
 import SettingsPlugins from "./SettingsPlugins.vue";
 import SettingsShortcuts from "./SettingsShortcuts.vue";
 import SettingsDiagnostics from "./SettingsDiagnostics.vue";
+import SettingsConfigIO from "./SettingsConfigIO.vue";
 import SettingsTemplates from "./SettingsTemplates.vue";
 import SettingsProfiles from "./SettingsProfiles.vue";
 import SettingsTasks from "./SettingsTasks.vue";
@@ -453,6 +454,18 @@ function onSaveClick() {
             <section class="merged-section">
               <h4 v-if="caps.fileDialog" class="merged-section-title">{{ t("settings.diagnostics.section") }}</h4>
               <SettingsDiagnostics />
+            </section>
+            <!-- Export/import is a whole-config data operation (SSH hosts,
+                 session profiles), not a single preference -- it belongs
+                 beside Diagnostics's own save-dialog file export, not
+                 buried at the bottom of the single-preference General pane.
+                 SettingsConfigIO.vue self-gates internally too; the
+                 caps.wailsBindings gate on the div.diag-merged container
+                 above is defense in depth, matching SyncStatusIndicator's
+                 precedent above. -->
+            <section class="merged-section">
+              <h4 class="merged-section-title">{{ t("settings.configio.title") }}</h4>
+              <SettingsConfigIO />
             </section>
           </div>
           <SettingsFeishu v-if="activeTab === 'feishu' && caps.wailsBindings" />

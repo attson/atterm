@@ -124,6 +124,20 @@ vi.mock("../lib/api", () => ({
   getHostInfo: vi.fn().mockResolvedValue({ platform: "darwin", arch: "arm64", buildType: "production" }),
   getSyncStatus: vi.fn().mockResolvedValue({ state: "idle", last_synced_at: 0, pending_keys: 0 }),
   syncNow: vi.fn().mockResolvedValue(undefined),
+  exportConfig: vi.fn().mockResolvedValue(""),
+  previewConfigImport: vi.fn().mockResolvedValue({ changes: [], skipped: [] }),
+  applyConfigImport: vi.fn().mockResolvedValue({ applied: [], skipped: [] }),
+  getDiagnostics: vi.fn().mockResolvedValue({
+    generated_at: "", app_version: "", os: "", arch: "", os_version: "",
+    webview_summary: "", user_agent: "", relay_url: "", relay_status: "",
+    relay_token_redacted: "", allow_insecure_relay: false, remote_permission: "full",
+    uplink_paused: false, recent_relay_errors: [],
+    config: {
+      default_shell: "", locale: "", terminal_theme: "", notifications_enabled: false,
+      shell_integration_enabled: false, webgl_renderer_enabled: false, logging_enabled: false,
+      log_file_path: "", auto_check_updates: false, command_notify_threshold_seconds: 0,
+    },
+  }),
 }));
 
 import { mount, flushPromises } from "@vue/test-utils";
@@ -152,6 +166,13 @@ function mountDialog(props: typeof baseProps = baseProps) {
 
 function navLabels(w: ReturnType<typeof mount>) {
   return w.findAll(".settings-nav-item").map((b) => b.text());
+}
+
+async function switchToTab(w: ReturnType<typeof mount>, label: string) {
+  const btn = w.findAll(".settings-nav-item").find((b) => b.text() === label);
+  if (!btn) throw new Error(`no nav item labeled ${label}`);
+  await btn.trigger("click");
+  await flushPromises();
 }
 
 describe("SettingsDialog caps gating", () => {
@@ -203,6 +224,26 @@ describe("SettingsDialog caps gating", () => {
   it("keeps the logging section out of the Diagnostics pane when fileDialog=false", () => {
     // Section is gated on caps.fileDialog inside the merged pane.
     expect(source).toContain('<section v-if="caps.fileDialog" class="merged-section">');
+  });
+
+  // The config export/import panel (SettingsConfigIO.vue) has a strong test
+  // suite of its own, but nothing before this pinned that it's actually
+  // *mounted* anywhere -- deleting its line from the diag-merged block would
+  // leave every one of its own tests green (they mount the component
+  // directly) while the feature became unreachable from the app. This
+  // mounts the real SettingsDialog, switches to the Diagnostics tab exactly
+  // as a user would, and looks for the panel by its own data-testid.
+  it("mounts the config export/import panel in the Diagnostics pane on Wails", async () => {
+    const w = mountDialog();
+    await switchToTab(w, en.settings.diagnostics.tab);
+    expect(w.find('[data-testid="configio-panel"]').exists()).toBe(true);
+  });
+
+  it("never reaches the config export/import panel on non-wails platforms (Diagnostics tab itself is hidden)", () => {
+    platform.caps = { ...platform.caps, wailsBindings: false };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    expect(w.find('[data-testid="configio-panel"]').exists()).toBe(false);
   });
 
   it("with capacitor-style caps shows General + Task display + Relay + Devices + Templates + Profiles + Diagnostics + Feishu + Received files", () => {

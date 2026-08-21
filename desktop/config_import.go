@@ -834,16 +834,15 @@ func (a *App) applyScalarPref(key string, raw json.RawMessage) error {
 // change in the preview if the alias happened to stay the same. Losing a
 // stored credential on a host whose address moved is the safe failure;
 // silently pointing it at a new machine is not — see hostTargetChanged.
-func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, error) {
+func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]ImportChange) (applied []string, skipped []string, err error) {
 	hosts, keys, _, err := validateSSHHostsPayload(raw)
 	if err != nil {
 		// PreviewConfigImport already reported this as Skipped (it runs the
 		// exact same parse); nothing new to apply.
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	cfg := a.cfgStore.Get()
-	var applied []string
 	var credentialsToClear []string
 
 	hostIdx := make(map[string]int, len(cfg.SSHHosts))
@@ -886,7 +885,7 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 	}
 
 	if len(applied) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Fold the dirty-meta write into the same cfg/Set call that persists
@@ -904,7 +903,7 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 	m.UpdatedAtLocal = time.Now().UnixMilli()
 	cfg.PrefsMeta["ssh_hosts_encrypted"] = m
 	if err := a.cfgStore.Set(cfg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if a.prefsSync != nil {
 		a.markPrefDirtyAndPush("ssh_hosts_encrypted")
@@ -912,21 +911,28 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 
 	// Clear stale credentials AFTER the host records themselves are
 	// persisted: the record write is what the caller actually asked for,
-	// and must not be rolled back just because a keyring clear failed. A
-	// clear failure is still surfaced as an error (matching DeleteSSHHost's
-	// own handling of the same Clear call) rather than swallowed, because a
-	// credential left attached to a host whose target moved is exactly the
-	// silent-rebind this whole guard exists to prevent.
-	var clearErrs error
+	// and must not be rolled back just because a keyring clear failed.
+	//
+	// A failure here is REPORTED, not returned. Returning it aborted the
+	// rest of the import — and by this point the host records are already
+	// written and already pushed to every other device, so aborting bought
+	// nothing and left profiles and scalar prefs unapplied with an empty
+	// report: the "a config that is neither the file nor the original"
+	// outcome this feature spent a whole review round eliminating. The user
+	// still has to know, because a credential left attached to a host whose
+	// target moved is the silent rebind this guard exists to prevent — so it
+	// goes in Skipped, where they will read it, rather than into an error
+	// that discards the work already done.
+	clear := a.clearSSHCredential
+	if clear == nil {
+		clear = func(id string) error { return sshCredentialSlot(id).Clear() }
+	}
 	for _, id := range credentialsToClear {
-		if err := sshCredentialSlot(id).Clear(); err != nil {
-			clearErrs = errors.Join(clearErrs, fmt.Errorf("clear stale credential for %s: %w", id, err))
+		if err := clear(id); err != nil {
+			skipped = append(skipped, fmt.Sprintf("ssh_hosts: could not clear the stored credential for host id=%s after its address changed — it is still attached to the new address: %v", id, err))
 		}
 	}
-	if clearErrs != nil {
-		return applied, clearErrs
-	}
-	return applied, nil
+	return applied, skipped, nil
 }
 
 // applyProfilesImport writes the add/replace entries validateProfilesPayload
@@ -1167,13 +1173,18 @@ func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
 	appliedKeys := make(map[string]bool)
 	if needSSH {
 		if raw, ok := export.Preferences["ssh_hosts"]; ok {
-			keys, err := a.applySSHHostsImport(raw, actionable)
+			keys, sshSkips, err := a.applySSHHostsImport(raw, actionable)
 			if err != nil {
 				return report, err
 			}
 			for _, k := range keys {
 				appliedKeys[k] = true
 			}
+			// Post-write problems the host import could not fix but the user
+			// must see (a keyring clear that failed). They are not a reason
+			// to abandon the rest of the import: the records they refer to
+			// are already written and already pushed.
+			report.Skipped = append(report.Skipped, sshSkips...)
 		}
 	}
 	// explicitSkips holds keys applyProfilesImport already gave a specific,

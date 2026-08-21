@@ -1894,3 +1894,70 @@ func TestValidateScalarPrefValue_RejectsNullCursorBlink(t *testing.T) {
 		t.Fatal("validateScalarPrefValue accepted a null terminal_cursor_blink; applyScalarPref would then refuse it and Preview/Apply would disagree")
 	}
 }
+
+// A keyring clear that fails must be REPORTED, not returned. By the time the
+// clear runs, the host records are already written and already pushed to every
+// other device, so aborting bought nothing — it left profiles and scalar prefs
+// unapplied with both report lists empty, which is the "a config that is
+// neither the file nor the original" outcome this feature spent a review round
+// eliminating. The user still has to learn the credential is now attached to
+// the new address, hence Skipped rather than silence.
+func TestApplyConfigImport_CredentialClearFailureDoesNotAbortTheImport(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{
+		{ID: "h1", Alias: "prod", Host: "trusted.example.com", Port: "22", User: "root", AuthKind: "password"},
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := sshCredentialSlot("h1").Save(sshCredential{Password: "correct-horse-battery-staple"}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+	// The real Clear talks to the OS keychain, which a test cannot make fail
+	// on demand — and what happens WHEN it fails is the whole point here.
+	a.clearSSHCredential = func(string) error { return errors.New("keychain delete: permission denied") }
+
+	rawHosts, _ := json.Marshal(sshHostsExportPayload{Hosts: []SSHHost{
+		{ID: "h1", Alias: "prod", Host: "attacker.example.com", Port: "22", User: "root", AuthKind: "password"},
+	}})
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version:    configExportVersion,
+		ExportedAt: "2026-08-21T00:00:00Z",
+		AppVersion: "0.4.0",
+		Preferences: map[string]json.RawMessage{
+			"ssh_hosts":         rawHosts,
+			"locale_preference": json.RawMessage(`"zh-CN"`),
+		},
+	})
+
+	report, err := a.ApplyConfigImport(jsonText)
+	if err != nil {
+		t.Fatalf("a failed credential clear must not fail the whole import: %v", err)
+	}
+	// The rest of the import must have happened.
+	if got := a.cfgStore.Get().LocalePreference; got != "zh-CN" {
+		t.Fatalf("locale_preference = %q, want it applied despite the clear failure", got)
+	}
+	if len(report.Applied) == 0 {
+		t.Fatal("report.Applied is empty; the import did work and must say so")
+	}
+}
+
+// hostDetail must name the target, not just the alias. Before it did, a file
+// reusing an existing host ID with the same alias and a different Host
+// produced a byte-identical preview line — the user could not see the machine
+// had moved underneath the credential they had stored for it.
+func TestHostDetail_NamesTheTargetNotJustTheAlias(t *testing.T) {
+	before := hostDetail(SSHHost{ID: "h1", Alias: "prod", Host: "trusted.example.com", Port: "22", User: "root"})
+	after := hostDetail(SSHHost{ID: "h1", Alias: "prod", Host: "attacker.example.com", Port: "22", User: "root"})
+	if before == after {
+		t.Fatalf("hostDetail is identical (%q) for two hosts with the same alias and different targets; the preview cannot show a rebind", before)
+	}
+	if !strings.Contains(after, "attacker.example.com") {
+		t.Fatalf("hostDetail = %q, want it to name the host", after)
+	}
+	if !strings.Contains(after, "root") {
+		t.Fatalf("hostDetail = %q, want it to name the user — a replace that changes only the user also rebinds the credential", after)
+	}
+}

@@ -267,6 +267,13 @@ type App struct {
 	// saveDialogFunc in config_export.go).
 	saveDialog saveDialogFunc
 
+	// clearSSHCredential removes a host's stored credential. Injectable for
+	// the same reason writeFile and saveDialog are: the real implementation
+	// talks to the OS keychain, which a test cannot make fail on demand —
+	// and the behaviour worth pinning is precisely what happens WHEN it
+	// fails. Defaults to sshCredentialSlot(id).Clear() in NewApp.
+	clearSSHCredential func(id string) error
+
 	// sshKnownHostsPath overrides the known_hosts file used by NewSshSession
 	// (tests set a temp path). Empty → ~/.ssh/known_hosts.
 	sshKnownHostsPath string

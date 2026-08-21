@@ -20,6 +20,19 @@ import (
 // Shared by tests that want a real mini-relay without booting the full *App
 // wiring.
 //
+// Every caller of this forks a REAL shell, so `-count=N` for large N is not a
+// meaningful stress mode for the TestRelayHost family and its failures there
+// are not a bug. Measured on a machine with kern.tty.ptmx_max = 511: the
+// family at -count=60 fails 136 times, while TWO separate -count=30 runs fail
+// zero times each. That split is the signature of a per-process resource pool
+// running out — ptys are reclaimed when the test binary exits — and not of
+// shared state between tests. The failure reads `open pty: device not
+// configured`.
+//
+// Recorded because it was misdiagnosed once as "some other shared state we
+// have not found yet" and cost an investigation. If you are chasing a
+// -count=N failure in this family, check the pty limit first.
+//
 // The root is os.MkdirTemp, NOT t.TempDir(), and that is load-bearing.
 // t.TempDir registers its own removal as a separate cleanup, and t.Cleanup is
 // LIFO, so the removal ran BEFORE h.Stop for every caller that created

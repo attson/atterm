@@ -152,6 +152,44 @@ export interface SessionBridge {
   listRelaySessions?(): Promise<_RelaySessionRow[]>
   revokeRelaySession?(idHash: string): Promise<void>
   signOutOtherRelaySessions?(): Promise<_SignOutOthersResult>
+  /** Capacitor-only (design §5). Mobile cannot fork a PTY, so this asks a
+   *  specific connected desktop (by host_id, from RemoteSession.host_id) to
+   *  fork a session from one of its own saved profiles (by profile_id, from
+   *  ProfileView.id) and resolves with the new session_id on success. The
+   *  Wails platform never gains this — it already forks locally via
+   *  newSession, which is faster and cannot fail on relay routing.
+   *
+   *  One round trip, no retry: rejects after a 30s timeout (matching the
+   *  relay's own request_in_flight TTL headroom) with Error('timeout'), and
+   *  the caller must not resend — a retried "start a shell" that actually
+   *  succeeded the first time leaves an orphan process nobody asked for. On
+   *  a desktop-refused request, rejects with an Error whose message is one
+   *  of the closed set of wire error codes documented on
+   *  SessionCreatedPayload.Error in internal/proto/frame.go (plus
+   *  'relay_not_configured' when no relay session exists locally).
+   *
+   *  Implementation opens a brand-new WebSocket to the relay's /client
+   *  endpoint for every call, rather than reusing one connection across
+   *  requests (there is no existing attached connection to ride when the
+   *  phone isn't attached to anything, unlike the FS request path's
+   *  pendingFSRequests). That has a real benefit: a late reply for a
+   *  timed-out request cannot land on a newer request, because the socket
+   *  and its closure die together. But it also means the relay's per-client
+   *  in-flight bound (internal/relay/session_create_router.go's
+   *  hasOutstandingRequest, keyed on the requesting client_conn.go
+   *  connection's own targetedOut channel) CANNOT fire against this client
+   *  — every call is a distinct connection, so two concurrent taps look
+   *  like two different clients to the relay, and so does
+   *  duplicate_request_id (each attempt mints its own fresh request_id).
+   *  The in-app double-tap guard (the `creating` ref in
+   *  SettingsProfilesMobile.vue) is therefore the ONLY defence against
+   *  duplicate requests from this client, not a belt-and-suspenders layer
+   *  on top of a relay-side one. Each open request also holds one of the
+   *  account key's MaxConnectionsPerKey connection slots (shared with the
+   *  sidebar's session list and any attached terminals) for up to 30s —
+   *  bounded to one such slot at a time by that same JS guard, but worth
+   *  knowing if connection-limit errors ever show up here. */
+  createSessionWithProfile?(hostID: string, profileID: string): Promise<string>
 }
 
 export interface SystemBridge {

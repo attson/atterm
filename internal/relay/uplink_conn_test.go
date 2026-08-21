@@ -415,6 +415,75 @@ func TestUplink_EchoesPingPayloadAsPong(t *testing.T) {
 	}
 }
 
+// TestUplink_UnknownFrameTypeIgnored pins the relay's /uplink reader
+// behaviour for a frame type it doesn't recognize: it hits the `default`
+// case, is logged and dropped, and the connection stays open. This matters
+// because an older relay must survive a newer desktop uplink (or a relay
+// forwarding a type an older uplink predates) without tearing down the
+// websocket. 0xfe is deliberately unassigned — see
+// TestFrameTypeValuesPinned in internal/proto.
+func TestUplink_UnknownFrameTypeIgnored(t *testing.T) {
+	store, _, apiToken := newUplinkTestStore(t)
+
+	srv := newUplinkTestServer(t, store)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+apiToken)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// The reader gates on the first frame being ANNOUNCE (see
+	// TestUplink_EchoesPingPayloadAsPong above).
+	sendAnnounce(t, dialCtx, conn)
+
+	unknown := proto.Frame{Type: proto.Type(0xfe), Payload: []byte("unrecognized")}
+	if err := conn.Write(dialCtx, websocket.MessageBinary, proto.Marshal(unknown)); err != nil {
+		t.Fatalf("write unknown-type frame: %v", err)
+	}
+
+	// Prove the reader loop is still alive by sending a PING right after the
+	// unknown frame and getting a PONG back.
+	wantTS := uint64(0xAAAA_BBBB_CCCC_DDDD)
+	frame := proto.Frame{Type: proto.TypePing, Payload: proto.EncodePingTimestamp(wantTS)}
+	if err := conn.Write(dialCtx, websocket.MessageBinary, proto.Marshal(frame)); err != nil {
+		t.Fatalf("write PING: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for PONG after unknown frame type")
+		}
+		readCtx, readCancel := context.WithTimeout(dialCtx, time.Until(deadline))
+		_, data, err := conn.Read(readCtx)
+		readCancel()
+		if err != nil {
+			t.Fatalf("connection closed/errored after unknown frame type: %v", err)
+		}
+		f, err := proto.Unmarshal(data)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if f.Type != proto.TypePong {
+			continue
+		}
+		got, ok := proto.DecodePingTimestamp(f.Payload)
+		if !ok {
+			t.Fatalf("PONG payload not 8 bytes: %x", f.Payload)
+		}
+		if got != wantTS {
+			t.Fatalf("PONG ts = 0x%x, want 0x%x", got, wantTS)
+		}
+		return
+	}
+}
+
 // TestUplink_InboundForwardedWithoutSubscriber reproduces the Feishu-card bug:
 // a mirror session created via ANNOUNCE must forward inbound (IN/RESIZE) frames
 // down the uplink to the desktop EVEN WHEN no remote viewer is subscribed.

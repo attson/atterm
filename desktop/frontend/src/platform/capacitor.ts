@@ -22,6 +22,8 @@ import {
 } from '../lib/opaqueWasm'
 import { setAccountKeyProvider } from '../lib/account-key'
 import { errText, logWarn } from "../lib/log";
+import { webSocketAuth, type Endpoint } from "../lib/connection";
+import { TYPE, NIL_SID, encodeFrame, decodeFrame, encodeText, decodeText } from "../lib/proto";
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
@@ -222,6 +224,24 @@ function parseRelayJSON(raw: string | null): RelayConfig | null {
   if (!raw) return null
   try {
     return JSON.parse(raw) as RelayConfig
+  } catch {
+    return null
+  }
+}
+
+// relayWsEndpoint converts the persisted http(s) relay URL into the ws(s)
+// Endpoint shape lib/connection's webSocketAuth expects. Capacitor has no
+// Go loopback proxy (unlike Wails) and dials the relay directly, same as
+// listRemoteSessions's fetch(base + '/api/sessions') above — so unlike
+// App.vue's buildWebRemoteEndpoint there is no same-origin location.host
+// fallback to fall back to; a native app with no configured relay URL has
+// nothing to connect to at all.
+function relayWsEndpoint(cfg: RelayConfig): Endpoint | null {
+  if (!cfg.url || !cfg.token) return null
+  try {
+    const u = new URL(cfg.url)
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return { url: `${proto}//${u.host}`, session_token: cfg.token }
   } catch {
     return null
   }
@@ -602,6 +622,87 @@ export function createCapacitorPlatform(): Platform {
       setPins: async (ids) => {
         localStorage.setItem('atterm.pinned_session_ids.value', JSON.stringify(ids))
         notifyLocalChange('pinned_session_ids')
+      },
+      createSessionWithProfile: async (hostID: string, profileID: string): Promise<string> => {
+        const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                  ?? loadLegacyFromLocalStorage()
+        const endpoint = cfg ? relayWsEndpoint(cfg) : null
+        if (!endpoint) throw new Error('relay_not_configured')
+        const requestID = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? `sc-${crypto.randomUUID()}`
+          : `sc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+        const auth = webSocketAuth(endpoint, '/client')
+        return new Promise<string>((resolve, reject) => {
+          let settled = false
+          let timer: ReturnType<typeof setTimeout> | null = null
+          let ws: WebSocket
+          try {
+            ws = new WebSocket(auth.url, auth.protocols)
+          } catch {
+            // WebKit (iOS is the only platform this bridge method runs on)
+            // throws a synchronous SyntaxError DOMException when the URL
+            // scheme isn't ws/wss or a subprotocol has chars outside the RFC
+            // 6455 token set — see connection.ts's openWS for the same
+            // handling on the long-lived path. Map it to a code the UI
+            // already knows how to render instead of letting the raw
+            // browser message reach the user verbatim through the generic
+            // bucket.
+            reject(new Error('invalid_request'))
+            return
+          }
+          ws.binaryType = 'arraybuffer'
+          const finish = (fn: () => void) => {
+            if (settled) return
+            settled = true
+            if (timer !== null) clearTimeout(timer)
+            ws.onopen = null
+            ws.onmessage = null
+            ws.onclose = null
+            ws.onerror = null
+            try { ws.close() } catch { /* already closing/closed */ }
+            fn()
+          }
+          timer = setTimeout(() => {
+            // No retry: a retried "start a shell" that actually succeeded the
+            // first time leaves an orphan process nobody asked for. The
+            // caller must surface this as an actionable error, not resend.
+            finish(() => reject(new Error('timeout')))
+          }, 30000)
+          ws.onopen = () => {
+            const payload = encodeText(JSON.stringify({
+              request_id: requestID,
+              host_id: hostID,
+              profile_id: profileID,
+            }))
+            ws.send(encodeFrame(TYPE.SESSION_CREATE, NIL_SID, payload))
+          }
+          ws.onmessage = (ev) => {
+            if (settled) return
+            try {
+              const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : null
+              if (!data) return
+              const frame = decodeFrame(data)
+              if (frame.type !== TYPE.SESSION_CREATED) return
+              const resp = JSON.parse(decodeText(frame.payload)) as {
+                request_id: string; ok: boolean; session_id?: string; error?: string
+              }
+              if (resp.request_id !== requestID) return
+              if (resp.ok && resp.session_id) {
+                finish(() => resolve(resp.session_id!))
+              } else {
+                finish(() => reject(new Error(resp.error || 'upstream_unavailable')))
+              }
+            } catch (e) {
+              logWarn('capacitor', 'session-create response decode failed', { error: errText(e) })
+            }
+          }
+          ws.onclose = () => {
+            finish(() => reject(new Error('upstream_unavailable')))
+          }
+          ws.onerror = () => {
+            finish(() => reject(new Error('upstream_unavailable')))
+          }
+        })
       },
     },
     system: {

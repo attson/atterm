@@ -61,6 +61,10 @@ type uplinkSession struct {
 	server      *Server
 	conn        *websocket.Conn
 	ownerUserID string
+	// hostID is ANNOUNCE's HostID, captured once at connect so cleanup() can
+	// unregister the same key registerHost used — see sessionCreateRouter in
+	// session_create_router.go.
+	hostID string
 	// ctx cancels on writer teardown (kill -9 / TCP drop / ping timeout) so
 	// the reader unblocks and cleanup() runs. Every mirror-lifecycle
 	// goroutine also selects on ctx.Done() to bail cleanly.
@@ -130,12 +134,17 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		server:      s,
 		conn:        c,
 		ownerUserID: ownerUserID,
+		hostID:      ann.HostID,
 		ctx:         connCtx,
 		cancel:      cancelConn,
 		out:         make(chan proto.Frame, uplinkOutBuffer),
 		mirrors:     make(map[uuid.UUID]*mirrorState),
 	}
 	defer u.cleanup()
+	// Register before reconcile/writeLoop/readLoop start: a TypeSessionCreate
+	// naming this host must be routable the moment this connection is up,
+	// independent of whether it has announced any sessions yet (design §3).
+	s.sessionCreateRoutes().registerHost(u.hostID, u.out, u.ownerUserID)
 
 	logging.Info("relay-uplink", "host %s connected (%d session(s))", ann.HostID, len(ann.Sessions))
 	u.reconcile(ann.Sessions)
@@ -405,6 +414,7 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 }
 
 func (u *uplinkSession) cleanup() {
+	u.server.sessionCreateRoutes().unregisterHost(u.hostID, u.ownerUserID, u.out)
 	u.mu.Lock()
 	gone := make(map[uuid.UUID]*mirrorState, len(u.mirrors))
 	for id, ms := range u.mirrors {
@@ -527,6 +537,17 @@ func (u *uplinkSession) readLoop() {
 			}
 		case proto.TypeCommandEvent:
 			u.handleCommandEvent(f)
+		case proto.TypeSessionCreated:
+			// Unlike TypeFSResponse, this cannot gate on u.mirrors[f.SessionID]:
+			// on success f.SessionID is the session that was JUST created and
+			// may not have reached this uplink's mirror map yet (that happens
+			// on the next ANNOUNCE reconcile), and on failure it is the zero
+			// UUID. routeResponse enforces the equivalent protection itself —
+			// the response is only accepted from the same u.out the matching
+			// request was forwarded to, so a different uplink can't forge it.
+			if !u.server.sessionCreateRoutes().routeResponse(f, u.out) {
+				u.server.debugf("uplink session_created_drop reason=unrouted")
+			}
 		case proto.TypeFSResponse:
 			u.mu.Lock()
 			ms := u.mirrors[f.SessionID]

@@ -480,3 +480,63 @@ func TestClient_EchoesPingPayloadAsPong(t *testing.T) {
 		return
 	}
 }
+
+// TestClient_UnknownFrameTypeIgnored pins the relay's /client reader
+// behaviour for a frame type it doesn't recognize (the position an older
+// relay is in the moment a newer client starts sending TypeSessionCreate,
+// or any future type): the frame hits the `default` case, is logged and
+// dropped, and the connection stays open and keeps serving requests. If a
+// future change makes an unknown type close the connection or error instead,
+// that turns "new client talks to old relay" into a dropped websocket
+// instead of a silently-ignored frame — this test makes that regression
+// fail loudly. 0xfe is deliberately not one of the frame types this repo
+// currently assigns (see TestFrameTypeValuesPinned in internal/proto).
+func TestClient_UnknownFrameTypeIgnored(t *testing.T) {
+	srv, tok, userID := serverWithSessionAndUser(t)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	id := uuid.MustParse("66666666-6666-6666-6666-666666666666")
+	sess := session.New(id, proto.SessionInfo{Command: "bash", Cols: 80, Rows: 24})
+	sess.OwnerUserID = userID
+	srv.registry.Add(sess)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c := dialClientAttach(t, ctx, httpSrv, tok, id, "client-unknown")
+	defer c.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, c)
+
+	writeClientFrame(t, ctx, c, proto.Type(0xfe), id, []byte("unrecognized"))
+
+	// Prove the reader loop is still alive (didn't close/error out on the
+	// unknown frame) by sending a PING right after it and getting a PONG.
+	wantTS := uint64(0x1111_2222_3333_4444)
+	writeClientFrame(t, ctx, c, proto.TypePing, id, proto.EncodePingTimestamp(wantTS))
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for PONG after unknown frame type")
+		}
+		readCtx, readCancel := context.WithTimeout(ctx, time.Until(deadline))
+		_, data, err := c.Read(readCtx)
+		readCancel()
+		if err != nil {
+			t.Fatalf("connection closed/errored after unknown frame type: %v", err)
+		}
+		f, err := proto.Unmarshal(data)
+		if err != nil {
+			continue
+		}
+		if f.Type != proto.TypePong {
+			continue
+		}
+		got, ok := proto.DecodePingTimestamp(f.Payload)
+		if !ok || got != wantTS {
+			t.Fatalf("PONG payload mismatch: ok=%v got=0x%x want=0x%x", ok, got, wantTS)
+		}
+		return
+	}
+}

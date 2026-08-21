@@ -88,6 +88,18 @@ describe("web capability gates", () => {
     expect(source).toContain('@close="onSettingsClose"');
     expect(source).not.toContain('@close="showSettings = false; settingsInitialTab = undefined; refreshRelayConfig()"');
   });
+
+  // Task 6: mobile "open with profile" success attaches through the same
+  // path a sidebar click or notification tap would use — openRemoteAsTab —
+  // rather than a bespoke "just created" tab-open branch.
+  test("a mobile-created session closes settings and reaches the existing remote-attach path", () => {
+    expect(source).toContain("function onMobileSessionCreated(sessionId: string)");
+    expect(source).toContain('@session-created="onMobileSessionCreated"');
+    const fnStart = source.indexOf("function onMobileSessionCreated(sessionId: string)");
+    const fnBody = source.slice(fnStart, fnStart + 300);
+    expect(fnBody).toContain("onSettingsClose();");
+    expect(fnBody).toContain("openRemoteAsTab(sessionId);");
+  });
 });
 
 describe("capacitor uses the shared web shell", () => {

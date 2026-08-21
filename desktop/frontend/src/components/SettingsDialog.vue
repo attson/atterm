@@ -25,6 +25,8 @@ import SettingsTasks from "./SettingsTasks.vue";
 import SettingsFeishu from "./SettingsFeishu.vue";
 import SettingsDevices from "./SettingsDevices.vue";
 import SettingsReceivedFiles from "./SettingsReceivedFiles.vue";
+import SettingsProfilesMobile from "./SettingsProfilesMobile.vue";
+import SettingsSSHHostsMobile from "./SettingsSSHHostsMobile.vue";
 import SyncStatusIndicator from "./SyncStatusIndicator.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
@@ -39,7 +41,8 @@ const { t, resolvedLocale } = useI18n();
 // UI is in Chinese (CodeIsland-style "通用 General preferences" anchor).
 // English locale skips the subtitle to avoid duplicate text.
 type SettingsTabId = "general" | "account" | "tasks" | "relay" | "plugins"
-  | "shortcuts" | "templates" | "profiles" | "logging" | "updates" | "diagnostics" | "feishu" | "devices" | "received-files";
+  | "shortcuts" | "templates" | "profiles" | "logging" | "updates" | "diagnostics" | "feishu" | "devices" | "received-files"
+  | "mobile-profiles" | "mobile-hosts";
 
 const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> = {
   general:     { labelKey: "settings.tabs.general",        english: "General preferences" },
@@ -56,6 +59,8 @@ const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> 
   feishu:      { labelKey: "settings.feishu.title",        english: "Feishu integration" },
   devices:     { labelKey: "settings.tabs.devices",       english: "Signed-in devices" },
   "received-files": { labelKey: "settings.tabs.receivedFiles", english: "Received files" },
+  "mobile-profiles": { labelKey: "settings.tabs.mobileProfiles", english: "Synced profiles" },
+  "mobile-hosts":    { labelKey: "settings.tabs.mobileHosts",    english: "SSH hosts" },
 };
 
 const activeTabLabel = computed(() => t(tabMeta[activeTab.value].labelKey));
@@ -82,6 +87,8 @@ const tabIcons: Record<SettingsTabId, string> = {
   feishu:      `<svg ${icoBase}><path d="M3.5 4.5h6l2 2v5a1.5 1.5 0 0 1-1.5 1.5h-6.5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1Z"/><path d="M9.5 4.5v2h2"/></svg>`,
   devices:     `<svg ${icoBase}><rect x="1.6" y="2.4" width="12.8" height="8" rx="1.4"/><path d="M4.8 14h6.4M8 10.4V14"/></svg>`,
   "received-files": `<svg ${icoBase}><path d="M3 3.5h4l1.5 2H13v6.5H3z"/><path d="M8 8v3.5M6 10l2 2 2-2"/></svg>`,
+  "mobile-profiles": `<svg ${icoBase}><rect x="1.6" y="3" width="12.8" height="10" rx="1.4"/><path d="M4.2 6.6h4.4M4.2 9h7.6"/><circle cx="11.4" cy="6.6" r="0.9" fill="currentColor" stroke="none"/></svg>`,
+  "mobile-hosts":    `<svg ${icoBase}><circle cx="8" cy="8" r="1.4"/><path d="M4.4 4.4a5 5 0 0 0 0 7.2M11.6 11.6a5 5 0 0 0 0-7.2"/></svg>`,
 };
 
 const props = defineProps<{
@@ -99,13 +106,14 @@ const emit = defineEmits<{
   (e: "appearance-changed", appearance: TerminalAppearance): void;
   (e: "bindings-changed", bindings: Record<string, string>): void;
   (e: "profiles-changed"): void;
+  (e: "session-created", sessionId: string): void;
 }>();
 
 // Logging is no longer a standalone tab — it lives inside the Diagnostics
 // pane. Map any legacy `initialTab: 'logging'` onto diagnostics so deep links
 // keep working.
 const initialTab = props.initialTab === "logging" ? "diagnostics" : (props.initialTab ?? "general");
-const activeTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files">(initialTab);
+const activeTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | "mobile-profiles" | "mobile-hosts">(initialTab);
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
@@ -126,6 +134,16 @@ if (!caps.wailsBindings) {
   // Capacitor never do. Same reasoning as relay/diagnostics/feishu above.
   hiddenTabs.add('profiles')
 }
+// Read-only mobile views of the desktop's profiles/SSH hosts (design doc
+// §2/§6) only make sense inside the Capacitor native wrapper: caps.capacitor
+// is false on both Wails desktop and a plain browser tab (web/vite.config.ts
+// aliases the web build's `@` onto this same src tree, so the browser tab
+// would otherwise reach these tabs too — see SettingsProfilesMobile.vue's
+// own gate comment).
+if (!caps.capacitor) {
+  hiddenTabs.add('mobile-profiles')
+  hiddenTabs.add('mobile-hosts')
+}
 if (hiddenTabs.has(activeTab.value)) activeTab.value = 'general'
 
 const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
@@ -142,7 +160,7 @@ watch(
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | null>(null);
+const pendingTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | "mobile-profiles" | "mobile-hosts" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -178,7 +196,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files") {
+function switchTab(next: "general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | "mobile-profiles" | "mobile-hosts") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -344,6 +362,24 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.tabs.devices") }}</span>
           </button>
           <button
+            v-if="caps.capacitor"
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'mobile-profiles' }"
+            @click="switchTab('mobile-profiles')"
+          >
+            <span class="nav-icon" v-html="tabIcons['mobile-profiles']"></span>
+            <span class="nav-label">{{ t("settings.tabs.mobileProfiles") }}</span>
+          </button>
+          <button
+            v-if="caps.capacitor"
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'mobile-hosts' }"
+            @click="switchTab('mobile-hosts')"
+          >
+            <span class="nav-icon" v-html="tabIcons['mobile-hosts']"></span>
+            <span class="nav-label">{{ t("settings.tabs.mobileHosts") }}</span>
+          </button>
+          <button
             v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'plugins' }"
@@ -446,6 +482,11 @@ function onSaveClick() {
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" @bindings-changed="onBindingsChanged" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
           <SettingsProfiles v-if="activeTab === 'profiles' && caps.wailsBindings" @profiles-changed="onProfilesChanged" />
+          <SettingsProfilesMobile
+            v-if="activeTab === 'mobile-profiles' && caps.capacitor"
+            @session-created="(sessionId) => emit('session-created', sessionId)"
+          />
+          <SettingsSSHHostsMobile v-if="activeTab === 'mobile-hosts' && caps.capacitor" />
           <div v-if="activeTab === 'diagnostics' && caps.wailsBindings" class="diag-merged">
             <section v-if="caps.fileDialog" class="merged-section">
               <h4 class="merged-section-title">{{ t("settings.tabs.logging") }}</h4>

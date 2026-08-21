@@ -146,6 +146,7 @@ import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { createPinia } from "pinia";
 import SettingsDialog from "./SettingsDialog.vue";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsProfilesMobile from "./SettingsProfilesMobile.vue";
 
 const baseProps: { localSessionCount: number; remoteSessionCount: number; terminalThemeId: string; initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" } = { localSessionCount: 0, remoteSessionCount: 0, terminalThemeId: "default" };
 let platform: ReturnType<typeof createFakePlatform>;
@@ -302,6 +303,34 @@ describe("SettingsDialog caps gating", () => {
   // The sync status indicator is desktop-only (design doc §6 "No mobile
   // indicator"): GetSyncStatus/SyncNow are Wails-only, and mobile syncs
   // prefs over HTTP via a wholly separate path (prefsSync.capacitor.ts).
+  // The two mobile read-only views (SettingsProfilesMobile.vue,
+  // SettingsSSHHostsMobile.vue) each have their own strong test suites, but
+  // nothing before this pinned that they're actually *mounted and reachable*
+  // from SettingsDialog.vue -- deleting their nav buttons and/or their pane
+  // mounts would leave every one of their own tests green (they mount the
+  // component directly) while the feature became unreachable from the phone.
+  // Same shape as the config-export/import pin above. Mounts the real
+  // dialog under capacitor caps, switches to each new tab exactly as a user
+  // would, and looks for each panel by its own data-testid.
+  it("mounts the mobile profiles and mobile SSH hosts panels under capacitor caps", async () => {
+    platform.caps = { ...platform.caps, capacitor: true };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    await switchToTab(w, en.settings.tabs.mobileProfiles);
+    expect(w.find('[data-testid="mobile-profiles-panel"]').exists()).toBe(true);
+    await switchToTab(w, en.settings.tabs.mobileHosts);
+    expect(w.find('[data-testid="mobile-hosts-panel"]').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it("never reaches the mobile profiles/SSH hosts panels when capacitor=false (nav items themselves are hidden)", () => {
+    platform.caps = { ...platform.caps, capacitor: false };
+    __setPlatformForTests(platform);
+    const labels = navLabels(mountDialog());
+    expect(labels).not.toContain(en.settings.tabs.mobileProfiles);
+    expect(labels).not.toContain(en.settings.tabs.mobileHosts);
+  });
+
   it("shows the sync status indicator in the header on Wails (wailsBindings=true)", async () => {
     platform.caps = { ...platform.caps, wailsBindings: true };
     __setPlatformForTests(platform);
@@ -357,5 +386,27 @@ describe("SettingsDialog appearance forwarding", () => {
     w.findComponent(SettingsGeneral).vm.$emit("appearance-changed", payload);
     expect(w.emitted("appearance-changed")).toBeTruthy();
     expect(w.emitted("appearance-changed")!.at(-1)![0]).toEqual(payload);
+  });
+});
+
+// Same shape as the appearance-changed forwarding pin above (fix round 1,
+// task 6): SettingsProfilesMobile's session-created emit was wired with an
+// inline arrow (@session-created="(sessionId) => emit('session-created',
+// sessionId)") that nothing asserted on — deleting it left the phone with
+// no signal that a session it just created exists, with the full suite
+// green. Mounts under capacitor caps (the only shape this panel renders
+// under), switches to its tab, and proves both ends: the dialog is
+// listening on the child, and it re-emits exactly what it received.
+describe("SettingsDialog session-created forwarding", () => {
+  it("forwards session-created from SettingsProfilesMobile", async () => {
+    platform.caps = { ...platform.caps, capacitor: true };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    await switchToTab(w, en.settings.tabs.mobileProfiles);
+
+    w.findComponent(SettingsProfilesMobile).vm.$emit("session-created", "new-session-id");
+
+    expect(w.emitted("session-created")).toBeTruthy();
+    expect(w.emitted("session-created")!.at(-1)![0]).toEqual("new-session-id");
   });
 });

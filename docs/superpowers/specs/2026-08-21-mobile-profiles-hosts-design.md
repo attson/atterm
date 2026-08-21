@@ -91,6 +91,14 @@ even when that desktop has zero sessions. The create request carries a
 routes back to the requesting client only, exactly as `TypeFSResponse` does —
 per-requester, never broadcast.
 
+Routable at the relay is not the same as nameable on the phone, though: the
+relay can address a zero-session desktop by `host_id` because `AnnouncePayload`
+gives it one regardless of session count, but the phone's only source for
+*enumerating* hosts to offer in the picker is `/api/sessions`, which lists
+sessions — a desktop with none does not appear there and so cannot be
+selected, even though the relay could route a create request to it if the
+phone somehow knew its `host_id`.
+
 **The phone sends a profile ID, never a profile body.** The desktop resolves it
 from its own config. That is the security property that makes this safe to
 expose: a phone chooses among the desktop's recipes, it cannot write one. A

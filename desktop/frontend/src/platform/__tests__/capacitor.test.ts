@@ -823,6 +823,12 @@ describe('capacitor.createSessionWithProfile', () => {
     expect(payload.profile_id).toBe('profile-a')
     expect(payload.request_id).toEqual(expect.any(String))
     expect(payload.request_id.length).toBeGreaterThan(0)
+    // Spec's central security claim (design doc §3): the phone sends a profile
+    // ID, never a profile body — no startup_cmd, no env, no cwd. Pin the exact
+    // key set on the wire so a stray extra field (e.g. an accidental
+    // `startup_cmd` leaking into the payload) fails loudly instead of riding
+    // along unnoticed.
+    expect(Object.keys(payload).sort()).toEqual(['host_id', 'profile_id', 'request_id'])
 
     ws.emitCreated({ request_id: payload.request_id, ok: true, session_id: 's-new' })
     await expect(pending).resolves.toBe('s-new')
@@ -894,6 +900,34 @@ describe('capacitor.createSessionWithProfile', () => {
     await vi.advanceTimersByTimeAsync(60000)
     expect(ws.sent).toHaveLength(1)
     expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
+  // Lower bound on the timeout, not just "eventually rejects": the relay's
+  // own request_in_flight TTL (internal/relay/session_create_router.go's 60s)
+  // is deliberately set comfortably above this client's 30s patience, so a
+  // desktop that answers at, say, 25s must still resolve here rather than
+  // this side having already given up. Shortening `}, 30000)` to `}, 1000)`
+  // would pass every other test in this file (they only assert eventual
+  // rejection) while making "the session was actually created but the phone
+  // reported a timeout" the common case instead of a 30s-edge rarity.
+  it('does not settle before 30s have elapsed', async () => {
+    vi.useFakeTimers()
+    const p = createCapacitorPlatform()
+    const pending = p.sessions.createSessionWithProfile!('host-a', 'profile-a')
+    await vi.advanceTimersByTimeAsync(0)
+    const ws = lastWS()
+    ws.open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(ws.sent).toHaveLength(1)
+
+    let settled = false
+    pending.then(() => { settled = true }, () => { settled = true })
+
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(settled).toBe(true)
   })
 
   it('rejects with relay_not_configured when no relay session is stored, without opening a socket', async () => {

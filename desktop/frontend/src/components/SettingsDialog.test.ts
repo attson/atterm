@@ -146,6 +146,7 @@ import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { createPinia } from "pinia";
 import SettingsDialog from "./SettingsDialog.vue";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsProfilesMobile from "./SettingsProfilesMobile.vue";
 
 const baseProps: { localSessionCount: number; remoteSessionCount: number; terminalThemeId: string; initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" } = { localSessionCount: 0, remoteSessionCount: 0, terminalThemeId: "default" };
 let platform: ReturnType<typeof createFakePlatform>;
@@ -385,5 +386,27 @@ describe("SettingsDialog appearance forwarding", () => {
     w.findComponent(SettingsGeneral).vm.$emit("appearance-changed", payload);
     expect(w.emitted("appearance-changed")).toBeTruthy();
     expect(w.emitted("appearance-changed")!.at(-1)![0]).toEqual(payload);
+  });
+});
+
+// Same shape as the appearance-changed forwarding pin above (fix round 1,
+// task 6): SettingsProfilesMobile's session-created emit was wired with an
+// inline arrow (@session-created="(sessionId) => emit('session-created',
+// sessionId)") that nothing asserted on — deleting it left the phone with
+// no signal that a session it just created exists, with the full suite
+// green. Mounts under capacitor caps (the only shape this panel renders
+// under), switches to its tab, and proves both ends: the dialog is
+// listening on the child, and it re-emits exactly what it received.
+describe("SettingsDialog session-created forwarding", () => {
+  it("forwards session-created from SettingsProfilesMobile", async () => {
+    platform.caps = { ...platform.caps, capacitor: true };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    await switchToTab(w, en.settings.tabs.mobileProfiles);
+
+    w.findComponent(SettingsProfilesMobile).vm.$emit("session-created", "new-session-id");
+
+    expect(w.emitted("session-created")).toBeTruthy();
+    expect(w.emitted("session-created")!.at(-1)![0]).toEqual("new-session-id");
   });
 });

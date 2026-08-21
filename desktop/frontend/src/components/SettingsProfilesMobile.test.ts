@@ -385,6 +385,45 @@ describe("SettingsProfilesMobile", () => {
       expect(errText).not.toBe("permission_denied");
     });
 
+    // Table-driven walk of the full closed set (SessionCreatedPayload.Error
+    // in internal/proto/frame.go plus the two bridge-level codes 'timeout'
+    // and 'relay_not_configured' that capacitor.ts's createSessionWithProfile
+    // can reject with). Only 'timeout' and 'permission_denied' were pinned
+    // above; the other eight had no test at all, so e.g. renaming the
+    // mapping's "session_create_busy" key to "session_create_bsy" passed the
+    // whole suite — the real wire code would then silently fall into the
+    // generic bucket and show the user a raw code, exactly what this
+    // component exists to prevent. Every code here must render its own
+    // specific string, not the generic "Couldn't start a session: {error}"
+    // fallback.
+    const ALL_KNOWN_ERROR_CODES = [
+      "unknown_profile",
+      "permission_denied",
+      "request_in_flight",
+      "duplicate_request_id",
+      "unknown_host_id",
+      "invalid_request",
+      "upstream_unavailable",
+      "session_create_busy",
+      "timeout",
+      "relay_not_configured",
+    ] as const;
+
+    it.each(ALL_KNOWN_ERROR_CODES)("%s renders its own specific message, not the generic bucket", async (code) => {
+      const createSessionWithProfile = vi.fn().mockRejectedValue(new Error(code));
+      const w = mountReady({ createSessionWithProfile });
+      await flushPromises();
+
+      const items = w.findAll('[data-testid="mobile-profile-item"]');
+      const target = items.find((i) => i.text().includes("Synced Profile") && !i.text().includes("Empty"))!;
+      await target.find('[data-testid="mobile-profile-open"]').trigger("click");
+      await flushPromises();
+
+      const errText = w.find('[data-testid="mobile-profiles-create-error"]').text();
+      expect(errText).toBe(en.settings.mobileProfiles.openErrors[code]);
+      expect(errText).not.toBe(en.settings.mobileProfiles.openErrors.generic.replace("{error}", code));
+    });
+
     it("an unrecognized error message (e.g. desktop's raw NewSession failure) falls into the generic bucket", async () => {
       const createSessionWithProfile = vi.fn().mockRejectedValue(new Error("exec: \"nope\": file not found"));
       const w = mountReady({ createSessionWithProfile });

@@ -166,7 +166,29 @@ export interface SessionBridge {
    *  a desktop-refused request, rejects with an Error whose message is one
    *  of the closed set of wire error codes documented on
    *  SessionCreatedPayload.Error in internal/proto/frame.go (plus
-   *  'relay_not_configured' when no relay session exists locally). */
+   *  'relay_not_configured' when no relay session exists locally).
+   *
+   *  Implementation opens a brand-new WebSocket to the relay's /client
+   *  endpoint for every call, rather than reusing one connection across
+   *  requests (there is no existing attached connection to ride when the
+   *  phone isn't attached to anything, unlike the FS request path's
+   *  pendingFSRequests). That has a real benefit: a late reply for a
+   *  timed-out request cannot land on a newer request, because the socket
+   *  and its closure die together. But it also means the relay's per-client
+   *  in-flight bound (internal/relay/session_create_router.go's
+   *  hasOutstandingRequest, keyed on the requesting client_conn.go
+   *  connection's own targetedOut channel) CANNOT fire against this client
+   *  — every call is a distinct connection, so two concurrent taps look
+   *  like two different clients to the relay, and so does
+   *  duplicate_request_id (each attempt mints its own fresh request_id).
+   *  The in-app double-tap guard (the `creating` ref in
+   *  SettingsProfilesMobile.vue) is therefore the ONLY defence against
+   *  duplicate requests from this client, not a belt-and-suspenders layer
+   *  on top of a relay-side one. Each open request also holds one of the
+   *  account key's MaxConnectionsPerKey connection slots (shared with the
+   *  sidebar's session list and any attached terminals) for up to 30s —
+   *  bounded to one such slot at a time by that same JS guard, but worth
+   *  knowing if connection-limit errors ever show up here. */
   createSessionWithProfile?(hostID: string, profileID: string): Promise<string>
 }
 

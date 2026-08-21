@@ -122,8 +122,17 @@ onMounted(loadHosts);
 // guard: openProfile's very first line reads it, and since everything up to
 // the first `await` in an async function runs synchronously, a second tap
 // that lands before the network call starts sees it already set and bails.
-// This is the primary double-tap defence (per the brief) — the relay's
-// per-client in-flight limit is a backstop, not the mechanism.
+//
+// This is the ONLY live double-tap defence for this client — not "primary
+// with the relay as backstop". capacitor.ts's createSessionWithProfile
+// opens a brand-new WebSocket per call (see its own doc comment in
+// platform/types.ts for why), so two concurrent taps look to the relay like
+// two different clients on two different /client connections. The relay's
+// per-client in-flight bound (internal/relay/session_create_router.go's
+// hasOutstandingRequest, keyed on the requesting client_conn.go connection's
+// own targetedOut channel — see task 5) never sees two taps as the same
+// client and cannot fire. If this guard is ever removed, nothing else in
+// this path stops a double-tap.
 const creating = ref<string | null>(null);
 const createError = ref("");
 

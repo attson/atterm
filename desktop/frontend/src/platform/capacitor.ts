@@ -635,7 +635,21 @@ export function createCapacitorPlatform(): Platform {
         return new Promise<string>((resolve, reject) => {
           let settled = false
           let timer: ReturnType<typeof setTimeout> | null = null
-          const ws = new WebSocket(auth.url, auth.protocols)
+          let ws: WebSocket
+          try {
+            ws = new WebSocket(auth.url, auth.protocols)
+          } catch {
+            // WebKit (iOS is the only platform this bridge method runs on)
+            // throws a synchronous SyntaxError DOMException when the URL
+            // scheme isn't ws/wss or a subprotocol has chars outside the RFC
+            // 6455 token set — see connection.ts's openWS for the same
+            // handling on the long-lived path. Map it to a code the UI
+            // already knows how to render instead of letting the raw
+            // browser message reach the user verbatim through the generic
+            // bucket.
+            reject(new Error('invalid_request'))
+            return
+          }
           ws.binaryType = 'arraybuffer'
           const finish = (fn: () => void) => {
             if (settled) return

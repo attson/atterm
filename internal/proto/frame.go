@@ -56,6 +56,19 @@ const (
 	TypeFSResponse    Type = 0x39 // desktop uplink -> relay -> requester client
 	TypeFSEvent       Type = 0x3a // desktop uplink -> relay -> requester client
 
+	// TypeSessionCreate/TypeSessionCreated let a mobile client (which cannot
+	// fork a PTY of its own) ask a desktop to open one from a saved profile.
+	// Routing is by host, not by session: a create request has no session id
+	// yet, so it can't ride sess.SendInbound the way FS_REQUEST does. It
+	// carries host_id instead and the relay routes it to whichever uplink
+	// announced that host (AnnouncePayload.HostID is present even when the
+	// host has zero sessions, so this works before any session exists). This
+	// pair is new, not a change to any existing frame's payload (red line 4);
+	// an older peer that doesn't recognize 0x3b/0x3c ignores the frame rather
+	// than erroring. See spec 2026-08-21-mobile-profiles-hosts §3.
+	TypeSessionCreate  Type = 0x3b // client -> relay -> desktop uplink
+	TypeSessionCreated Type = 0x3c // desktop uplink -> relay -> requester client
+
 	// Auth frames (server → client).
 	TypeAuthInfo Type = 0x40 // relay -> uplink; UTF-8 JSON {user_id}
 )
@@ -293,6 +306,47 @@ type FSEventPayload struct {
 	WatchID string `json:"watch_id"`
 	Path    string `json:"path"`
 	Event   string `json:"event"`
+}
+
+// SessionCreatePayload is the JSON body of a TypeSessionCreate frame: a
+// mobile client asking a specific desktop to fork a session from one of its
+// own profiles.
+//
+// The phone sends a profile ID, never a profile body — the desktop resolves
+// it from its own config, so a phone can only choose among recipes the
+// desktop already has, never inject a new startup_cmd. See spec §3.
+type SessionCreatePayload struct {
+	// RequestID ties the eventual SessionCreatedPayload back to the one
+	// client that asked, exactly as FSRequestPayload.RequestID does for
+	// FS_RESPONSE. Without it a response would have to broadcast, and any
+	// client attached to the same relay could see (or race) another
+	// client's session creation.
+	RequestID string `json:"request_id"`
+	// HostID is the routing key: the relay has no session to key on yet
+	// (that's the thing being created), so it dispatches by
+	// AnnouncePayload.HostID to the uplink that owns this host instead.
+	HostID string `json:"host_id"`
+	// ProfileID names one of the desktop's own saved profiles. Never a
+	// profile body — see the type doc comment.
+	ProfileID string `json:"profile_id"`
+}
+
+// SessionCreatedPayload is the JSON body of a TypeSessionCreated frame: the
+// desktop's reply to a SessionCreatePayload, routed back to the single
+// requesting client via RequestID (never broadcast), matching how
+// FSResponsePayload answers FSRequestPayload.
+type SessionCreatedPayload struct {
+	// RequestID echoes SessionCreatePayload.RequestID so the relay can route
+	// this response to the one client that asked.
+	RequestID string `json:"request_id"`
+	OK        bool   `json:"ok"`
+	// SessionID is set when OK is true; the phone attaches to it through the
+	// existing ATTACH path, as if the session had appeared on its own.
+	SessionID string `json:"session_id,omitempty"`
+	// Error is set when OK is false (unknown profile id, per-host session
+	// cap reached, or the requester isn't authenticated for this uplink's
+	// owner).
+	Error string `json:"error,omitempty"`
 }
 
 // SessionInfo is one entry of TypeListResp.

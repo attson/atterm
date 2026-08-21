@@ -152,6 +152,22 @@ export interface SessionBridge {
   listRelaySessions?(): Promise<_RelaySessionRow[]>
   revokeRelaySession?(idHash: string): Promise<void>
   signOutOtherRelaySessions?(): Promise<_SignOutOthersResult>
+  /** Capacitor-only (design §5). Mobile cannot fork a PTY, so this asks a
+   *  specific connected desktop (by host_id, from RemoteSession.host_id) to
+   *  fork a session from one of its own saved profiles (by profile_id, from
+   *  ProfileView.id) and resolves with the new session_id on success. The
+   *  Wails platform never gains this — it already forks locally via
+   *  newSession, which is faster and cannot fail on relay routing.
+   *
+   *  One round trip, no retry: rejects after a 30s timeout (matching the
+   *  relay's own request_in_flight TTL headroom) with Error('timeout'), and
+   *  the caller must not resend — a retried "start a shell" that actually
+   *  succeeded the first time leaves an orphan process nobody asked for. On
+   *  a desktop-refused request, rejects with an Error whose message is one
+   *  of the closed set of wire error codes documented on
+   *  SessionCreatedPayload.Error in internal/proto/frame.go (plus
+   *  'relay_not_configured' when no relay session exists locally). */
+  createSessionWithProfile?(hostID: string, profileID: string): Promise<string>
 }
 
 export interface SystemBridge {

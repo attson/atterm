@@ -26,6 +26,12 @@ export const TYPE = {
   FS_REQUEST: 0x38,
   FS_RESPONSE: 0x39,
   FS_EVENT: 0x3a,
+  // SESSION_CREATE/SESSION_CREATED mirror internal/proto/frame.go's
+  // TypeSessionCreate (0x3b) / TypeSessionCreated (0x3c) — a mobile client
+  // asking a specific desktop (by host_id) to fork a session from one of its
+  // own profiles. See platform/capacitor.ts's createSessionWithProfile.
+  SESSION_CREATE: 0x3b,
+  SESSION_CREATED: 0x3c,
 } as const;
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE];

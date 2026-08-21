@@ -106,6 +106,7 @@ const emit = defineEmits<{
   (e: "appearance-changed", appearance: TerminalAppearance): void;
   (e: "bindings-changed", bindings: Record<string, string>): void;
   (e: "profiles-changed"): void;
+  (e: "session-created", sessionId: string): void;
 }>();
 
 // Logging is no longer a standalone tab — it lives inside the Diagnostics
@@ -481,7 +482,10 @@ function onSaveClick() {
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" @bindings-changed="onBindingsChanged" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
           <SettingsProfiles v-if="activeTab === 'profiles' && caps.wailsBindings" @profiles-changed="onProfilesChanged" />
-          <SettingsProfilesMobile v-if="activeTab === 'mobile-profiles' && caps.capacitor" />
+          <SettingsProfilesMobile
+            v-if="activeTab === 'mobile-profiles' && caps.capacitor"
+            @session-created="(sessionId) => emit('session-created', sessionId)"
+          />
           <SettingsSSHHostsMobile v-if="activeTab === 'mobile-hosts' && caps.capacitor" />
           <div v-if="activeTab === 'diagnostics' && caps.wailsBindings" class="diag-merged">
             <section v-if="caps.fileDialog" class="merged-section">

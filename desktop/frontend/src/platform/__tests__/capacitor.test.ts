@@ -27,6 +27,7 @@ import { CapacitorHttp } from '@capacitor/core'
 import { createCapacitorPlatform } from '../capacitor'
 import { secureStorage } from '../secureStorage'
 import { wrapAccountKey } from '../../lib/opaque'
+import { TYPE, NIL_SID, encodeFrame, decodeFrame, encodeText, decodeText } from '../../lib/proto'
 
 describe('createCapacitorPlatform', () => {
   beforeEach(async () => {
@@ -742,5 +743,174 @@ describe('createCapacitorPlatform — relay.consumePairing', () => {
     expect(result.session_token).toBe('sess_badwrap')
     expect(await secureStorage.get('atterm.relay.account-key')).toBeNull()
     expect(warn).toHaveBeenCalled()
+  })
+})
+
+// --- T6: createSessionWithProfile (the mobile "open with profile" flow) ---
+
+describe('capacitor.createSessionWithProfile', () => {
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = []
+    static CONNECTING = 0
+    static OPEN = 1
+    static CLOSED = 3
+
+    readyState = FakeWebSocket.CONNECTING
+    binaryType = ''
+    sent: Uint8Array[] = []
+    onopen: (() => void) | null = null
+    onmessage: ((event: MessageEvent) => void) | null = null
+    onclose: (() => void) | null = null
+    onerror: (() => void) | null = null
+
+    constructor(public url: string, public protocols?: string[]) {
+      FakeWebSocket.instances.push(this)
+    }
+
+    send(data: Uint8Array) {
+      this.sent.push(data)
+    }
+
+    close() {
+      if (this.readyState === FakeWebSocket.CLOSED) return
+      this.readyState = FakeWebSocket.CLOSED
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN
+      this.onopen?.()
+    }
+
+    // Simulates the relay delivering a TypeSessionCreated frame.
+    emitCreated(payload: { request_id: string; ok: boolean; session_id?: string; error?: string }) {
+      const json = encodeText(JSON.stringify(payload))
+      const bytes = encodeFrame(TYPE.SESSION_CREATED, NIL_SID, json)
+      this.onmessage?.({ data: bytes.buffer } as MessageEvent)
+    }
+  }
+
+  beforeEach(async () => {
+    const { secureStorage } = await import('../secureStorage')
+    await secureStorage.remove('atterm.relay.session')
+    localStorage.clear()
+    localStorage.setItem('atterm.relay.session', STORED_RELAY)
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  function lastWS(): FakeWebSocket {
+    return FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+  }
+
+  it('sends TypeSessionCreate with NIL_SID and {request_id, host_id, profile_id}, dialed at wss://.../client', async () => {
+    const p = createCapacitorPlatform()
+    const pending = p.sessions.createSessionWithProfile!('host-a', 'profile-a')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const ws = lastWS()
+    expect(ws.url).toBe('wss://relay.example/client')
+    ws.open()
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+
+    const frame = decodeFrame(ws.sent[0])
+    expect(frame.type).toBe(TYPE.SESSION_CREATE)
+    expect(frame.sid).toEqual(NIL_SID)
+    const payload = JSON.parse(decodeText(frame.payload)) as { request_id: string; host_id: string; profile_id: string }
+    expect(payload.host_id).toBe('host-a')
+    expect(payload.profile_id).toBe('profile-a')
+    expect(payload.request_id).toEqual(expect.any(String))
+    expect(payload.request_id.length).toBeGreaterThan(0)
+
+    ws.emitCreated({ request_id: payload.request_id, ok: true, session_id: 's-new' })
+    await expect(pending).resolves.toBe('s-new')
+  })
+
+  it('resolves with the session_id on ok:true', async () => {
+    const p = createCapacitorPlatform()
+    const pending = p.sessions.createSessionWithProfile!('host-a', 'profile-a')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const ws = lastWS()
+    ws.open()
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+    const requestID = (JSON.parse(decodeText(decodeFrame(ws.sent[0]).payload)) as { request_id: string }).request_id
+    ws.emitCreated({ request_id: requestID, ok: true, session_id: 's-ok' })
+    await expect(pending).resolves.toBe('s-ok')
+  })
+
+  it('rejects with the raw wire error code on ok:false, unchanged', async () => {
+    const p = createCapacitorPlatform()
+    const pending = p.sessions.createSessionWithProfile!('host-a', 'profile-a')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const ws = lastWS()
+    ws.open()
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+    const requestID = (JSON.parse(decodeText(decodeFrame(ws.sent[0]).payload)) as { request_id: string }).request_id
+    ws.emitCreated({ request_id: requestID, ok: false, error: 'permission_denied' })
+    await expect(pending).rejects.toThrow('permission_denied')
+  })
+
+  it('a mismatched request_id in the response is ignored (does not resolve or reject)', async () => {
+    vi.useFakeTimers()
+    const p = createCapacitorPlatform()
+    const pending = p.sessions.createSessionWithProfile!('host-a', 'profile-a')
+    await vi.advanceTimersByTimeAsync(0)
+    const ws = lastWS()
+    ws.open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(ws.sent).toHaveLength(1)
+
+    let settled = false
+    pending.then(() => { settled = true }, () => { settled = true })
+    ws.emitCreated({ request_id: 'not-the-real-one', ok: true, session_id: 's-wrong' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    // The real response still resolves it — proves the connection was never
+    // torn down by the bogus message.
+    const requestID = (JSON.parse(decodeText(decodeFrame(ws.sent[0]).payload)) as { request_id: string }).request_id
+    ws.emitCreated({ request_id: requestID, ok: true, session_id: 's-right' })
+    await expect(pending).resolves.toBe('s-right')
+  })
+
+  it('rejects with Error("timeout") after 30s and sends exactly one request — no retry', async () => {
+    vi.useFakeTimers()
+    const p = createCapacitorPlatform()
+    const pending = p.sessions.createSessionWithProfile!('host-a', 'profile-a')
+    await vi.advanceTimersByTimeAsync(0)
+    const ws = lastWS()
+    ws.open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(ws.sent).toHaveLength(1)
+
+    const assertion = expect(pending).rejects.toThrow('timeout')
+    await vi.advanceTimersByTimeAsync(30000)
+    await assertion
+
+    // Give any (incorrect) retry logic a chance to fire, then confirm it didn't.
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(ws.sent).toHaveLength(1)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
+  it('rejects with relay_not_configured when no relay session is stored, without opening a socket', async () => {
+    localStorage.clear()
+    const p = createCapacitorPlatform()
+    await expect(p.sessions.createSessionWithProfile!('host-a', 'profile-a')).rejects.toThrow('relay_not_configured')
+    expect(FakeWebSocket.instances).toHaveLength(0)
+  })
+
+  it('rejects with upstream_unavailable when the socket closes before a response arrives', async () => {
+    const p = createCapacitorPlatform()
+    const pending = p.sessions.createSessionWithProfile!('host-a', 'profile-a')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    const ws = lastWS()
+    ws.open()
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1))
+    ws.onclose?.()
+    await expect(pending).rejects.toThrow('upstream_unavailable')
   })
 })

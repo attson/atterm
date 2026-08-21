@@ -1080,6 +1080,17 @@ function onSshConnected(sessionId: string) {
   openSshTab(sessionId);
 }
 
+// Fired by SettingsProfilesMobile (via SettingsDialog's passthrough) after
+// platform.sessions.createSessionWithProfile resolves. Unlike onSshConnected
+// above, this session was forked on a *different* desktop and is announced
+// like any other remote session — openRemoteAsTab is the same path the
+// sidebar and notification taps use to reach a session this device did not
+// create, so there is no separate "just-created" tab-open code path here.
+function onMobileSessionCreated(sessionId: string) {
+  onSettingsClose();
+  openRemoteAsTab(sessionId);
+}
+
 async function onSplit(dir: SplitDir) {
   const t = currentTab.value;
   if (!t) return;
@@ -1866,6 +1877,7 @@ defineExpose({ me });
       @bindings-changed="onBindingsChanged"
       @profiles-changed="onProfilesChanged"
       @relay-config-changed="refreshDesktopRelayConfig"
+      @session-created="onMobileSessionCreated"
       @close="onSettingsClose"
     />
     <NewSshDialog

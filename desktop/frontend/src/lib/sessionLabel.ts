@@ -48,6 +48,19 @@ export function commandLabel(s: Pick<SessionLike, 'current_command' | 'title' | 
   return firstToken.split('/').pop() || firstToken
 }
 
+// kindGlyph maps a row's ai kind (commandLabel output) to a small colored
+// marker for the sidebar row, in each CLI's brand-ish hue. Unknown kinds get
+// no glyph — the plain kind badge still names them.
+export function kindGlyph(kind: string): { glyph: string; color: string } | null {
+  switch (kind) {
+    case 'claude': return { glyph: '\u2733', color: '#d97757' }  // ✳
+    case 'codex': return { glyph: '\u25c6', color: '#10a37f' }   // ◆
+    case 'gemini': return { glyph: '\u2726', color: '#4285f4' }  // ✦
+    case 'aider': return { glyph: '\u271a', color: '#22c55e' }   // ✚
+    default: return null
+  }
+}
+
 export function rowTitle(s: SessionLike): string {
   const cmd = fullCommand(s)
   return s.cwd ? `${cmd}\n${s.cwd}` : cmd

@@ -63,6 +63,7 @@ import {
   loadRecoverySnapshot,
   getRecoveryDialogEnabled,
   getProfiles,
+  getGitInfo,
   type MarkSessionsSeenOpts,
   type RecoverySnapshot,
 } from "./lib/api";
@@ -82,6 +83,7 @@ import {
   type DroppedSession,
 } from "./lib/paneDrop";
 import { useTerminalShortcuts } from "./composables/useTerminalShortcuts";
+import { useGitInfo } from "./composables/useGitInfo";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
 import { useSessionPins } from "./composables/useSessionPins";
@@ -173,6 +175,13 @@ function adaptSession(s: SessionInfo): RemoteSession {
   return { ...s, session_id: s.id } as unknown as RemoteSession;
 }
 const localListAdapted = computed<RemoteSession[]>(() => localList.value.map(adaptSession));
+
+// Sidebar git lines: poll branch + uncommitted counts for local sessions'
+// cwds. Wails-only — web/mobile have no binding and never poll.
+const gitCwds = computed<string[]>(() => localList.value.map((s) => s.cwd || "").filter((c) => c !== ""));
+const { byCwd: gitByCwd } = useGitInfo(gitCwds, (cwds) => getGitInfo(cwds), {
+  enabled: caps.wailsBindings,
+});
 const remoteListAdapted = computed<RemoteSession[]>(() => remoteList.value.map(adaptSession));
 
 const sessions = useSessions(localListAdapted, remoteListAdapted);
@@ -1811,6 +1820,7 @@ defineExpose({ me });
         :pane-location-for="paneLocationForSession"
         :can-detach-session="canDetachSession"
         :tab-index-by-id="tabIndexById"
+        :git-by-cwd="gitByCwd"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @close="requestCloseSession"

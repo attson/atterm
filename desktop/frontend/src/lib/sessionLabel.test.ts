@@ -8,6 +8,7 @@ import {
   hostNameWithIndex,
   coResidentIndex,
   taskStateLabel,
+  kindGlyph,
 } from './sessionLabel'
 
 describe('sessionLabel.fullCommand', () => {
@@ -218,3 +219,17 @@ describe('sessionLabel.hostNameWithIndex', () => {
     expect(hostNameWithIndex('h-1', [], 'unknown', 1)).toBe('h-1 #1')
   })
 })
+
+describe("kindGlyph", () => {
+  it("maps known AI CLIs to a colored glyph", () => {
+    expect(kindGlyph("claude")).toEqual({ glyph: "\u2733", color: "#d97757" });
+    expect(kindGlyph("codex")?.glyph).toBe("\u25c6");
+    expect(kindGlyph("gemini")?.glyph).toBe("\u2726");
+    expect(kindGlyph("aider")?.glyph).toBe("\u271a");
+  });
+
+  it("returns null for unknown kinds so the row shows no glyph", () => {
+    expect(kindGlyph("zsh")).toBeNull();
+    expect(kindGlyph("")).toBeNull();
+  });
+});

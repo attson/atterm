@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
+import type { GitInfo } from "../lib/api/git";
 import type { TaskState } from "../lib/taskState";
 import TaskGroupedList from "./TaskGroupedList.vue";
 import TaskStateIcon from "./TaskStateIcon.vue";
@@ -31,6 +32,8 @@ const props = withDefaults(defineProps<{
   paneLocationFor?: (id: string) => { tabId: string; paneIdx: number } | null;
   canDetachSession?: (id: string) => boolean;
   tabIndexById?: (tabId: string) => number;
+  // Git summary per local cwd; forwarded as-is to TaskGroupedList.
+  gitByCwd?: ReadonlyMap<string, GitInfo>;
 }>(), {
   byStateGroups: () => ({}),
   activeSessionId: null,
@@ -40,6 +43,7 @@ const props = withDefaults(defineProps<{
   paneLocationFor: () => null,
   canDetachSession: () => false,
   tabIndexById: () => 0,
+  gitByCwd: () => new Map(),
 });
 
 const emit = defineEmits<{
@@ -373,6 +377,7 @@ const railIcons = computed(() => {
             :pane-location-for="paneLocationFor"
             :can-detach-session="canDetachSession"
             :tab-index-by-id="tabIndexById"
+            :git-by-cwd="gitByCwd"
             @open="(s) => emit('open', s)"
             @close="(s) => emit('close', s)"
             @markSeen="(p) => emit('markSeen', p)"

@@ -4,6 +4,7 @@ import type { RemoteSession } from "../platform/types";
 import { stateColor, type TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import TaskRowInner from "./TaskRowInner.vue";
+import type { GitInfo } from "../lib/api/git";
 import LastOutputIndicator from "./LastOutputIndicator.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
 import SessionDetailsPopover from "./SessionDetailsPopover.vue";
@@ -62,9 +63,13 @@ const props = withDefaults(defineProps<{
   // True when the session shares a tab with other panes, so "move to its own
   // tab" is a real action. Only App knows the tab/pane shape.
   canDetachSession?: (id: string) => boolean;
+  // Git summary per cwd, for LOCAL sessions only (useGitInfo polls the local
+  // machine; a remote session's cwd names a path on another host).
+  gitByCwd?: ReadonlyMap<string, GitInfo>;
 }>(), {
   groupBy: "host",
   byState: () => ({}),
+  gitByCwd: () => new Map(),
   activeSessionId: null,
   localHostId: "",
   localHost: "",
@@ -85,6 +90,14 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+// gitFor resolves the git line for a row: local sessions only — gitByCwd is
+// polled on THIS machine, so a remote session's cwd would be a wrong answer.
+function gitFor(s: RemoteSession): GitInfo | null {
+  if (!props.localHostId || s.host_id !== props.localHostId) return null;
+  if (!s.cwd) return null;
+  return props.gitByCwd.get(s.cwd) ?? null;
+}
 const sel = useSessionSelection();
 
 // The group order is the row order: one list, so the two cannot disagree about
@@ -516,6 +529,7 @@ function stateLabel(state: string | undefined): string {
             :home="home"
             :show-close="openSessionIdSet.has(s.session_id)"
             :now-ms="nowMs"
+            :git="gitFor(s)"
             @close="emit('close', s)"
           />
         </button>
@@ -599,6 +613,7 @@ function stateLabel(state: string | undefined): string {
           :home="home"
           :show-close="openSessionIdSet.has(s.session_id)"
           :now-ms="nowMs"
+          :git="gitFor(s)"
           @close="emit('close', s)"
         />
       </button>

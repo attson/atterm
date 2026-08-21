@@ -467,6 +467,15 @@ export interface HostInfo {
   user: string;
 }
 
+// GitInfo mirrors desktop/git_info.go: one session cwd's checked-out branch
+// (short sha when detached) plus uncommitted line counts vs HEAD.
+export interface GitInfo {
+  cwd: string;
+  branch: string;
+  added: number;
+  deleted: number;
+}
+
 export interface LoggingConfig {
   enabled: boolean;
   path: string;
@@ -671,6 +680,7 @@ export interface AppBindings {
   GetStartupError?(): Promise<StartupError>;
   GetEndpoint(): Promise<Endpoint>;
   GetHostInfo(): Promise<HostInfo>;
+  GetGitInfo(cwds: string[]): Promise<GitInfo[] | null>;
   NewSession(req: NewSessionReq): Promise<NewSessionResp>;
   NewSshSession(req: SSHConnectReq): Promise<NewSessionResp>;
   NewSshSessionByID(id: string, accepted: AcceptedHostKey): Promise<NewSessionResp>;

@@ -25,7 +25,8 @@ import LastOutputIndicator from "./LastOutputIndicator.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { formatLastOutput } from "../lib/lastOutput";
-import { titleOrCommand, rowTitle, taskStateLabel, commandLabel } from "../lib/sessionLabel";
+import { titleOrCommand, rowTitle, taskStateLabel, commandLabel, kindGlyph } from "../lib/sessionLabel";
+import type { GitInfo } from "../lib/api/git";
 
 const props = withDefaults(defineProps<{
   session: RemoteSession;
@@ -33,10 +34,14 @@ const props = withDefaults(defineProps<{
   home?: string;
   showClose?: boolean;
   nowMs: number;
+  // Git summary for this session's cwd (local sessions only; undefined for
+  // remote sessions and non-repo cwds — the row simply has no git line).
+  git?: GitInfo | null;
 }>(), {
   showStateLabel: false,
   home: "",
   showClose: false,
+  git: null,
 });
 
 const emit = defineEmits<{
@@ -53,6 +58,9 @@ const hasLastOutput = computed(() =>
 const kind = computed(() =>
   props.session.type === "ai" ? commandLabel(props.session) : "",
 );
+// Colored marker identifying WHICH agent, next to the title — the kind badge
+// in the tail already names it, but a hue reads faster when scanning many rows.
+const glyph = computed(() => (kind.value ? kindGlyph(kind.value) : null));
 
 function stateLabel(state: string | undefined): string {
   return taskStateLabel(state, t);
@@ -72,11 +80,23 @@ function stateLabel(state: string | undefined): string {
       data-test="state-label"
     >{{ stateLabel(props.session.task_state) }}</span>
     <span class="cmd-and-cwd" :title="rowTitle(props.session)">
+      <span
+        v-if="glyph"
+        class="agent-glyph"
+        data-test="row-agent-glyph"
+        :style="{ color: glyph.color }"
+        aria-hidden="true"
+      >{{ glyph.glyph }}</span>
       <span class="cmd">{{ titleOrCommand(props.session) }}</span>
     </span>
   </span>
   <span v-if="cwd" class="row-meta" data-test="row-meta">
     <span class="cwd" data-test="row-cwd">{{ cwd }}</span>
+  </span>
+  <span v-if="props.git" class="row-git" data-test="row-git" :title="props.git.branch">
+    <span class="branch">⑂ {{ props.git.branch }}</span>
+    <span v-if="props.git.added > 0" class="stat-add" data-test="row-git-added">+{{ props.git.added }}</span>
+    <span v-if="props.git.deleted > 0" class="stat-del" data-test="row-git-deleted">−{{ props.git.deleted }}</span>
   </span>
   </span>
   <!-- Right-hand tail, same shape as the desk widget's row: kind badge on the
@@ -120,6 +140,16 @@ function stateLabel(state: string | undefined): string {
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
 .row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
+.row-git { display: flex; align-items: center; gap: 5px; min-width: 0; padding-left: 18px; }
+.row-git .branch {
+  color: var(--fg-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-mono); font-size: 0.8em;
+  flex: 0 1 auto; min-width: 0;
+}
+.stat-add { color: var(--good); font-family: var(--font-mono); font-size: 0.8em; flex-shrink: 0; }
+.stat-del { color: var(--bad); font-family: var(--font-mono); font-size: 0.8em; flex-shrink: 0; }
+.agent-glyph { flex-shrink: 0; font-size: 10px; line-height: 1; }
 .cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 1 1 auto; min-width: 0; }
 
 /* Tail column. `align-self: stretch` + space-between is what pins the kind

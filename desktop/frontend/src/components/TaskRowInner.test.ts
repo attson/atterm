@@ -162,3 +162,42 @@ describe("TaskRowInner layout", () => {
     expect(indicator.attributes("aria-label")).toBe("Output active");
   });
 });
+
+describe("TaskRowInner git line and agent glyph", () => {
+  const git = { cwd: "/w/repo", branch: "fix/ime-229-keystrokes", added: 220, deleted: 13 };
+
+  test("renders branch and +/- counts when a git summary is supplied", () => {
+    const w = mount(TaskRowInner, {
+      props: { session: mk({ title: "t", cwd: "/w/repo" }), nowMs: NOW, git },
+    });
+    const line = w.find('[data-test="row-git"]');
+    expect(line.exists()).toBe(true);
+    expect(line.text()).toContain("fix/ime-229-keystrokes");
+    expect(w.find('[data-test="row-git-added"]').text()).toBe("+220");
+    expect(w.find('[data-test="row-git-deleted"]').text()).toBe("\u2212" + "13");
+  });
+
+  test("omits zero counts and the whole line without a summary", () => {
+    const clean = mount(TaskRowInner, {
+      props: { session: mk({ title: "t" }), nowMs: NOW, git: { ...git, added: 0, deleted: 0 } },
+    });
+    expect(clean.find('[data-test="row-git"]').exists()).toBe(true);
+    expect(clean.find('[data-test="row-git-added"]').exists()).toBe(false);
+    expect(clean.find('[data-test="row-git-deleted"]').exists()).toBe(false);
+    const none = mount(TaskRowInner, { props: { session: mk({ title: "t" }), nowMs: NOW } });
+    expect(none.find('[data-test="row-git"]').exists()).toBe(false);
+  });
+
+  test("ai rows get a colored agent glyph; shell rows do not", () => {
+    const ai = mount(TaskRowInner, {
+      props: { session: mk({ title: "t", type: "ai", current_command: "claude --resume x" }), nowMs: NOW },
+    });
+    const glyph = ai.find('[data-test="row-agent-glyph"]');
+    expect(glyph.exists()).toBe(true);
+    expect(glyph.text()).toBe("\u2733");
+    const shell = mount(TaskRowInner, {
+      props: { session: mk({ title: "t", type: "shell", current_command: "zsh" }), nowMs: NOW },
+    });
+    expect(shell.find('[data-test="row-agent-glyph"]').exists()).toBe(false);
+  });
+});

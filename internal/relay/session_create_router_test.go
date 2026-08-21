@@ -209,24 +209,65 @@ func TestSessionCreateRouterHostLifecycle(t *testing.T) {
 	hostBOut := make(chan proto.Frame, 1)
 	r.registerHost("host-a", hostAOut, "user-a")
 
-	route, ok := r.lookupHost("host-a")
+	route, ok := r.lookupHost("host-a", "user-a")
 	if !ok || route.out != chan<- proto.Frame(hostAOut) || route.ownerUserID != "user-a" {
 		t.Fatalf("lookupHost = %+v, %v; want host-a route for user-a", route, ok)
 	}
-	if _, ok := r.lookupHost("host-b"); ok {
+	if _, ok := r.lookupHost("host-b", "user-a"); ok {
 		t.Fatal("lookupHost found a host that was never registered")
 	}
 
 	// A stale connection's teardown must not clobber a fresher registration
-	// for the same host id.
-	r.unregisterHost("host-a", hostBOut)
-	if _, ok := r.lookupHost("host-a"); !ok {
+	// for the same {owner, host_id} — same owner here, different out channel,
+	// simulating a reconnect racing the old connection's cleanup.
+	r.unregisterHost("host-a", "user-a", hostBOut)
+	if _, ok := r.lookupHost("host-a", "user-a"); !ok {
 		t.Fatal("unregisterHost with the wrong out channel removed the live route")
 	}
 
-	r.unregisterHost("host-a", hostAOut)
-	if _, ok := r.lookupHost("host-a"); ok {
+	r.unregisterHost("host-a", "user-a", hostAOut)
+	if _, ok := r.lookupHost("host-a", "user-a"); ok {
 		t.Fatal("unregisterHost with the matching out channel did not remove the route")
+	}
+}
+
+// TestSessionCreateRouterHostsNamespacedByOwner is the mutation test for
+// MAJOR 1: the host table must be keyed on {ownerUserID, hostID}, not
+// hostID alone. host_id is an opaque per-machine UUID, but nothing stops two
+// different users' machines from producing the same one (a cloned config
+// directory or a shared ATTERM_HOST_ID reproduces it with no attacker
+// involved). A single-key table lets user B's uplink evict user A's own
+// host-a registration outright just by announcing the same id — a denial of
+// service against A's own host, not a confidentiality break (the owner check
+// elsewhere still refuses B's client).
+func TestSessionCreateRouterHostsNamespacedByOwner(t *testing.T) {
+	r := newSessionCreateRouter()
+	aOut := make(chan proto.Frame, 1)
+	bOut := make(chan proto.Frame, 1)
+
+	r.registerHost("host-a", aOut, "user-a")
+	// User B registers the identical host_id. Without per-owner namespacing
+	// this is a single map write that overwrites user A's entry outright.
+	r.registerHost("host-a", bOut, "user-b")
+
+	routeA, ok := r.lookupHost("host-a", "user-a")
+	if !ok || routeA.out != chan<- proto.Frame(aOut) {
+		t.Fatalf("user A's host-a route = %+v, %v; want A's own route intact after B registered the same host_id", routeA, ok)
+	}
+	routeB, ok := r.lookupHost("host-a", "user-b")
+	if !ok || routeB.out != chan<- proto.Frame(bOut) {
+		t.Fatalf("user B's host-a route = %+v, %v; want B's own route", routeB, ok)
+	}
+
+	// B disconnects. A's route, which B's registration and teardown never
+	// touched, must still be there — no reconnect required on A's side to
+	// recover.
+	r.unregisterHost("host-a", "user-b", bOut)
+	if _, ok := r.lookupHost("host-a", "user-a"); !ok {
+		t.Fatal("user A's host-a route disappeared when user B's same-named host disconnected")
+	}
+	if _, ok := r.lookupHost("host-a", "user-b"); ok {
+		t.Fatal("user B's host-a route was not removed by its own unregisterHost")
 	}
 }
 
@@ -399,15 +440,13 @@ func TestSessionCreateCrossUserRefused(t *testing.T) {
 // TestSessionCreateUnknownHostIDRefused pins "a request naming an
 // unknown/disconnected host_id gets a prompt error, not silence."
 func TestSessionCreateUnknownHostIDRefused(t *testing.T) {
-	_, _, tokenA, _, _ := newClientTestStore(t)
-	store, _, tokenA2, _, _ := newClientTestStore(t)
-	_ = tokenA // unused placeholder to keep both stores independent; see below
+	store, _, tokenA, _, _ := newClientTestStore(t)
 	srv := newClientTestServer(t, store)
 	httpSrv := newRelayHTTPServer(t, srv)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, _, err := dialClientWSBearer(t, ctx, httpSrv, tokenA2)
+	client, _, err := dialClientWSBearer(t, ctx, httpSrv, tokenA)
 	if err != nil {
 		t.Fatalf("dial client: %v", err)
 	}
@@ -539,12 +578,47 @@ func waitForSessionCreateHost(t *testing.T, srv *Server, hostID, ownerUserID str
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if route, ok := srv.sessionCreateRoutes().lookupHost(hostID); ok && route.ownerUserID == ownerUserID {
+		if _, ok := srv.sessionCreateRoutes().lookupHost(hostID, ownerUserID); ok {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("host %q for owner %q was never registered", hostID, ownerUserID)
+}
+
+// waitForSessionCreateHostGone polls until hostID/ownerUserID is no longer
+// registered, so tests can prove an uplink's cleanup() actually ran (not
+// just that its socket closed — those are not the same moment).
+func waitForSessionCreateHostGone(t *testing.T, srv *Server, hostID, ownerUserID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := srv.sessionCreateRoutes().lookupHost(hostID, ownerUserID); !ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("host %q for owner %q was still registered after disconnect", hostID, ownerUserID)
+}
+
+// waitForSessionCreateRequestFree polls until requestID is no longer
+// reserved in srv's router, by probing with a throwaway registration and
+// immediately releasing it on success. Used to prove handleClient's
+// teardown defer actually calls unregisterClient, rather than calling
+// unregisterClient directly (which would prove nothing about the wiring).
+func waitForSessionCreateRequestFree(t *testing.T, srv *Server, requestID string) {
+	t.Helper()
+	probe := make(chan proto.Frame, 1)
+	fromHost := make(chan proto.Frame, 1)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.sessionCreateRoutes().registerRequest(requestID, probe, fromHost) {
+			srv.sessionCreateRoutes().unregisterRequest(requestID, probe)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("request_id %q stayed reserved", requestID)
 }
 
 // assertNoUplinkSessionCreate confirms no TypeSessionCreate frame arrives on
@@ -573,4 +647,243 @@ func assertNoUplinkSessionCreate(t *testing.T, ctx context.Context, c *websocket
 		}
 		t.Fatalf("uplink unexpectedly received frame type %v", f.Type)
 	}
+}
+
+// TestSessionCreateHostIDCollisionAcrossOwners is the end-to-end companion
+// to TestSessionCreateRouterHostsNamespacedByOwner: two different owners'
+// uplinks announce the identical host_id (a cloned config directory or a
+// shared ATTERM_HOST_ID, not an attack). User A's own routing must be
+// unaffected the whole time, including after user B's uplink disconnects —
+// A must not need a reconnect to recover something B's presence never
+// should have taken from it.
+func TestSessionCreateHostIDCollisionAcrossOwners(t *testing.T) {
+	store, userAID, tokenA, userBID, tokenB := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
+	httpSrv := newRelayHTTPServer(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	uplinkA, _, err := dialUplinkWS(t, ctx, httpSrv, "Bearer "+tokenA)
+	if err != nil {
+		t.Fatalf("dial uplink A: %v", err)
+	}
+	defer uplinkA.Close(websocket.StatusNormalClosure, "")
+	announceHost(t, ctx, uplinkA, "host-a")
+	waitForSessionCreateHost(t, srv, "host-a", userAID)
+
+	uplinkB, _, err := dialUplinkWS(t, ctx, httpSrv, "Bearer "+tokenB)
+	if err != nil {
+		t.Fatalf("dial uplink B: %v", err)
+	}
+	announceHost(t, ctx, uplinkB, "host-a")
+	waitForSessionCreateHost(t, srv, "host-a", userBID)
+
+	clientA, _, err := dialClientWSBearer(t, ctx, httpSrv, tokenA)
+	if err != nil {
+		t.Fatalf("dial client A: %v", err)
+	}
+	defer clientA.Close(websocket.StatusNormalClosure, "")
+
+	writeSessionCreate(t, ctx, clientA, "req-a", "host-a", "profile-1")
+	forwarded := nextNonAdminUplinkFrame(t, ctx, uplinkA)
+	if forwarded.Type != proto.TypeSessionCreate {
+		t.Fatalf("uplink A frame type = %v, want SESSION_CREATE (A's own host-a must still route to A's uplink)", forwarded.Type)
+	}
+	assertNoUplinkSessionCreate(t, ctx, uplinkB)
+
+	respPayload, _ := json.Marshal(proto.SessionCreatedPayload{RequestID: "req-a", OK: true, SessionID: uuid.New().String()})
+	if err := uplinkA.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeSessionCreated, Payload: respPayload})); err != nil {
+		t.Fatalf("write SESSION_CREATED: %v", err)
+	}
+	got := readSessionCreated(t, ctx, clientA)
+	if !got.OK || got.RequestID != "req-a" {
+		t.Fatalf("client A SESSION_CREATED = %+v, want ok request_id=req-a", got)
+	}
+
+	// User B disconnects. A's route must survive without A's uplink needing
+	// to reconnect.
+	uplinkB.Close(websocket.StatusNormalClosure, "")
+	waitForSessionCreateHostGone(t, srv, "host-a", userBID)
+	if _, ok := srv.sessionCreateRoutes().lookupHost("host-a", userAID); !ok {
+		t.Fatal("user A's host-a route disappeared when user B's same-named host disconnected")
+	}
+
+	writeSessionCreate(t, ctx, clientA, "req-a-2", "host-a", "profile-1")
+	forwarded2 := nextNonAdminUplinkFrame(t, ctx, uplinkA)
+	if forwarded2.Type != proto.TypeSessionCreate {
+		t.Fatalf("uplink A frame type after B disconnected = %v, want SESSION_CREATE", forwarded2.Type)
+	}
+}
+
+// TestSessionCreateDisconnectedHostRefusedPromptly pins the other half of
+// "unknown OR disconnected host_id gets a prompt error, not silence"
+// (TestSessionCreateUnknownHostIDRefused only covers "never announced").
+// Without uplinkSession.cleanup() unregistering its host route, a request
+// against a host whose uplink already disconnected would be forwarded into a
+// dead connection's out channel — nothing is left to read it — and the
+// client would sit through its own 30s timeout in silence instead of getting
+// an error back immediately. That silent-timeout failure mode is exactly
+// what the TTL exists to bound, not something meant to happen routinely.
+func TestSessionCreateDisconnectedHostRefusedPromptly(t *testing.T) {
+	store, userAID, tokenA, _, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
+	httpSrv := newRelayHTTPServer(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	uplink, _, err := dialUplinkWS(t, ctx, httpSrv, "Bearer "+tokenA)
+	if err != nil {
+		t.Fatalf("dial uplink: %v", err)
+	}
+	announceHost(t, ctx, uplink, "host-a")
+	waitForSessionCreateHost(t, srv, "host-a", userAID)
+
+	// Disconnect and wait for the host route to actually be gone — proof
+	// cleanup() ran, not just that the socket closed (those are not the same
+	// moment).
+	uplink.Close(websocket.StatusNormalClosure, "")
+	waitForSessionCreateHostGone(t, srv, "host-a", userAID)
+
+	client, _, err := dialClientWSBearer(t, ctx, httpSrv, tokenA)
+	if err != nil {
+		t.Fatalf("dial client: %v", err)
+	}
+	defer client.Close(websocket.StatusNormalClosure, "")
+
+	writeSessionCreate(t, ctx, client, "req-gone", "host-a", "profile-1")
+
+	// A short deadline: the correct behaviour answers almost immediately.
+	// Only the broken behaviour (silence until the client's own 30s patience
+	// runs out) needs anything close to that long, and this test should not
+	// have to wait that long to prove the point.
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	got := readSessionCreated(t, readCtx, client)
+	if got.OK || got.Error != "unknown_host_id" {
+		t.Fatalf("disconnected-host SESSION_CREATED = %+v, want ok=false error=unknown_host_id", got)
+	}
+}
+
+// TestSessionCreateInvalidRequestRejected pins the payload-validation gate:
+// a request missing request_id, host_id, or profile_id must be refused
+// in-band rather than silently dropped or forwarded upstream.
+func TestSessionCreateInvalidRequestRejected(t *testing.T) {
+	store, userAID, tokenA, _, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
+	httpSrv := newRelayHTTPServer(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	uplink, _, err := dialUplinkWS(t, ctx, httpSrv, "Bearer "+tokenA)
+	if err != nil {
+		t.Fatalf("dial uplink: %v", err)
+	}
+	defer uplink.Close(websocket.StatusNormalClosure, "")
+	announceHost(t, ctx, uplink, "host-a")
+	waitForSessionCreateHost(t, srv, "host-a", userAID)
+
+	client, _, err := dialClientWSBearer(t, ctx, httpSrv, tokenA)
+	if err != nil {
+		t.Fatalf("dial client: %v", err)
+	}
+	defer client.Close(websocket.StatusNormalClosure, "")
+
+	cases := []struct {
+		name string
+		req  proto.SessionCreatePayload
+	}{
+		{"missing_request_id", proto.SessionCreatePayload{HostID: "host-a", ProfileID: "profile-1"}},
+		{"missing_host_id", proto.SessionCreatePayload{RequestID: "req-missing-host", ProfileID: "profile-1"}},
+		{"missing_profile_id", proto.SessionCreatePayload{RequestID: "req-missing-profile", HostID: "host-a"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := json.Marshal(tc.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeSessionCreate, Payload: payload})); err != nil {
+				t.Fatalf("write SESSION_CREATE: %v", err)
+			}
+			got := readSessionCreated(t, ctx, client)
+			if got.OK || got.Error != "invalid_request" {
+				t.Fatalf("%s SESSION_CREATED = %+v, want ok=false error=invalid_request", tc.name, got)
+			}
+		})
+	}
+
+	assertNoUplinkSessionCreate(t, ctx, uplink)
+}
+
+// TestSessionCreateUnregisterOnDisconnectFreesRequestID pins the cleanup
+// defer in handleClient: a client that disconnects mid-request must not
+// leave its request_id permanently reserved. This exercises the real
+// handleClient teardown path (an actual client disconnect over the wire),
+// not sessionCreateRouter.unregisterClient called directly — calling it
+// directly would only prove the router method works, not that handleClient
+// is wired to call it.
+func TestSessionCreateUnregisterOnDisconnectFreesRequestID(t *testing.T) {
+	store, userAID, tokenA, _, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
+	httpSrv := newRelayHTTPServer(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	uplink, _, err := dialUplinkWS(t, ctx, httpSrv, "Bearer "+tokenA)
+	if err != nil {
+		t.Fatalf("dial uplink: %v", err)
+	}
+	defer uplink.Close(websocket.StatusNormalClosure, "")
+	announceHost(t, ctx, uplink, "host-a")
+	waitForSessionCreateHost(t, srv, "host-a", userAID)
+
+	client, _, err := dialClientWSBearer(t, ctx, httpSrv, tokenA)
+	if err != nil {
+		t.Fatalf("dial client: %v", err)
+	}
+	writeSessionCreate(t, ctx, client, "req-reuse", "host-a", "profile-1")
+	nextNonAdminUplinkFrame(t, ctx, uplink)
+
+	// The requester vanishes before answering — no clean unregister call
+	// from the client side, just gone. handleClient's own teardown defer is
+	// what must free the slot.
+	client.Close(websocket.StatusNormalClosure, "")
+
+	waitForSessionCreateRequestFree(t, srv, "req-reuse")
+}
+
+// TestSessionCreateDeniedForReadOnlyScope pins the least-privilege gate: a
+// read-scope client must not be able to ask a desktop to fork a session —
+// the most privileged thing an authRead token could gain if that scope is
+// ever revived (every authenticated principal is authWrite today; see
+// auth.go).
+func TestSessionCreateDeniedForReadOnlyScope(t *testing.T) {
+	store, userAID, tokenA, _, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
+	relayHTTP := newRelayHTTPServer(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	uplink, _, err := dialUplinkWS(t, ctx, relayHTTP, "Bearer "+tokenA)
+	if err != nil {
+		t.Fatalf("dial uplink: %v", err)
+	}
+	defer uplink.Close(websocket.StatusNormalClosure, "")
+	announceHost(t, ctx, uplink, "host-a")
+	waitForSessionCreateHost(t, srv, "host-a", userAID)
+
+	readHTTP := newReadScopeClientHTTPServer(t, srv, userAID)
+	wsURL := "ws" + strings.TrimPrefix(readHTTP.URL, "http")
+	client, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial read-scope client: %v", err)
+	}
+	defer client.Close(websocket.StatusNormalClosure, "")
+
+	writeSessionCreate(t, ctx, client, "req-readonly", "host-a", "profile-1")
+	got := readSessionCreated(t, ctx, client)
+	if got.OK || got.Error != "permission_denied" {
+		t.Fatalf("read-scope SESSION_CREATED = %+v, want ok=false error=permission_denied", got)
+	}
+	assertNoUplinkSessionCreate(t, ctx, uplink)
 }

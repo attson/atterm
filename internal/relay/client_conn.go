@@ -100,6 +100,13 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			case <-writerCtx.Done():
 				return
 			case newSub := <-attachSignal:
+				// session.Subscribe never returns a nil *Subscriber today,
+				// but this runs in a goroutine with no caller to recover a
+				// panic: a nil here would take down the whole relay process
+				// instead of just this one connection, so guard it anyway.
+				if newSub == nil {
+					continue
+				}
 				subOut = newSub.Out()
 				subDone = newSub.Done()
 			case <-subDone:
@@ -316,29 +323,35 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "invalid_request")
 				continue
 			}
+			// authRead is dormant today (every authenticated principal is
+			// authWrite — see auth.go), but forking a PTY and running a
+			// profile's startup_cmd is the most privileged thing a read-only
+			// token could do if that scope is ever revived. Gate it now,
+			// same as CLAIM_DRIVER above and open_external below, rather
+			// than leaving it to be noticed later.
+			if scope == authRead {
+				s.debugf("client session_create_denied reason=read_only_scope")
+				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "permission_denied")
+				continue
+			}
 			routes := s.sessionCreateRoutes()
-			host, ok := routes.lookupHost(req.HostID)
-			// "unknown_host_id" covers both a host_id nobody announced and a
-			// host_id that belongs to a different owner. Collapsing those two
-			// cases into one message is deliberate: host_id is an opaque
-			// per-machine UUID the relay never displays, but distinguishing
-			// "doesn't exist" from "not yours" would still let a client probe
-			// which host ids exist for users it does not own — the same
-			// enumeration risk the cross-user gate exists to close.
-			if !ok || (ownerUserID != "" && host.ownerUserID != ownerUserID) {
-				reason := "unknown_host"
-				if ok {
-					reason = "not_owner"
-				}
-				s.debugf("client session_create_denied host_id=%q reason=%s", req.HostID, reason)
+			// lookupHost is scoped to ownerUserID itself, so a miss already
+			// means "no such host_id for this owner" — whether nobody ever
+			// announced it or it belongs to someone else is not a
+			// distinction this lookup can make (or needs to): both answer
+			// unknown_host_id, which is what keeps host_id enumeration
+			// across owners closed.
+			host, ok := routes.lookupHost(req.HostID, ownerUserID)
+			if !ok {
+				s.debugf("client session_create_denied host_id=%q reason=unknown_host", req.HostID)
 				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "unknown_host_id")
 				continue
 			}
-			if !routes.registerRequest(req.RequestID, targetedOut, host.out) {
+			if !routes.registerRequestRoute(req.RequestID, targetedOut, host.out, targetedOverflow) {
 				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "duplicate_request_id")
 				continue
 			}
-			if !sendSessionCreateFrame(host.out, f) {
+			if !sendFSFrame(host.out, f) {
 				routes.unregisterRequest(req.RequestID, targetedOut)
 				s.debugf("client session_create_drop reason=uplink_unavailable host_id=%q request_id=%s", req.HostID, req.RequestID)
 				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "upstream_unavailable")
@@ -466,7 +479,7 @@ func (s *Server) sendSessionCreateError(out chan<- proto.Frame, onOverflow func(
 	if err != nil {
 		return
 	}
-	if !sendSessionCreateFrame(out, proto.Frame{Type: proto.TypeSessionCreated, Payload: payload}) {
+	if !sendFSFrame(out, proto.Frame{Type: proto.TypeSessionCreated, Payload: payload}) {
 		if onOverflow != nil {
 			onOverflow()
 		}

@@ -414,7 +414,7 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 }
 
 func (u *uplinkSession) cleanup() {
-	u.server.sessionCreateRoutes().unregisterHost(u.hostID, u.out)
+	u.server.sessionCreateRoutes().unregisterHost(u.hostID, u.ownerUserID, u.out)
 	u.mu.Lock()
 	gone := make(map[uuid.UUID]*mirrorState, len(u.mirrors))
 	for id, ms := range u.mirrors {

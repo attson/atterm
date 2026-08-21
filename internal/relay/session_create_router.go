@@ -24,12 +24,24 @@ import (
 // latency.
 const sessionCreateRequestTTL = 60 * time.Second
 
+// hostKey namespaces the host table by owner: host_id alone is not a safe
+// key. It is an opaque per-machine UUID (internal/appdir.HostID), but
+// nothing stops two different users' machines from producing the same one —
+// a cloned config directory or a shared ATTERM_HOST_ID env var reproduces it
+// with no attacker involved at all. Keying on {ownerUserID, hostID} means
+// two owners registering the identical host_id occupy two different map
+// entries instead of one colliding one, so neither can evict the other's
+// route (register) or delete the other's route out from under it
+// (unregister, which also checks the out channel — see unregisterHost).
+type hostKey struct {
+	ownerUserID string
+	hostID      string
+}
+
 // hostRoute is where a connected desktop uplink registers itself, keyed by
 // AnnouncePayload.HostID — present the moment ANNOUNCE lands, independent of
 // the mirrored sessions list. That is what makes routing by host work even
-// for a desktop with zero open sessions (design doc §3). ownerUserID is
-// carried alongside so a TypeSessionCreate from a different user's client
-// can be refused without a second lookup.
+// for a desktop with zero open sessions (design doc §3).
 type hostRoute struct {
 	out         chan<- proto.Frame
 	ownerUserID string
@@ -54,18 +66,25 @@ type sessionCreateRequestRoute struct {
 	// reply for a request the relay routed to a different uplink, even if
 	// it guesses (or is handed) the request_id.
 	fromHost chan<- proto.Frame
+	// onOverflow fires when the requester's channel is full at delivery
+	// time, mirroring fsClientRoute.onOverflow. Without this, a full
+	// requester channel silently swallows the reply after the route has
+	// already been deleted — the request_id can never be reused (it already
+	// isn't registered), but the client gets no error and just waits out its
+	// own 30s timeout instead of the overflow being noticed anywhere.
+	onOverflow func()
 	// registeredAt anchors the TTL sweep; see reapExpiredLocked.
 	registeredAt time.Time
 }
 
 // sessionCreateRouter holds two independent tables: hosts (uplinks,
-// registered at ANNOUNCE and keyed by host_id) and requests (outstanding
-// TypeSessionCreate calls, keyed by request_id). Neither can use
-// Session.Broadcast: a host route exists before any session does, and a
+// registered at ANNOUNCE and keyed by owner+host_id) and requests
+// (outstanding TypeSessionCreate calls, keyed by request_id). Neither can
+// use Session.Broadcast: a host route exists before any session does, and a
 // request's response belongs to one client only.
 type sessionCreateRouter struct {
 	mu       sync.Mutex
-	hosts    map[string]hostRoute
+	hosts    map[hostKey]hostRoute
 	requests map[string]sessionCreateRequestRoute
 }
 
@@ -85,7 +104,7 @@ func (s *Server) sessionCreateRoutes() *sessionCreateRouter {
 
 func newSessionCreateRouter() *sessionCreateRouter {
 	return &sessionCreateRouter{
-		hosts:    make(map[string]hostRoute),
+		hosts:    make(map[hostKey]hostRoute),
 		requests: make(map[string]sessionCreateRequestRoute),
 	}
 }
@@ -94,44 +113,65 @@ func newSessionCreateRouter() *sessionCreateRouter {
 // find it by host_id. Called once per uplink connection, at the same point
 // handleUplink already has ann.HostID and ownerUserID in hand — this reuses
 // that fact rather than building a second index that could drift from it.
+//
+// This is a same-owner-only unconditional overwrite: within ownerUserID's own
+// namespace, a second registration under the same host_id (e.g. an
+// unclean-reconnect race, or a misconfigured second machine sharing an id)
+// still replaces the earlier entry last-write-wins, exactly as before. What
+// changed is that it can no longer replace a *different* owner's entry, since
+// they now live under different keys.
 func (r *sessionCreateRouter) registerHost(hostID string, out chan<- proto.Frame, ownerUserID string) {
 	if hostID == "" || out == nil {
 		return
 	}
 	r.mu.Lock()
-	r.hosts[hostID] = hostRoute{out: out, ownerUserID: ownerUserID}
+	r.hosts[hostKey{ownerUserID: ownerUserID, hostID: hostID}] = hostRoute{out: out, ownerUserID: ownerUserID}
 	r.mu.Unlock()
 }
 
-// unregisterHost removes hostID's route, but only if it still belongs to
-// this connection's out channel. Without that guard, a stale connection's
-// teardown could race a fresher reconnection for the same host id and
-// delete the newer, still-live registration.
-func (r *sessionCreateRouter) unregisterHost(hostID string, out chan<- proto.Frame) {
+// unregisterHost removes hostID's route for ownerUserID, but only if it
+// still belongs to this connection's out channel. Without that out-channel
+// guard, a stale connection's teardown could race a fresher reconnection for
+// the same {owner, host_id} and delete the newer, still-live registration.
+func (r *sessionCreateRouter) unregisterHost(hostID, ownerUserID string, out chan<- proto.Frame) {
 	if hostID == "" || out == nil {
 		return
 	}
+	key := hostKey{ownerUserID: ownerUserID, hostID: hostID}
 	r.mu.Lock()
-	if route, ok := r.hosts[hostID]; ok && route.out == out {
-		delete(r.hosts, hostID)
+	if route, ok := r.hosts[key]; ok && route.out == out {
+		delete(r.hosts, key)
 	}
 	r.mu.Unlock()
 }
 
-// lookupHost returns the uplink registered for hostID, if any is currently
-// connected.
-func (r *sessionCreateRouter) lookupHost(hostID string) (hostRoute, bool) {
+// lookupHost returns the uplink registered for hostID under ownerUserID, if
+// any is currently connected. Scoping the lookup by the caller's own
+// ownerUserID (rather than looking up by hostID alone and comparing owners
+// after the fact) means a miss is structurally indistinguishable from "wrong
+// owner" — there is no separate comparison step left to get wrong.
+func (r *sessionCreateRouter) lookupHost(hostID, ownerUserID string) (hostRoute, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	route, ok := r.hosts[hostID]
+	route, ok := r.hosts[hostKey{ownerUserID: ownerUserID, hostID: hostID}]
 	return route, ok
 }
 
-// registerRequest reserves requestID for clientOut, remembering fromHost (the
-// uplink the request was forwarded to) so routeResponse can verify the reply
-// came from the same connection. Returns false on a duplicate request id, the
-// same contract fs_router's registerRequestRoute uses.
+// registerRequest reserves requestID for clientOut, remembering fromHost
+// (the uplink the request was forwarded to) so routeResponse can verify the
+// reply came from the same connection. It is the no-overflow-callback
+// convenience wrapper fs_router.go also offers (registerRequest vs.
+// registerRequestRoute) — used directly by tests that don't care about
+// overflow handling.
 func (r *sessionCreateRouter) registerRequest(requestID string, clientOut, fromHost chan<- proto.Frame) bool {
+	return r.registerRequestRoute(requestID, clientOut, fromHost, nil)
+}
+
+// registerRequestRoute is registerRequest plus an onOverflow callback,
+// invoked if the eventual response can't be delivered because clientOut is
+// full. Returns false on a duplicate request id, the same contract
+// fs_router's registerRequestRoute uses.
+func (r *sessionCreateRouter) registerRequestRoute(requestID string, clientOut, fromHost chan<- proto.Frame, onOverflow func()) bool {
 	if requestID == "" || clientOut == nil || fromHost == nil {
 		return false
 	}
@@ -142,7 +182,12 @@ func (r *sessionCreateRouter) registerRequest(requestID string, clientOut, fromH
 	if _, exists := r.requests[requestID]; exists {
 		return false
 	}
-	r.requests[requestID] = sessionCreateRequestRoute{out: clientOut, fromHost: fromHost, registeredAt: now}
+	r.requests[requestID] = sessionCreateRequestRoute{
+		out:          clientOut,
+		fromHost:     fromHost,
+		onOverflow:   onOverflow,
+		registeredAt: now,
+	}
 	return true
 }
 
@@ -233,17 +278,14 @@ func (r *sessionCreateRouter) routeResponse(f proto.Frame, fromUplink chan<- pro
 	delete(r.requests, payload.RequestID)
 	r.mu.Unlock()
 
-	return sendSessionCreateFrame(route.out, f)
-}
-
-func sendSessionCreateFrame(out chan<- proto.Frame, f proto.Frame) bool {
-	if out == nil {
-		return false
-	}
-	select {
-	case out <- f:
+	// sendFSFrame is fs_router.go's identical non-blocking channel send —
+	// shared rather than duplicated, since the two routers' delivery
+	// mechanics don't diverge here.
+	if sendFSFrame(route.out, f) {
 		return true
-	default:
-		return false
 	}
+	if route.onOverflow != nil {
+		route.onOverflow()
+	}
+	return false
 }

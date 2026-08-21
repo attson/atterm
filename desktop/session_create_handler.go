@@ -37,7 +37,13 @@ import (
 // window (not 1) covers that without pretending to see per-client identity
 // it cannot: several phones legitimately creating sessions around the same
 // moment should not queue behind each other on one desktop. Mirrors
-// fsWorkerPool's shape (remote_fs.go) at a similar size.
+// fsWorkerPool's SHAPE (remote_fs.go) — acquire/release, an immediate
+// non-blocking busy reply, submit that never blocks the read loop — but not
+// its size or its unit: that pool is 4 per SESSION, this is 8 per DESKTOP.
+// The units differ because a create request has no session to be bounded
+// per. Eight concurrent PTY forks is nothing for a machine whose user
+// routinely keeps a dozen tabs open; the number is a sanity valve against a
+// buggy or compromised relay, not a capacity decision.
 const sessionCreateConcurrency = 8
 
 const (

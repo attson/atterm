@@ -305,6 +305,12 @@ func (h *relayHost) HostMeta() (hostID, host, user string) {
 // forked on behalf of a network-originated request (see the forkCtx field
 // doc comment). Called once, by app.go's startup(), after a.host is
 // assigned and a.ctx is known.
+//
+// The write is unlocked, and that is safe only because of where it happens:
+// startup() writes it before the uplink goroutine that reads it exists, so
+// goroutine creation supplies the happens-before edge. A second caller, or
+// a call after the uplink is running, turns this into a data race — add a
+// mutex before adding one.
 func (h *relayHost) SetForkContext(ctx context.Context) {
 	h.forkCtx = ctx
 }

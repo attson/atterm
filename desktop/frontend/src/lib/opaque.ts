@@ -89,7 +89,10 @@ function bytesToB64(b: Uint8Array): string {
   return btoa(String.fromCharCode(...b))
 }
 
-function b64ToBytes(s: string): Uint8Array {
+/** Std / URL-safe base64 → bytes. Tolerant of either Go encoding. Shared by
+ *  every reader in this bundle that needs to decode a base64 wire value —
+ *  don't add another private copy; import this one. */
+export function b64ToBytes(s: string): Uint8Array {
   const norm = s.replace(/-/g, '+').replace(/_/g, '/')
   const pad = norm.length % 4 === 0 ? '' : '='.repeat(4 - (norm.length % 4))
   const bin = atob(norm + pad)

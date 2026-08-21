@@ -21,12 +21,12 @@
 // Golden vectors: the fixed session UUIDs and AAD tags below, the fixed
 // account key, and the two sealed values in
 // desktop/testdata/synced_blob_vectors.json are all produced by
-// desktop/synced_blob_vectors_test.go (TestGenerateSyncedBlobVectors), never
-// hand-authored. desktop/frontend/src/lib/syncedBlobs.test.ts opens that
-// fixture — see the file's own header for why this is the load-bearing
-// half of this feature.
+// desktop/synced_blob_vectors_test.go (TestSyncedBlobVectors, run with
+// -update to regenerate), never hand-authored.
+// desktop/frontend/src/lib/syncedBlobs.test.ts opens that fixture — see the
+// file's own header for why this is the load-bearing half of this feature.
 
-import { openUnsequencedFrame } from './opaque'
+import { openUnsequencedFrame, b64ToBytes } from './opaque'
 
 // Must match profilesSyncSessionID (desktop/profiles.go).
 const PROFILES_SYNC_SESSION_ID = 'bbbac178-5e9b-45b4-8b79-3257d9af7ca5'
@@ -139,18 +139,12 @@ interface RawSSHSyncPayload {
   keys?: RawSSHSyncKeyEntry[]
 }
 
-function b64ToBytes(s: string): Uint8Array {
-  const bin = atob(s)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}
-
 /** Shared open: base64-decode `value`, open the envelope for `sessionUUID`
  *  / `aadTag`, JSON.parse the plaintext. Throws on any failure — a wrong
  *  account key or a corrupted/foreign blob must fail loudly rather than
- *  hand the caller garbage it might render. */
-function openBlob(accountKey: Uint8Array, value: string, sessionUUID: string, aadTag: number, what: string): unknown {
+ *  hand the caller garbage it might render or a bare TypeError from the
+ *  first place a caller happens to dereference a property. */
+function openBlob(accountKey: Uint8Array, value: string, sessionUUID: string, aadTag: number, what: string): Record<string, unknown> {
   let ciphertext: Uint8Array
   try {
     ciphertext = b64ToBytes(value)
@@ -161,11 +155,16 @@ function openBlob(accountKey: Uint8Array, value: string, sessionUUID: string, aa
   if (!plaintext) {
     throw new Error(`${what}: could not decrypt (wrong account key or corrupted blob)`)
   }
+  let parsed: unknown
   try {
-    return JSON.parse(new TextDecoder().decode(plaintext))
+    parsed = JSON.parse(new TextDecoder().decode(plaintext))
   } catch {
     throw new Error(`${what}: decrypted payload is not valid JSON`)
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${what}: decrypted payload is not a JSON object`)
+  }
+  return parsed as Record<string, unknown>
 }
 
 /** Opens a `profiles_encrypted` prefs-sync value into the profile list and

@@ -27,9 +27,12 @@ would be honest but is not what the roadmap asks for.
 nothing with them, because it cannot open them.
 
 It turns out the crypto is not the missing piece. `desktop/frontend/src/lib/opaque.ts`
-already exports `deriveSessionKey`, `sealUnsequenced` and
-`openUnsequencedFrame` — the exact primitives `sealProfiles`/`sealSSHHosts`
-use on the Go side. What is missing is only the envelope around them:
+already exports `sealUnsequenced` and `openUnsequencedFrame` — the same
+frame-open primitive `sealProfiles`/`sealSSHHosts` route through on the Go
+side via `e2eecrypto.SealUnsequenced`. (`deriveSessionKey` itself is
+module-private to `opaque.ts`; `openUnsequencedFrame` derives the session key
+internally, so a reader never needs to call it directly.) What is missing is
+only the envelope around them:
 
 ```
 value = json string of base64( SealUnsequenced(

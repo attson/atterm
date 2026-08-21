@@ -15,7 +15,7 @@ import {
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
-import { openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame } from "./opaque";
+import { openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame, b64ToBytes } from "./opaque";
 import { encodeSegments, decodeSegments } from "./fsSegments";
 import { errText, logDebug, logError, logWarn } from "./log";
 
@@ -780,7 +780,7 @@ export class SessionConnection {
           // via setAccountKeyProvider in lib/account-key.ts.
           const accountKey = getCurrentAccountKey();
           if (accountKey && typeof meta.sealed === "string" && meta.sealed.length > 0) {
-            const env = b64StdToBytes(meta.sealed);
+            const env = b64ToBytes(meta.sealed);
             const fields = openMetaFields(env, accountKey, this.sessionId);
             if (fields) {
               if (fields.cwd !== undefined) meta.cwd = fields.cwd;
@@ -983,7 +983,7 @@ export function decryptSessionFields(sessions: SessionInfo[]): SessionInfo[] {
   return sessions.map((s) => {
     if (!s.sealed) return s;
     try {
-      const fields = openSessionFields(b64StdToBytes(s.sealed), accountKey, s.id);
+      const fields = openSessionFields(b64ToBytes(s.sealed), accountKey, s.id);
       if (!fields) return s;
       const next: SessionInfo = { ...s };
       if (fields.title !== undefined) next.title = fields.title;
@@ -1045,14 +1045,3 @@ export type TaskState =
   | "disconnected"
   | "closed";
 
-/** Std / URL-safe base64 → bytes. Tolerant of either Go encoding so a
- * future Sealed-field wire-encoding change cannot silently break the
- * mobile META decrypt. */
-function b64StdToBytes(s: string): Uint8Array {
-  const norm = s.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = norm.length % 4 === 0 ? "" : "=".repeat(4 - (norm.length % 4));
-  const bin = atob(norm + pad);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}

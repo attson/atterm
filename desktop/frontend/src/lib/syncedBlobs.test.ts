@@ -1,15 +1,16 @@
 // The Go and TS envelope implementations are written independently. Only a
 // fixture produced by desktop/synced_blob_vectors_test.go
-// (TestGenerateSyncedBlobVectors) and opened here proves the two agree on
+// (TestSyncedBlobVectors) and opened here proves the two agree on
 // session-key derivation, AAD layout, and envelope framing — the same
 // contract fsCrypto.vectors.test.ts holds for the FS request/response
 // envelopes. Never hand-edit desktop/testdata/synced_blob_vectors.json;
-// regenerate it with `go test ./desktop/... -run TestGenerateSyncedBlobVectors`
+// regenerate it with `go test ./desktop/ -run TestSyncedBlobVectors -update`
 // after any change to sealProfiles/sealSSHHosts on the Go side.
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { b64ToBytes } from './opaque'
 import { openProfilesBlob, openSSHHostsBlob } from './syncedBlobs'
 
 interface Fixture {
@@ -26,14 +27,17 @@ const thisFile = fileURLToPath(import.meta.url)
 const fixturePath = resolve(dirname(thisFile), '../../../testdata/synced_blob_vectors.json')
 const fixture: Fixture = JSON.parse(readFileSync(fixturePath, 'utf-8'))
 
-function b64ToBytes(s: string): Uint8Array {
-  const bin = atob(s)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}
-
 const accountKey = b64ToBytes(fixture.account_key_b64)
+
+// The three CANARY strings sealed into the fixture's ssh_hosts_value by
+// desktop/synced_blob_vectors_test.go's fixtureSSHCreds/fixtureSSHKeySecrets.
+// A denylist of forbidden *key names* (the previous version of this test)
+// only catches a leak that keeps using the same field name a reviewer
+// already knows to look for — it does nothing against a differently-named
+// field (`savedAuth`, `material`, ...) that forwards the same secret value.
+// Asserting the CANARY substrings are literally absent from the serialized
+// output catches the leak regardless of what the leaking field is called.
+const CANARIES = ['CANARY-password-must-not-leak', 'CANARY-private-key-must-not-leak', 'CANARY-passphrase-must-not-leak']
 
 describe('openProfilesBlob — Go-generated vector', () => {
   it('opens the Go-sealed blob and decodes both profiles', () => {
@@ -109,21 +113,37 @@ describe('openSSHHostsBlob — Go-generated vector', () => {
   it('never surfaces a credential field on the decoded hosts or keys', () => {
     // The sealed payload bundles sshCredential (password) into every host
     // entry and sshKeySecret (private_key, passphrase) into every key
-    // entry (desktop/ssh_sync.go sshSyncHost/sshSyncKey). Assert on the
-    // decoded objects' own keys — not on what a renderer happens to show —
-    // so a future field added to the view type that leaks a secret fails
-    // this test even before anything renders it.
+    // entry (desktop/ssh_sync.go sshSyncHost/sshSyncKey). Three assertions,
+    // each catching a different way this could regress:
     const { hosts, keys } = openSSHHostsBlob(accountKey, fixture.ssh_hosts_value)
-    const forbidden = ['cred', 'password', 'private_key', 'privateKey', 'passphrase', 'keySecret', 'secret']
 
-    for (const h of hosts as unknown as Record<string, unknown>[]) {
-      const ownKeys = Object.keys(h)
-      for (const f of forbidden) expect(ownKeys).not.toContain(f)
+    // 1. A length guard of its own — without this, the assertions below
+    //    pass vacuously against a reader that returns `{ hosts: [], keys: [] }`.
+    //    Don't rely on the neighbouring 'opens the Go-sealed blob' test to
+    //    catch that; weaken that test and this one must still fail on its own.
+    expect(hosts.length).toBeGreaterThan(0)
+    expect(keys.length).toBeGreaterThan(0)
+
+    // 2. CANARY-substring check on the full serialized output. A denylist of
+    //    forbidden key *names* is defeated by renaming the leaking field
+    //    (e.g. `savedAuth`, `material`); grepping the actual secret value out
+    //    of the serialized objects catches the leak under any field name.
+    const serializedHosts = JSON.stringify(hosts)
+    const serializedKeys = JSON.stringify(keys)
+    for (const canary of CANARIES) {
+      expect(serializedHosts).not.toContain(canary)
+      expect(serializedKeys).not.toContain(canary)
     }
-    for (const k of keys as unknown as Record<string, unknown>[]) {
-      const ownKeys = Object.keys(k)
-      for (const f of forbidden) expect(ownKeys).not.toContain(f)
-    }
+
+    // 3. Exact key ALLOWLIST on one decoded host and one decoded key: a new
+    //    field must be added to this list deliberately, rather than being
+    //    inherited silently from a destructure of the raw wire entry.
+    const h1 = hosts.find((h) => h.id === 'h1')!
+    expect(Object.keys(h1).sort()).toEqual(
+      ['alias', 'authKind', 'hasJumpChain', 'host', 'id', 'isProxyCommandHost', 'keyId', 'note', 'port', 'tags', 'user'].sort(),
+    )
+    const k1 = keys.find((k) => k.id === 'k1')!
+    expect(Object.keys(k1).sort()).toEqual(['id', 'keyType', 'name'].sort())
   })
 
   it('fails cleanly on a wrong account key', () => {

@@ -79,6 +79,8 @@ export function GetFeishuRemoteTerminalSettings():Promise<main.FeishuRemoteTermi
 
 export function GetFeishuStatus():Promise<main.FeishuStatusResp>;
 
+export function GetGitInfo(arg1:Array<string>):Promise<Array<main.GitInfo>>;
+
 export function GetHookInstallState():Promise<hookinstall.State>;
 
 export function GetHostInfo():Promise<main.HostInfo>;

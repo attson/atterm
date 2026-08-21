@@ -573,6 +573,24 @@ export namespace main {
 	        this.message = source["message"];
 	    }
 	}
+	export class GitInfo {
+	    cwd: string;
+	    branch: string;
+	    added: number;
+	    deleted: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cwd = source["cwd"];
+	        this.branch = source["branch"];
+	        this.added = source["added"];
+	        this.deleted = source["deleted"];
+	    }
+	}
 	export class HostInfo {
 	    host_id: string;
 	    host: string;

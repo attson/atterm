@@ -150,6 +150,10 @@ export function GetFeishuStatus() {
   return window['go']['main']['App']['GetFeishuStatus']();
 }
 
+export function GetGitInfo(arg1) {
+  return window['go']['main']['App']['GetGitInfo'](arg1);
+}
+
 export function GetHookInstallState() {
   return window['go']['main']['App']['GetHookInstallState']();
 }

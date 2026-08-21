@@ -59,7 +59,7 @@ const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> 
   feishu:      { labelKey: "settings.feishu.title",        english: "Feishu integration" },
   devices:     { labelKey: "settings.tabs.devices",       english: "Signed-in devices" },
   "received-files": { labelKey: "settings.tabs.receivedFiles", english: "Received files" },
-  "mobile-profiles": { labelKey: "settings.tabs.mobileProfiles", english: "Session profiles" },
+  "mobile-profiles": { labelKey: "settings.tabs.mobileProfiles", english: "Synced profiles" },
   "mobile-hosts":    { labelKey: "settings.tabs.mobileHosts",    english: "SSH hosts" },
 };
 

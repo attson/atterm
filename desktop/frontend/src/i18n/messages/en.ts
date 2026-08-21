@@ -334,7 +334,7 @@ export const en = {
       shortcuts: "Shortcuts",
       devices: 'Signed-in devices',
       receivedFiles: 'Received files',
-      mobileProfiles: 'Session profiles',
+      mobileProfiles: 'Synced profiles',
       mobileHosts: 'SSH hosts',
     },
     discardRelayTitle: "Discard unsaved relay changes?",

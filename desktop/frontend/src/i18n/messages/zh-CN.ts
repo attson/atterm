@@ -303,7 +303,7 @@ export const zhCN = {
       shortcuts: "快捷键",
       devices: '已登录设备',
       receivedFiles: '接收文件',
-      mobileProfiles: '会话配置',
+      mobileProfiles: '同步的配置',
       mobileHosts: 'SSH 主机',
     },
     discardRelayTitle: "放弃未保存的 relay 更改？",
@@ -645,7 +645,7 @@ export const zhCN = {
     },
     mobileProfiles: {
       intro: "从桌面同步的配置，仅供查看。请在运行它们的机器上编辑。",
-      empty: "你的桌面还没有配置会话配置。",
+      empty: "桌面上还没有会话配置。",
       defaultBadge: "默认",
       shell: "Shell",
       cwd: "工作目录",
@@ -662,7 +662,7 @@ export const zhCN = {
       tags: "标签",
       note: "备注",
       jumpChain: "需要通过跳板链才能到达此主机",
-      proxyCommand: "使用 ProxyCommand——无法直接拨号",
+      proxyCommand: "使用 ProxyCommand——不能直接连接",
       key: "密钥",
     },
     devices: {

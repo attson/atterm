@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import SettingsProfilesMobile from "./SettingsProfilesMobile.vue";
+import source from "./SettingsProfilesMobile.vue?raw";
 import { resetI18nForTest } from "../i18n";
 import { en } from "../i18n/messages/en";
 import { __setPlatformForTests } from "../platform";
@@ -247,5 +248,17 @@ describe("SettingsProfilesMobile", () => {
     expect(w.findAll("button")).toHaveLength(0);
     expect(w.findAll("input")).toHaveLength(0);
     expect(w.findAll("textarea")).toHaveLength(0);
+  });
+
+  // Same guard as SettingsSSHHostsMobile.test.ts's credential-leak pair: a
+  // bypass that re-derives the payload with the raw crypto primitives
+  // instead of going through the mocked openProfilesBlob would be invisible
+  // to any assertion on rendered output here, so the only thing that
+  // catches it is proving the import never happens. ProfileView carries no
+  // credential field, but this keeps both mobile views symmetric.
+  it("does not import the raw crypto primitives directly (must go through openProfilesBlob only)", () => {
+    expect(source).not.toMatch(/from\s+["']\.\.\/lib\/opaque["']/);
+    expect(source).not.toContain("openUnsequencedFrame");
+    expect(source).not.toContain("b64ToBytes");
   });
 });

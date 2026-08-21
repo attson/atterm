@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import SettingsSSHHostsMobile from "./SettingsSSHHostsMobile.vue";
+import source from "./SettingsSSHHostsMobile.vue?raw";
 import { resetI18nForTest } from "../i18n";
 import { en } from "../i18n/messages/en";
 import { __setPlatformForTests } from "../platform";
@@ -82,6 +83,25 @@ function sampleHosts(): { hosts: SSHHostView[]; keys: SSHKeyView[] } {
         tags: [],
         note: "",
         hasJumpChain: false,
+        isProxyCommandHost: true,
+      },
+      // Both flags set: no host in the sealed payload can reach this shape
+      // from a plain SSH config alone (a ProxyCommand host is a leaf, not
+      // itself dialed through a jump chain) -- but the two are independent
+      // booleans on the wire, so a corrupted or future payload could set
+      // both. ProxyCommand is the one that matters: "not dialable" must win
+      // over "reaches via a jump chain", never the reverse.
+      {
+        id: "h4",
+        alias: "box4",
+        host: "box4.internal",
+        port: "22",
+        user: "deploy",
+        authKind: "password",
+        keyId: "",
+        tags: [],
+        note: "",
+        hasJumpChain: true,
         isProxyCommandHost: true,
       },
     ],
@@ -230,6 +250,19 @@ describe("SettingsSSHHostsMobile", () => {
     expect(h3.find('[data-testid="mobile-host-jump-chain-badge"]').exists()).toBe(false);
   });
 
+  it('when a host has both flags set, shows "not dialable" (ProxyCommand) and never "reaches via a jump chain"', async () => {
+    setAccountKeyProvider(() => ACCOUNT_KEY);
+    setSyncedValue(RAW_VALUE);
+    openSSHHostsBlob.mockReturnValue(sampleHosts());
+    const w = mountPanel();
+    await flushPromises();
+
+    const items = w.findAll('[data-testid="mobile-host-item"]');
+    const h4 = items.find((i) => i.text().includes("box4"))!;
+    expect(h4.find('[data-testid="mobile-host-proxy-command-badge"]').exists()).toBe(true);
+    expect(h4.find('[data-testid="mobile-host-jump-chain-badge"]').exists()).toBe(false);
+  });
+
   it("resolves a host's keyId to the synced key's name", async () => {
     setAccountKeyProvider(() => ACCOUNT_KEY);
     setSyncedValue(RAW_VALUE);
@@ -268,5 +301,47 @@ describe("SettingsSSHHostsMobile", () => {
     expect(html).not.toContain("passphrase");
     expect(html).not.toContain("private_key");
     expect(html).not.toContain("privatekey");
+  });
+
+  // The field-name grep above only proves this fixture's known fields never
+  // render — it says nothing about a future bypass. Two concrete bypass
+  // shapes, both of which passed the whole suite before this pair existed:
+
+  // (a) an indiscriminate per-item dump (e.g. adding
+  // `<span>{{ JSON.stringify(h) }}</span>` per host) renders whatever
+  // extra properties the reader handed back, including any a future
+  // refactor accidentally leaves on SSHHostView/SSHKeyView. Plant CANARY
+  // values as those extra fields — mirroring how task 1's
+  // syncedBlobs.test.ts pins the crypto layer with the same trick — and
+  // assert the rendered HTML never contains them. This is a render-layer
+  // guard that mocking openSSHHostsBlob would otherwise leave uncovered.
+  it("never renders planted secret-shaped fields even if the reader hands back extra properties (indiscriminate-dump guard)", async () => {
+    setAccountKeyProvider(() => ACCOUNT_KEY);
+    setSyncedValue(RAW_VALUE);
+    const base = sampleHosts();
+    openSSHHostsBlob.mockReturnValue({
+      keys: [{ ...base.keys[0], secret: "CANARY-KEY-SECRET" }],
+      hosts: [
+        { ...base.hosts[0], password: "CANARY-HOST-PASSWORD", privateKey: "CANARY-PRIVATE-KEY" },
+        ...base.hosts.slice(1),
+      ],
+    });
+    const w = mountPanel();
+    await flushPromises();
+    expect(w.html()).not.toContain("CANARY-");
+  });
+
+  // (b) re-deriving the payload inside the component with the raw crypto
+  // primitives (openUnsequencedFrame/b64ToBytes from lib/opaque) instead of
+  // going through the mocked reader is invisible to any assertion on
+  // rendered output in this file: the mock stands in for openSSHHostsBlob,
+  // but a bypass that calls the raw primitives itself, against the fake
+  // RAW_VALUE used throughout this suite, just no-ops or throws quietly and
+  // never touches what those assertions check. The only thing that catches
+  // it is proving the import never happens at all.
+  it("does not import the raw crypto primitives directly (must go through openSSHHostsBlob only)", () => {
+    expect(source).not.toMatch(/from\s+["']\.\.\/lib\/opaque["']/);
+    expect(source).not.toContain("openUnsequencedFrame");
+    expect(source).not.toContain("b64ToBytes");
   });
 });

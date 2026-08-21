@@ -25,18 +25,20 @@ const { t } = useI18n();
 const platform = usePlatform();
 const enabled = platform.caps.capacitor;
 
-const accountKey = usePolledAccountKey();
+// Only start the account-key poll (a real setInterval) when this view can
+// ever render — a non-capacitor mount (web tab, Wails desktop) must do
+// nothing at all, matching the "short-circuits before any localStorage/
+// crypto call" claim above.
+const accountKey = enabled ? usePolledAccountKey() : ref<Uint8Array | null>(null);
 
 const profiles = ref<ProfileView[]>([]);
 const defaultProfileId = ref("");
 const errorMessage = ref("");
 const hasSyncedValue = ref(false);
-const opened = ref(false);
 
 function refresh(): void {
   if (!enabled) return;
   errorMessage.value = "";
-  opened.value = false;
   const key = accountKey.value;
   if (!key) return;
   const raw = readSyncedRawValue("profiles_encrypted");
@@ -46,7 +48,6 @@ function refresh(): void {
     const result = openProfilesBlob(key, raw);
     profiles.value = result.profiles;
     defaultProfileId.value = result.defaultProfileId;
-    opened.value = true;
   } catch (e) {
     errorMessage.value = e instanceof Error ? e.message : String(e);
   }
@@ -54,12 +55,16 @@ function refresh(): void {
 
 watch(accountKey, refresh, { immediate: true });
 
+// Once hasSyncedValue is true, the try/catch above always sets either
+// errorMessage (handled above) or profiles — "empty" and "ready" are the
+// only remaining possibilities, so this doesn't need its own "did the
+// reader actually run" flag.
 type Status = "locked" | "noData" | "error" | "empty" | "ready";
 const status = computed<Status>(() => {
   if (!accountKey.value) return "locked";
   if (errorMessage.value) return "error";
   if (!hasSyncedValue.value) return "noData";
-  if (opened.value && profiles.value.length === 0) return "empty";
+  if (profiles.value.length === 0) return "empty";
   return "ready";
 });
 </script>

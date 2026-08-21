@@ -82,6 +82,13 @@ type uplink struct {
 	// loop's liveness under a slow FS is asserted.
 	fsExec func(uuid.UUID, proto.FSRequestPayload) proto.Frame
 
+	// sessionCreateExec, when non-nil, replaces the session-create
+	// handler's underlying relayHost.NewSession call. Nil in production;
+	// tests use it the same way fsExec stands in for a slow filesystem —
+	// to hold a create "in flight" deterministically and prove the read
+	// loop stays live while a slow PTY fork is still running.
+	sessionCreateExec func(ctx context.Context, req NewSessionReq) (uuid.UUID, error)
+
 	// allowInsecure mirrors RelayConfig.AllowInsecureRelay: when true the
 	// uplink's WebSocket dial skips TLS certificate verification so it can
 	// reach a relay serving a self-signed certificate.
@@ -210,6 +217,14 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	// loop also carries keystrokes, and one slow listing would freeze every
 	// session on this uplink.
 	fsPool := newFSWorkerPool(connCtx, out, u.rawRemotePermission, remoteFS, fsRequestsPerSession)
+
+	// Session-create work runs on its own handler, off the read loop, for
+	// the same reason fsPool does: forking a PTY is not instant, and this
+	// loop also carries every session's keystrokes.
+	sessionCreate := newSessionCreateHandler(connCtx, out, u.host, 0)
+	if u.sessionCreateExec != nil {
+		sessionCreate.newSession = u.sessionCreateExec
+	}
 
 	// Send first ANNOUNCE so the relay registers the host immediately.
 	if err := u.writeAnnounce(connCtx, conn); err != nil {
@@ -450,6 +465,19 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				continue
 			}
 			fsPool.submit(f.SessionID, req)
+		case proto.TypeSessionCreate:
+			var req proto.SessionCreatePayload
+			if err := json.Unmarshal(f.Payload, &req); err != nil || req.RequestID == "" {
+				// Can't even address a reply without a request_id — the
+				// relay already validates this before forwarding (redline:
+				// don't duplicate that check), so seeing it here means a
+				// malformed frame, not a legitimate request. Log and drop
+				// rather than guess at a request_id to answer.
+				logWarn("uplink", "session_create decode failed or missing request_id: %v", err)
+				continue
+			}
+			logDebug("uplink", "session_create_recv request_id=%s profile_id=%s", req.RequestID, req.ProfileID)
+			sessionCreate.submit(req)
 		case proto.TypeClaimDriver:
 			logDebug("uplink", "inbound_recv type=CLAIM_DRIVER %s", desktopUplinkFrameLogDetails(f))
 			var cp proto.ClaimDriverPayload

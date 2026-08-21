@@ -288,6 +288,16 @@ func (h *relayHost) HostMeta() (hostID, host, user string) {
 	return h.hostID, h.host, h.user
 }
 
+// SessionCount returns the number of live PTYs this host is currently
+// running. Used by session_create_handler.go to enforce design §4's
+// per-host cap before a mobile-triggered NewSession forks another one —
+// nothing else needs a live count today.
+func (h *relayHost) SessionCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.sessions)
+}
+
 // SubscribeLocal returns a Subscriber for the local session with the given id.
 // Used by the uplink when the remote relay asks it to start streaming.
 func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subscriber, uint64, error) {

@@ -43,6 +43,19 @@ type relayHost struct {
 
 	cfg *configStore
 
+	// forkCtx is the app's own lifetime, not any one caller's. Set once by
+	// app.go's startup() (SetForkContext) right after a.host is assigned;
+	// nil in tests that build a relayHost directly, where
+	// SessionForkContext falls back to context.Background(). It exists so a
+	// session forked on behalf of a request that arrived over the network
+	// (TypeSessionCreate — session_create_handler.go) can outlive the one
+	// uplink connection that happened to carry that request: a local tab
+	// already gets this by construction (App.NewSession passes a.ctx
+	// directly), but the uplink's own connCtx is cancelled by runOnce on
+	// every reconnect, which is a routine event for that link, not a reason
+	// to kill a PTY the user is actively using.
+	forkCtx context.Context
+
 	mu       sync.Mutex
 	sessions map[uuid.UUID]*activeSession
 	changes  chan struct{} // capacity 1; signals "session set has changed"
@@ -288,14 +301,27 @@ func (h *relayHost) HostMeta() (hostID, host, user string) {
 	return h.hostID, h.host, h.user
 }
 
-// SessionCount returns the number of live PTYs this host is currently
-// running. Used by session_create_handler.go to enforce design §4's
-// per-host cap before a mobile-triggered NewSession forks another one —
-// nothing else needs a live count today.
-func (h *relayHost) SessionCount() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.sessions)
+// SetForkContext installs the app-lifetime context that governs sessions
+// forked on behalf of a network-originated request (see the forkCtx field
+// doc comment). Called once, by app.go's startup(), after a.host is
+// assigned and a.ctx is known.
+func (h *relayHost) SetForkContext(ctx context.Context) {
+	h.forkCtx = ctx
+}
+
+// SessionForkContext returns the context that should own a session's OS
+// process when the request that created it did not come from something
+// physically at this keyboard — currently only TypeSessionCreate
+// (session_create_handler.go). Falls back to context.Background() when
+// SetForkContext was never called, which is every relayHost a test builds
+// directly: those processes exit with the test binary regardless, so a
+// context that never cancels is the correct (and only sensible) default
+// there.
+func (h *relayHost) SessionForkContext() context.Context {
+	if h.forkCtx != nil {
+		return h.forkCtx
+	}
+	return context.Background()
 }
 
 // SubscribeLocal returns a Subscriber for the local session with the given id.

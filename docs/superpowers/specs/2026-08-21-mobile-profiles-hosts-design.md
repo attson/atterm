@@ -104,9 +104,26 @@ through the existing path, as if the session had appeared on its own.
 ## 4. Bounds
 
 - **One in-flight create per client.** A phone that taps twice does not fork
-  two shells.
-- The desktop refuses when its session count is at the existing per-host cap.
-  Mobile gets the refusal, not a silently dropped frame.
+  two shells. Client identity only exists at the relay (one outbound channel
+  per connected client), so this bound lives there — a client with an
+  unanswered `TypeSessionCreate` gets refused (`request_in_flight`) until the
+  first is answered or reaped after 60s (comfortably above the phone's own
+  30s patience, so the relay never reaps a request the phone is still
+  waiting on). The desktop separately caps how many creates it will run at
+  once (a modest concurrency window, not a per-client count — a desktop
+  keeps exactly one uplink connection shared by every client that talks to
+  it, so it cannot see per-client identity to bound by), purely as a safety
+  valve against an unbounded or buggy/compromised relay.
+- There is no per-host session-count cap. An earlier draft of this spec
+  proposed one; it was dropped: it counted every session (local tabs
+  included) but refused only phone-created ones, so a desktop's own owner
+  opening many local tabs would make the phone unusable with an error naming
+  a limit the user never set and can't see; it bought no additional
+  security, since anything reaching this handler is already authenticated
+  for the owner and can already attach, type, and read the filesystem; and
+  it was a total-count cap standing in for what is really a rate concern,
+  which the phone's no-auto-retry rule and the relay's per-client and
+  duplicate-request-id refusals above already cover.
 - A create with no response in **30s** fails on the phone and is **not
   retried automatically**. A retried "start a shell" that actually succeeded
   the first time leaves an orphan process the user never asked for.

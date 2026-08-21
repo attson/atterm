@@ -335,6 +335,18 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				continue
 			}
 			routes := s.sessionCreateRoutes()
+			// One outstanding request per client at a time (design §4: "a
+			// phone that taps twice does not fork two shells"). Client
+			// identity — targetedOut — only exists here at the relay; see
+			// hasOutstandingRequest's doc comment for why this cannot live
+			// on the desktop uplink instead. Checked before the host lookup
+			// so a client already waiting on one host can't queue a second
+			// request against a different host either.
+			if routes.hasOutstandingRequest(targetedOut) {
+				s.debugf("client session_create_denied reason=request_in_flight request_id=%s", req.RequestID)
+				s.sendSessionCreateError(targetedOut, targetedOverflow, req.RequestID, "request_in_flight")
+				continue
+			}
 			// lookupHost is scoped to ownerUserID itself, so a miss already
 			// means "no such host_id for this owner" — whether nobody ever
 			// announced it or it belongs to someone else is not a

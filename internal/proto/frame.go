@@ -343,9 +343,17 @@ type SessionCreatedPayload struct {
 	// SessionID is set when OK is true; the phone attaches to it through the
 	// existing ATTACH path, as if the session had appeared on its own.
 	SessionID string `json:"session_id,omitempty"`
-	// Error is set when OK is false (unknown profile id, per-host session
-	// cap reached, or the requester isn't authenticated for this uplink's
-	// owner).
+	// Error is set when OK is false. Known values: "unknown_profile" (no
+	// such profile_id in the target desktop's config), "permission_denied"
+	// (insufficient remote_permission on the desktop, or a read-only relay
+	// scope), "request_in_flight" (this client already has an unanswered
+	// TypeSessionCreate — see sessionCreateRouter.hasOutstandingRequest),
+	// "duplicate_request_id", "unknown_host_id", "invalid_request",
+	// "upstream_unavailable" (the target uplink isn't connected),
+	// "session_create_busy" (the desktop's own concurrency bound is
+	// saturated), or the desktop's own NewSession failure message passed
+	// through unchanged (may name a local path — see
+	// session_create_handler.go's comment on that one exception).
 	Error string `json:"error,omitempty"`
 }
 

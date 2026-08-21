@@ -511,6 +511,91 @@ func TestSessionCreateDuplicateRequestIDRejected(t *testing.T) {
 	}
 }
 
+// TestSessionCreateSecondRequestFromSameClientRefused pins the per-CLIENT
+// bound design §4 wants ("a phone that taps twice does not fork two
+// shells"): unlike TestSessionCreateDuplicateRequestIDRejected above (same
+// request_id reused), this uses a DIFFERENT request_id for the second
+// request from the SAME client — the case a request-id-keyed check alone
+// cannot catch, and which used to fall through to the desktop's own
+// sessionCreateMaxInFlight=1, a bound that was actually per-uplink-
+// connection (i.e. shared by every client of one desktop), not per-client.
+// It also proves the automatic-recovery half: once the first request is
+// answered, the client is free to make a third request.
+func TestSessionCreateSecondRequestFromSameClientRefused(t *testing.T) {
+	store, userAID, tokenA, _, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
+	httpSrv := newRelayHTTPServer(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	uplink, _, err := dialUplinkWS(t, ctx, httpSrv, "Bearer "+tokenA)
+	if err != nil {
+		t.Fatalf("dial uplink: %v", err)
+	}
+	defer uplink.Close(websocket.StatusNormalClosure, "")
+	announceHost(t, ctx, uplink, "host-a")
+	waitForSessionCreateHost(t, srv, "host-a", userAID)
+
+	client, _, err := dialClientWSBearer(t, ctx, httpSrv, tokenA)
+	if err != nil {
+		t.Fatalf("dial client: %v", err)
+	}
+	defer client.Close(websocket.StatusNormalClosure, "")
+
+	writeSessionCreate(t, ctx, client, "first", "host-a", "profile-1")
+	forwarded := decodeUplinkSessionCreate(t, nextNonAdminUplinkFrame(t, ctx, uplink))
+	if forwarded.RequestID != "first" {
+		t.Fatalf("first forwarded request_id = %q, want %q", forwarded.RequestID, "first")
+	}
+
+	// Same client, a genuinely different request_id — must be refused
+	// without ever reaching the uplink.
+	writeSessionCreate(t, ctx, client, "second", "host-a", "profile-1")
+	gotSecond := readSessionCreated(t, ctx, client)
+	if gotSecond.OK || gotSecond.Error != "request_in_flight" {
+		t.Fatalf("second request from same client = %+v, want ok=false error=request_in_flight", gotSecond)
+	}
+
+	// Answering "first" frees the client to ask again.
+	respPayload, _ := json.Marshal(proto.SessionCreatedPayload{RequestID: "first", OK: true, SessionID: uuid.New().String()})
+	if err := uplink.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeSessionCreated, Payload: respPayload})); err != nil {
+		t.Fatalf("write SESSION_CREATED: %v", err)
+	}
+	gotFirst := readSessionCreated(t, ctx, client)
+	if !gotFirst.OK || gotFirst.RequestID != "first" {
+		t.Fatalf("first request response = %+v, want ok=true request_id=first", gotFirst)
+	}
+
+	// The next frame the uplink sees must be "third", never a belated
+	// "second" that leaked through despite the refusal above — proving
+	// "second" was never registered/forwarded at all, not merely that its
+	// error reply happened to win a race. (assertNoUplinkSessionCreate is
+	// not usable mid-test here: its bounded-context Read closes the
+	// underlying connection on timeout, which every other caller relies on
+	// only as the last use of that conn — this test still needs to write
+	// and read on uplink afterward.)
+	writeSessionCreate(t, ctx, client, "third", "host-a", "profile-1")
+	thirdForwarded := decodeUplinkSessionCreate(t, nextNonAdminUplinkFrame(t, ctx, uplink))
+	if thirdForwarded.RequestID != "third" {
+		t.Fatalf("next uplink frame request_id = %q, want %q — either the refused \"second\" leaked through, or the client isn't free to ask again after \"first\" was answered", thirdForwarded.RequestID, "third")
+	}
+}
+
+// decodeUplinkSessionCreate asserts f is a TypeSessionCreate frame and
+// decodes its payload, for tests that need to check WHICH request reached
+// the uplink, not just that some SESSION_CREATE did.
+func decodeUplinkSessionCreate(t *testing.T, f proto.Frame) proto.SessionCreatePayload {
+	t.Helper()
+	if f.Type != proto.TypeSessionCreate {
+		t.Fatalf("uplink frame type = %v, want SESSION_CREATE", f.Type)
+	}
+	var p proto.SessionCreatePayload
+	if err := json.Unmarshal(f.Payload, &p); err != nil {
+		t.Fatalf("decode SessionCreatePayload: %v", err)
+	}
+	return p
+}
+
 // TestSessionCreateResponseNotBroadcast is the mutation test for "the
 // response goes to the requesting client only, never broadcast": two clients
 // authenticated as the same owner both talk to the relay, only one of them

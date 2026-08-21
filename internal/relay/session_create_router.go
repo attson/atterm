@@ -191,6 +191,34 @@ func (r *sessionCreateRouter) registerRequestRoute(requestID string, clientOut, 
 	return true
 }
 
+// hasOutstandingRequest reports whether clientOut already has a
+// TypeSessionCreate awaiting a reply.
+//
+// This is the true per-CLIENT bound design §4's "a phone that taps twice
+// does not fork two shells" needs: client identity — one outbound channel
+// per connected client — only exists here, at the relay. A desktop keeps
+// exactly one uplink connection shared by every client that talks to it, so
+// a bound placed on the desktop side (sessionCreateConcurrency in
+// desktop/session_create_handler.go) is necessarily per-desktop, not
+// per-client; it exists only as a coarse safety valve against an unbounded
+// or buggy/compromised relay, not as this dedup.
+//
+// Recovery is automatic: reapExpiredLocked's existing TTL sweep (run here,
+// under the lock, before the scan) means a client is never stuck refused
+// forever by a desktop that wedges mid-fork — the same sweep that already
+// protects registerRequestRoute from a permanently-squatted request_id.
+func (r *sessionCreateRouter) hasOutstandingRequest(clientOut chan<- proto.Frame) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reapExpiredLocked(time.Now())
+	for _, route := range r.requests {
+		if route.out == clientOut {
+			return true
+		}
+	}
+	return false
+}
+
 // unregisterRequest removes requestID's route, but only if it still belongs
 // to clientOut — the same self-check pattern as fs_router's unregisterRequest,
 // so a caller that raced a response (which already deleted the entry) or a

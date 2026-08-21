@@ -221,7 +221,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	// Session-create work runs on its own handler, off the read loop, for
 	// the same reason fsPool does: forking a PTY is not instant, and this
 	// loop also carries every session's keystrokes.
-	sessionCreate := newSessionCreateHandler(connCtx, out, u.host, 0)
+	sessionCreate := newSessionCreateHandler(connCtx, out, u.host, u.rawRemotePermission)
 	if u.sessionCreateExec != nil {
 		sessionCreate.newSession = u.sessionCreateExec
 	}

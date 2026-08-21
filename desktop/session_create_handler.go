@@ -11,42 +11,34 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"runtime"
 	"sync"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 )
 
-// maxSessionsPerHost is design §4's "per-host session cap": above this many
-// concurrently-live sessions, a mobile create request is refused with a
-// distinct error rather than forking another PTY. Every other session-
-// creation path on this desktop is gated by someone physically sitting at
-// the keyboard clicking "new tab"; TypeSessionCreate is the first one
-// reachable purely over the network (relay -> uplink), so it is the one
-// path that needs a hard ceiling — a buggy or malicious caller retrying
-// past its own 30s timeout many times must not be able to fork the desktop
-// into the ground.
-const maxSessionsPerHost = 32
-
-// sessionCreateMaxInFlight bounds concurrent session-create work to 1 per
-// uplink connection.
+// sessionCreateConcurrency bounds how many session-create forks this
+// desktop will run at once.
 //
-// SessionCreatePayload deliberately carries no requesting-client identity —
-// just request_id/host_id/profile_id (see its doc comment in
-// internal/proto/frame.go; that emptiness is the same guarantee that keeps
-// a phone from smuggling a profile body). That means this handler has no
-// way to tell "the same phone tapped twice" apart from "two different
-// phones asked at once": the uplink connection itself is the only
-// requesting-client boundary it can observe, since one desktop keeps
-// exactly one relay connection for every client that talks to it. Capping
-// at 1 here is the tightest bound available on that boundary — a second
-// request arriving while the first is still forking gets refused
-// immediately (design §4: "a phone that taps twice does not fork two
-// shells"), never silently queued behind the first.
-const sessionCreateMaxInFlight = 1
+// This is NOT a per-requesting-phone limit: SessionCreatePayload carries no
+// client identity (see its doc comment in internal/proto/frame.go), and a
+// desktop keeps exactly one uplink connection shared by every phone that
+// talks to it — so a bound at this level is inherently per-desktop, not
+// per-client. The true "does this one phone already have a request in
+// flight" bound lives at the relay instead, in sessionCreateRouter
+// (internal/relay/session_create_router.go), which is where client
+// identity — one outbound channel per connected client — actually exists.
+//
+// What this bound is genuinely responsible for is the two things visible
+// from here: never block the uplink read loop on a PTY fork, and never let
+// an unbounded number of forks run at once if the relay is buggy or
+// compromised and forwards more than it should. A modest concurrency
+// window (not 1) covers that without pretending to see per-client identity
+// it cannot: several phones legitimately creating sessions around the same
+// moment should not queue behind each other on one desktop. Mirrors
+// fsWorkerPool's shape (remote_fs.go) at a similar size.
+const sessionCreateConcurrency = 8
 
 const (
 	// sessionCreateErrUnknownProfile answers a profile_id that does not
@@ -57,11 +49,18 @@ const (
 	// handing it a different profile it never chose would be a worse
 	// surprise than telling it plainly that the id is gone.
 	sessionCreateErrUnknownProfile = "unknown_profile"
-	// sessionCreateErrCapReached answers a request arriving once
-	// maxSessionsPerHost is already live.
-	sessionCreateErrCapReached = "session_cap_reached"
-	// sessionCreateErrBusy answers a request arriving while another create
-	// is already in flight on this connection (sessionCreateMaxInFlight).
+	// sessionCreateErrPermissionDenied answers a request arriving on an
+	// uplink whose remote_permission is below what forking a shell
+	// requires. Forking a PTY and (via a profile's startup_cmd) running
+	// arbitrary commands is at least as privileged as typing into an
+	// existing one, so this uses the same control-or-full bar
+	// localFrameAllowedByPermission enforces for TypeIn/TypeResize
+	// (uplink.go) — a desktop the owner published as view-only must not
+	// fork a shell just because a request reached it.
+	sessionCreateErrPermissionDenied = "permission_denied"
+	// sessionCreateErrBusy answers a request arriving once
+	// sessionCreateConcurrency forks are already running on this
+	// connection.
 	sessionCreateErrBusy = "session_create_busy"
 )
 
@@ -72,10 +71,37 @@ const (
 // would stall every other session on this uplink for the duration of one
 // fork.
 type sessionCreateHandler struct {
-	ctx  context.Context
-	out  chan<- proto.Frame
-	host *relayHost
-	cap  int
+	// connCtx is this uplink connection's own lifetime — cancelled by
+	// runOnce's defer on every return, including a routine reconnect. Used
+	// only for concerns that should genuinely end with the connection:
+	// sendResult's blocking-send escape hatch. It must NOT reach the actual
+	// fork — see forkCtx.
+	connCtx context.Context
+	// forkCtx governs the OS process a create request spawns. Sourced from
+	// host.SessionForkContext() (the app's own lifetime), not connCtx,
+	// specifically so a session created for a phone survives the next
+	// uplink reconnect the same way a locally-created tab already does
+	// (App.NewSession passes a.ctx directly). A context tied to one
+	// connection's lifetime governing a long-lived PTY was the bug here
+	// before: connCtx cancels on every reconnect, a routine event for that
+	// link, and that cancellation used to reach exec.CommandContext
+	// (ptyhost.Open) and AdoptSession, killing the session within moments
+	// of the very next network blip.
+	forkCtx context.Context
+	out     chan<- proto.Frame
+	host    *relayHost
+
+	// remotePermission is the uplink's raw (unnormalized) remote_permission
+	// setting — the same value fsWorkerPool checks (u.rawRemotePermission
+	// in uplink.go), used the same fail-closed way: only the exact strings
+	// "control" or "full" pass; anything else, including an empty or
+	// unrecognized value, is refused. This deliberately does not use
+	// normalizeRemotePermission, which defaults an unrecognized value to
+	// Full for the less-dangerous TypeIn/TypeResize path — forking a shell
+	// (and, via a profile's startup_cmd, running arbitrary commands) is at
+	// least as privileged as typing into an existing one and does not get
+	// that leniency.
+	remotePermission string
 
 	// newSession forks the session. Defaults to host.NewSession; tests
 	// override it (via uplink.sessionCreateExec) to control PTY-fork timing
@@ -88,22 +114,27 @@ type sessionCreateHandler struct {
 
 	// testHook, when non-nil, runs at the top of run() before any real
 	// work — nil in production. Lets tests hold a create "in flight"
-	// deterministically to exercise sessionCreateMaxInFlight without
+	// deterministically to exercise sessionCreateConcurrency without
 	// racing real PTY-spawn timing, mirroring the fsExec test seam
 	// uplink.go already uses for the same reason on the FS path.
 	testHook func()
 }
 
 // newSessionCreateHandler builds a handler bound to one uplink connection's
-// lifetime (ctx) and outbound queue (out). sessionCap<=0 uses
-// maxSessionsPerHost — the same "0 means default" convention
-// newFSWorkerPool's limit parameter uses — so tests can install a small cap
-// without spawning dozens of real PTYs to reach it.
-func newSessionCreateHandler(ctx context.Context, out chan<- proto.Frame, host *relayHost, sessionCap int) *sessionCreateHandler {
-	if sessionCap <= 0 {
-		sessionCap = maxSessionsPerHost
+// lifetime (connCtx) and outbound queue (out). remotePermission is the
+// connection's raw remote_permission setting (u.rawRemotePermission in
+// uplink.go) — see the field doc comment for why it is checked unnormalized.
+// The fork context is derived from host.SessionForkContext(), independent of
+// connCtx — see the forkCtx field doc comment.
+func newSessionCreateHandler(connCtx context.Context, out chan<- proto.Frame, host *relayHost, remotePermission string) *sessionCreateHandler {
+	return &sessionCreateHandler{
+		connCtx:          connCtx,
+		forkCtx:          host.SessionForkContext(),
+		out:              out,
+		host:             host,
+		remotePermission: remotePermission,
+		newSession:       host.NewSession,
 	}
-	return &sessionCreateHandler{ctx: ctx, out: out, host: host, cap: sessionCap, newSession: host.NewSession}
 }
 
 // submit hands one TypeSessionCreate request to a worker goroutine and
@@ -123,7 +154,7 @@ func (h *sessionCreateHandler) submit(req proto.SessionCreatePayload) {
 func (h *sessionCreateHandler) acquire() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.inFlight >= sessionCreateMaxInFlight {
+	if h.inFlight >= sessionCreateConcurrency {
 		return false
 	}
 	h.inFlight++
@@ -178,16 +209,17 @@ func (h *sessionCreateHandler) run(req proto.SessionCreatePayload) {
 		h.testHook()
 	}
 
+	if h.remotePermission != proto.RemotePermissionControl && h.remotePermission != proto.RemotePermissionFull {
+		h.sendResult(req.RequestID, false, uuid.Nil, sessionCreateErrPermissionDenied)
+		return
+	}
+
 	var profiles []SessionProfile
 	if h.host.cfg != nil {
 		profiles = h.host.cfg.Get().Profiles
 	}
 	if _, ok := findProfileByID(profiles, req.ProfileID); !ok {
 		h.sendResult(req.RequestID, false, uuid.Nil, sessionCreateErrUnknownProfile)
-		return
-	}
-	if h.host.SessionCount() >= h.cap {
-		h.sendResult(req.RequestID, false, uuid.Nil, sessionCreateErrCapReached)
 		return
 	}
 
@@ -197,15 +229,18 @@ func (h *sessionCreateHandler) run(req proto.SessionCreatePayload) {
 		return
 	}
 
-	// h.ctx is the uplink connection's own lifetime context — not a fresh
-	// deadline scoped to this one request. The phone already times out at
-	// 30s (design §4) and does not retry on timeout; a second, shorter
-	// timeout here could fire first, mid-fork, and leave a PTY nobody
-	// tracks while the phone is told only "timed out," never "it actually
-	// started." NewSession failing loudly (bad cwd, unresolvable shell) is
-	// still reported below — this is specifically about not racing the
-	// phone's own patience with one of our own.
-	sid, err := h.newSession(h.ctx, NewSessionReq{
+	// forkCtx, not connCtx: this must not die on the next uplink reconnect.
+	// See the forkCtx field doc comment above.
+	//
+	// This is deliberately not a fresh, request-scoped deadline either: the
+	// phone already times out at 30s (design §4) and does not retry on
+	// timeout; a second, shorter timeout here could fire first, mid-fork,
+	// and leave a PTY nobody tracks while the phone is told only "timed
+	// out," never "it actually started." NewSession failing loudly (bad
+	// cwd, unresolvable shell) is still reported below — this is
+	// specifically about not racing the phone's own patience with one of
+	// our own.
+	sid, err := h.newSession(h.forkCtx, NewSessionReq{
 		Command:   shell,
 		ProfileID: req.ProfileID,
 	})
@@ -215,6 +250,15 @@ func (h *sessionCreateHandler) run(req proto.SessionCreatePayload) {
 		// Shell degrades to `shell` above and a missing Cwd fails naming
 		// the profile (relay_host.go). Surfacing err.Error() as-is here
 		// avoids a second copy of that logic that could drift from it.
+		//
+		// This is also the one place a raw local error string crosses the
+		// relay to a mobile client: err may embed an absolute local path
+		// (e.g. a missing profile cwd). Acceptable here specifically
+		// because reaching this handler already required same-owner
+		// relay authentication for this host — the recipient could already
+		// attach to any session and read the filesystem through the FS
+		// path, so a path fragment in an error string tells them nothing
+		// they couldn't already see.
 		h.sendResult(req.RequestID, false, uuid.Nil, err.Error())
 		return
 	}
@@ -245,49 +289,42 @@ func findProfileByID(profiles []SessionProfile, id string) (SessionProfile, bool
 // For a locally-created tab, the frontend does this resolution itself —
 // App.vue's spawnLocalShell calls ListShells() and passes shells[0] as
 // NewSessionReq.Command before ever calling into relayHost.NewSession.
-// TypeSessionCreate has no frontend in the loop, so this mirrors
-// ListShells' own priority order directly: the configured default shell
-// (unless "auto"), then $SHELL, then the first well-known shell actually
-// on PATH. Without this, a session-create for a profile with no explicit
-// Shell would hand NewSession an empty Command, and NewSession refuses that
-// outright ("empty command") — exactly the profile shape design §4 expects
-// to work (Shell "empty = fall back to the global default_shell").
+// TypeSessionCreate has no frontend in the loop, so this walks the exact
+// same shellPriorityOrder App.ListShells uses (shell_resolve.go) and takes
+// the first candidate that resolves on PATH — the two used to be
+// independently written copies of the same priority list, which a review
+// found could silently drift (see shellPriorityOrder's doc comment).
+// Without this, a session-create for a profile with no explicit Shell would
+// hand NewSession an empty Command, and NewSession refuses that outright
+// ("empty command") — exactly the profile shape design §4 expects to work
+// (Shell "empty = fall back to the global default_shell").
 func defaultShellForNewSession(cfg *configStore) (string, error) {
-	try := func(shell string) (string, bool) {
+	var found string
+	shellPriorityOrder(cfg, func(shell string) bool {
 		if shell == "" {
-			return "", false
+			return true
 		}
 		path, err := exec.LookPath(shell)
 		if err != nil {
-			return "", false
+			return true
 		}
-		return path, true
+		found = path
+		return false
+	})
+	if found == "" {
+		return "", fmt.Errorf("no shell found on this machine")
 	}
-	if cfg != nil {
-		if configured := cfg.Get().DefaultShellOrDefault(); configured != defaultShellAuto {
-			if path, ok := try(configured); ok {
-				return path, nil
-			}
-		}
-	}
-	candidates := []string{"bash", "zsh", "fish", "sh"}
-	if runtime.GOOS == "windows" {
-		candidates = windowsShellCandidates()
-	} else if path, ok := try(os.Getenv("SHELL")); ok {
-		return path, nil
-	}
-	for _, c := range candidates {
-		if path, ok := try(c); ok {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("no shell found on this machine")
+	return found, nil
 }
 
 // sendResult queues the TypeSessionCreated reply. Runs on the worker
 // goroutine (never the read loop), so unlike sendBusy it can afford to
-// block on h.out up to connection shutdown instead of dropping — nothing
-// else is waiting behind this specific send.
+// block on h.out — but only up to THIS connection's shutdown (connCtx), not
+// the app's own lifetime (forkCtx): once the connection that asked is gone,
+// nothing is left to deliver the reply to, and blocking on the app-lifetime
+// context here would pin this goroutine (and, while sessionCreateConcurrency
+// caps it, one of a bounded number of slots) for the life of the process
+// instead of just the life of the connection.
 func (h *sessionCreateHandler) sendResult(requestID string, ok bool, sid uuid.UUID, errStr string) {
 	payload := proto.SessionCreatedPayload{RequestID: requestID, OK: ok, Error: errStr}
 	frameSessionID := uuid.Nil
@@ -303,6 +340,6 @@ func (h *sessionCreateHandler) sendResult(requestID string, ok bool, sid uuid.UU
 	frame := proto.Frame{Type: proto.TypeSessionCreated, SessionID: frameSessionID, Payload: body}
 	select {
 	case h.out <- frame:
-	case <-h.ctx.Done():
+	case <-h.connCtx.Done():
 	}
 }

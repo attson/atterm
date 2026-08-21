@@ -460,6 +460,10 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.host = h
+	// A session forked for a network-originated request (mobile
+	// TypeSessionCreate) must survive an uplink reconnect the same way a
+	// local tab already does — see relayHost.forkCtx's doc comment.
+	h.SetForkContext(a.ctx)
 
 	// Loopback proxy for remote-session attaches: the WebView can't open a TLS
 	// WebSocket to the relay on networks that fingerprint-filter its handshake,
@@ -1633,39 +1637,24 @@ func (a *App) CloseSession(sessionID string) error {
 // ListShells returns absolute paths of candidate shells available on this
 // machine, in priority order: $SHELL first, then well-known shells.
 func (a *App) ListShells() []string {
-	candidates := []string{"bash", "zsh", "fish", "sh"}
-	if runtime.GOOS == "windows" {
-		candidates = windowsShellCandidates()
-	}
 	var out []string
 	seen := map[string]bool{}
-	addShell := func(shell string) {
+	shellPriorityOrder(a.cfgStore, func(shell string) bool {
 		if shell == "" {
-			return
+			return true
 		}
 		path, err := exec.LookPath(shell)
 		if err != nil {
-			return
+			return true
 		}
 		key := strings.ToLower(filepath.Base(path))
 		if seen[key] {
-			return
+			return true
 		}
 		out = append(out, path)
 		seen[key] = true
-	}
-	if a.cfgStore != nil {
-		if configured := a.cfgStore.Get().DefaultShellOrDefault(); configured != defaultShellAuto {
-			addShell(configured)
-		}
-	}
-	if runtime.GOOS != "windows" {
-		envShell := os.Getenv("SHELL")
-		addShell(envShell)
-	}
-	for _, c := range candidates {
-		addShell(c)
-	}
+		return true
+	})
 	if out == nil {
 		// A machine where none of the candidates resolved. Returning the nil
 		// slice would reach the frontend as JSON `null` rather than `[]`.

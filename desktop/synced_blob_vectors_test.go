@@ -93,6 +93,19 @@ func fixtureSSHHosts() []SSHHost {
 			KeyID:     "k1",
 			ProxyJump: "box1",
 		},
+		{
+			// Carries ProxyCommand specifically. Every other mapped field is
+			// non-zero on some fixture host, so a renamed json tag shows up as
+			// a DeepEqual mismatch — but with no host setting this one, the
+			// comparison was zero-against-zero and stayed green while the
+			// phone silently stopped marking the host as not dialable.
+			ID:           "h3",
+			Alias:        "via-command",
+			Host:         "behind.example.com",
+			User:         "ops",
+			AuthKind:     "key",
+			ProxyCommand: "ssh -W %h:%p bastion",
+		},
 	}
 }
 

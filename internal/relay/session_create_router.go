@@ -179,6 +179,12 @@ func (r *sessionCreateRouter) registerRequestRoute(requestID string, clientOut, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reapExpiredLocked(now)
+	// Not namespaced by owner, unlike hostKey a few lines up — deliberately.
+	// Request ids are client-minted uuids ("sc-<uuid>"), so a collision across
+	// tenants is not reachable, and keying this table by owner would buy
+	// nothing while making the reaper and the per-client scan more expensive.
+	// Said out loud because this is the one table in this file that is NOT
+	// tenant-scoped, sitting next to the one that had to be.
 	if _, exists := r.requests[requestID]; exists {
 		return false
 	}

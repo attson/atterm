@@ -85,7 +85,7 @@ describe('openProfilesBlob — Go-generated vector', () => {
 describe('openSSHHostsBlob — Go-generated vector', () => {
   it('opens the Go-sealed blob and decodes hosts + keys', () => {
     const { hosts, keys } = openSSHHostsBlob(accountKey, fixture.ssh_hosts_value)
-    expect(hosts).toHaveLength(2)
+    expect(hosts).toHaveLength(3)
     expect(keys).toHaveLength(1)
 
     const h1 = hosts.find((h) => h.id === 'h1')
@@ -104,6 +104,16 @@ describe('openSSHHostsBlob — Go-generated vector', () => {
     expect(h2).toBeDefined()
     expect(h2!.keyId).toBe('k1')
     expect(h2!.hasJumpChain).toBe(true) // proxy_jump: 'box1'
+
+    // h3 exists so that proxy_command has a non-zero value in the vector.
+    // Without it, renaming that json tag on the Go side compared zero against
+    // zero, the fixture test stayed green, and the phone silently stopped
+    // marking the host as not dialable — the one label the spec calls
+    // load-bearing.
+    const h3 = hosts.find((h) => h.id === 'h3')
+    expect(h3).toBeDefined()
+    expect(h3!.isProxyCommandHost).toBe(true)
+    expect(h3!.hasJumpChain).toBe(false)
 
     const k1 = keys[0]
     expect(k1.name).toBe('deploy-key')

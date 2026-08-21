@@ -335,14 +335,14 @@ func TestHandleEvent_ReplyTargetRoutesThroughRouter(t *testing.T) {
 	}
 	// Router splits text into two SendInput calls (text, then CR after 16ms)
 	// so the TUI sees a discrete Enter keypress instead of a bundled paste.
-	time.Sleep(80 * time.Millisecond)
-	if len(stub.sentIn) != 2 {
-		t.Fatalf("sentIn = %v, want 2 entries (text + CR)", stub.sentIn)
+	sent := stub.waitForInputs(t, 2)
+	if len(sent) != 2 {
+		t.Fatalf("sentIn = %v, want 2 entries (text + CR)", sent)
 	}
-	if string(stub.sentIn[0]) != "hello world" || stub.sentIn[1][0] != 0x0d {
-		t.Fatalf("sentIn = %q, want [text, {0x0d}] split", stub.sentIn)
+	if string(sent[0]) != "hello world" || sent[1][0] != 0x0d {
+		t.Fatalf("sentIn = %q, want [text, {0x0d}] split", sent)
 	}
-	if !stub.claimed {
+	if !stub.didClaim() {
 		t.Error("expected ClaimDriver to have been called")
 	}
 }
@@ -388,12 +388,12 @@ func TestHandleEvent_AnchorCardInputKindRoutesThroughRouter(t *testing.T) {
 		t.Fatalf("reason = %q, want anchor_inject_ok", res.Reason)
 	}
 	// Router splits text+enter into two SendInput calls.
-	time.Sleep(80 * time.Millisecond)
-	if len(stub.sentIn) != 2 {
-		t.Fatalf("sentIn = %v, want 2 entries (text + CR)", stub.sentIn)
+	sent := stub.waitForInputs(t, 2)
+	if len(sent) != 2 {
+		t.Fatalf("sentIn = %v, want 2 entries (text + CR)", sent)
 	}
-	if string(stub.sentIn[0]) != "ls -la" || stub.sentIn[1][0] != 0x0d {
-		t.Fatalf("sentIn = %q, want [text, {0x0d}] split", stub.sentIn)
+	if string(sent[0]) != "ls -la" || sent[1][0] != 0x0d {
+		t.Fatalf("sentIn = %q, want [text, {0x0d}] split", sent)
 	}
 }
 

@@ -238,6 +238,20 @@ func TestSessionCreatedPayloadRoundTrip(t *testing.T) {
 	if strings.Contains(string(b), "\"error\"") {
 		t.Fatalf("success payload should omit error field: %s", b)
 	}
+	// Decode to a map, not just back into the struct. A struct round-trip
+	// proves only that Marshal and Unmarshal agree with each other, so a
+	// renamed json tag survives it — and the tag IS the wire contract that
+	// the relay router and the mobile client read. The sibling
+	// TestSessionCreatePayloadRoundTrip already checks its keys this way.
+	var okMap map[string]any
+	if err := json.Unmarshal(b, &okMap); err != nil {
+		t.Fatalf("unmarshal ok to map: %v", err)
+	}
+	for _, key := range []string{"request_id", "ok", "session_id"} {
+		if _, present := okMap[key]; !present {
+			t.Errorf("success payload missing wire key %q: %s", key, b)
+		}
+	}
 	var gotOK SessionCreatedPayload
 	if err := json.Unmarshal(b, &gotOK); err != nil {
 		t.Fatalf("unmarshal ok: %v", err)
@@ -253,6 +267,15 @@ func TestSessionCreatedPayloadRoundTrip(t *testing.T) {
 	}
 	if strings.Contains(string(b), "\"session_id\"") {
 		t.Fatalf("failure payload should omit session_id field: %s", b)
+	}
+	var failMap map[string]any
+	if err := json.Unmarshal(b, &failMap); err != nil {
+		t.Fatalf("unmarshal fail to map: %v", err)
+	}
+	for _, key := range []string{"request_id", "error"} {
+		if _, present := failMap[key]; !present {
+			t.Errorf("failure payload missing wire key %q: %s", key, b)
+		}
 	}
 	var gotFail SessionCreatedPayload
 	if err := json.Unmarshal(b, &gotFail); err != nil {

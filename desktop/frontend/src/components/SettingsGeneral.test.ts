@@ -52,6 +52,18 @@ function removeServiceWorker() {
 }
 
 describe("SettingsGeneral", () => {
+  it("groups language and terminal theme as two responsive fields", () => {
+    const platform = createFakePlatform();
+    platform.caps.wailsBindings = false;
+    __setPlatformForTests(platform);
+
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    const grid = w.get('[data-test="general-primary-grid"]');
+
+    expect(grid.findAllComponents({ name: "SelectDropdown" })).toHaveLength(2);
+    __setPlatformForTests(null);
+  });
+
   test("declares terminalThemeId prop and terminal-theme-changed emit", () => {
     expect(source).toContain("terminalThemeId: string");
     expect(source).toContain('(e: "terminal-theme-changed", themeID: string): void');

@@ -130,3 +130,53 @@ input:focus, select:focus {
   outline: none;
   border-color: var(--accent);
 }
+
+/* Settings fields opt into these grids explicitly so only semantically
+   related controls share a row. Long text, warnings, and actions stay full
+   width, while narrow screens retain the existing single-column flow. */
+.settings-field-grid {
+  display: grid;
+  gap: 14px 12px;
+  min-width: 0;
+}
+
+.settings-field-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-field-grid--compact {
+  grid-template-columns:
+    minmax(72px, 0.65fr)
+    minmax(72px, 0.65fr)
+    minmax(90px, 0.85fr)
+    minmax(170px, 1.6fr);
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-field--full {
+  grid-column: 1 / -1;
+}
+
+.settings-field > input,
+.settings-field > .select-dropdown,
+.settings-field > .password-field {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .settings-field-grid--two,
+  .settings-field-grid--compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-field--full {
+    grid-column: auto;
+  }
+}

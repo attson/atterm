@@ -255,4 +255,25 @@ function cancelReset() { resetOpen.value = false }
 .error { color: var(--bad); font-size: 0.75rem; }
 .dialog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .dialog { background: #11182b; padding: 14px 18px; border: 1px solid #1e2638; border-radius: 11px; max-width: 320px; display: flex; flex-direction: column; gap: 10px; color: #e6e7ea; }
+
+@media (max-width: 640px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .text {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .hotkey {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+  .edit-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 </style>

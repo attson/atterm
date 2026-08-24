@@ -467,27 +467,31 @@ async function onChange() {
 
 <template>
   <div class="tab-pane">
-    <label class="field-label">{{ t("settings.general.languageLabel") }}</label>
-    <SelectDropdown
-      v-model="selectedLocale"
-      :options="localizedLanguageOptions"
-      :disabled="localeSaving"
-      :aria-label="t('settings.general.languageLabel')"
-      @update:modelValue="onLocaleChange"
-    />
-    <p class="hint">{{ t("settings.general.languageHint") }}</p>
+    <div class="settings-field-grid settings-field-grid--two" data-test="general-primary-grid">
+      <div class="settings-field">
+        <label class="field-label">{{ t("settings.general.languageLabel") }}</label>
+        <SelectDropdown
+          v-model="selectedLocale"
+          :options="localizedLanguageOptions"
+          :disabled="localeSaving"
+          :aria-label="t('settings.general.languageLabel')"
+          @update:modelValue="onLocaleChange"
+        />
+        <p class="hint">{{ t("settings.general.languageHint") }}</p>
+      </div>
 
-    <label class="field-label">{{ t("settings.general.terminalTheme") }}</label>
-    <SelectDropdown
-      v-model="selected"
-      :options="themeOptions"
-      :disabled="saving"
-      :aria-label="t('settings.general.terminalTheme')"
-      @update:modelValue="onChange"
-    />
-    <p class="hint">
-      {{ t("settings.general.terminalThemeHint") }}
-    </p>
+      <div class="settings-field">
+        <label class="field-label">{{ t("settings.general.terminalTheme") }}</label>
+        <SelectDropdown
+          v-model="selected"
+          :options="themeOptions"
+          :disabled="saving"
+          :aria-label="t('settings.general.terminalTheme')"
+          @update:modelValue="onChange"
+        />
+        <p class="hint">{{ t("settings.general.terminalThemeHint") }}</p>
+      </div>
+    </div>
 
     <SettingsTerminalAppearance @appearance-changed="onAppearanceChanged" />
 

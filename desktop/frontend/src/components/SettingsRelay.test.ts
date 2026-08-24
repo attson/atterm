@@ -92,6 +92,12 @@ describe("SettingsRelay", () => {
     expect(source).toContain("loginRemoteRelay");
   });
 
+  test("groups email and password in the responsive credentials row", () => {
+    expect(source).toMatch(
+      /data-test="relay-credentials-grid"[\s\S]*id="relay-email"[\s\S]*id="relay-password"[\s\S]*<\/div>/,
+    );
+  });
+
   test("does not clear password after successful login (retained for prefill on reopen)", () => {
     // password.value must NOT be reset on success — the field is kept so the
     // user can see what they typed, matching the safekeyring prefill behaviour.

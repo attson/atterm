@@ -278,18 +278,23 @@ async function clearDefault() {
     </template>
 
     <div v-if="editing" class="edit-row" data-testid="profile-editor">
-      <input
-        v-model="editing.name"
-        class="edit-input"
-        :placeholder="t('settings.profiles.name')"
-        data-testid="profile-edit-name"
-      />
-      <input
-        v-model="editing.shell"
-        class="edit-input"
-        :placeholder="t('settings.profiles.shellPlaceholder')"
-        data-testid="profile-edit-shell"
-      />
+      <div
+        class="settings-field-grid settings-field-grid--two"
+        data-testid="profile-primary-grid"
+      >
+        <input
+          v-model="editing.name"
+          class="edit-input"
+          :placeholder="t('settings.profiles.name')"
+          data-testid="profile-edit-name"
+        />
+        <input
+          v-model="editing.shell"
+          class="edit-input"
+          :placeholder="t('settings.profiles.shellPlaceholder')"
+          data-testid="profile-edit-shell"
+        />
+      </div>
       <input
         v-model="editing.cwd"
         class="edit-input"
@@ -462,5 +467,19 @@ async function clearDefault() {
 .error {
   color: var(--bad);
   font-size: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .name {
+    grid-column: 1 / -1;
+  }
+  .actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 </style>

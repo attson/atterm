@@ -263,86 +263,101 @@ async function onScrollbackChange(e: Event) {
 </script>
 
 <template>
-  <label class="field-label" v-if="caps.wailsBindings && !appearanceLoading">{{ t("settings.general.terminalFont") }}</label>
-  <SelectDropdown
-    v-if="caps.wailsBindings && !appearanceLoading"
-    v-model="fontHead"
-    :options="fontHeadOptions"
-    data-test="terminal-font"
-    :aria-label="t('settings.general.terminalFont')"
-    @update:modelValue="onFontHeadChange"
-  />
-  <p class="hint" v-if="caps.wailsBindings && !appearanceLoading">
-    {{ t("settings.general.terminalFontHint") }}
-  </p>
+  <div v-if="caps.wailsBindings && !appearanceLoading" class="terminal-appearance">
+    <div class="settings-field">
+      <label class="field-label">{{ t("settings.general.terminalFont") }}</label>
+      <SelectDropdown
+        v-model="fontHead"
+        :options="fontHeadOptions"
+        data-test="terminal-font"
+        :aria-label="t('settings.general.terminalFont')"
+        @update:modelValue="onFontHeadChange"
+      />
+      <p class="hint">{{ t("settings.general.terminalFontHint") }}</p>
+    </div>
 
-  <label class="field-label" v-if="caps.wailsBindings && !appearanceLoading">{{ t("settings.general.terminalFontSize") }}</label>
-  <input
-    v-if="caps.wailsBindings && !appearanceLoading"
-    class="number-input"
-    type="number"
-    data-test="terminal-font-size"
-    min="8"
-    max="32"
-    step="1"
-    :value="fontSize"
-    @change="onFontSizeChange"
-  />
+    <div class="settings-field-grid settings-field-grid--compact" data-test="terminal-compact-grid">
+      <div class="settings-field">
+        <label class="field-label" for="terminal-font-size">{{ t("settings.general.terminalFontSize") }}</label>
+        <input
+          id="terminal-font-size"
+          class="number-input"
+          type="number"
+          data-test="terminal-font-size"
+          min="8"
+          max="32"
+          step="1"
+          :value="fontSize"
+          @change="onFontSizeChange"
+        />
+      </div>
 
-  <label class="field-label" v-if="caps.wailsBindings && !appearanceLoading">{{ t("settings.general.terminalLineHeight") }}</label>
-  <input
-    v-if="caps.wailsBindings && !appearanceLoading"
-    class="number-input"
-    type="number"
-    data-test="terminal-line-height"
-    min="1.0"
-    max="2.0"
-    step="0.1"
-    :value="lineHeight"
-    @change="onLineHeightChange"
-  />
+      <div class="settings-field">
+        <label class="field-label" for="terminal-line-height">{{ t("settings.general.terminalLineHeight") }}</label>
+        <input
+          id="terminal-line-height"
+          class="number-input"
+          type="number"
+          data-test="terminal-line-height"
+          min="1.0"
+          max="2.0"
+          step="0.1"
+          :value="lineHeight"
+          @change="onLineHeightChange"
+        />
+      </div>
 
-  <label class="field-label" v-if="caps.wailsBindings && !appearanceLoading">{{ t("settings.general.terminalCursorStyle") }}</label>
-  <SelectDropdown
-    v-if="caps.wailsBindings && !appearanceLoading"
-    v-model="cursorStyle"
-    :options="cursorStyleOptions"
-    data-test="terminal-cursor-style"
-    :aria-label="t('settings.general.terminalCursorStyle')"
-    @update:modelValue="onCursorStyleChange"
-  />
+      <div class="settings-field scrollback-field">
+        <label class="field-label" for="terminal-scrollback">{{ t("settings.general.terminalScrollback") }}</label>
+        <input
+          id="terminal-scrollback"
+          class="number-input"
+          type="number"
+          data-test="terminal-scrollback"
+          min="500"
+          max="20000"
+          step="500"
+          :value="scrollback"
+          @input="onScrollbackInput"
+          @change="onScrollbackChange"
+        />
+      </div>
 
-  <label class="checkbox" v-if="caps.wailsBindings && !appearanceLoading">
-    <input
-      type="checkbox"
-      data-test="terminal-cursor-blink"
-      :checked="cursorBlink"
-      @change="onCursorBlinkToggle"
-    />
-    {{ t("settings.general.terminalCursorBlink") }}
-  </label>
+      <div class="settings-field">
+        <label class="field-label">{{ t("settings.general.terminalCursorStyle") }}</label>
+        <SelectDropdown
+          v-model="cursorStyle"
+          :options="cursorStyleOptions"
+          data-test="terminal-cursor-style"
+          :aria-label="t('settings.general.terminalCursorStyle')"
+          @update:modelValue="onCursorStyleChange"
+        />
+        <label class="checkbox cursor-blink">
+          <input
+            type="checkbox"
+            data-test="terminal-cursor-blink"
+            :checked="cursorBlink"
+            @change="onCursorBlinkToggle"
+          />
+          {{ t("settings.general.terminalCursorBlink") }}
+        </label>
+      </div>
+    </div>
 
-  <label class="field-label" v-if="caps.wailsBindings && !appearanceLoading">{{ t("settings.general.terminalScrollback") }}</label>
-  <input
-    v-if="caps.wailsBindings && !appearanceLoading"
-    class="number-input"
-    type="number"
-    data-test="terminal-scrollback"
-    min="500"
-    max="20000"
-    step="500"
-    :value="scrollback"
-    @input="onScrollbackInput"
-    @change="onScrollbackChange"
-  />
-  <p class="hint" v-if="caps.wailsBindings && !appearanceLoading" data-test="terminal-scrollback-hint">
-    {{ t("settings.general.terminalScrollbackHint", { mb: scrollbackEstimateMb }) }}
-  </p>
+    <p class="hint" data-test="terminal-scrollback-hint">
+      {{ t("settings.general.terminalScrollbackHint", { mb: scrollbackEstimateMb }) }}
+    </p>
 
-  <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="error" class="error">{{ error }}</p>
+  </div>
 </template>
 
 <style scoped>
+.terminal-appearance {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 .field-label {
   font-size: 12px;
   color: var(--fg-dim);
@@ -375,5 +390,14 @@ async function onScrollbackChange(e: Event) {
   border-radius: 4px;
   color: var(--fg);
   font: inherit;
+}
+.settings-field-grid .number-input {
+  width: 100%;
+}
+.cursor-blink {
+  min-height: 18px;
+}
+.scrollback-field {
+  align-items: flex-start;
 }
 </style>

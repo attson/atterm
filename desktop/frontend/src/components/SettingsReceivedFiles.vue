@@ -139,4 +139,23 @@ onMounted(reload);
 .file-delete { margin-left: auto; font-size: 0.8rem; padding: 1px 6px; }
 .file-delete.danger { color: #d33; }
 .empty { color: var(--fg-dim, #999); padding: 8px 0; }
+
+@media (max-width: 640px) {
+  .header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .actions {
+    flex-wrap: wrap;
+  }
+  .session-row,
+  .files li {
+    flex-wrap: wrap;
+  }
+  .file-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
 </style>

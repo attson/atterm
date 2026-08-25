@@ -136,4 +136,21 @@ describe('SettingsFeishu configured view', () => {
     expect(w.find('.feishu-fieldset').exists()).toBe(true)
     expect(w.find('[data-test="feishu-configured"]').exists()).toBe(false)
   })
+
+  it('lays out all four unconfigured credentials in the responsive field grid', async () => {
+    vi.spyOn(api, 'getFeishuStatus').mockResolvedValue({
+      enabled: true,
+      mode: 'local',
+      bound: false,
+      open_id: '',
+      disabled: false,
+      configured: false,
+    } as never)
+
+    const w = mount(SettingsFeishu)
+    await flushPromises()
+    const grid = w.get('[data-test="feishu-credentials-grid"]')
+
+    expect(grid.findAll('input')).toHaveLength(4)
+  })
 })

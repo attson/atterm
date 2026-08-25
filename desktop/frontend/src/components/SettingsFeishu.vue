@@ -131,21 +131,25 @@
         </div>
         <p v-if="pairCode" class="pair-hint">{{ t('settings.feishu.pair_hint', { code: pairCode }) }}</p>
       </div>
-      <fieldset v-else class="feishu-fieldset">
-        <label class="field-label">App ID
+      <fieldset
+        v-else
+        class="feishu-fieldset settings-field-grid settings-field-grid--two"
+        data-test="feishu-credentials-grid"
+      >
+        <label class="field-label settings-field">App ID
           <input v-model="creds.AppID" type="text" class="field-input" />
         </label>
-        <label class="field-label">App Secret
+        <label class="field-label settings-field">App Secret
           <input v-model="creds.AppSecret" type="password" class="field-input" />
         </label>
-        <label class="field-label">Encrypt Key
+        <label class="field-label settings-field">Encrypt Key
           <input v-model="creds.EncryptKey" type="password" class="field-input" />
         </label>
-        <label class="field-label">Verify Token
+        <label class="field-label settings-field">Verify Token
           <input v-model="creds.VerifyToken" type="password" class="field-input" />
         </label>
-        <div v-if="saveError" class="error">{{ saveError }}</div>
-        <div class="actions">
+        <div v-if="saveError" class="error settings-field--full">{{ saveError }}</div>
+        <div class="actions settings-field--full">
           <button type="button" class="btn-primary" @click="onSave">{{ t('settings.feishu.save') }}</button>
         </div>
       </fieldset>
@@ -489,9 +493,6 @@ async function onDelete() {
   border: none;
   padding: 0;
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
 }
 .field-label {
   display: flex;

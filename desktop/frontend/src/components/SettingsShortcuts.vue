@@ -246,4 +246,20 @@ defineExpose({ dirty });
   font-size: 12px;
   margin: 8px 0 0;
 }
+
+@media (max-width: 640px) {
+  .shortcut-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 140px) auto;
+  }
+  .shortcut-row :deep(.hotkey-cell) {
+    min-width: 0;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .actions-row {
+    flex-wrap: wrap;
+  }
+}
 </style>

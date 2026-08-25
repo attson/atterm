@@ -56,6 +56,17 @@ describe("SettingsTerminalAppearance", () => {
     expect(w.find('[data-test="terminal-scrollback"]').exists()).toBe(true);
   });
 
+  it("groups the short appearance controls into one compact row", async () => {
+    const w = await mountAppearance();
+    const grid = w.get('[data-test="terminal-compact-grid"]');
+
+    expect(grid.find('[data-test="terminal-font-size"]').exists()).toBe(true);
+    expect(grid.find('[data-test="terminal-line-height"]').exists()).toBe(true);
+    expect(grid.find('[data-test="terminal-scrollback"]').exists()).toBe(true);
+    expect(grid.find('[data-test="terminal-cursor-style"]').exists()).toBe(true);
+    expect(grid.find('[data-test="terminal-cursor-blink"]').exists()).toBe(true);
+  });
+
   it("shows a per-pane memory estimate that tracks the scrollback value", async () => {
     const w = await mountAppearance();
     const input = w.find('[data-test="terminal-scrollback"]');

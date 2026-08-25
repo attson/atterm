@@ -353,26 +353,35 @@ async function onDeleteClick() {
           type="checkbox"
         />
       </label>
-      <label class="field-label" for="account-login-email">{{ t("mobile.email") }}</label>
-      <input
-        id="account-login-email"
-        v-model="loginEmail"
-        data-testid="account-login-email"
-        :disabled="loginSubmitting"
-        type="email"
-        autocomplete="username"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <label class="field-label" for="account-login-password">{{ t("mobile.password") }}</label>
-      <input
-        id="account-login-password"
-        v-model="loginPassword"
-        data-testid="account-login-password"
-        :disabled="loginSubmitting"
-        type="password"
-        autocomplete="current-password"
-      />
+      <div
+        class="settings-field-grid settings-field-grid--two"
+        data-testid="account-login-credentials-grid"
+      >
+        <div class="settings-field">
+          <label class="field-label" for="account-login-email">{{ t("mobile.email") }}</label>
+          <input
+            id="account-login-email"
+            v-model="loginEmail"
+            data-testid="account-login-email"
+            :disabled="loginSubmitting"
+            type="email"
+            autocomplete="username"
+            autocapitalize="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="settings-field">
+          <label class="field-label" for="account-login-password">{{ t("mobile.password") }}</label>
+          <input
+            id="account-login-password"
+            v-model="loginPassword"
+            data-testid="account-login-password"
+            :disabled="loginSubmitting"
+            type="password"
+            autocomplete="current-password"
+          />
+        </div>
+      </div>
       <p v-if="loginError" class="inline-error" role="alert">{{ loginError }}</p>
       <button
         type="submit"
@@ -408,48 +417,59 @@ async function onDeleteClick() {
     <section class="account-section">
       <h3>{{ t("settings.account.changePassword.title") }}</h3>
 
-      <label class="field-label" for="account-old-password">{{
-        t("settings.account.changePassword.oldPassword")
-      }}</label>
-      <input
-        id="account-old-password"
-        v-model="oldPassword"
-        data-testid="old-password-input"
-        type="password"
-        autocomplete="current-password"
-        :disabled="changePasswordSubmitting"
-      />
+      <div class="settings-field">
+        <label class="field-label" for="account-old-password">{{
+          t("settings.account.changePassword.oldPassword")
+        }}</label>
+        <input
+          id="account-old-password"
+          v-model="oldPassword"
+          data-testid="old-password-input"
+          type="password"
+          autocomplete="current-password"
+          :disabled="changePasswordSubmitting"
+        />
+      </div>
 
-      <label class="field-label" for="account-new-password">{{
-        t("settings.account.changePassword.newPassword")
-      }}</label>
-      <input
-        id="account-new-password"
-        v-model="newPassword"
-        data-testid="new-password-input"
-        type="password"
-        autocomplete="new-password"
-        :disabled="changePasswordSubmitting"
-      />
-      <p v-if="newPassword && !newPasswordLengthValid" class="hint">
-        {{ t("settings.account.changePassword.hintLength") }}
-      </p>
+      <div
+        class="settings-field-grid settings-field-grid--two"
+        data-testid="account-password-grid"
+      >
+        <div class="settings-field">
+          <label class="field-label" for="account-new-password">{{
+            t("settings.account.changePassword.newPassword")
+          }}</label>
+          <input
+            id="account-new-password"
+            v-model="newPassword"
+            data-testid="new-password-input"
+            type="password"
+            autocomplete="new-password"
+            :disabled="changePasswordSubmitting"
+          />
+          <p v-if="newPassword && !newPasswordLengthValid" class="hint">
+            {{ t("settings.account.changePassword.hintLength") }}
+          </p>
+        </div>
 
-      <label class="field-label" for="account-confirm-password">{{
-        t("settings.account.changePassword.confirmPassword")
-      }}</label>
-      <input
-        id="account-confirm-password"
-        v-model="confirmPassword"
-        data-testid="confirm-password-input"
-        type="password"
-        autocomplete="new-password"
-        :disabled="changePasswordSubmitting"
-        @keyup.enter="onChangePasswordSubmit"
-      />
-      <p v-if="confirmPassword && !newPasswordMatches" class="hint">
-        {{ t("settings.account.changePassword.hintMismatch") }}
-      </p>
+        <div class="settings-field">
+          <label class="field-label" for="account-confirm-password">{{
+            t("settings.account.changePassword.confirmPassword")
+          }}</label>
+          <input
+            id="account-confirm-password"
+            v-model="confirmPassword"
+            data-testid="confirm-password-input"
+            type="password"
+            autocomplete="new-password"
+            :disabled="changePasswordSubmitting"
+            @keyup.enter="onChangePasswordSubmit"
+          />
+          <p v-if="confirmPassword && !newPasswordMatches" class="hint">
+            {{ t("settings.account.changePassword.hintMismatch") }}
+          </p>
+        </div>
+      </div>
 
       <button
         type="button"

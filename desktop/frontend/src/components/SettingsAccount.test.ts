@@ -125,6 +125,17 @@ describe('SettingsAccount', () => {
     expect(w.get('[data-testid="account-email"]').text()).toBe('paired@example.com')
   })
 
+  it('groups inline-login email and password as responsive fields', async () => {
+    fakePlatform.relay.fetchMe = vi.fn().mockRejectedValue(new Error('unauthorized'))
+    fakePlatform.relay.login = vi.fn().mockResolvedValue(undefined)
+
+    const w = await mountReady()
+    const grid = w.get('[data-testid="account-login-credentials-grid"]')
+
+    expect(grid.find('[data-testid="account-login-email"]').exists()).toBe(true)
+    expect(grid.find('[data-testid="account-login-password"]').exists()).toBe(true)
+  })
+
   it('offers logout, clears the relay session, and redirects to login', async () => {
     const assign = vi.fn()
     const originalLocation = window.location
@@ -144,6 +155,15 @@ describe('SettingsAccount', () => {
   })
 
   describe('change password', () => {
+    it('groups the new and confirmation fields without moving the current password', async () => {
+      const w = await mountReady()
+      const grid = w.get('[data-testid="account-password-grid"]')
+
+      expect(grid.find('[data-testid="new-password-input"]').exists()).toBe(true)
+      expect(grid.find('[data-testid="confirm-password-input"]').exists()).toBe(true)
+      expect(grid.find('[data-testid="old-password-input"]').exists()).toBe(false)
+    })
+
     it('submit is disabled until old password set, new password >= 8 chars, and confirm matches', async () => {
       const w = await mountReady()
       const submit = w.get('[data-testid="change-password-submit"]')

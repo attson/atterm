@@ -79,6 +79,16 @@ describe("SettingsProfiles", () => {
     expect(saved[0].sync_env).toBeFalsy();
   });
 
+  it("groups profile name and shell without pulling long fields into the row", async () => {
+    const w = await mountProfiles();
+    await w.find('[data-testid="profile-edit-p1"]').trigger("click");
+    const grid = w.get('[data-testid="profile-primary-grid"]');
+
+    expect(grid.find('[data-testid="profile-edit-name"]').exists()).toBe(true);
+    expect(grid.find('[data-testid="profile-edit-shell"]').exists()).toBe(true);
+    expect(grid.find('[data-testid="profile-edit-cwd"]').exists()).toBe(false);
+  });
+
   it("edits an existing profile in place", async () => {
     const w = await mountProfiles();
     await w.find('[data-testid="profile-edit-p1"]').trigger("click");

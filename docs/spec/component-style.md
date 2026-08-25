@@ -1,7 +1,7 @@
 # 组件样式规范
 
 > **Audience**: 改 atterm 前端 UI 的工程师
-> **Last updated**: 2026-07-29
+> **Last updated**: 2026-08-24
 > **Status**: stable
 > **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md) · [session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)
 
@@ -96,6 +96,13 @@ Settings 是最容易跑偏的区域，新增 tab 或字段时遵守以下结构
 - 下拉必须用 `SelectDropdown`；Default Shell、Terminal Theme、Language、Remote Permission 都属于同一类控件。
 - 设置保存失败时要回滚 UI 状态，并显示错误；不要乐观更新后静默失败。
 - 新增用户可见文案必须同步 `desktop/frontend/src/i18n/messages/en.ts` 和 `zh-CN.ts`。
+- 语义相关且较短的字段显式使用 `.settings-field-grid` 分组；双列使用
+  `.settings-field-grid--two`，终端外观等短字段行使用
+  `.settings-field-grid--compact`。不要用全局 `auto-fit` 自动重排所有设置项。
+- 长文本输入、说明、警告、错误、危险操作和列表保持整行；字段内部保持
+  label → control → hint 的顺序，不要为了凑列拆散字段语义。
+- `640px` 以下字段网格必须降为单列；列表、工具栏和按钮行允许换行，输入控件
+  使用 `min-width: 0`，不得把 Settings 内容区撑出横向滚动。
 
 ## Dialog / overlay
 

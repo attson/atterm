@@ -23,8 +23,16 @@ vi.mock('@capacitor/core', async (importOriginal) => {
   return { ...actual, CapacitorHttp: { post: vi.fn() } }
 })
 
+vi.mock('../servicePreviewNative', () => ({
+  NativeServicePreview: {
+    start: vi.fn(),
+    stop: vi.fn(),
+  },
+}))
+
 import { CapacitorHttp } from '@capacitor/core'
 import { createCapacitorPlatform } from '../capacitor'
+import { NativeServicePreview } from '../servicePreviewNative'
 import { secureStorage } from '../secureStorage'
 import { wrapAccountKey } from '../../lib/opaque'
 import { TYPE, NIL_SID, encodeFrame, decodeFrame, encodeText, decodeText } from '../../lib/proto'
@@ -70,6 +78,37 @@ describe('createCapacitorPlatform', () => {
     const p = createCapacitorPlatform()
     expect(p.sessions.newSession).toBeUndefined()
     expect(p.relay.setUplinkPaused).toBeUndefined()
+  })
+
+  it('opens service Preview on the home instance without passing account_key', async () => {
+    const p = createCapacitorPlatform()
+    await p.relay.save({
+      url: 'https://login.example.com',
+      token: 'atk_service',
+      session_expires_at: 0,
+      allow_insecure_relay: false,
+      remote_permission: 'full',
+      last_email: '',
+      connected: true,
+      homeInstanceURL: 'https://home.example.com',
+    })
+    vi.mocked(NativeServicePreview.start).mockResolvedValue({ id: 'service-id', url: 'http://127.0.0.1:49152/' })
+
+    const result = await p.servicePreview!.start({
+      serviceId: 'service-id',
+      clientTicket: 'ticket',
+      clientToHostKey: new Uint8Array(32).fill(1),
+      hostToClientKey: new Uint8Array(32).fill(2),
+    })
+
+    expect(result.url).toBe('http://127.0.0.1:49152/')
+    expect(NativeServicePreview.start).toHaveBeenCalledWith(expect.objectContaining({
+      relayUrl: 'https://home.example.com',
+      token: 'atk_service',
+      clientToHostKey: btoa(String.fromCharCode(...new Uint8Array(32).fill(1))),
+      hostToClientKey: btoa(String.fromCharCode(...new Uint8Array(32).fill(2))),
+    }))
+    expect(NativeServicePreview.start).not.toHaveBeenCalledWith(expect.objectContaining({ accountKey: expect.anything() }))
   })
 
   it('relay.load returns null when nothing stored', async () => {

@@ -15,7 +15,7 @@ import {
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
-import { openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame, b64ToBytes } from "./opaque";
+import { deriveServiceKeys, openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame, b64ToBytes } from "./opaque";
 import { encodeSegments, decodeSegments } from "./fsSegments";
 import { errText, logDebug, logError, logWarn } from "./log";
 
@@ -165,6 +165,14 @@ export interface SessionListHandlers {
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_SERVICE_OPEN_TIMEOUT_MS = 30_000;
+
+export interface ServiceOpenResult {
+  serviceId: string;
+  clientTicket: string;
+  clientToHostKey: Uint8Array;
+  hostToClientKey: Uint8Array;
+}
 
 export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {
   if (wsReadyState !== WebSocket.OPEN) return t("terminal.websocketNotOpen");
@@ -506,6 +514,17 @@ export class SessionConnection {
   >();
   private retiredFSRequestIDs = new Set<string>();
   private fsEventHandlers = new Set<(event: FSEvent) => void>();
+  private pendingServiceOpens = new Map<
+    string,
+    {
+      serviceId: string;
+      resolve: (result: ServiceOpenResult) => void;
+      reject: (err: Error) => void;
+      timer: number;
+      clientToHostKey: Uint8Array;
+      hostToClientKey: Uint8Array;
+    }
+  >();
 
   constructor(
     private endpoint: Endpoint,
@@ -544,6 +563,7 @@ export class SessionConnection {
     if (this.detached) return;
     this.suspended = true;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection suspended"));
+    this.rejectPendingServiceOpens(new Error("service preview failed: connection suspended"));
     this.retiredFSRequestIDs.clear();
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
@@ -563,6 +583,7 @@ export class SessionConnection {
     this.detached = true;
     this.suspended = false;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
+    this.rejectPendingServiceOpens(new Error("service preview failed: connection detached"));
     this.retiredFSRequestIDs.clear();
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
@@ -608,6 +629,69 @@ export class SessionConnection {
         reject(e instanceof Error ? e : new Error(String(e)));
       }
     });
+  }
+
+  openService(port: number, timeoutMs = DEFAULT_SERVICE_OPEN_TIMEOUT_MS): Promise<ServiceOpenResult> {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("service preview failed: websocket is not open"));
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return Promise.reject(new Error("service preview failed: invalid port"));
+    }
+    const accountKey = getCurrentAccountKey();
+    if (!accountKey || accountKey.length !== 32) {
+      return Promise.reject(new Error("service preview requires unlocked E2EE"));
+    }
+    const requestId = crypto.randomUUID();
+    const serviceId = crypto.randomUUID();
+    const keys = deriveServiceKeys(accountKey, serviceId);
+    const sealed = sealUnsequenced(
+      accountKey,
+      this.sessionId,
+      TYPE.SERVICE_OPEN,
+      encodeText(JSON.stringify({ port, scheme: "http" })),
+    );
+    const payload = encodeText(JSON.stringify({
+      request_id: requestId,
+      service_id: serviceId,
+      sealed: bytesToBase64(sealed),
+    }));
+    return new Promise<ServiceOpenResult>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingServiceOpens.delete(requestId);
+        reject(new Error("service preview timed out"));
+      }, timeoutMs);
+      this.pendingServiceOpens.set(requestId, {
+        serviceId,
+        resolve,
+        reject,
+        timer,
+        clientToHostKey: keys.clientToHost,
+        hostToClientKey: keys.hostToClient,
+      });
+      try {
+        ws.send(encodeFrame(TYPE.SERVICE_OPEN, this.sidBytes, payload));
+      } catch (e) {
+        window.clearTimeout(timer);
+        this.pendingServiceOpens.delete(requestId);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  }
+
+  closeService(serviceId: string): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(encodeFrame(
+        TYPE.SERVICE_CLOSE,
+        this.sidBytes,
+        encodeText(JSON.stringify({ service_id: serviceId })),
+      ));
+    } catch {
+      // Connection teardown also revokes the relay lease.
+    }
   }
 
   onFSEvent(handler: (event: FSEvent) => void): () => void {
@@ -818,6 +902,8 @@ export class SessionConnection {
         this.handleFSResponse(f.payload);
       } else if (f.type === TYPE.FS_EVENT) {
         this.handleFSEvent(f.payload);
+      } else if (f.type === TYPE.SERVICE_OPENED) {
+        this.handleServiceOpened(f.payload);
       }
     };
 
@@ -827,6 +913,7 @@ export class SessionConnection {
       if (this.ws !== ws) return;
       this.ws = null;
       this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
+      this.rejectPendingServiceOpens(new Error("service preview failed: websocket closed"));
       this.retiredFSRequestIDs.clear();
       if (this.detached || this.suspended) return;
       // The close code is the only thing that distinguishes "the relay hung up"
@@ -870,6 +957,44 @@ export class SessionConnection {
       return `fs-${crypto.randomUUID()}`;
     }
     return `fs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  private handleServiceOpened(payload: Uint8Array): void {
+    let response: {
+      request_id?: string;
+      service_id?: string;
+      ok?: boolean;
+      error?: string;
+      client_ticket?: string;
+    };
+    try {
+      response = JSON.parse(decodeText(payload));
+    } catch {
+      return;
+    }
+    if (!response.request_id) return;
+    const pending = this.pendingServiceOpens.get(response.request_id);
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    this.pendingServiceOpens.delete(response.request_id);
+    if (!response.ok || !response.client_ticket || response.service_id !== pending.serviceId) {
+      pending.reject(new Error(response.error || "service preview rejected"));
+      return;
+    }
+    pending.resolve({
+      serviceId: pending.serviceId,
+      clientTicket: response.client_ticket,
+      clientToHostKey: pending.clientToHostKey,
+      hostToClientKey: pending.hostToClientKey,
+    });
+  }
+
+  private rejectPendingServiceOpens(err: Error): void {
+    for (const pending of this.pendingServiceOpens.values()) {
+      window.clearTimeout(pending.timer);
+      pending.reject(err);
+    }
+    this.pendingServiceOpens.clear();
   }
 
   private newUniqueFSRequestID(): string {
@@ -1044,4 +1169,3 @@ export type TaskState =
   | "failed"
   | "disconnected"
   | "closed";
-

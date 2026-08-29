@@ -94,6 +94,7 @@ type Server struct {
 	mux         *http.ServeMux
 	rate        *fixedWindowLimiter
 	conns       *connectionLimiter
+	services    *serviceHub
 	startTime   time.Time
 	uplinkCount int64 // atomic; read via UplinkCount()
 	// feishu holds the runtime Feishu handler; nil = integration disabled.
@@ -128,6 +129,7 @@ func NewServer(cfg Config) *Server {
 		mux:         http.NewServeMux(),
 		rate:        newFixedWindowLimiter(rateLimit, time.Minute),
 		conns:       newConnectionLimiter(connLimit),
+		services:    newServiceHub(),
 		startTime:   time.Now(),
 	}
 	originsInit := append([]string(nil), cfg.AllowedOrigins...)
@@ -139,6 +141,8 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/uplink", s.requireSession(s.handleUplinkHTTP))
 	s.mux.HandleFunc("/client", s.requireSession(s.handleClientHTTP))
 	s.mux.HandleFunc("/client-sessions", s.requireSession(s.handleClientSessionsHTTP))
+	s.mux.HandleFunc("/service-client", s.requireSession(s.handleServiceClientHTTP))
+	s.mux.HandleFunc("/service-host", s.requireSession(s.handleServiceHostHTTP))
 	s.mux.HandleFunc("/api/sessions", s.requireSession(s.handleSessionsHTTP))
 	// Public — anonymous traffic allowed.
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
@@ -285,6 +289,9 @@ func (s *Server) Store() *userstore.DBStore {
 // session_seen table does not accumulate rows for dead sessions.
 func (s *Server) removeSession(id uuid.UUID) {
 	s.fsRoutes().unregisterSession(id)
+	if s.services != nil {
+		s.services.closeSession(id)
+	}
 	s.registry.Remove(id)
 	if s.cfg.Store != nil {
 		_ = s.cfg.Store.PruneSeenSession(context.Background(), id.String())

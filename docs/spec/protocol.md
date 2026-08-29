@@ -66,6 +66,11 @@ const (
     TypeFSRequest       Type = 0x38  // client → relay → desktop uplink (remote file explorer)
     TypeFSResponse      Type = 0x39  // desktop uplink → relay → requester client
     TypeFSEvent         Type = 0x3a  // desktop uplink → relay → requester client
+    TypeSessionCreate   Type = 0x3b  // client → relay → desktop uplink
+    TypeSessionCreated  Type = 0x3c  // desktop uplink → relay → requester client
+    TypeServiceOpen     Type = 0x3d  // client → relay → desktop uplink
+    TypeServiceOpened   Type = 0x3e  // desktop uplink → relay → requester client
+    TypeServiceClose    Type = 0x3f  // client → relay; revoke Preview lease
 
     // Auth frames (server → client).
     TypeAuthInfo        Type = 0x40  // relay → uplink; UTF-8 JSON {user_id}
@@ -453,6 +458,51 @@ segment 0 恒为明文 JSON，只放 relay 转发和鉴权真正需要的字段�
 
 relay 仍可做 payload 大小限制（信封长度可见），但不再能审计路径。完整设计见 [../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md](../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md)。
 
+### Remote Web Preview (`SERVICE_OPEN` 0x3d / `SERVICE_OPENED` 0x3e / `SERVICE_CLOSE` 0x3f)
+
+Preview 控制帧沿已 attach session 路由；实际 HTTP/TCP 字节不进入本帧协议，
+而走独立 `/service-client` / `/service-host` WebSocket。该独立通道不创建
+session subscriber，不触发 `STREAM_REQUEST/STOP`。
+
+`SERVICE_OPEN` payload：
+
+```json
+{
+  "request_id": "uuid",
+  "service_id": "uuid",
+  "host_ticket": "relay-injected-one-time-ticket",
+  "sealed": "<base64 AEAD envelope>"
+}
+```
+
+- client 生成 `request_id/service_id`；`host_ticket` 留空并由 relay 覆盖。
+- `sealed` 打开后是 `{ "port": 3000, "scheme": "http" }`，AAD 鉴别字节
+  `0x3d`。目标 host 不上 wire：desktop 固定只拨 `127.0.0.1:<port>`。
+- relay 只在 client 已 attach、当前为 driver、session 的
+  `remote_permission=full` 时转发；desktop 按自己的 raw permission 再验一次。
+
+`SERVICE_OPENED` payload：
+
+```json
+{
+  "request_id": "uuid",
+  "service_id": "uuid",
+  "ok": true,
+  "error": "",
+  "client_ticket": "relay-injected-one-time-ticket"
+}
+```
+
+响应只路由给发起请求的 `/client`；relay 只在成功响应中注入
+`client_ticket`。两个 ticket 只允许在对应 service WS 的第一条注册消息中使用
+一次，不进 URL/日志。service WS 接受注册后先回 JSON `{ "ok": true }` ACK；
+端点收到 ACK 后才宣告 ready 或发 multiplex packet，拒绝则直接关闭 WS。
+`SERVICE_CLOSE {service_id}` 幂等撤销 lease；client
+连接、owner uplink、session 或任一 service WS 断开同样撤销。
+
+Service data message 的 AES-GCM multiplex 格式、额度和 key derivation 见
+[`2026-08-29-remote-web-preview-phase1-design.md`](../superpowers/specs/2026-08-29-remote-web-preview-phase1-design.md) §3–4。
+
 ### `CLAIM_DRIVER` (0x34) — client → relay
 
 viewer 想接管成为 driver 时发。payload = JSON：
@@ -552,6 +602,8 @@ Payload (UTF-8 JSON):
 | `/uplink` | GET (Upgrade: websocket) | 桌面 app 控制连 |
 | `/client` | GET (Upgrade: websocket) | client attach |
 | `/client-sessions` | GET (Upgrade: websocket) | session 列表推送 |
+| `/service-client` | GET (Upgrade: websocket) | Preview 客户端 E2EE multiplex 数据通道 |
+| `/service-host` | GET (Upgrade: websocket) | owner desktop E2EE multiplex 数据通道 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
 | `/api/version` | GET | JSON 版本信息 |
 | `/api/pair/create` | POST | 桌面端 owner 签发一次性 pairing token（详见 [auth.md](./auth.md)） |
@@ -618,6 +670,7 @@ AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字�
 | `0x38` `FS_REQUEST` | 分段 payload 的 segment 1（裸二进制，非 base64） | JSON `SealedFSRequestFields { path, new_path }` |
 | `0x39` `FS_RESPONSE` | segment 1（元数据）+ segment 2（文件字节） | segment 1 = JSON `SealedFSResponseFields { entries, meta, error, content, chunk }`；segment 2 = 原始文件字节，不经 base64 |
 | `0x3a` `FS_EVENT` | 分段 payload 的 segment 1（裸二进制） | JSON `SealedFSEventFields { path }` |
+| `0x3d` `SERVICE_OPEN` | `ServiceOpenPayload.sealed`（base64） | JSON `SealedServiceOpenFields { port, scheme }` |
 | `0xF0` （合成，不上 wire） | `ssh_hosts_encrypted` 偏好值 | JSON `sshSyncPayload { hosts, keys }` |
 | `0xF1` （合成，不上 wire） | `profiles_encrypted` 偏好值 | JSON `profilesSyncPayload { profiles, default_profile_id }` |
 

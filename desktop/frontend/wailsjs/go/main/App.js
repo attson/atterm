@@ -626,12 +626,20 @@ export function StartForward(arg1, arg2) {
   return window['go']['main']['App']['StartForward'](arg1, arg2);
 }
 
+export function StartServicePreview(arg1) {
+  return window['go']['main']['App']['StartServicePreview'](arg1);
+}
+
 export function StartWidget() {
   return window['go']['main']['App']['StartWidget']();
 }
 
 export function StopForward(arg1, arg2) {
   return window['go']['main']['App']['StopForward'](arg1, arg2);
+}
+
+export function StopServicePreview(arg1) {
+  return window['go']['main']['App']['StopServicePreview'](arg1);
 }
 
 export function StopWidget() {

@@ -34,6 +34,7 @@ const (
 	AADTagFSRequest    byte = 0x38
 	AADTagFSResponse   byte = 0x39
 	AADTagFSEvent      byte = 0x3a
+	AADTagServiceOpen  byte = 0x3d
 
 	// Synthetic, AAD-only — no wire frame carries these.
 	AADTagSSHHosts byte = 0xF0
@@ -51,6 +52,7 @@ var AADTags = map[byte]string{
 	AADTagFSRequest:    "FS_REQUEST",
 	AADTagFSResponse:   "FS_RESPONSE",
 	AADTagFSEvent:      "FS_EVENT",
+	AADTagServiceOpen:  "SERVICE_OPEN",
 	AADTagSSHHosts:     "ssh_hosts_encrypted sync",
 	AADTagProfiles:     "profiles_encrypted sync",
 }

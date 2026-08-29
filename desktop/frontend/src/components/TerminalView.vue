@@ -185,6 +185,9 @@ const selectionPopover = ref({
 });
 const platform = usePlatform();
 const fileRevealStore = useFileRevealStore();
+const previewBusy = ref(false);
+const previewMode = ref(false);
+const preview = ref<{ id: string; serviceId: string; url: string; port: number } | null>(null);
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -340,8 +343,17 @@ const auxKeysCanSend = computed(() =>
 const pasteBlobCanSend = computed(() =>
   auxKeysCanSend.value && effectiveRemotePermission(props.remotePermission) === "full"
 );
+const canOpenPreview = computed(() =>
+  Boolean(
+    platform.servicePreview &&
+    !props.isLocalSession &&
+    isDriver.value &&
+    status.value === "attached" &&
+    effectiveRemotePermission(props.remotePermission) === "full",
+  )
+);
 const bottomBarCount = computed(() =>
-  (templatesHidden.value ? 0 : 1) + (showAuxKeyBar.value ? 1 : 0)
+  previewMode.value ? 0 : (templatesHidden.value ? 0 : 1) + (showAuxKeyBar.value ? 1 : 0)
 );
 const terminalBottom = computed(() => `${bottomBarCount.value * 30}px`);
 const templateBarBottom = computed(() => showAuxKeyBar.value ? "30px" : "0");
@@ -349,6 +361,65 @@ const templateBarBottom = computed(() => showAuxKeyBar.value ? "30px" : "0");
 function focusTerminalIfDriver() {
   if (!isDriver.value) return;
   term?.focus();
+}
+
+async function stopPreview(): Promise<void> {
+  const running = preview.value;
+  preview.value = null;
+  previewMode.value = false;
+  if (!running) return;
+  conn?.closeService(running.serviceId);
+  try {
+    await platform.servicePreview?.stop(running.id);
+  } catch (e) {
+    logDebug("service-preview", "stop failed", { error: errText(e) });
+  }
+  await nextTick();
+  safeFit();
+}
+
+async function openPreview(): Promise<void> {
+  if (!canOpenPreview.value || !conn || !platform.servicePreview || previewBusy.value) return;
+  const raw = window.prompt(t("terminal.preview.portPrompt"), "3000");
+  if (raw === null) return;
+  const port = Number(raw.trim());
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    emit("toast", t("terminal.preview.invalidPort"));
+    return;
+  }
+  previewBusy.value = true;
+  let opened: Awaited<ReturnType<SessionConnection["openService"]>> | null = null;
+  try {
+    if (preview.value) await stopPreview();
+    opened = await conn.openService(port);
+    if (!isAlive || !canOpenPreview.value) {
+      conn.closeService(opened.serviceId);
+      throw new Error(t("terminal.preview.noLongerAllowed"));
+    }
+    const local = await platform.servicePreview.start({
+      serviceId: opened.serviceId,
+      clientTicket: opened.clientTicket,
+      clientToHostKey: opened.clientToHostKey,
+      hostToClientKey: opened.hostToClientKey,
+    });
+    if (!isAlive || !canOpenPreview.value) {
+      conn.closeService(opened.serviceId);
+      await platform.servicePreview.stop(local.id);
+      throw new Error(t("terminal.preview.noLongerAllowed"));
+    }
+    preview.value = { id: local.id, serviceId: opened.serviceId, url: local.url, port };
+    previewMode.value = true;
+  } catch (e) {
+    if (opened) conn?.closeService(opened.serviceId);
+    emit("toast", t("terminal.preview.openFailed", { error: errText(e) }));
+  } finally {
+    previewBusy.value = false;
+  }
+}
+
+function showTerminal(): void {
+  previewMode.value = false;
+  nextTick(() => safeFit());
 }
 
 function focusTerminalForPaneActivation() {
@@ -1823,6 +1894,7 @@ function startConnection() {
       },
       onStatus: (s) => {
         status.value = s;
+        if (s !== "attached" && preview.value) void stopPreview();
       },
       onReplayProgress: (progress) => {
         replayProgress.value = progress.phase === "end" ? null : progress;
@@ -1845,6 +1917,7 @@ function startConnection() {
         applyViewerSize();
         if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
         if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
+        if (!isMe && preview.value) void stopPreview();
         if (wasDriver !== isMe) {
           emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
         }
@@ -2086,6 +2159,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   isAlive = false;
+  void stopPreview();
   // Drop every external callback that could re-enter the term BEFORE we
   // touch conn / term. A queued ResizeObserver entry or a stray document
   // listener firing in the same tick used to call safeFit() → fit.fit() on
@@ -2176,6 +2250,15 @@ watch(
   }
 );
 
+watch(
+  () => props.remotePermission,
+  () => {
+    if (effectiveRemotePermission(props.remotePermission) !== "full" && preview.value) {
+      void stopPreview();
+    }
+  },
+);
+
 // Pane swap inside an already-active tab: the active-watch above doesn't fire
 // (props.active stayed true), so xterm never learns the focus moved. A manual
 // mousedown on the pane goes via the DOM and lands focus on xterm's textarea
@@ -2240,6 +2323,7 @@ watch(
 <template>
   <div class="term-view" :class="{ focused }">
     <div
+      v-show="!previewMode"
       ref="termContainer"
       class="term"
       :style="{ bottom: terminalBottom }"
@@ -2249,6 +2333,24 @@ watch(
       @pointerdown.capture="onTermPointerDown"
       @mousedown.capture="onTermMouseDown"
     ></div>
+    <iframe
+      v-if="preview && previewMode"
+      class="service-preview-frame"
+      :src="preview.url"
+      :title="t('terminal.preview.frameTitle', { port: preview.port })"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
+      allow="clipboard-read; clipboard-write"
+    ></iframe>
+    <div v-if="canOpenPreview || preview" class="service-preview-controls">
+      <template v-if="preview">
+        <button type="button" :class="{ active: !previewMode }" @click="showTerminal">{{ t("terminal.preview.terminal") }}</button>
+        <button type="button" :class="{ active: previewMode }" @click="previewMode = true">{{ t("terminal.preview.previewPort", { port: preview.port }) }}</button>
+        <button type="button" class="close" @click="stopPreview">{{ t("common.close") }}</button>
+      </template>
+      <button v-else type="button" data-testid="open-service-preview" :disabled="previewBusy" @click="openPreview">
+        {{ previewBusy ? t("terminal.preview.opening") : t("terminal.preview.open") }}
+      </button>
+    </div>
     <TerminalSelectionPopover
       :visible="selectionPopover.visible"
       :x="selectionPopover.x"
@@ -2323,7 +2425,7 @@ watch(
       </div>
     </Teleport>
     <div
-      v-if="!templatesHidden"
+      v-if="!templatesHidden && !previewMode"
       class="template-bar"
       data-testid="template-bar"
       :style="{ bottom: templateBarBottom }"
@@ -2346,7 +2448,7 @@ watch(
       >{{ tpl.label }}</button>
     </div>
     <div
-      v-if="showAuxKeyBar"
+      v-if="showAuxKeyBar && !previewMode"
       class="aux-key-bar"
       data-testid="terminal-aux-key-bar"
       @pointerdown.capture="onKeyboardControlPointerDown"
@@ -2530,6 +2632,47 @@ watch(
   right: 0;
   top: 0;
   bottom: 30px;
+}
+.service-preview-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.service-preview-controls {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  z-index: 7;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--terminal-overlay);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.25);
+}
+.service-preview-controls button {
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 8px;
+  color: var(--fg-dim);
+  background: transparent;
+  font: 12px var(--font-mono);
+  cursor: pointer;
+}
+.service-preview-controls button.active {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.1);
+}
+.service-preview-controls button.close {
+  color: var(--bad);
+}
+.service-preview-controls button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .template-bar {
   position: absolute;

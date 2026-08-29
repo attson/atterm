@@ -317,9 +317,13 @@ export function StartDownload():Promise<void>;
 
 export function StartForward(arg1:string,arg2:string):Promise<void>;
 
+export function StartServicePreview(arg1:main.ServicePreviewStartRequest):Promise<main.ServicePreviewStartResponse>;
+
 export function StartWidget():Promise<void>;
 
 export function StopForward(arg1:string,arg2:string):Promise<void>;
+
+export function StopServicePreview(arg1:string):Promise<void>;
 
 export function StopWidget():Promise<void>;
 

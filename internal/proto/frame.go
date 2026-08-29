@@ -69,6 +69,15 @@ const (
 	TypeSessionCreate  Type = 0x3b // client -> relay -> desktop uplink
 	TypeSessionCreated Type = 0x3c // desktop uplink -> relay -> requester client
 
+	// Remote Web Preview control frames. TCP bytes never ride these frames;
+	// they use the independent /service-client and /service-host WebSockets.
+	// Keeping control on the attached session gives the relay and owner host
+	// the same driver/full permission gates as other privileged remote actions
+	// without making a Preview count as a PTY subscriber.
+	TypeServiceOpen   Type = 0x3d // client -> relay -> desktop uplink
+	TypeServiceOpened Type = 0x3e // desktop uplink -> relay -> requester client
+	TypeServiceClose  Type = 0x3f // client -> relay; tears down one lease
+
 	// Auth frames (server → client).
 	TypeAuthInfo Type = 0x40 // relay -> uplink; UTF-8 JSON {user_id}
 )
@@ -355,6 +364,46 @@ type SessionCreatedPayload struct {
 	// through unchanged (may name a local path — see
 	// session_create_handler.go's comment on that one exception).
 	Error string `json:"error,omitempty"`
+}
+
+// ServiceOpenPayload asks the owner desktop of an attached session to expose
+// one loopback HTTP service. Port and Scheme are never present outside the
+// Sealed envelope; the relay needs only the ids and its own one-time ticket.
+type ServiceOpenPayload struct {
+	RequestID string `json:"request_id"`
+	ServiceID string `json:"service_id"`
+	// HostTicket is generated and overwritten by the relay. It authenticates
+	// the desktop's first /service-host registration message and is never put
+	// in a URL or log line.
+	HostTicket string `json:"host_ticket,omitempty"`
+	// Sealed is XChaCha20-Poly1305 over SealedServiceOpenFields under the
+	// session key, AAD=session_uuid||TypeServiceOpen.
+	Sealed []byte `json:"sealed,omitempty"`
+}
+
+// SealedServiceOpenFields are the owner-only fields carried by
+// ServiceOpenPayload.Sealed. There is deliberately no host field: phase 1 can
+// only dial owner loopback, so the wire cannot be turned into an SSRF surface.
+type SealedServiceOpenFields struct {
+	Port   uint16 `json:"port"`
+	Scheme string `json:"scheme,omitempty"`
+}
+
+// ServiceOpenedPayload is the answer to ServiceOpenPayload. ClientTicket is
+// injected by the relay only on a successful response and authorizes exactly
+// one /service-client registration.
+type ServiceOpenedPayload struct {
+	RequestID    string `json:"request_id"`
+	ServiceID    string `json:"service_id"`
+	OK           bool   `json:"ok"`
+	Error        string `json:"error,omitempty"`
+	ClientTicket string `json:"client_ticket,omitempty"`
+}
+
+// ServiceClosePayload explicitly revokes a Preview lease. Socket/session
+// teardown also revokes it, so this frame is an idempotent fast path.
+type ServiceClosePayload struct {
+	ServiceID string `json:"service_id"`
 }
 
 // SessionInfo is one entry of TypeListResp.

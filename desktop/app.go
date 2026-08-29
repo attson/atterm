@@ -284,6 +284,11 @@ type App struct {
 	// usable; it holds its own lock.
 	tunnels tunnelManager
 
+	// servicePreviews owns loopback listeners opened by the desktop Preview
+	// bridge. It is independent of PTY/session lifecycle and is stopped on
+	// relay reconfiguration or app shutdown.
+	servicePreviews servicePreviewManager
+
 	// sftp holds the file explorer's SSH data source (see sftp_source.go).
 	// Built lazily by sftpBrowser() because App is constructed in a dozen
 	// shapes and none of them should have to remember this one.
@@ -569,6 +574,7 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
 func (a *App) shutdown(ctx context.Context) {
+	a.servicePreviews.stopAll()
 	a.mu.Lock()
 	if a.uplinkCancel != nil {
 		a.uplinkCancel()
@@ -621,6 +627,7 @@ func (a *App) shutdown(ctx context.Context) {
 // applyRelayConfig reconciles everything that depends on the relay login state:
 // the uplink and the Feishu integration mode. Caller need not hold a.mu.
 func (a *App) applyRelayConfig(cfg appConfig) {
+	a.servicePreviews.stopAll()
 	a.applyRelayUplink(cfg)
 	a.applyRelayPrefsWatch(cfg)
 	// Feishu mode follows the relay login state: relay when logged in, local

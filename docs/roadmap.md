@@ -1,12 +1,13 @@
 # 路线图
 
-## 状态速览 (2026-08-16)
+## 状态速览 (2026-08-29)
 
 - **v0.4.19** 已发布(2026-08-16)。桌面 dmg / Linux deb+tar / Windows exe+zip 全平台构件已 upload,SHA256SUMS + GPG 签名附。
 - **下一阶段方向已定**:以配置同步层为主线,补本地终端基本功 + SSH 主机能力,见 [`docs/superpowers/specs/2026-08-16-sync-layer-roadmap-design.md`](./superpowers/specs/2026-08-16-sync-layer-roadmap-design.md)。对应下面的 **P5 / P6 / P7**;原 P3(协作)降级到 Backlog、原 P4(历史与回放)暂缓。
 - **桌面挂件**(Desk Widget)已落地:置顶悬浮小窗显示所有会话的运行 / 失败 / 等待输入状态,点行跳转对应 tab。走插件模式(Settings → 插件),可选"仅 AI 会话"。设计与踩坑记录见 [`docs/superpowers/specs/2026-08-10-desk-widget-design.md`](./superpowers/specs/2026-08-10-desk-widget-design.md),不变量见 AGENTS.md 红线 #37。
 - **task_state 改由 hook 驱动**(#341):Claude Code / Codex 的 `Stop` / `Notification` / `PreToolUse` 等事件接进 `internal/session`,取代输出静默启发式,AI 会话状态不再在 `running` ↔ `waiting_input` 之间抖。见 [`docs/superpowers/specs/2026-08-16-hook-driven-task-state-design.md`](./superpowers/specs/2026-08-16-hook-driven-task-state-design.md)。后续项:`running` 会话置顶排序、挂件形态 B/C、尚未接入的 `SessionStart` / `SubagentStart|Stop` / `Pre|PostCompact`。
 - **终端链接已完成**:URL 单击直接打开 + 软换行 URL 拼接(#281),本地文件路径点击在文件浏览器中定位预览。
+- **远程 Web Preview 阶段 1 已完成**：remote session 的 driver 可手工输入 owner loopback HTTP 端口，在当前 pane 内切换 Terminal / Preview；Desktop 与 iOS 通过独立 E2EE service proxy 转发，relay 不见 HTTP 明文且不触发 PTY lazy 上传。见 [`2026-08-29-remote-web-preview-phase1-design.md`](./superpowers/specs/2026-08-29-remote-web-preview-phase1-design.md)。
 - P0/P1/P2 核心功能全部完成并稳定;v0.4.x 系列以修复 + 内部重构为主。
 - 大规模重构完成:App.vue 2326→1749 (-25%)、TerminalView.vue 抽 2 slice、api.ts 1098→299 (-73%)、Go 巨型文件全套拆分。详见 [`docs/superpowers/plans/2026-08-04-refactor-roadmap.md`](./superpowers/plans/2026-08-04-refactor-roadmap.md)。
 - 待办:M5-b 剩余 6 slice(TerminalView composable 抽取,需 iOS Simulator 逐 slice 验证);具体见上述 refactor-roadmap 尾部"剩余待办"表。
@@ -510,6 +511,31 @@
 **已知限制**：零会话的桌面在 `/api/sessions` 里没有行，所以手机的目标选择器里点不到它——尽管 relay 完全能路由过去。「可路由」不等于「可命名」。界面文案把它变成一个用户能执行的动作（先在某台桌面上开一个会话）。补上它需要新的 API surface，不值得。
 
 **刻意没做**：移动端不可编辑主机与 profile——编辑意味着密封、密封意味着写一个别的设备会采纳的 key，而一台无法验证结果的设备（它开不了 shell 去试）的写入路径，正是一次性搞坏所有机器配置的方式；不显示凭据；手机不直接连 SSH；不为已有会话切换 profile（profile 在 fork 时生效，事后更换等于重新 fork，那是另一件需要另一次确认的事）。
+
+## P8：v0.8 远程 Web Preview
+
+### 34. 手动 loopback HTTP Preview
+
+- [x] remote + driver + `remote_permission=full` 的可见入口与端口校验
+- [x] `SERVICE_OPEN/OPENED/CLOSE` additive control frames，端口 E2EE sealed
+- [x] `/service-client` / `/service-host` 单次 ticket 配对与 owner/session cleanup
+- [x] AES-256-GCM TCP multiplex（方向 key、sequence/AAD、16 connection 与额度边界）
+- [x] owner 只拨 `127.0.0.1:<port>`，desktop 二次权限校验
+- [x] Wails 与 Capacitor iOS loopback bridge；纯 Web/PWA 阶段 1 不开放
+- [x] `Terminal / Preview :port` pane 内切换，失去 driver/full 或卸载即关闭
+- [x] Go/TS 跨端 key vector、codec/replay/tamper、relay control/data 与真实 HTTP loopback E2E
+
+### 后续迭代
+
+- [ ] 服务发现：从 owner 进程/终端输出中安全提议端口，仍需用户确认，不自动暴露
+- [ ] HMR/WebSocket/SSE 兼容矩阵与长连接专项压测
+- [ ] 多 Preview 管理、重连恢复与流量/连接可见性
+- [ ] SSH session 的显式目标侧 Preview（需独立威胁模型，不复用任意 host 字段）
+- [ ] 评估浏览器/PWA 在不让 `account_key` 离开主线程前提下的可行 bridge
+
+**刻意不做**：公网分享 URL、任意 host/通用 TCP/SOCKS、自动端口扫描、relay
+解密或 HTTP 感知。阶段 1 的价值是“离开工位后能看开发服务”，不是把 atterm
+变成通用内网穿透产品。
 
 ## 阻塞于外部凭据
 

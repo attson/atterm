@@ -1362,6 +1362,38 @@ export namespace main {
 	        this.key_type = source["key_type"];
 	    }
 	}
+	export class ServicePreviewStartRequest {
+	    service_id: string;
+	    client_ticket: string;
+	    client_to_host_key: number[];
+	    host_to_client_key: number[];
+
+	    static createFrom(source: any = {}) {
+	        return new ServicePreviewStartRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.service_id = source["service_id"];
+	        this.client_ticket = source["client_ticket"];
+	        this.client_to_host_key = source["client_to_host_key"];
+	        this.host_to_client_key = source["host_to_client_key"];
+	    }
+	}
+	export class ServicePreviewStartResponse {
+	    id: string;
+	    url: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ServicePreviewStartResponse(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.url = source["url"];
+	    }
+	}
 	export class SessionProfile {
 	    id: string;
 	    name: string;
@@ -1561,4 +1593,3 @@ export namespace main {
 	}
 
 }
-

@@ -1340,3 +1340,22 @@ describe("prefs:changed reload", () => {
     }
   });
 });
+
+describe("Remote Web Preview", () => {
+  test("is visible only for a remote full-permission driver on a native bridge", () => {
+    expect(source).toMatch(/platform\.servicePreview/);
+    expect(source).toMatch(/!props\.isLocalSession/);
+    expect(source).toMatch(/isDriver\.value/);
+    expect(source).toMatch(/effectiveRemotePermission\(props\.remotePermission\) === "full"/);
+    expect(source).toContain('data-testid="open-service-preview"');
+  });
+
+  test("switches inside the pane and tears the lease down on role or lifecycle loss", () => {
+    expect(source).toContain('class="service-preview-frame"');
+    expect(source).toMatch(/conn\?\.closeService\(running\.serviceId\)/);
+    expect(source).toMatch(/platform\.servicePreview\?\.stop\(running\.id\)/);
+    expect(source).toMatch(/if \(!isMe && preview\.value\) void stopPreview\(\)/);
+    expect(source).toMatch(/onBeforeUnmount\(\(\) => \{[\s\S]*?void stopPreview\(\)/);
+    expect(source.match(/!isAlive \|\| !canOpenPreview\.value/g)).toHaveLength(2);
+  });
+});

@@ -95,6 +95,34 @@ func TestServer_ClientRoute_AcceptsSession(t *testing.T) {
 	}
 }
 
+func TestServer_ServiceRoutesRequireSession(t *testing.T) {
+	for _, path := range []string{"/service-client", "/service-host"} {
+		t.Run(path+" unauthenticated", func(t *testing.T) {
+			s, _ := serverWithSession(t)
+			req := httptest.NewRequest("GET", path, nil)
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("%s unauth: got %d want 401", path, rec.Code)
+			}
+		})
+		t.Run(path+" authenticated", func(t *testing.T) {
+			s, token := serverWithSession(t)
+			req := httptest.NewRequest("GET", path, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-WebSocket-Version", "13")
+			req.Header.Set("Sec-WebSocket-Key", "dGVzdC1rZXktMTIzNDU2Nzg=")
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, req)
+			if rec.Code == http.StatusUnauthorized {
+				t.Fatalf("%s rejected valid session", path)
+			}
+		})
+	}
+}
+
 func TestServer_ClientSessionsRoute_RejectsWithoutSession(t *testing.T) {
 	s, _ := serverWithSession(t)
 	req := httptest.NewRequest("GET", "/client-sessions", nil)

@@ -48,6 +48,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 	// eventually clear it, but there's no reason to wait: nothing will ever
 	// read targetedOut again once this connection is gone.
 	defer s.sessionCreateRoutes().unregisterClient(targetedOut)
+	defer s.services.closeRequester(targetedOut)
 	defer func() {
 		routes := s.fsRoutes()
 		if sess != nil && sess.DriverFromUpstream() {
@@ -432,6 +433,63 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "upstream_unavailable")
 			}
 
+		case proto.TypeServiceOpen:
+			if sess == nil || f.SessionID != sess.ID {
+				s.sendServiceClientError(targetedOut, targetedOverflow, f.SessionID, "", "", "invalid_request")
+				continue
+			}
+			var req proto.ServiceOpenPayload
+			if err := json.Unmarshal(f.Payload, &req); err != nil || req.RequestID == "" || req.ServiceID == "" || len(req.Sealed) == 0 {
+				s.sendServiceClientError(targetedOut, targetedOverflow, sess.ID, req.RequestID, req.ServiceID, "invalid_request")
+				continue
+			}
+			if scope != authWrite || sess.Info().RemotePermission != proto.RemotePermissionFull {
+				s.sendServiceClientError(targetedOut, targetedOverflow, sess.ID, req.RequestID, req.ServiceID, "permission_denied")
+				continue
+			}
+			if !sess.IsDriver(sub) {
+				s.sendServiceClientError(targetedOut, targetedOverflow, sess.ID, req.RequestID, req.ServiceID, "driver_required")
+				continue
+			}
+			if !sess.DriverFromUpstream() {
+				s.sendServiceClientError(targetedOut, targetedOverflow, sess.ID, req.RequestID, req.ServiceID, "upstream_unavailable")
+				continue
+			}
+			forwarded, message, ok := s.services.begin(ownerUserID, sess.ID, req, targetedOut, targetedOverflow)
+			if !ok {
+				s.sendServiceClientError(targetedOut, targetedOverflow, sess.ID, req.RequestID, req.ServiceID, message)
+				continue
+			}
+			payload, err := json.Marshal(forwarded)
+			if err != nil {
+				if id, parseErr := uuid.Parse(req.ServiceID); parseErr == nil {
+					s.services.closeByRequester(id, targetedOut)
+				}
+				s.sendServiceClientError(targetedOut, targetedOverflow, sess.ID, req.RequestID, req.ServiceID, "invalid_request")
+				continue
+			}
+			f.Payload = payload
+			if !sess.SendInbound(f) {
+				if id, parseErr := uuid.Parse(req.ServiceID); parseErr == nil {
+					s.services.closeByRequester(id, targetedOut)
+				}
+				s.sendServiceClientError(targetedOut, targetedOverflow, sess.ID, req.RequestID, req.ServiceID, "upstream_unavailable")
+			}
+
+		case proto.TypeServiceClose:
+			if sess == nil || f.SessionID != sess.ID {
+				continue
+			}
+			var req proto.ServiceClosePayload
+			if err := json.Unmarshal(f.Payload, &req); err != nil {
+				continue
+			}
+			serviceID, err := uuid.Parse(req.ServiceID)
+			if err != nil {
+				continue
+			}
+			s.services.closeByRequester(serviceID, targetedOut)
+
 		case proto.TypePing:
 			// Echo PING payload as PONG so the client can compute RTT
 			// without trusting the server clock. nhooyr Conn.Write is
@@ -476,6 +534,20 @@ func (s *Server) sendFSClientError(out chan<- proto.Frame, onOverflow func(), se
 	}
 	if !sendFSFrameToRoute(fsClientRoute{out: out, onOverflow: onOverflow}, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
 		s.debugf("client fs_error_drop session=%s request_id=%s", sessionID, requestID)
+	}
+}
+
+func (s *Server) sendServiceClientError(out chan<- proto.Frame, onOverflow func(), sessionID uuid.UUID, requestID, serviceID, message string) {
+	payload, err := json.Marshal(proto.ServiceOpenedPayload{
+		RequestID: requestID,
+		ServiceID: serviceID,
+		Error:     message,
+	})
+	if err != nil {
+		return
+	}
+	if !sendFSFrame(out, proto.Frame{Type: proto.TypeServiceOpened, SessionID: sessionID, Payload: payload}) && onOverflow != nil {
+		onOverflow()
 	}
 }
 

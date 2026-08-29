@@ -17,6 +17,7 @@
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		A77E330000000000000000B1 /* AttermSecureStoragePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77E330000000000000000F1 /* AttermSecureStoragePlugin.swift */; };
 		A77E330000000000000000B2 /* AttermQRScannerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77E330000000000000000F2 /* AttermQRScannerPlugin.swift */; };
+		A77E330000000000000000B4 /* AttermServicePreviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77E330000000000000000F4 /* AttermServicePreviewPlugin.swift */; };
 		A77E330000000000000000B3 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77E330000000000000000F3 /* MainViewController.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,6 +34,7 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		A77E330000000000000000F1 /* AttermSecureStoragePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttermSecureStoragePlugin.swift; sourceTree = "<group>"; };
 		A77E330000000000000000F2 /* AttermQRScannerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttermQRScannerPlugin.swift; sourceTree = "<group>"; };
+		A77E330000000000000000F4 /* AttermServicePreviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttermServicePreviewPlugin.swift; sourceTree = "<group>"; };
 		A77E330000000000000000F3 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -87,6 +89,7 @@
 			children = (
 				A77E330000000000000000A2 /* AttermSecureStorage */,
 				A77E330000000000000000A3 /* AttermQRScanner */,
+				A77E330000000000000000A4 /* AttermServicePreview */,
 			);
 			path = Plugins;
 			sourceTree = "<group>";
@@ -105,6 +108,14 @@
 				A77E330000000000000000F2 /* AttermQRScannerPlugin.swift */,
 			);
 			path = AttermQRScanner;
+			sourceTree = "<group>";
+		};
+		A77E330000000000000000A4 /* AttermServicePreview */ = {
+			isa = PBXGroup;
+			children = (
+				A77E330000000000000000F4 /* AttermServicePreviewPlugin.swift */,
+			);
+			path = AttermServicePreview;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -192,6 +203,7 @@
 				A77E330000000000000000B3 /* MainViewController.swift in Sources */,
 				A77E330000000000000000B1 /* AttermSecureStoragePlugin.swift in Sources */,
 				A77E330000000000000000B2 /* AttermQRScannerPlugin.swift in Sources */,
+				A77E330000000000000000B4 /* AttermServicePreviewPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

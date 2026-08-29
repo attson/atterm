@@ -337,6 +337,28 @@ export function sealUnsequenced(
   return out
 }
 
+export interface ServiceKeys {
+  clientToHost: Uint8Array
+  hostToClient: Uint8Array
+}
+
+/** Derive direction-separated AES-256 keys for one Remote Web Preview.
+ *  Mirrors internal/e2eecrypto.DeriveServiceKeys exactly. Only these
+ *  ephemeral keys cross the native bridge; accountKey never does. */
+export function deriveServiceKeys(accountKey: Uint8Array, serviceUUID: string): ServiceKeys {
+  if (accountKey.length !== 32) throw new Error('account_key must be 32 bytes')
+  const serviceID = uuidStringToBytes(serviceUUID)
+  const prefix = utf8ToBytes('atterm-service-v1')
+  const info = new Uint8Array(prefix.length + serviceID.length)
+  info.set(prefix)
+  info.set(serviceID, prefix.length)
+  const out = hkdf(sha256, accountKey, undefined, info, 64)
+  return {
+    clientToHost: out.slice(0, 32),
+    hostToClient: out.slice(32, 64),
+  }
+}
+
 /** openUnsequencedFrame is the inverse of sealUnsequenced, returning raw
  *  plaintext bytes or null on any structural/cipher error so the caller
  *  drops the frame rather than acting on garbage. */

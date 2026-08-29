@@ -118,7 +118,8 @@ func (p *remoteProxy) handleWSProxy(w http.ResponseWriter, r *http.Request, rela
 		dialOpts.HTTPClient = relayHTTPClient(true, 0)
 	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, 10*time.Second)
-	remote, _, err := websocket.Dial(dialCtx, strings.TrimRight(cfg.RelayURL, "/")+relayPath, dialOpts)
+	relayURL := uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
+	remote, _, err := websocket.Dial(dialCtx, strings.TrimRight(relayURL, "/")+relayPath, dialOpts)
 	cancelDial()
 	if err != nil {
 		logWarn("remote-proxy", "dial relay %s: %v", relayPath, err)

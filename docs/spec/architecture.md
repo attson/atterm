@@ -174,6 +174,34 @@ ATTACH(sid, client_id)  ───►
 
 帧格式与字节级语义见 [protocol.md](./protocol.md) §Driver / Viewer 模型。前端实现在 `desktop/frontend/src/components/TerminalView.vue`（`isDriver` ref + `onDriverChange` handler + Space 拦截调 `claimDriver()`）——web 现在挂载的就是这同一个组件（见「前端架构细节」节），不再有独立的 `web/src/main/` 实现。
 
+### 流 5：远程 Web Preview（阶段 1）
+
+远程 session 的当前 driver 可手工输入 owner desktop 上的 loopback HTTP
+端口，并在同一个 `TerminalView` 内切到 Preview。控制与数据刻意分流：
+
+```text
+控制：SessionConnection SERVICE_OPEN(sealed port)
+       → relay /client（driver + full gate）
+       → mirror.Inbound → /uplink
+       → desktop serviceHost（full gate + open sealed port）
+
+数据：原生 client loopback listener
+       ⇄ /service-client ⇄ relay keyless pair ⇄ /service-host
+       ⇄ owner 127.0.0.1:<port>
+```
+
+relay 为两条 service WS 发一次性 ticket，只看 multiplex header/额度并转发
+AES-GCM 密文。两端以 `HKDF(account_key, "atterm-service-v1" || service_id)`
+派生方向独立的临时 key；`account_key` 不交给 Wails/Swift 代理。wire 不存在
+任意 host 字段，owner 固定只拨 `127.0.0.1`，因此该能力不能被改造成 relay
+侧或 owner 侧 SSRF。
+
+service hub 不调用 `Subscribe`，数据 WS 也不经过 session mirror，所以打开
+Preview 不会改变 0→1/N→0 subscriber lifecycle，更不会让静默 PTY 开始 lazy
+上传。阶段 1 只在 Wails desktop 与 Capacitor iOS 暴露原生 bridge；纯 Web/PWA
+不显示入口。完整 wire、限额与生命周期见
+[Remote Web Preview 阶段 1 design](../superpowers/specs/2026-08-29-remote-web-preview-phase1-design.md)。
+
 ## 会话生命周期
 
 ```
@@ -219,6 +247,7 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 - ✅ Phase 4c（v0.4 引导可信度）：P1.6 桌面端 QR 配对 + 移动端扫码消费 token（`/api/pair/*`）；P1.7 relay `/healthz` + admin `/admin/health` 健康检查页；P1.9 iOS Keychain 安全存储 + ATS；P1.10 桌面诊断信息导出 + 脱敏
 - ✅ Phase 4d（v0.5 AI 任务控制台）：P2.11 session 类型分类（shell / ai / test / build / deploy，sticky non-shell）；P2.12 OSC 133 D 事件触发的 SessionSummary（ANSI-stripped tail + error lines），MetaPayload 携带 type + summary；P2.13 AI 快捷模板（QuickTemplate model + desktop Settings editor + 三端 bar）
 - ✅ Phase 4e（v0.6 mobile UX 收口，至 v0.2.39 全部落地）：移动端独立设置页 + 模板/aux 键编辑器 + 退出登录保留配置（#105）；终端首屏全屏（ResizeObserver 替换一次性 fit）+ viewer 锁尺寸（onMeta term.resize）（#106）；中文输入法 capture-phase 补获 `insertText`（#107）；设置改动通过事件总线（`mobile:shortcutsChanged` / `quickTemplates:changed`）实时同步到已开 tab（#108）；Capacitor 8 plugin 正式落地（#104 Keychain + #109 Camera/barcode 注册到 mobile/package.json + #113 keyboard accessory bar 隐藏）；QuickTemplate v2（hotkey + 直接发送 + 显示/隐藏开关 + 新默认值）+ 删 legacy quickInput 插件（#110 + #111）；防误触模式 banner（#100）
+- ✅ Remote Web Preview Phase 1：remote driver 手工暴露 owner loopback HTTP 端口；Wails/iOS 原生 loopback bridge；独立 E2EE service WS multiplex，不触碰 PTY lazy subscriber lifecycle
 - ⬜ Phase 5（未完成）：P1.8 桌面安装包 codesign + notarization；P3+ 单 session 分享 / presence / 审计日志 / 持久化历史 / 命令级回放
 
 ## 桌面端架构细节

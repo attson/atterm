@@ -32,6 +32,9 @@ export const TYPE = {
   // own profiles. See platform/capacitor.ts's createSessionWithProfile.
   SESSION_CREATE: 0x3b,
   SESSION_CREATED: 0x3c,
+  SERVICE_OPEN: 0x3d,
+  SERVICE_OPENED: 0x3e,
+  SERVICE_CLOSE: 0x3f,
 } as const;
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE];

@@ -287,6 +287,23 @@ export interface WidgetBridge {
   pushState(json: string): Promise<void>
 }
 
+export interface ServicePreviewStartRequest {
+  serviceId: string
+  clientTicket: string
+  clientToHostKey: Uint8Array
+  hostToClientKey: Uint8Array
+}
+
+export interface ServicePreviewStartResult {
+  id: string
+  url: string
+}
+
+export interface ServicePreviewBridge {
+  start(req: ServicePreviewStartRequest): Promise<ServicePreviewStartResult>
+  stop(id: string): Promise<void>
+}
+
 export interface Platform {
   caps: Capabilities
   relay: RelayBridge
@@ -298,4 +315,5 @@ export interface Platform {
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
   deskWidget?: WidgetBridge
+  servicePreview?: ServicePreviewBridge
 }

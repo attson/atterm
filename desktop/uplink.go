@@ -225,6 +225,8 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	if u.sessionCreateExec != nil {
 		sessionCreate.newSession = u.sessionCreateExec
 	}
+	serviceHosts := newServiceHostManager(connCtx, u.relayURL, u.token, u.allowInsecure, u.accountKey, out, u.rawRemotePermission)
+	defer serviceHosts.close()
 
 	// Send first ANNOUNCE so the relay registers the host immediately.
 	if err := u.writeAnnounce(connCtx, conn); err != nil {
@@ -478,6 +480,8 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			}
 			logDebug("uplink", "session_create_recv request_id=%s profile_id=%s", req.RequestID, req.ProfileID)
 			sessionCreate.submit(req)
+		case proto.TypeServiceOpen:
+			serviceHosts.submit(f)
 		case proto.TypeClaimDriver:
 			logDebug("uplink", "inbound_recv type=CLAIM_DRIVER %s", desktopUplinkFrameLogDetails(f))
 			var cp proto.ClaimDriverPayload

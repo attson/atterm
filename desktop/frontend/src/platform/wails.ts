@@ -18,6 +18,8 @@ import {
   StartWidget,
   StopWidget,
   PushWidgetState,
+  StartServicePreview,
+  StopServicePreview,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -122,6 +124,18 @@ export function createWailsPlatform(): Platform {
       listRelaySessions: api.listRelaySessions,
       revokeRelaySession: api.revokeRelaySession,
       signOutOtherRelaySessions: api.signOutOtherRelaySessions,
+    },
+    servicePreview: {
+      start: async (req) => {
+        const result = await StartServicePreview({
+          service_id: req.serviceId,
+          client_ticket: req.clientTicket,
+          client_to_host_key: Array.from(req.clientToHostKey),
+          host_to_client_key: Array.from(req.hostToClientKey),
+        })
+        return { id: result.id, url: result.url }
+      },
+      stop: async (id) => StopServicePreview(id),
     },
     system: {
       showNotification: api.showNotification,

@@ -24,6 +24,7 @@ import { setAccountKeyProvider } from '../lib/account-key'
 import { errText, logWarn } from "../lib/log";
 import { webSocketAuth, type Endpoint } from "../lib/connection";
 import { TYPE, NIL_SID, encodeFrame, decodeFrame, encodeText, decodeText } from "../lib/proto";
+import { NativeServicePreview } from './servicePreviewNative'
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
@@ -510,6 +511,24 @@ export function createCapacitorPlatform(): Platform {
         return v ?? ''
       },
       // setUplinkPaused omitted — desktop-only
+    },
+    servicePreview: {
+      start: async (req) => {
+        const cfg = loadLegacyFromLocalStorage()
+          ?? parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+        if (!cfg?.url || !cfg.token) throw new Error('relay_not_configured')
+        const serviceRelayURL = cfg.homeInstanceURL || cfg.url
+        return NativeServicePreview.start({
+          serviceId: req.serviceId,
+          clientTicket: req.clientTicket,
+          clientToHostKey: bytesToB64Std(req.clientToHostKey),
+          hostToClientKey: bytesToB64Std(req.hostToClientKey),
+          relayUrl: serviceRelayURL,
+          token: cfg.token,
+          allowInsecure: cfg.allow_insecure_relay ?? false,
+        })
+      },
+      stop: (id) => NativeServicePreview.stop({ id }),
     },
     sessions: {
       // newSession omitted — capacitor cannot fork local PTYs

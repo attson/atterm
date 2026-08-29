@@ -350,6 +350,7 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 		existing, ok := u.mirrors[id]
 		u.mu.Unlock()
 		if ok {
+			u.server.services.registerSession(id, u.ownerUserID, u.out)
 			// ANNOUNCE carries no driver_client_id; reconcile advertised
 			// facts without adopting an empty driver and clobbering the
 			// active driver (every client would flip to viewer).
@@ -387,6 +388,7 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 		ms := &mirrorState{sess: sess}
 		u.mirrors[id] = ms
 		u.mu.Unlock()
+		u.server.services.registerSession(id, u.ownerUserID, u.out)
 		// Resident inbound forwarder: must run regardless of remote
 		// subscribers so relay-injected IN frames reach the PTY.
 		u.startInboundForwarder(sess)
@@ -415,6 +417,7 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 
 func (u *uplinkSession) cleanup() {
 	u.server.sessionCreateRoutes().unregisterHost(u.hostID, u.ownerUserID, u.out)
+	u.server.services.closeUplink(u.out)
 	u.mu.Lock()
 	gone := make(map[uuid.UUID]*mirrorState, len(u.mirrors))
 	for id, ms := range u.mirrors {
@@ -547,6 +550,21 @@ func (u *uplinkSession) readLoop() {
 			// request was forwarded to, so a different uplink can't forge it.
 			if !u.server.sessionCreateRoutes().routeResponse(f, u.out) {
 				u.server.debugf("uplink session_created_drop reason=unrouted")
+			}
+		case proto.TypeServiceOpened:
+			u.mu.Lock()
+			_, knownSession := u.mirrors[f.SessionID]
+			u.mu.Unlock()
+			if !knownSession {
+				u.server.debugf("uplink service_opened_drop reason=unknown_session session=%s", f.SessionID)
+				continue
+			}
+			response, out, onOverflow, ok := u.server.services.finish(f, u.out)
+			if !ok || !sendFSFrame(out, response) {
+				if ok && onOverflow != nil {
+					onOverflow()
+				}
+				u.server.debugf("uplink service_opened_drop reason=unrouted session=%s", f.SessionID)
 			}
 		case proto.TypeFSResponse:
 			u.mu.Lock()

@@ -125,6 +125,7 @@ describe("SessionConnection FS RPC", () => {
   });
 
   afterEach(() => {
+    setAccountKeyProvider(null);
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -136,6 +137,55 @@ describe("SessionConnection FS RPC", () => {
     ws.open();
     return { conn, ws };
   }
+
+  test("openService seals the port and resolves only its matching SERVICE_OPENED", async () => {
+    setAccountKeyProvider(() => new Uint8Array(32).fill(0x42));
+    const requestID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const serviceID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const { conn, ws } = openConnection();
+    const randomUUID = vi.spyOn(crypto, "randomUUID");
+    randomUUID.mockReturnValueOnce(requestID).mockReturnValueOnce(serviceID);
+
+    const result = conn.openService(3000);
+    const frame = decodeFrame(ws.sent[1]);
+    expect(frame.type).toBe(TYPE.SERVICE_OPEN);
+    const payload = JSON.parse(decodeText(frame.payload));
+    expect(payload).toMatchObject({ request_id: requestID, service_id: serviceID });
+    expect(payload.sealed).toEqual(expect.any(String));
+    expect(JSON.stringify(payload)).not.toContain("3000");
+
+    ws.emit(TYPE.SERVICE_OPENED, {
+      request_id: requestID,
+      service_id: serviceID,
+      ok: true,
+      client_ticket: "one-time-ticket",
+    });
+    await expect(result).resolves.toMatchObject({
+      serviceId: serviceID,
+      clientTicket: "one-time-ticket",
+    });
+    const opened = await result;
+    expect(opened.clientToHostKey).toHaveLength(32);
+    expect(opened.hostToClientKey).toHaveLength(32);
+    expect(opened.clientToHostKey).not.toEqual(opened.hostToClientKey);
+  });
+
+  test("openService fails closed without an unlocked account key", async () => {
+    setAccountKeyProvider(() => null);
+    const { conn, ws } = openConnection();
+    await expect(conn.openService(3000)).rejects.toThrow(/E2EE/);
+    expect(ws.sent).toHaveLength(1); // ATTACH only
+  });
+
+  test("closeService sends the additive SERVICE_CLOSE frame", () => {
+    const { conn, ws } = openConnection();
+    conn.closeService("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    const frame = decodeFrame(ws.sent[1]);
+    expect(frame.type).toBe(TYPE.SERVICE_CLOSE);
+    expect(JSON.parse(decodeText(frame.payload))).toEqual({
+      service_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
+  });
 
   test("sendFSRequest sends FS_REQUEST and resolves the matching FS_RESPONSE", async () => {
     const { conn, ws } = openConnection();

@@ -27,6 +27,41 @@ func prepareZsh(sessionID string) Plan {
 		return Plan{}
 	}
 
+	// zsh resolves EVERY startup file against $ZDOTDIR, not just .zshrc:
+	// .zshenv → .zprofile → .zshrc → .zlogin. Pointing ZDOTDIR at the shim
+	// dir therefore silently skips the user's ~/.zshenv and ~/.zprofile —
+	// on macOS ~/.zprofile is where `brew shellenv` usually lives, so
+	// PATH-dependent tools (atuin, mise, …) turn into "command not found"
+	// inside atterm while working fine in Terminal.app. Chain-load both
+	// with the same restore-source-reshim dance the .zshrc wrapper does.
+	// .zlogin needs no shim: the .zshrc wrapper leaves ZDOTDIR restored to
+	// the original, so zsh finds the user's own .zlogin afterwards.
+	for _, name := range []string{".zshenv", ".zprofile"} {
+		chain := fmt.Sprintf(`# atterm zsh shim — chain-load the user's %[1]s, then re-shim ZDOTDIR
+# so the remaining startup files still route through this dir.
+_atterm_shim_dir=%[2]q
+if [[ -n "${ATTERM_ORIG_ZDOTDIR}" ]]; then
+  ZDOTDIR="${ATTERM_ORIG_ZDOTDIR}"
+else
+  unset ZDOTDIR
+fi
+_atterm_user_file="${ZDOTDIR:-$HOME}/%[1]s"
+if [[ -f "$_atterm_user_file" ]]; then
+  source "$_atterm_user_file" || true
+fi
+# The user file may itself change ZDOTDIR; capture what it left behind so
+# the later shim files chain to the right place.
+export ATTERM_ORIG_ZDOTDIR="${ZDOTDIR:-}"
+ZDOTDIR="$_atterm_shim_dir"
+unset _atterm_user_file _atterm_shim_dir
+`, name, dir)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(chain), 0o600); err != nil {
+			logging.Warn("shell-integration", "zsh write %s: %v", name, err)
+			_ = os.RemoveAll(dir)
+			return Plan{}
+		}
+	}
+
 	wrapper := fmt.Sprintf(`# atterm zsh wrapper — sources user rc then injects OSC 133 hooks.
 _atterm_shim_dir=%q
 _atterm_orig="${ATTERM_ORIG_ZDOTDIR}"

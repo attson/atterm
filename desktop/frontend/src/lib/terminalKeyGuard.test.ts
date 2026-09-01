@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { Terminal } from "xterm";
-import { isBareModifierKeydown, installModifierScrollGuard } from "./terminalKeyGuard";
+import { isBareModifierKeydown, installTerminalKeyHandler, ime229Payload } from "./terminalKeyGuard";
 
 beforeAll(() => {
   // jsdom lacks matchMedia; xterm's ScreenDprMonitor needs it on open().
@@ -39,9 +39,6 @@ describe("isBareModifierKeydown", () => {
   });
 });
 
-// Behavioral regression test against the real xterm build: proves that an
-// IME-routed (keyCode 229) modifier keydown no longer yanks the viewport to the
-// bottom once the guard is installed.
 async function makeScrolledTerm() {
   const el = document.createElement("div");
   document.body.appendChild(el);
@@ -53,14 +50,18 @@ async function makeScrolledTerm() {
   return term;
 }
 
-function fireKeydown(term: Terminal, keyCode: number, key: string) {
-  const ta = (term as unknown as { textarea: HTMLTextAreaElement }).textarea;
-  const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
-  Object.defineProperty(ev, "keyCode", { get: () => keyCode });
-  ta.dispatchEvent(ev);
+function textareaOf(term: Terminal): HTMLTextAreaElement {
+  return (term as unknown as { textarea: HTMLTextAreaElement }).textarea;
 }
 
-describe("installModifierScrollGuard (real xterm)", () => {
+function fireKeydown(term: Terminal, keyCode: number, key: string) {
+  const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "keyCode", { get: () => keyCode });
+  textareaOf(term).dispatchEvent(ev);
+}
+
+// Behavioral regression tests against the real xterm build.
+describe("installTerminalKeyHandler (real xterm)", () => {
   it("reproduces the bug: a keyCode-229 keydown scrolls to bottom without the guard", async () => {
     const term = await makeScrolledTerm();
     const base = term.buffer.active.baseY;
@@ -73,9 +74,86 @@ describe("installModifierScrollGuard (real xterm)", () => {
 
   it("keeps the viewport put when a bare modifier is pressed under an IME", async () => {
     const term = await makeScrolledTerm();
-    installModifierScrollGuard(term);
+    installTerminalKeyHandler(term, { ime229Takeover: false });
     term.scrollToTop();
     fireKeydown(term, 229, "Control"); // IME-routed bare Ctrl
     expect(term.buffer.active.viewportY).toBe(0);
+  });
+
+  // The swallowed-keystroke bug: xterm 5.3 reads keyCode-229 characters by
+  // diffing the hidden textarea's value in setTimeout(0) callbacks
+  // (CompositionHelper._handleAnyTextareaChanges), and those timers race the
+  // keyup handler that clears the textarea — fast sequences merge, duplicate,
+  // or drop characters. First prove the racy path exists, then that the
+  // takeover keeps it from being scheduled at all.
+  it("without takeover, a 229 keydown schedules xterm's textarea diff, which emits data", async () => {
+    const term = await makeScrolledTerm();
+    const got: string[] = [];
+    term.onData((d) => got.push(d));
+    fireKeydown(term, 229, "c");
+    textareaOf(term).value = "c"; // browser inserts the char after keydown
+    await new Promise((r) => setTimeout(r, 20)); // let the diff timer fire
+    expect(got).toEqual(["c"]);
+  });
+
+  it("with takeover, a 229 keydown never reaches xterm's diff path and emits nothing", async () => {
+    const term = await makeScrolledTerm();
+    installTerminalKeyHandler(term, { ime229Takeover: true });
+    const got: string[] = [];
+    term.onData((d) => got.push(d));
+    fireKeydown(term, 229, "c");
+    textareaOf(term).value = "c";
+    await new Promise((r) => setTimeout(r, 20));
+    expect(got).toEqual([]); // delivery is the input-event takeover's job now
+  });
+
+  it("fires onRegularKeydown only for keydowns xterm will process", async () => {
+    const term = await makeScrolledTerm();
+    const calls: string[] = [];
+    installTerminalKeyHandler(term, {
+      ime229Takeover: true,
+      hooks: {
+        onRegularKeydown: () => calls.push("regular"),
+      },
+    });
+    fireKeydown(term, 229, "c"); // blocked: IME-routed, takeover owns it
+    fireKeydown(term, 68, "d");
+    fireKeydown(term, 229, "Control"); // blocked: IME-routed bare modifier
+    fireKeydown(term, 17, "Control"); // blocked: plain bare modifier
+    expect(calls).toEqual(["regular"]);
+  });
+});
+
+describe("ime229Payload", () => {
+  const ev = (over: Partial<Pick<InputEvent, "inputType" | "data" | "isComposing">>) => ({
+    inputType: "insertText",
+    data: "d",
+    isComposing: false,
+    ...over,
+  });
+
+  it("returns the event's own data for a non-composing insertText", () => {
+    expect(ime229Payload(ev({}))).toBe("d");
+  });
+
+  it("returns null mid-composition (pinyin candidates are xterm's)", () => {
+    expect(ime229Payload(ev({ isComposing: true }))).toBeNull();
+  });
+
+  it("maps deleteContentBackward to DEL", () => {
+    expect(ime229Payload(ev({ inputType: "deleteContentBackward", data: null }))).toBe("\x7f");
+  });
+
+  it("maps insertLineBreak and insertParagraph to CR", () => {
+    expect(ime229Payload(ev({ inputType: "insertLineBreak", data: null }))).toBe("\r");
+    expect(ime229Payload(ev({ inputType: "insertParagraph", data: null }))).toBe("\r");
+  });
+
+  it("returns null for composition commits and unmapped inputTypes and empty data", () => {
+    expect(ime229Payload(ev({ inputType: "insertCompositionText" }))).toBeNull();
+    expect(ime229Payload(ev({ inputType: "insertFromComposition" }))).toBeNull();
+    expect(ime229Payload(ev({ inputType: "insertFromPaste" }))).toBeNull();
+    expect(ime229Payload(ev({ data: "" }))).toBeNull();
+    expect(ime229Payload(ev({ data: null }))).toBeNull();
   });
 });

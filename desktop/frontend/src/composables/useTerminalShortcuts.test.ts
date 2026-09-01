@@ -18,6 +18,7 @@ describe("useTerminalShortcuts (default bindings)", () => {
     onFocusPane: vi.fn(),
     onNewTab: vi.fn(),
     onSwitchTab: vi.fn(),
+    onSwitchTabTo: vi.fn(),
     onFocusSidebarSearch: vi.fn(),
   };
 
@@ -88,6 +89,28 @@ describe("useTerminalShortcuts (default bindings)", () => {
     expect(ev.defaultPrevented).toBe(true);
   });
 
+  it("Ctrl+1 -> onSwitchTabTo(1), preventDefault", () => {
+    const ev = fireKey({ key: "1", code: "Digit1", ctrlKey: true });
+    expect(handlers.onSwitchTabTo).toHaveBeenCalledWith(1);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("Ctrl+9 -> onSwitchTabTo(9)", () => {
+    fireKey({ key: "9", code: "Digit9", ctrlKey: true });
+    expect(handlers.onSwitchTabTo).toHaveBeenCalledWith(9);
+  });
+
+  it("Ctrl+0 is not a tab-select chord", () => {
+    fireKey({ key: "0", code: "Digit0", ctrlKey: true });
+    expect(handlers.onSwitchTabTo).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+Shift+1 and plain 1 are not tab-select chords", () => {
+    fireKey({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
+    fireKey({ key: "1", code: "Digit1" });
+    expect(handlers.onSwitchTabTo).not.toHaveBeenCalled();
+  });
+
   it("scope.stop unbinds the listener", () => {
     scope.stop();
     fireKey({ key: "n", code: "KeyN", ctrlKey: true });
@@ -133,6 +156,16 @@ describe("useTerminalShortcuts (user overrides)", () => {
     scope.run(() => useTerminalShortcuts(handlers, { mod: "Control", bindings }));
     fireKey({ key: "˜", code: "KeyN", ctrlKey: true, altKey: true });
     expect(handlers.onSplitVertical).toHaveBeenCalled();
+  });
+
+  it("a user override on Mod+Digit1 wins over the built-in tab-select fallback", () => {
+    bindings = ref({ "pane.split-vertical-new": "Mod+Digit1" });
+    scope = effectScope();
+    const withTabTo = { ...handlers, onSwitchTabTo: vi.fn() };
+    scope.run(() => useTerminalShortcuts(withTabTo, { mod: "Control", bindings }));
+    fireKey({ key: "1", code: "Digit1", ctrlKey: true });
+    expect(handlers.onSplitVertical).toHaveBeenCalled();
+    expect(withTabTo.onSwitchTabTo).not.toHaveBeenCalled();
   });
 
   it("empty binding disables the action", () => {

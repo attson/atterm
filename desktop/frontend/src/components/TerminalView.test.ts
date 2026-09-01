@@ -608,17 +608,22 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toContain('removeEventListener("input", onImeInput');
   });
 
-  test("onImeInput skips desktop runtimes so xterm.onData is not double-fired", () => {
-    // Root cause of the "one space → two spaces" regression: on Wails /
-    // local-PTY the physical keyboard already goes through xterm's keydown →
-    // term.onData(" ") → sendInput(" ") path, but the browser also mirrors
-    // the char into the hidden textarea and fires `input`, which
-    // (pre-gate) ran onImeInput → sendInput(" ") a second time. The gate
-    // MUST run BEFORE the inputType check so no branch in this handler can
-    // fire on desktop.
+  test("desktop IME takeover is the single input-event sender, ahead of xterm", () => {
+    // "one space → two spaces" / doubled-character regression guard. IME
+    // event order varies (WKWebView can fire insertText BEFORE the key's own
+    // 229 keydown, activating xterm's _inputEvent), so the takeover must run
+    // ahead of xterm — container-level capture — and stopPropagation, never
+    // gate on keydown state. The textarea-level onImeInput stays mobile-only.
     expect(source).toMatch(
-      /function\s+onImeInput[^}]*?if\s*\(\s*platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty\s*\)\s*return/,
+      /function\s+onImeInput[^}]*?if\s*\(\s*isDesktopIme229Takeover\(\)\s*\)\s*return/,
     );
+    expect(source).toMatch(
+      /function\s+onDesktopImeInput[\s\S]*?event\.target\s*!==\s*imeInputTarget[\s\S]*?ime229Payload\(event\)[\s\S]*?event\.stopPropagation\(\)[\s\S]*?conn\?\.sendInput\(payload\)/,
+    );
+    expect(source).toMatch(
+      /keyTarget\.addEventListener\("input", onDesktopImeInput as EventListener, \{ capture: true \}\)/,
+    );
+    expect(source).toContain('removeEventListener("input", onDesktopImeInput as EventListener');
   });
 
   test("supports mobile long-press selection with copy/send/cancel and scroll/outside exit", () => {

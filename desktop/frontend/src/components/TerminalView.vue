@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { errText, logDebug, logError, logWarn } from "../lib/log";
+import { errText, logDebug, logError, logInfo, logWarn } from "../lib/log";
 import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
@@ -35,7 +35,7 @@ import { GetPasteboardFileURLs } from "../../wailsjs/go/main/App";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { isMac } from "../lib/modKey";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
-import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
+import { installTerminalKeyHandler, ime229Payload } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
 import { cellInLink, detectLinks, shouldActivateLink, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
@@ -824,13 +824,57 @@ async function handleImagePaste(e: ClipboardEvent) {
 // xterm forwarding it. Take over only the non-composition insertText case so
 // pinyin -> Hanzi composition remains xterm-owned.
 //
-// Desktop (Wails / local-PTY web) MUST skip this path: xterm already handles
-// the physical-keyboard keydown and calls term.onData(" "); the browser then
-// also inserts the char into the hidden textarea and fires `input`, which
-// without this gate would run onImeInput and sendInput a second time —
-// pressing space once produces two spaces, breaking TUI checkbox toggling.
+// Desktop (Wails / local-PTY web) skips this textarea-level path — its
+// takeover is onDesktopImeInput below, which listens on the pane container
+// instead. Plain physical-keyboard keys are handled (and preventDefaulted)
+// by xterm on keydown, so they never fire `input` and cannot double-send.
+//
+// keyOriginated: set by the installTerminalKeyHandler hooks for keydowns
+// xterm processes; read by term.onData to tell user keystrokes from
+// xterm-generated replies (see the comment at the onData subscription).
+let keyOriginated = false;
+
+function isDesktopIme229Takeover(): boolean {
+  return platform.caps.wailsBindings || platform.caps.localPty;
+}
+
+// Desktop takeover for keys a CJK IME routes as keyCode 229. xterm cannot
+// read the character from a 229 keydown; its stock path diffs the hidden
+// textarea's before/after values in setTimeout(0) callbacks that race its
+// own keyup textarea-clear — fast consecutive keystrokes get merged,
+// duplicated, or dropped (typing "cd" quickly landed only "c" at the shell).
+// installTerminalKeyHandler blocks 229 keydowns from xterm so that diff path
+// is never scheduled, and this handler delivers the character from the
+// `input` event's own data instead.
+//
+// Single-sender invariant: IME event order varies — WKWebView can fire the
+// insertText `input` BEFORE the keystroke's own keydown, which lights up
+// xterm's `_inputEvent` listener via its `!_keyDownSeen` branch (and that
+// listener's cancel() is a no-op, leaving no defaultPrevented trace). Any
+// same-element listener runs after xterm's and cannot stop it — every
+// gate-on-keydown-state design double-sent or dropped depending on order.
+// This handler is registered in the CAPTURE phase on the pane container (an
+// ancestor), so it runs before every textarea listener xterm owns and
+// stopPropagation() keeps `_inputEvent` from ever seeing the event: exactly
+// one sender in both event orders. Composition stays xterm-owned —
+// ime229Payload rejects isComposing events (commits arrive as
+// insertFromComposition / insertCompositionText, which it does not map).
+function onDesktopImeInput(event: InputEvent) {
+  if (!isDesktopIme229Takeover()) return;
+  // Only xterm's hidden textarea — never search bars or other inputs that
+  // happen to live inside the pane container.
+  if (!imeInputTarget || event.target !== imeInputTarget) return;
+  const payload = ime229Payload(event);
+  if (payload === null) return;
+  if (!auxKeysCanSend.value) return;
+  event.stopPropagation();
+  conn?.sendInput(payload);
+  term?.scrollToBottom();
+  imeInputTarget.value = "";
+}
+
 function onImeInput(event: InputEvent) {
-  if (platform.caps.wailsBindings || platform.caps.localPty) return;
+  if (isDesktopIme229Takeover()) return;
   if (event.inputType !== "insertText") return;
   if (event.isComposing) return;
   const data = event.data;
@@ -1585,10 +1629,21 @@ async function ensureTerm() {
     searchResultCount.value = resultCount;
   });
   term.open(termContainer.value!);
-  // Keep a bare Ctrl/⌘ press (e.g. to mod-click a link in the scrollback) from
-  // scrolling the viewport to the prompt. CJK IMEs deliver such keydowns as
-  // keyCode 229, which xterm 5.3 otherwise answers with scrollToBottom().
-  installModifierScrollGuard(term);
+  // Single custom-key-handler call site — xterm keeps only the last
+  // attachCustomKeyEventHandler, so all three keydown concerns live in one
+  // handler (see terminalKeyGuard.ts): the bare-modifier scroll guard, the
+  // keyOriginated marking that onData uses to tell user keystrokes from
+  // xterm-generated replies, and (desktop only) blocking keyCode-229
+  // keydowns so CJK-IME keystrokes never enter xterm's racy textarea-diff
+  // path — onDesktopImeInput delivers them from the `input` events instead.
+  installTerminalKeyHandler(term, {
+    ime229Takeover: isDesktopIme229Takeover(),
+    hooks: {
+      onRegularKeydown: () => {
+        keyOriginated = true;
+      },
+    },
+  });
   // GPU-rasterized renderer eliminates the cell-ghosting the DOM renderer
   // shows on light terminal themes (most visible when remote TUIs like
   // Claude Code repaint dense RGB diff blocks). Load after open() so the
@@ -1613,16 +1668,35 @@ async function ensureTerm() {
   if (webglEnabled) {
     try {
       const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
+      // Context loss silently drops the pane back to the DOM renderer, which
+      // reads to the user as "it got slow on its own". Without a line here
+      // there is nothing in the log to distinguish that from a pane that
+      // never had WebGL to begin with.
+      webgl.onContextLoss(() => {
+        logWarn("term", "WebGL context lost, falling back to DOM");
+        webgl.dispose();
+      });
       term.loadAddon(webgl);
     } catch (err) {
       logWarn("term", "WebGL renderer unavailable, falling back to DOM", { error: errText(err) });
     }
   }
+  // Report the renderer that actually attached, not the preference that was
+  // asked for: the two diverge whenever addon construction throws, and the
+  // diagnostics bundle only carries the preference. The DOM renderer builds
+  // rows out of div/span, so a canvas under .xterm-screen means WebGL won.
+  logInfo("term", "renderer active", {
+    webgl: !!term.element?.querySelector("canvas"),
+    configured: webglEnabled,
+  });
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
   keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
+  // Container-level CAPTURE so this runs before every listener xterm owns on
+  // the textarea — the ordering the desktop 229 takeover's single-sender
+  // invariant depends on (see onDesktopImeInput).
+  keyTarget.addEventListener("input", onDesktopImeInput as EventListener, { capture: true });
   // handleViewerKeydown is attached to document (not keyTarget) so it fires
   // regardless of where focus currently sits. The autofocused take-control
   // button covers the initial transition, but focus drifts as soon as the
@@ -1733,13 +1807,11 @@ async function ensureTerm() {
   // the replies it generates itself while parsing escape sequences. Only the
   // latter needs suppressing during replay, and the two are indistinguishable
   // by their payload — so mark the keyboard-originated ones as they arrive.
-  // attachCustomKeyEventHandler runs for every key event before the data is
-  // emitted, which is the ordering this depends on.
-  let keyOriginated = false;
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.type === "keydown") keyOriginated = true;
-    return true;
-  });
+  // The marking lives in the installTerminalKeyHandler hooks above (xterm
+  // consults that handler before emitting data, which is the ordering this
+  // depends on); only keydowns xterm actually processes set the flag, so a
+  // blocked 229/bare-modifier keydown cannot mislabel a later xterm-generated
+  // reply as user input.
   term.onData((data) => {
     const fromUser = keyOriginated;
     keyOriginated = false;
@@ -2183,6 +2255,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", onTemplateHotkey, true);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("input", onDesktopImeInput as EventListener, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);

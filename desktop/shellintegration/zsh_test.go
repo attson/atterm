@@ -99,6 +99,52 @@ func TestPrepareZshWritesWrapperAndReturnsPlan(t *testing.T) {
 	}
 }
 
+func TestPrepareZshWritesChainShimsForZshenvAndZprofile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("ZDOTDIR", "")
+
+	p := prepareZsh("sess-chain")
+	if p.Cleanup == nil {
+		t.Fatalf("Plan.Cleanup is nil")
+	}
+	defer p.Cleanup()
+
+	zdir := ""
+	for _, env := range p.ExtraEnv {
+		if strings.HasPrefix(env, "ZDOTDIR=") {
+			zdir = strings.TrimPrefix(env, "ZDOTDIR=")
+		}
+	}
+	if zdir == "" {
+		t.Fatalf("Plan.ExtraEnv missing ZDOTDIR; got %v", p.ExtraEnv)
+	}
+
+	// zsh resolves .zshenv and .zprofile against $ZDOTDIR too. Without shim
+	// counterparts the user's ~/.zprofile (brew shellenv on macOS) never
+	// runs and PATH-dependent plugins break inside atterm. Each shim must
+	// chain to the user's file and then point ZDOTDIR back at the shim dir
+	// so the .zshrc wrapper still runs.
+	for _, name := range []string{".zshenv", ".zprofile"} {
+		body, err := os.ReadFile(filepath.Join(zdir, name))
+		if err != nil {
+			t.Fatalf("shim %s not written: %v", name, err)
+		}
+		got := string(body)
+		if !strings.Contains(got, "${ZDOTDIR:-$HOME}/"+name) {
+			t.Fatalf("shim %s does not chain to the user's %s; got %q", name, name, got)
+		}
+		reshim := strings.Index(got, `ZDOTDIR="$_atterm_shim_dir"`)
+		src := strings.Index(got, "source ")
+		if reshim < 0 {
+			t.Fatalf("shim %s does not restore ZDOTDIR to the shim dir; got %q", name, got)
+		}
+		if src >= 0 && reshim < src {
+			t.Fatalf("shim %s re-shims ZDOTDIR before sourcing the user file; got %q", name, got)
+		}
+	}
+}
+
 func TestPrepareZshReturnsZeroPlanWhenCacheDirFails(t *testing.T) {
 	// Force os.UserCacheDir to fail by clearing both HOME and XDG_CACHE_HOME
 	// and (on darwin) HOME-derived candidates.

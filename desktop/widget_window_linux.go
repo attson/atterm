@@ -2,6 +2,30 @@
 
 package main
 
+/*
+#cgo pkg-config: gtk+-3.0
+#include <gtk/gtk.h>
+#include <gdk/gdkx.h>
+
+static gboolean atterm_widget_disable_frame_sync(gpointer data) {
+	(void)data;
+	GList *windows = gtk_window_list_toplevels();
+	for (GList *item = windows; item != NULL; item = item->next) {
+		GtkWidget *widget = GTK_WIDGET(item->data);
+		GdkWindow *window = gtk_widget_get_window(widget);
+		if (window != NULL && GDK_IS_X11_WINDOW(window))
+			gdk_x11_window_set_frame_sync_enabled(window, FALSE);
+	}
+	g_list_free(windows);
+	return G_SOURCE_REMOVE;
+}
+
+static void atterm_widget_schedule_disable_frame_sync(void) {
+	g_idle_add(atterm_widget_disable_frame_sync, NULL);
+}
+*/
+import "C"
+
 import (
 	"context"
 
@@ -26,6 +50,11 @@ func applyWidgetPlatformOptions(opts *options.App) {
 	}
 }
 
-// applyWidgetPostStartup runs from OnStartup. Nothing to do on Linux: the
-// skip-taskbar hint would need the GtkWindow* out of Wails' internals.
-func applyWidgetPostStartup(_ context.Context) {}
+// applyWidgetPostStartup runs from OnStartup. Wails invokes it on a Go
+// goroutine, so GTK work is queued onto the main loop. Mutter's X11 frame-sync
+// protocol can stop acknowledging a window after its first frame; GTK then
+// keeps the process responsive but suppresses every subsequent draw. The
+// widget does not need compositor pacing, so opt its sole toplevel out.
+func applyWidgetPostStartup(_ context.Context) {
+	C.atterm_widget_schedule_disable_frame_sync()
+}

@@ -142,6 +142,7 @@ Wails v2.12 的 `mac.Options.ActivationPolicy` **整块被注释掉**（`pkg/opt
 | macOS | 圆角外有白边 | `setOpaque:NO` + `setBackgroundColor:clearColor` |
 | Windows | 出现在 Alt-Tab / 任务栏 | `SetWindowLong` 加 `WS_EX_TOOLWINDOW`（`x/sys/windows`，无需 cgo） |
 | Linux | 出现在任务栏 | `gtk_window_set_skip_taskbar_hint`（Wails v2 未暴露，本期不做） |
+| Linux/X11 | 进程存活但窗口停在首帧 | 在 GTK 主循环中对挂件窗口调用 `gdk_x11_window_set_frame_sync_enabled(..., FALSE)` |
 
 cgo + AppKit 已在 `desktop/pasteboard_files_darwin.go` 使用（`#cgo LDFLAGS: -framework AppKit`），
 `main_{darwin,linux,windows}.go` + `platformOptions()` 的分文件模式也是现成的，所以这三段
@@ -171,6 +172,27 @@ osascript -e 'tell application "System Events" to get unix id of every process w
 ```
 
 宠物 PID 不在其中 = accessory 生效。
+
+### Linux/X11 frame sync 卡死（实测踩过）
+
+GNOME/Mutter 的 X11 会话可能停止回复 `_NET_WM_FRAME_DRAWN` /
+`_NET_WM_FRAME_TIMINGS`。GTK3 默认启用这套 compositor frame sync；一旦回执丢失，GTK 的
+frame clock 会一直等上一帧完成，后续 invalidation 全部积着不画。进程、GLib timer、Vue、
+Wails IPC 和 WebKit DOM 此时都仍然存活，所以新的状态事件不会让窗口恢复，表象却是数字、
+动画和点击反馈一起冻结。
+
+这个结论来自同机逐层隔离：
+
+1. WebKitGTK 2.44.0、2.52.3、2.52.6 的最小原生 WebKit 程序都停在首帧，排除单一 WebKit
+   版本回归。
+2. 不含 WebKit 的纯 GTK label 程序也复现：GLib tick 持续，`draw` 只在启动时发生。
+3. 同一程序在无 Mutter 的 Xephyr 中持续出帧。
+4. 只关闭该窗口的 GDK X11 frame sync 后，宿主会话中每个 tick 都重新触发 `draw`。
+
+修复位于 `desktop/widget_window_linux.go::applyWidgetPostStartup`。Wails 从 Go goroutine 调
+`OnStartup`，因此必须用 `g_idle_add` 把 GTK 操作派发到主循环；挂件是独立子进程，只枚举并
+修改该进程的唯一顶层窗口，不影响 AT Term 主窗口。不要用定时重启、WebKit reload、GPU flag
+或强制 queue-draw 掩盖：frame clock 仍在等待时，这些操作都不能完成新帧。
 
 ## Interaction
 

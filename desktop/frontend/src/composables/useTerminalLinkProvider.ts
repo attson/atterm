@@ -1,8 +1,7 @@
 import type { IDisposable, Terminal } from "xterm";
 import {
-  detectLinks,
+  linkSegmentsAtBufferRow,
   shouldActivateLink,
-  mapWrappedLogicalLine,
   type BufferLike,
   type LinkMatch,
   type PointerPos,
@@ -45,42 +44,22 @@ export function useTerminalLinkProvider(
   const provider = {
     provideLinks(y: number, callback: (links: unknown[] | undefined) => void) {
       const active = term.buffer.active as unknown as BufferLike;
-      // Walk up to the first row of this logical line — the row that is not
-      // itself a soft-wrap continuation. y is 1-based; getLine is 0-based.
-      let firstIdx = y - 1;
-      for (let steps = 0; steps < MAX_LOGICAL_ROWS; steps++) {
-        const line = active.getLine(firstIdx);
-        if (!line || !line.isWrapped) break;
-        firstIdx--;
-      }
-      const mapped = mapWrappedLogicalLine(active, firstIdx, term.cols, MAX_LOGICAL_ROWS);
-      const matches = detectLinks(mapped.text);
-      if (matches.length === 0) {
+      const segments = linkSegmentsAtBufferRow(active, y - 1, term.cols, MAX_LOGICAL_ROWS);
+      if (segments.length === 0) {
         callback(undefined);
         return;
       }
-      const wantRow = y - 1 - firstIdx; // 0-based physical row within this logical line
-      const links: unknown[] = [];
-      for (const m of matches) {
-        // A match may span several physical rows; emit one ILink per row, but
-        // keep only the segment on the requested row so each physical line
-        // renders its own clickable piece (and we never emit duplicates).
-        let segStart = m.start;
-        while (segStart < m.end) {
-          const row = mapped.cellY[segStart];
-          let segEnd = segStart;
-          while (segEnd < m.end && mapped.cellY[segEnd] === row) segEnd++;
-          if (row === wantRow) {
-            const startX = mapped.cellStart[segStart] + 1;
-            const endX = mapped.cellStart[segEnd - 1] + 1;
-            links.push(
-              makeLink(m, firstIdx + row + 1, startX, endX, term, isMac, () => lastDownPos, openLink, onError),
-            );
-          }
-          segStart = segEnd;
-        }
-      }
-      callback(links.length ? links : undefined);
+      callback(segments.map((segment) => makeLink(
+        segment.match,
+        segment.row + 1,
+        segment.startCell + 1,
+        segment.endCell,
+        term,
+        isMac,
+        () => lastDownPos,
+        openLink,
+        onError,
+      )));
     },
   };
 

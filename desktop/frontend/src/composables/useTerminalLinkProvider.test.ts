@@ -224,6 +224,32 @@ describe("useTerminalLinkProvider", () => {
     expect(row2![0].range.start.y).toBe(2);
   });
 
+  it("stitches a Markdown-rendered URL across hard-wrapped table rows", () => {
+    const f = makeWrappedTerm(
+      [
+        { text: "    !60 (http://git.example.cn/back_end/", wrapped: false },
+        { text: "    advertisement/ad-toolkit/team-hub/", wrapped: false },
+        { text: "    team-hub-root/merge_requests/60)", wrapped: false },
+      ],
+      50,
+    );
+    useTerminalLinkProvider({
+      term: f.term,
+      isMac: false,
+      getHomeDir: () => "",
+      openLink: vi.fn(),
+      onError: vi.fn(),
+    });
+    for (let y = 1; y <= 3; y++) {
+      let links: any[] | undefined;
+      f.getProvider().provideLinks(y, (result) => (links = result as any[]));
+      expect(links).toHaveLength(1);
+      expect(links![0].text).toBe(
+        "http://git.example.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-root/merge_requests/60",
+      );
+    }
+  });
+
   it("activate with Ctrl clears the terminal selection", async () => {
     // xterm.js starts a selection on the mousedown that leads into the
     // click; the linkProvider's activate() must clear it after opening the

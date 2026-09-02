@@ -38,7 +38,7 @@ import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/fo
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
-import { cellInLink, detectLinks, shouldActivateLink, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
+import { linkSegmentsAtBufferRow, shouldActivateLink, normalizeForOpen, type BufferLike, type LinkMatch } from "../lib/terminalLinks";
 import { cellCoordsAt, readXtermCellSize } from "../lib/terminalCellCoords";
 import { wordBoundaryAt } from "../lib/wordBoundary";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
@@ -1291,7 +1291,8 @@ function getTerminalGridElement(): HTMLElement | null {
 
 // computeLinkHit converts a right-click MouseEvent into the LinkMatch that
 // covers the clicked cell, or null when the click isn't on any detected link.
-// Reuses detectLinks so the menu agrees with what the hover provider drew.
+// Reuses the provider's segment mapper so soft wraps and Markdown table hard
+// wraps behave identically for hover, Ctrl+click, and the context menu.
 function computeLinkHit(e: MouseEvent): LinkMatch | null {
   if (!term) return null;
   const viewport = getTerminalGridElement();
@@ -1299,12 +1300,13 @@ function computeLinkHit(e: MouseEvent): LinkMatch | null {
   const hit = cellCoordsAt(e.clientX, e.clientY, term, viewport);
   if (!hit) return null;
   const bufferRow = term.buffer.active.viewportY + hit.row;
-  const line = term.buffer.active.getLine(bufferRow);
-  if (!line) return null;
-  // hit.col is a cell column; map detected string-index spans to cell columns
-  // so wide glyphs (CJK, emoji) before the link don't throw off hit-testing.
-  const { text, cellStart } = mapBufferLineCells(line, term.cols);
-  return detectLinks(text).find((m) => cellInLink(hit.col, m, cellStart)) ?? null;
+  const segments = linkSegmentsAtBufferRow(
+    term.buffer.active as unknown as BufferLike,
+    bufferRow,
+    term.cols,
+    50,
+  );
+  return segments.find((segment) => hit.col >= segment.startCell && hit.col < segment.endCell)?.match ?? null;
 }
 
 async function onMenuOpenLink() {

@@ -3,6 +3,7 @@ import {
   cellInLink,
   detectLinks,
   shouldActivateLink,
+  linkSegmentsAtBufferRow,
   mapBufferLineCells,
   mapWrappedLogicalLine,
   normalizeForOpen,
@@ -331,5 +332,63 @@ describe("mapWrappedLogicalLine", () => {
     );
     const { text } = mapWrappedLogicalLine(buf, 0, cols, 50);
     expect(text).toBe("http://ex.com/aaaaa");
+  });
+});
+
+describe("linkSegmentsAtBufferRow", () => {
+  it("reconstructs Markdown links hard-wrapped inside adjacent table columns", () => {
+    const cols = 94;
+    const dev = [
+      "!60 (http://git.example.cn/back_end/",
+      "advertisement/ad-toolkit/team-hub/",
+      "team-hub-root/merge_requests/60)",
+    ];
+    const master = [
+      "!61 (http://git.example.cn/back_end/",
+      "advertisement/ad-toolkit/team-hub/",
+      "team-hub-root/merge_requests/61)",
+    ];
+    const rows = dev.map((left, i) => ({
+      text: `    ${left.padEnd(43)}${master[i]}`,
+      wrapped: false,
+    }));
+    const buffer = fakeBuffer(rows, cols);
+
+    for (let row = 0; row < rows.length; row++) {
+      const segments = linkSegmentsAtBufferRow(buffer, row, cols, 50);
+      expect(segments.map((segment) => segment.match.text)).toEqual([
+        "http://git.example.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-root/merge_requests/60",
+        "http://git.example.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-root/merge_requests/61",
+      ]);
+    }
+  });
+
+  it("does not join a bare URL to an unrelated following hard line", () => {
+    const cols = 40;
+    const buffer = fakeBuffer(
+      [
+        { text: "https://example.test/incomplete", wrapped: false },
+        { text: "next-command", wrapped: false },
+      ],
+      cols,
+    );
+    expect(linkSegmentsAtBufferRow(buffer, 0, cols, 50).map((s) => s.match.text)).toEqual([
+      "https://example.test/incomplete",
+    ]);
+    expect(linkSegmentsAtBufferRow(buffer, 1, cols, 50)).toEqual([]);
+  });
+
+  it("keeps the existing xterm soft-wrap behavior", () => {
+    const cols = 20;
+    const buffer = fakeBuffer(
+      [
+        { text: "http://ex.com/aaaaa", wrapped: false },
+        { text: "bbb/ccc", wrapped: true },
+      ],
+      cols,
+    );
+    expect(linkSegmentsAtBufferRow(buffer, 1, cols, 50).map((s) => s.match.text)).toEqual([
+      "http://ex.com/aaaaabbb/ccc",
+    ]);
   });
 });

@@ -710,20 +710,20 @@ describe("TerminalView right-click menu", () => {
     // closeContextMenu must clear it so the next right-click on plain text
     // doesn't carry over a stale hit.
     expect(source).toMatch(/menuLinkHit\.value\s*=\s*null/);
-    // computeLinkHit reuses the same detectLinks used by the hover provider,
-    // hit-testing by cell column (cellInLink) so wide glyphs don't skew it.
-    expect(source).toMatch(/detectLinks\(text\)\.find/);
+    // computeLinkHit reuses the same segment mapper as the hover provider, so
+    // soft wraps and Markdown table hard wraps resolve to the same target.
+    expect(source).toContain("linkSegmentsAtBufferRow(");
     // Mouse coordinates are viewport-relative; xterm buffer lines are absolute
     // within scrollback, so clicks must be offset by viewportY.
     expect(source).toContain("const bufferRow = term.buffer.active.viewportY + hit.row");
-    expect(source).toContain("term.buffer.active.getLine(bufferRow)");
+    expect(source).toContain("term.buffer.active as unknown as BufferLike");
     // Coordinates should be relative to xterm's rendered grid, not the outer
     // host that also contains padding/overlays.
     expect(source).toContain("function getTerminalGridElement()");
     expect(source).toContain('.querySelector<HTMLElement>(".xterm-rows")');
     expect(source).toContain('.querySelector<HTMLElement>(".xterm-screen")');
-    expect(source).toContain("cellInLink(hit.col");
-    expect(source).toContain("mapBufferLineCells(line, term.cols)");
+    expect(source).toContain("hit.col >= segment.startCell");
+    expect(source).toContain("hit.col < segment.endCell");
     expect(source).toContain("cellCoordsAt(");
   });
 

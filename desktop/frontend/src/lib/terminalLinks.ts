@@ -223,6 +223,15 @@ export interface MappedLogicalLine {
   rowCount: number;
 }
 
+export interface PhysicalLinkSegment {
+  match: LinkMatch;
+  /** Absolute 0-based buffer row containing this visible segment. */
+  row: number;
+  /** 0-based terminal cell range on row, end-exclusive. */
+  startCell: number;
+  endCell: number;
+}
+
 /**
  * Walk a soft-wrapped logical line starting at physical row firstY, joining each
  * continuation row (the row whose isWrapped is true) into one string while
@@ -258,4 +267,158 @@ export function mapWrappedLogicalLine(
     }
   }
   return { text, cellStart, cellY, rowCount };
+}
+
+/**
+ * Return every detected link segment that intersects one physical buffer row.
+ * Besides xterm soft wraps, this recognizes the hard wraps produced by terminal
+ * Markdown renderers for `label (https://...)`: those renderers align every URL
+ * continuation with the start of the table cell and close it with `)`.
+ * Requiring both delimiters and a stable continuation column avoids joining an
+ * ordinary URL with unrelated output from the following command line.
+ */
+export function linkSegmentsAtBufferRow(
+  buffer: BufferLike,
+  row: number,
+  cols: number,
+  maxRows: number,
+): PhysicalLinkSegment[] {
+  const markdownSegments = hardWrappedMarkdownSegmentsAtRow(buffer, row, cols, maxRows);
+  const occupied = markdownSegments.map((s) => [s.startCell, s.endCell] as const);
+
+  let firstRow = row;
+  for (let steps = 0; steps < maxRows; steps++) {
+    const line = buffer.getLine(firstRow);
+    if (!line || !line.isWrapped) break;
+    firstRow--;
+  }
+  const mapped = mapWrappedLogicalLine(buffer, firstRow, cols, maxRows);
+  const wantedRelativeRow = row - firstRow;
+  const ordinary: PhysicalLinkSegment[] = [];
+  for (const match of detectLinks(mapped.text)) {
+    let start = match.start;
+    while (start < match.end) {
+      const relativeRow = mapped.cellY[start];
+      let end = start + 1;
+      while (end < match.end && mapped.cellY[end] === relativeRow) end++;
+      if (relativeRow === wantedRelativeRow) {
+        const startCell = mapped.cellStart[start];
+        const endCell = mapped.cellStart[end - 1] + 1;
+        if (!occupied.some(([a, b]) => startCell < b && endCell > a)) {
+          ordinary.push({ match, row, startCell, endCell });
+        }
+      }
+      start = end;
+    }
+  }
+  return [...markdownSegments, ...ordinary].sort((a, b) => a.startCell - b.startCell);
+}
+
+interface PendingHardSegment {
+  row: number;
+  mapped: MappedLine;
+  start: number;
+  end: number;
+}
+
+function hardWrappedMarkdownSegmentsAtRow(
+  buffer: BufferLike,
+  wantedRow: number,
+  cols: number,
+  maxRows: number,
+): PhysicalLinkSegment[] {
+  const out: PhysicalLinkSegment[] = [];
+  const firstCandidateRow = Math.max(0, wantedRow - maxRows + 1);
+  for (let startRow = firstCandidateRow; startRow <= wantedRow; startRow++) {
+    const firstLine = buffer.getLine(startRow);
+    if (!firstLine || firstLine.isWrapped) continue;
+    const firstMapped = mapBufferLineCells(firstLine, cols);
+    const opener = /\((https?|file):\/\//g;
+    let open: RegExpExecArray | null;
+    while ((open = opener.exec(firstMapped.text)) !== null) {
+      const urlStart = open.index + 1;
+      const firstEnd = tokenEnd(firstMapped.text, urlStart);
+      const firstPart = firstMapped.text.slice(urlStart, firstEnd);
+      // A closing Markdown delimiter on the same row needs no reconstruction;
+      // the ordinary detector below already handles it exactly.
+      if (hasMarkdownClosingDelimiter(firstPart)) continue;
+
+      for (const laneStart of possibleLaneStarts(firstMapped.text, open.index)) {
+        const pending: PendingHardSegment[] = [
+          { row: startRow, mapped: firstMapped, start: urlStart, end: firstEnd },
+        ];
+        let joined = firstPart;
+        let complete = false;
+        for (let continuationRow = startRow + 1;
+          continuationRow < startRow + maxRows;
+          continuationRow++) {
+          const line = buffer.getLine(continuationRow);
+          if (!line || line.isWrapped) break;
+          const mapped = mapBufferLineCells(line, cols);
+          if (mapped.text[laneStart] === undefined || /\s/.test(mapped.text[laneStart])) break;
+          if (laneStart > 0 && !/\s/.test(mapped.text[laneStart - 1])) break;
+          const end = tokenEnd(mapped.text, laneStart);
+          const part = mapped.text.slice(laneStart, end);
+          pending.push({ row: continuationRow, mapped, start: laneStart, end });
+          joined += part;
+          if (hasMarkdownClosingDelimiter(joined)) {
+            complete = true;
+            break;
+          }
+        }
+        if (!complete) continue;
+        const match = detectLinks(joined).find((candidate) => candidate.start === 0);
+        if (!match || match.kind === "path" || match.end >= joined.length) continue;
+        const trim = joined.length - match.end;
+        const last = pending[pending.length - 1];
+        last.end -= trim;
+        for (const segment of pending) {
+          if (segment.row !== wantedRow || segment.end <= segment.start) continue;
+          out.push({
+            match: { ...match, start: 0, end: match.text.length },
+            row: segment.row,
+            startCell: segment.mapped.cellStart[segment.start],
+            endCell: segment.mapped.cellStart[segment.end],
+          });
+        }
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+function tokenEnd(text: string, start: number): number {
+  let end = start;
+  while (end < text.length && !/\s/.test(text[end])) end++;
+  return end;
+}
+
+function hasMarkdownClosingDelimiter(text: string): boolean {
+  const match = detectLinks(text).find((candidate) => candidate.start === 0);
+  return !!match && match.end < text.length && text[match.end] === ")";
+}
+
+function possibleLaneStarts(text: string, openIndex: number): number[] {
+  // A Markdown table renderer commonly emits `!123 (https://...)` and aligns
+  // continuation rows with `!123`. Do not cross a two-space cell separator.
+  let laneFloor = openIndex;
+  let spaces = 0;
+  for (let i = openIndex - 1; i >= 0; i--) {
+    if (/\s/.test(text[i])) {
+      spaces++;
+      if (spaces >= 2) {
+        laneFloor = i + 2;
+        break;
+      }
+    } else {
+      spaces = 0;
+      laneFloor = i;
+    }
+  }
+  const starts = [openIndex];
+  for (let i = openIndex - 1; i >= laneFloor; i--) {
+    if (!/\s/.test(text[i]) && (i === laneFloor || /\s/.test(text[i - 1]))) starts.push(i);
+  }
+  return starts;
 }

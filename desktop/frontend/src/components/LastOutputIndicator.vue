@@ -44,12 +44,4 @@ const display = computed(() => formatLastOutput(props.lastOutputAt, props.taskSt
 }
 .last-output-clock { width: 10px; height: 10px; flex: none; }
 .last-output.live { color: var(--accent, #58a6ff); }
-.last-output.live .last-output-clock { animation: last-output-tick 1.2s steps(2, end) infinite; }
-@keyframes last-output-tick {
-  0%, 45% { opacity: 1; }
-  46%, 100% { opacity: 0.45; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .last-output.live .last-output-clock { animation: none; }
-}
 </style>

@@ -765,6 +765,109 @@ describe("SessionConnection driver reconciliation across reconnect", () => {
   });
 });
 
+describe("reconnect backoff across proxy-accepted failures", () => {
+  const endpoint = { url: "ws://127.0.0.1:1234", session_token: "token" };
+  const sessionId = "11111111-2222-3333-4444-555555555555";
+
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 3;
+
+    readyState = FakeWebSocket.CONNECTING;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public url: string, public protocols?: string[]) {
+      FakeWebSocket.instances.push(this);
+    }
+
+    send(_data: Uint8Array) {}
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+
+    closeFromPeer() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.();
+    }
+
+    emit(type: number, sid: Uint8Array = NIL_SID, payload: Uint8Array = new Uint8Array(0)) {
+      const frame = encodeFrame(type as any, sid, payload);
+      this.onmessage?.({ data: frame.buffer } as MessageEvent);
+    }
+  }
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("session-list backs off through proxy-only opens and resets after a server frame", () => {
+    const conn = new SessionListConnection(endpoint, { onSessions: vi.fn() });
+    conn.attach();
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].closeFromPeer();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    FakeWebSocket.instances[1].open();
+    FakeWebSocket.instances[1].closeFromPeer();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(3);
+    FakeWebSocket.instances[2].open();
+    FakeWebSocket.instances[2].emit(TYPE.LIST_RESP, NIL_SID, encodeText("[]"));
+    FakeWebSocket.instances[2].closeFromPeer();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(4);
+    conn.detach();
+  });
+
+  test("session backs off through proxy-only opens and resets after a server frame", () => {
+    const conn = new SessionConnection(endpoint, sessionId);
+    conn.attach();
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].closeFromPeer();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    FakeWebSocket.instances[1].open();
+    FakeWebSocket.instances[1].closeFromPeer();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(3);
+    FakeWebSocket.instances[2].open();
+    FakeWebSocket.instances[2].emit(
+      TYPE.META,
+      uuidParse(sessionId),
+      encodeText(JSON.stringify({ cols: 80, rows: 24 })),
+    );
+    FakeWebSocket.instances[2].closeFromPeer();
+
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(4);
+    conn.detach();
+  });
+});
+
 describe("openWS sync-throw isolation", () => {
   // Regression: WebKit throws "The string did not match the expected pattern."
   // synchronously from new WebSocket(invalid). That used to unwind App.vue's

@@ -359,7 +359,6 @@ export class SessionListConnection {
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
 
     ws.onopen = () => {
-      this.reconnectAttempts = 0;
       this.handlers.onStatus?.("attached");
     };
 
@@ -370,6 +369,11 @@ export class SessionListConnection {
       } catch {
         return;
       }
+      // The desktop loopback proxy accepts the browser-facing websocket
+      // before its upstream relay dial/authentication has succeeded. Only a
+      // framed server message proves the full path is healthy; resetting in
+      // onopen turns an upstream 401 into a permanent 500 ms retry loop.
+      this.reconnectAttempts = 0;
       if (f.type === TYPE.PREFS_CHANGED) {
         this.handlers.onPrefsChanged?.();
         return;
@@ -795,7 +799,6 @@ export class SessionConnection {
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
 
     ws.onopen = () => {
-      this.reconnectAttempts = 0;
       this.retiredFSRequestIDs.clear();
       this.recoverDriverIfVacant = this.isDriverRole;
       this.handlers.onStatus?.("attached");
@@ -832,6 +835,9 @@ export class SessionConnection {
       } catch {
         return;
       }
+      // See SessionListConnection: a local proxy onopen does not prove its
+      // upstream websocket was authenticated. A valid protocol frame does.
+      this.reconnectAttempts = 0;
       if (f.type === TYPE.OUT) {
         const { seq, data } = decodeOutPayload(f.payload);
         // A reconnect/replay race can deliver an OUT chunk that this client

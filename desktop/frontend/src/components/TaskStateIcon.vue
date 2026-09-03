@@ -35,16 +35,11 @@ const color = computed(() => preset.value.colorOf(props.state));
 // black. taskState.ts hardcodes the state palette for the same reason.
 const KNOCKOUT = "#0d1117";
 const glyphColor = computed(() => (showUnread.value ? KNOCKOUT : color.value));
-const spinMs = computed(() => preset.value.spinnerDurationMs(props.state));
-// No pulse while unread: the filled disc plus the dot already carry the row,
-// and stacking a fade on top only makes a list of unread rows restless.
-const pulse = computed(() => !showUnread.value && preset.value.animatePulse(props.state));
 </script>
 
 <template>
   <span
     class="task-state-icon"
-    :class="{ pulse }"
     :style="{
       color,
       display: 'inline-flex',
@@ -73,15 +68,15 @@ const pulse = computed(() => !showUnread.value && preset.value.animatePulse(prop
         :fill="color"
       />
       <g :transform="showUnread ? 'translate(8,8) scale(0.62) translate(-8,-8)' : undefined">
-        <!-- running: 3/4 arc, spinning -->
+        <!-- A static 3/4 arc remains legible at small sizes without scheduling
+             a repaint for every mounted copy of a running session. -->
         <path
           v-if="state === 'running'"
-          class="task-spinner"
+          class="task-running-arc"
           d="M14 8 a6 6 0 1 1 -3 -5.196"
           :stroke="glyphColor"
           stroke-width="2"
           stroke-linecap="round"
-          :style="{ animationDuration: spinMs + 'ms' }"
         />
         <!-- completed: check mark -->
         <path
@@ -124,21 +119,3 @@ const pulse = computed(() => !showUnread.value && preset.value.animatePulse(prop
     </svg>
   </span>
 </template>
-
-<style scoped>
-.task-state-icon.pulse {
-  animation: task-pulse 1.2s ease-in-out infinite alternate;
-}
-.task-spinner {
-  /* duration is set via inline style based on preset.spinnerDurationMs */
-  animation: task-spin 1s linear infinite;
-  transform-origin: 50% 50%;
-}
-@keyframes task-pulse {
-  from { opacity: 0.5; }
-  to { opacity: 1; }
-}
-@keyframes task-spin {
-  to { transform: rotate(360deg); }
-}
-</style>

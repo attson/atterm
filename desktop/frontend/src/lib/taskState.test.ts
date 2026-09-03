@@ -26,14 +26,6 @@ describe("taskState presets", () => {
       test.each(STATES)("colorOf(%s) returns a hex color", (s) => {
         expect(p.colorOf(s)).toMatch(/^#[0-9a-f]{6}$/i);
       });
-      test("spinnerDurationMs(running) > 0", () => {
-        expect(p.spinnerDurationMs("running")).toBeGreaterThan(0);
-      });
-      test("spinnerDurationMs(non-running) is 0", () => {
-        for (const s of STATES.filter((x) => x !== "running")) {
-          expect(p.spinnerDurationMs(s)).toBe(0);
-        }
-      });
       test("colors match the shared vivid palette", () => {
         expect(p.colorOf("idle")).toBe("#6b7280");
         expect(p.colorOf("running")).toBe("#06b6d4");
@@ -50,8 +42,13 @@ describe("taskState presets", () => {
     expect(presets.iconOnly.showLabel).toBe(false);
     expect(presets.iconLabel.showLabel).toBe(true);
   });
-  test("both presets pulse waiting_input (shared animation budget)", () => {
-    expect(presets.iconOnly.animatePulse("waiting_input")).toBe(true);
-    expect(presets.iconLabel.animatePulse("waiting_input")).toBe(true);
+  test("presets contain display choices, not animation schedules", () => {
+    expect(Object.keys(presets.iconOnly).sort()).toEqual([
+      "colorOf",
+      "i18nKey",
+      "id",
+      "showLabel",
+      "textOpacity",
+    ]);
   });
 });

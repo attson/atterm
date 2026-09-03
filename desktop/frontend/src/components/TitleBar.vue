@@ -244,16 +244,9 @@ function onTitleDblClick() {
   line-height: 1;
 }
 
-/* Running indicator at the titlebar bottom: a transparent-base track with a
-   long green wave (720px wide) traveling L→R; one wave is always either
-   on-screen or just entering, no dead window between cycles.
-   Pseudo-element is always rendered (animation runs continuously) with
-   opacity 0 by default, so re-entering "running" reveals an already-in-
-   motion wave (no cold start / mid-blob pop-in). `.is-running` flips
-   opacity to 1; the 0.5s ease transition handles graceful fade in/out.
-   Pattern: 200px transparent gutter + 720px wave (symmetric ramp ↔ peak
-   ↔ ramp) + 200px transparent gutter = 1120px tile, repeat-x. Animation
-   shifts by exactly one tile width per cycle for a seamless loop. */
+/* Keep running visible without a perpetual paint loop. The titlebar remains
+   mounted while its indicator is transparent, so a moving gradient consumes
+   rendering time even when no running state is visible. */
 .titlebar::after {
   content: "";
   position: absolute;
@@ -261,34 +254,16 @@ function onTitleDblClick() {
   right: 0;
   bottom: -1px;
   height: 3px;
-  background: repeating-linear-gradient(90deg,
-    transparent 0px,
-    transparent 200px,
-    rgba(74, 222, 128, 0.3) 320px,
-    #4ade80 500px,
-    #bbf7d0 560px,
-    #4ade80 620px,
-    rgba(74, 222, 128, 0.3) 800px,
-    transparent 920px,
-    transparent 1120px);
-  background-size: 1120px 100%;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(74, 222, 128, 0.35) 18%,
+    #4ade80 50%,
+    rgba(74, 222, 128, 0.35) 82%,
+    transparent 100%);
   box-shadow: 0 -1px 6px rgba(74, 222, 128, 0.4);
-  animation: titlebar-running-sweep 3.5s linear infinite;
   opacity: 0;
-  transition: opacity 0.5s ease;
+  transition: opacity 0.25s ease;
   pointer-events: none;
 }
 .titlebar.is-running::after { opacity: 1; }
-@keyframes titlebar-running-sweep {
-  /* positive shift = LEFT-TO-RIGHT. shift by exactly one tile (1120px). */
-  0% { background-position: 0 0; }
-  100% { background-position: 1120px 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .titlebar::after {
-    animation: none;
-    background: #4ade80;
-    transition: opacity 0.25s ease;
-  }
-}
 </style>

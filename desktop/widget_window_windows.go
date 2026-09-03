@@ -39,10 +39,16 @@ func applyWidgetPlatformOptions(opts *options.App) {
 	}
 }
 
-// applyWidgetPostStartup runs from OnStartup, once the window exists.
+// applyWidgetPostStartup runs from OnStartup. The short native poll handles
+// the case where HWND registration lags Wails startup.
 func applyWidgetPostStartup(_ context.Context) {
-	// Even at OnStartup the HWND may not be registered yet, so poll briefly
-	// for it by title before swapping the extended style.
+	go stripWidgetFromTaskbar()
+}
+
+// applyWidgetPostReady runs after the widget page has mounted, when the HWND
+// is guaranteed to exist. The short native poll remains useful on Windows
+// because registration can lag the first frontend callback.
+func applyWidgetPostReady(_ context.Context) {
 	go stripWidgetFromTaskbar()
 }
 

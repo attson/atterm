@@ -68,10 +68,10 @@ func NewWidgetBridge() *WidgetBridge { return &WidgetBridge{} }
 
 func (p *WidgetBridge) startup(ctx context.Context) {
 	p.ctx = ctx
-	// Must run here, not before wails.Run: Wails sets
-	// NSApplicationActivationPolicyRegular during its own startup, which
-	// undoes anything set earlier — the symptom is the widget owning the menu
-	// bar and a Dock tile.
+	// Keep platform setup in OnStartup for platforms that require it (notably
+	// macOS activation policy, which must be dispatched after Wails starts).
+	// Linux performs its X11 operation again from Ready because realization can
+	// lag this callback.
 	applyWidgetPostStartup(ctx)
 	go p.readStdin()
 }
@@ -147,6 +147,11 @@ func (p *WidgetBridge) Ready() {
 	// Ready is invoked after runtime:ready, so this wins over Wails enabling
 	// the gesture during its own initialization.
 	wailsruntime.WindowExecJS(p.ctx, "window.wails.flags.enableResize = false;")
+	// OnStartup runs concurrently with Wails' native window setup. At that point
+	// a GTK window may not be realized yet, and platform APIs that enumerate or
+	// mutate the native window silently do nothing. Ready is called from the
+	// mounted widget page, so the window is guaranteed to exist on every platform.
+	applyWidgetPostReady(p.ctx)
 
 	p.mu.Lock()
 	p.ready = true

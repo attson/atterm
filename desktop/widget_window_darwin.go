@@ -67,8 +67,16 @@ func applyWidgetPlatformOptions(opts *options.App) {
 	}
 }
 
-// applyWidgetPostStartup runs from OnStartup, once Wails has finished its own
-// NSApplication setup.
+// applyWidgetPostStartup runs from OnStartup, after Wails has finished its own
+// NSApplication setup. The actual AppKit calls are dispatched to the main queue
+// because Wails invokes this callback on a Go goroutine.
 func applyWidgetPostStartup(_ context.Context) {
+	C.atterm_widget_configure()
+}
+
+// applyWidgetPostReady repeats the idempotent native setup after the page has
+// mounted, covering a delayed native window creation without changing the
+// required OnStartup ordering above.
+func applyWidgetPostReady(_ context.Context) {
 	C.atterm_widget_configure()
 }

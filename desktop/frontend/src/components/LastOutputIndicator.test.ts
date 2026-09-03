@@ -16,12 +16,11 @@ describe("LastOutputIndicator", () => {
     expect(indicator.find("svg").exists()).toBe(true);
   });
 
-  it("keeps live blue but disables animation for reduced motion", () => {
+  it("keeps live blue without a perpetual clock animation", () => {
     const w = mount(LastOutputIndicator, {
       props: { lastOutputAt: NOW / 1000 - 1, taskState: "running", nowMs: NOW },
     });
     expect(w.get('[data-test="last-output"]').classes()).toContain("live");
-    expect(source).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(source).toMatch(/\.last-output\.live \.last-output-clock \{ animation: none; \}/);
+    expect(source).not.toMatch(/animation[^;]*infinite/);
   });
 });

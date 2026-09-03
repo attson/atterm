@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { mount } from "@vue/test-utils";
 import TaskStateIcon from "./TaskStateIcon.vue";
+import source from "./TaskStateIcon.vue?raw";
 import { presets } from "../lib/taskState";
 
 describe("TaskStateIcon", () => {
@@ -17,15 +18,14 @@ describe("TaskStateIcon", () => {
     expect(w.find("svg circle").exists()).toBe(false);
     expect(w.attributes("style")).toContain("color: rgb(245, 158, 11)"); // #f59e0b
   });
-  test("renders an SVG spinner for running", () => {
+  test("renders a static SVG arc for running", () => {
     const w = mount(TaskStateIcon, {
       props: { state: "running", preset: presets.iconOnly },
     });
-    // Spinner is now a <path class="task-spinner"> inside the shared <svg>.
-    expect(w.find("path.task-spinner").exists()).toBe(true);
-    expect(w.find("path.task-spinner").attributes("style")).toContain(
-      "animation-duration: 1500ms",
-    );
+    expect(w.find("path.task-running-arc").exists()).toBe(true);
+  });
+  test("does not continuously animate state indicators", () => {
+    expect(source).not.toMatch(/animation[^;]*infinite/);
   });
   // Unread is drawn as a filled version of the *same* state glyph — a solid
   // state-colored disc with the glyph knocked out in the background colour —
@@ -74,25 +74,15 @@ describe("TaskStateIcon", () => {
     expect(w.find("path.task-completed-check").exists()).toBe(true);
     expect(w.find("path.task-unread-star").exists()).toBe(false);
   });
-  test("both presets share spinner duration (visual differs only by label)", () => {
-    const a = mount(TaskStateIcon, {
-      props: { state: "running", preset: presets.iconOnly },
-    });
-    const b = mount(TaskStateIcon, {
-      props: { state: "running", preset: presets.iconLabel },
-    });
-    expect(a.find("path.task-spinner").attributes("style")).toContain("1500ms");
-    expect(b.find("path.task-spinner").attributes("style")).toContain("1500ms");
-  });
-  test("waiting_input pulses in both presets", () => {
+  test("waiting_input stays static in both presets", () => {
     const a = mount(TaskStateIcon, {
       props: { state: "waiting_input", preset: presets.iconOnly },
     });
     const b = mount(TaskStateIcon, {
       props: { state: "waiting_input", preset: presets.iconLabel },
     });
-    expect(a.classes()).toContain("pulse");
-    expect(b.classes()).toContain("pulse");
+    expect(a.classes()).not.toContain("pulse");
+    expect(b.classes()).not.toContain("pulse");
   });
   test("neither preset renders a type icon when type is provided", () => {
     const a = mount(TaskStateIcon, {

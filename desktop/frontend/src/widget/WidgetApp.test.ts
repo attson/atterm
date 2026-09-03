@@ -156,7 +156,7 @@ describe("WidgetApp", () => {
     await w.vm.$nextTick();
 
     expect(w.find('[data-state="running"]').exists()).toBe(true);
-    expect(w.find("path.task-spinner").exists()).toBe(true);
+    expect(w.find("path.task-running-arc").exists()).toBe(true);
   });
 
   it("renders unread in the main state icon for unread completed rows", async () => {

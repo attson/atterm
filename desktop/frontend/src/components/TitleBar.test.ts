@@ -172,10 +172,10 @@ describe("TitleBar running indicator", () => {
     expect(w.get('[data-testid="titlebar-root"]').classes()).not.toContain("is-running");
   });
 
-  it("scoped style defines is-running underline + opacity-pulse keyframe", () => {
+  it("uses a static running underline without perpetual animation", () => {
     expect(titleBarSource).toMatch(/\.titlebar\.is-running::after/);
-    expect(titleBarSource).toMatch(/@keyframes titlebar-running-sweep/);
-    expect(titleBarSource).toMatch(/prefers-reduced-motion/);
+    expect(titleBarSource).not.toMatch(/animation[^;]*infinite/);
+    expect(titleBarSource).not.toContain("@keyframes titlebar-running-sweep");
   });
 });
 

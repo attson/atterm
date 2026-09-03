@@ -13,13 +13,11 @@ export interface TaskStatePreset {
   id: PresetId;
   i18nKey: string; // tasks.preset.<id>
   colorOf(state: TaskState): string;
-  spinnerDurationMs(state: TaskState): number;
-  animatePulse(state: TaskState): boolean;
   textOpacity: number;
   // When true, the sidebar row renders a short status-text label next to
   // the icon (Running / 等待输入 …). When false, only the colored glyph
   // shows. The two predefined presets differ only on this knob — they
-  // share the same vivid palette and animation budget.
+  // share the same vivid palette.
   showLabel: boolean;
 }
 
@@ -54,8 +52,6 @@ function makePreset(id: PresetId, showLabel: boolean): TaskStatePreset {
     id,
     i18nKey: `tasks.preset.${id}`,
     colorOf: (s) => COLORS[s],
-    spinnerDurationMs: (s) => (s === "running" ? 1500 : 0),
-    animatePulse: (s) => s === "waiting_input",
     textOpacity: 1.0,
     showLabel,
   };

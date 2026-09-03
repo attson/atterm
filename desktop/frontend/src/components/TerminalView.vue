@@ -1462,6 +1462,25 @@ function applyViewerSize() {
   }
 }
 
+// App.vue keeps previously visited tabs mounted under v-show. WebGL may drop
+// the last rendered frame while a terminal's ancestor is display:none, and a
+// same-size FitAddon pass does not invalidate that frame when the tab becomes
+// visible again. Redraw explicitly after layout has made the container
+// measurable. applyViewerSize preserves the driver/viewer sizing contract:
+// drivers fit to the container, while viewers stay locked to the PTY's META
+// dimensions.
+function redrawTerminalAfterReveal() {
+  if (!term || !termContainer.value) return;
+  const rect = termContainer.value.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return;
+  applyViewerSize();
+  try {
+    term.refresh(0, term.rows - 1);
+  } catch {
+    /* ignore renderer races while a tab is being revealed */
+  }
+}
+
 function onMenuSend() {
   closeContextMenu();
   if (!term || !conn) return;
@@ -2154,7 +2173,7 @@ onMounted(async () => {
     if (!isAlive) return;
     safeFit();
     requestAnimationFrame(() => {
-      if (isAlive) safeFit();
+      if (isAlive) redrawTerminalAfterReveal();
     });
   });
 });
@@ -2235,15 +2254,19 @@ watch(
     if (isActive) {
       if (conn) conn.attach();
       else startConnection();
-      // Tab just gained focus — recompute size and let xterm refocus its
-      // input so keystrokes go to this term instead of the body.
+      // Tab just gained focus — refocus xterm after Vue reveals the v-show
+      // subtree, then redraw on the next frame after layout is measurable.
+      // A redraw is required even when the fitted dimensions did not change:
+      // WebGL can otherwise leave a previously-hidden remote terminal black
+      // until an unrelated window resize invalidates its canvas.
       nextTick(() => {
-        safeFit();
-        // conn already exists here, so startConnection() returned early and
-        // its expectedCols/expectedRows comparison never ran. Reconcile the
-        // PTY in case it shrank while this pane was suspended.
-        syncPtySizeToTerm();
         focusTerminalForPaneActivation();
+        requestAnimationFrame(() => {
+          if (!isAlive || !props.active) return;
+          // redrawTerminalAfterReveal also reconciles a driver's PTY size via
+          // applyViewerSize; viewers remain locked to META dimensions.
+          redrawTerminalAfterReveal();
+        });
       });
     } else {
       conn?.suspend();

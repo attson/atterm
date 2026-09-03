@@ -103,6 +103,30 @@ describe("TerminalView fit geometry", () => {
   });
 });
 
+describe("TerminalView reveal redraw", () => {
+  test("redraws a previously hidden terminal after its tab becomes active", () => {
+    const helperBody = source.match(/function\s+redrawTerminalAfterReveal\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(helperBody).not.toBeNull();
+    // Viewer dimensions still come from META; revealing a tab must not bypass
+    // applyViewerSize with an unconditional FitAddon call.
+    expect(helperBody![0]).toMatch(/applyViewerSize\(\);[\s\S]*?term\.refresh\(0, term\.rows - 1\)/);
+
+    const activeWatch = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
+    expect(activeWatch).not.toBeNull();
+    expect(activeWatch![0]).toMatch(
+      /nextTick\([\s\S]*?requestAnimationFrame\([\s\S]*?redrawTerminalAfterReveal\(\)/,
+    );
+  });
+
+  test("redraws a newly mounted remote viewer after its initial layout settles", () => {
+    const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
+    expect(mountedBody).not.toBeNull();
+    expect(mountedBody![0]).toMatch(
+      /requestAnimationFrame\([\s\S]*?safeFit\(\);[\s\S]*?requestAnimationFrame\([\s\S]*?redrawTerminalAfterReveal\(\)/,
+    );
+  });
+});
+
 describe("TerminalView web auxiliary keys", () => {
   test("loads the mobile aux-key defaults for browser terminals only", () => {
     expect(source).toContain('effectiveAuxKeys, type AuxKey');
@@ -1102,10 +1126,11 @@ describe("TerminalView driver-side PTY size reconciliation", () => {
 
   test("re-activating a suspended pane reconciles the PTY size too", () => {
     // conn already exists on tab re-activation, so startConnection() returns
-    // early and its expectedCols/expectedRows comparison never runs.
+    // early and its expectedCols/expectedRows comparison never runs. The
+    // reveal redraw reaches applyViewerSize, whose driver branch reconciles.
     const watchBody = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
     expect(watchBody).not.toBeNull();
-    expect(watchBody![0]).toMatch(/safeFit\(\);[\s\S]*?syncPtySizeToTerm\(\);/);
+    expect(watchBody![0]).toMatch(/redrawTerminalAfterReveal\(\)/);
   });
 });
 

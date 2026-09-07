@@ -235,6 +235,8 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 
 **同一 PTY 内 AI 恢复凭据 latest-generation-wins**：OSC 133 `C` 每报告一次顶层 `claude` / `codex` / `aider` 启动，desktop 就建立新的 resolver generation——包括 Claude→Codex、Codex→Claude 以及同 kind 新会话。新 generation 同步取消旧 resolver，并先通过 `recovery:ai-sid` 的空 `ai_session_id` 清掉旧恢复凭据；只有当前 generation 精确解析出的 SID 才能重新写入 recovery snapshot，旧 resolver 的迟到回调必须按 generation 丢弃。新 SID 抓不到时宁可恢复普通 shell，也不能回退到上一段 AI 对话。恢复注入产生的首次同 kind OSC 只确认已建立的恢复 generation，不重复清凭据/启动 resolver；该豁免只消费一次。
 
+**同 cwd 的 Codex 会话按 PTY 进程归属 rollout**：Codex 的 rollout 只记录 cwd，不记录 atterm `session_id`；多个 pane 同时在一个目录运行时，单靠“哪个 jsonl 刚创建/更新”会让多个 resolver 认领同一会话。Linux desktop 因此从 PTY shell PID 沿 `/proc` 子进程树查找实际打开的 `rollout-*.jsonl`，只在唯一匹配时写入 SID 和标题。无进程级归属能力的平台仍可在同 cwd 只有一个活跃 resolver 时使用文件变化启发式；一旦存在多个候选就保持未解析，遵守“抓不到优于抓错”。
+
 ## phase 完成度（截至当前）
 
 - ✅ Phase 0：协议骨架，命令行 wrapper + relay + 浏览器 attach

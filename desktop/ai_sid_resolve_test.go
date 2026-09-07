@@ -251,7 +251,7 @@ func TestStartCodexFileResolve_CapturesSidAndMirrorsUserTitle(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	gotSid := make(chan string, 1)
-	go startCodexFileResolve(ctx, sess, cwd, func(sid string) {
+	go startCodexFileResolve(ctx, sess, cwd, 0, func(sid string) {
 		gotSid <- sid
 	})
 
@@ -306,7 +306,7 @@ func TestStartCodexFileResolve_CapturesResumedExistingRollout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	gotSid := make(chan string, 1)
-	go startCodexFileResolve(ctx, sess, cwd, func(captured string) {
+	go startCodexFileResolve(ctx, sess, cwd, 0, func(captured string) {
 		gotSid <- captured
 	})
 
@@ -330,6 +330,47 @@ func TestStartCodexFileResolve_CapturesResumedExistingRollout(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("session title = %q, want codex user message", sess.Info().Title)
+}
+
+func TestStartCodexFileResolve_SameCwdResolversDoNotShareRollout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer first.Close()
+	second := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer second.Close()
+	captured := make(chan string, 2)
+	go startCodexFileResolve(ctx, first, cwd, 0, func(sid string) { captured <- sid })
+	go startCodexFileResolve(ctx, second, cwd, 0, func(sid string) { captured <- sid })
+
+	// Both resolvers have the same baseline before either Codex process creates
+	// its rollout. A cwd-only watcher cannot know which PTY owns the first file.
+	time.Sleep(codexResolveInterval * 2)
+	sid := "019fae77-52c1-7201-bbdc-078634559f19"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"belongs to exactly one pane"}}`,
+	)
+
+	select {
+	case got := <-captured:
+		t.Fatalf("ambiguous same-cwd resolver captured %q; want no guessed session id", got)
+	case <-time.After(codexResolveInterval * 3):
+	}
+	if got := first.Info().Title; got == "belongs to exactly one pane" {
+		t.Fatalf("first pane adopted an ambiguous title %q", got)
+	}
+	if got := second.Info().Title; got == "belongs to exactly one pane" {
+		t.Fatalf("second pane adopted an ambiguous title %q", got)
+	}
 }
 
 func TestStartCodexKnownTitleResolve_FindsPreviousDaySidAndMirrorsUserTitle(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -415,14 +416,47 @@ const (
 	codexTitleMaxRunes   = 80
 )
 
-// startCodexFileResolve keeps the filename heuristic for codex (its jsonl has
-// no ai-title record). It baselines the day-dir's rollout ids, then waits for a
-// single new one to appear, or a single existing same-cwd rollout to advance
-// after the user selects it from Codex's resume picker. Ambiguous (≥2) aborts.
+var activeCodexResolvers = struct {
+	sync.Mutex
+	byCwd map[string]int
+}{byCwd: make(map[string]int)}
+
+// registerCodexResolver remains registered while title tracking is active, not
+// just during initial SID discovery. On platforms without process-owned file
+// lookup, that prevents a later same-cwd resolver from mistaking writes from
+// an already-bound pane for its own Codex conversation.
+func registerCodexResolver(cwd string) func() {
+	key := filepath.Clean(cwd)
+	activeCodexResolvers.Lock()
+	activeCodexResolvers.byCwd[key]++
+	activeCodexResolvers.Unlock()
+	return func() {
+		activeCodexResolvers.Lock()
+		activeCodexResolvers.byCwd[key]--
+		if activeCodexResolvers.byCwd[key] == 0 {
+			delete(activeCodexResolvers.byCwd, key)
+		}
+		activeCodexResolvers.Unlock()
+	}
+}
+
+func codexResolverCount(cwd string) int {
+	activeCodexResolvers.Lock()
+	defer activeCodexResolvers.Unlock()
+	return activeCodexResolvers.byCwd[filepath.Clean(cwd)]
+}
+
+// startCodexFileResolve first binds Codex to the rollout held open by the PTY's
+// process tree when the OS exposes that relationship. On other platforms it
+// retains the filename heuristic, but only while this is the sole resolver for
+// the cwd: a missing title is safer than attaching another pane's conversation.
 // Once captured, it keeps polling the rollout for the latest real user message
 // and mirrors that into the session title; Codex's OSC title is only spinner +
 // cwd basename.
-func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd string, onCapture func(sid string)) {
+func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd string, rootPID int, onCapture func(sid string)) {
+	unregister := registerCodexResolver(cwd)
+	defer unregister()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		logWarn("ai-sid", "no home for codex resolve: %v", err)
@@ -453,6 +487,23 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 			if file.ModTime.After(prev.ModTime) {
 				advanced = append(advanced, sid)
 			}
+		}
+		if codexProcessRolloutLookupSupported && rootPID > 0 {
+			if sid, ok := codexRolloutOwnedByProcess(rootPID, files); ok {
+				onCapture(sid)
+				trackCodexUserTitle(ctx, sess, files[sid].Path)
+				return
+			}
+			before = files
+			continue
+		}
+		// A rollout contains its cwd but no terminal/session identifier. When
+		// multiple PTYs are resolving Codex in that cwd, every watcher observes
+		// the same files; assigning one here would attach another conversation's
+		// recovery id and title to an arbitrary pane.
+		if codexResolverCount(cwd) > 1 {
+			before = files
+			continue
 		}
 		switch {
 		case len(fresh) == 1:
@@ -747,10 +798,10 @@ func codexRolloutIsResumableForCwd(path, sid, cwd string) bool {
 	return true
 }
 
-// startAIResolve dispatches AI session-id resolution by CLI kind. claude uses
-// title matching; codex keeps the filename heuristic; aider is a no-op (it
-// resumes by cwd, no id involved).
-func startAIResolve(ctx context.Context, sess *session.Session, cwd, kind string, onCapture func(sid string)) {
+// startAIResolve dispatches AI session-id resolution. Claude uses title
+// matching; Codex uses process-owned rollout lookup with a guarded filename
+// fallback; aider is a no-op (it resumes by cwd, no id involved).
+func startAIResolve(ctx context.Context, sess *session.Session, cwd, kind string, rootPID int, onCapture func(sid string)) {
 	switch kind {
 	case "claude":
 		home, err := os.UserHomeDir()
@@ -762,7 +813,7 @@ func startAIResolve(ctx context.Context, sess *session.Session, cwd, kind string
 		startClaudeTitleResolve(ctx, sess, home, onCapture)
 	case "codex":
 		logDebug("ai-sid", "ai resolve start kind=codex cwd=%s", cwd)
-		startCodexFileResolve(ctx, sess, cwd, onCapture)
+		startCodexFileResolve(ctx, sess, cwd, rootPID, onCapture)
 	default:
 		// aider and unknown kinds: nothing to resolve.
 	}

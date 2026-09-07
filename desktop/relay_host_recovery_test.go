@@ -16,7 +16,7 @@ func TestRelayHost_NewSession_AIKindKicksSniff(t *testing.T) {
 	var mu sync.Mutex
 	var sniffStarted bool
 	var capturedKind string
-	h.startSniffFn = func(_ context.Context, _ *session.Session, _, kind string, _ func(string)) {
+	h.startSniffFn = func(_ context.Context, _ *session.Session, _, kind string, _ int, _ func(string)) {
 		mu.Lock()
 		defer mu.Unlock()
 		sniffStarted = true
@@ -89,7 +89,7 @@ func TestRelayHost_NewSession_NoAIKind_NoSniff(t *testing.T) {
 	h := newTestRelayHost(t)
 	var mu sync.Mutex
 	var called bool
-	h.startSniffFn = func(_ context.Context, _ *session.Session, _, _ string, _ func(string)) {
+	h.startSniffFn = func(_ context.Context, _ *session.Session, _, _ string, _ int, _ func(string)) {
 		mu.Lock()
 		defer mu.Unlock()
 		called = true
@@ -113,10 +113,12 @@ func TestRelayHost_NewSession_OnAIClassified_StartsSniff(t *testing.T) {
 
 	var mu sync.Mutex
 	var captured []string
-	h.startSniffFn = func(_ context.Context, _ *session.Session, cwd, kind string, _ func(string)) {
+	var capturedRootPID int
+	h.startSniffFn = func(_ context.Context, _ *session.Session, cwd, kind string, rootPID int, _ func(string)) {
 		mu.Lock()
 		defer mu.Unlock()
 		captured = append(captured, kind+"@"+cwd)
+		capturedRootPID = rootPID
 	}
 
 	cwd := t.TempDir()
@@ -144,6 +146,9 @@ func TestRelayHost_NewSession_OnAIClassified_StartsSniff(t *testing.T) {
 	if captured[0] != "claude@"+cwd {
 		t.Fatalf("expected claude@%s, got %s", cwd, captured[0])
 	}
+	if capturedRootPID <= 0 {
+		t.Fatalf("resolver root pid = %d, want spawned PTY pid", capturedRootPID)
+	}
 }
 
 func TestRelayHost_NewSession_LatestAICommandOwnsRecoveryGeneration(t *testing.T) {
@@ -155,7 +160,7 @@ func TestRelayHost_NewSession_LatestAICommandOwnsRecoveryGeneration(t *testing.T
 		capture func(string)
 	}
 	started := make(chan resolver, 4)
-	h.startSniffFn = func(ctx context.Context, _ *session.Session, _ string, kind string, capture func(string)) {
+	h.startSniffFn = func(ctx context.Context, _ *session.Session, _ string, kind string, _ int, capture func(string)) {
 		started <- resolver{kind: kind, ctx: ctx, capture: capture}
 		<-ctx.Done()
 	}
@@ -275,7 +280,7 @@ func TestRelayHost_NewSession_RestoredResumeOSCConfirmsExistingGeneration(t *tes
 	h := newTestRelayHost(t)
 
 	started := make(chan string, 4)
-	h.startSniffFn = func(ctx context.Context, _ *session.Session, _ string, kind string, _ func(string)) {
+	h.startSniffFn = func(ctx context.Context, _ *session.Session, _ string, kind string, _ int, _ func(string)) {
 		started <- kind
 		<-ctx.Done()
 	}
@@ -330,7 +335,7 @@ func TestRelayHost_NewSession_UnresolvedRestoredKindDoesNotConsumeManualLaunch(t
 	h := newTestRelayHost(t)
 
 	started := make(chan string, 4)
-	h.startSniffFn = func(ctx context.Context, _ *session.Session, _ string, kind string, _ func(string)) {
+	h.startSniffFn = func(ctx context.Context, _ *session.Session, _ string, kind string, _ int, _ func(string)) {
 		started <- kind
 		<-ctx.Done()
 	}

@@ -67,7 +67,7 @@ type relayHost struct {
 
 	// startSniffFn launches an AI session-id resolution goroutine. Defaults
 	// to startAIResolve in production; tests override with a stub.
-	startSniffFn func(ctx context.Context, sess *session.Session, cwd, kind string, onCapture func(sid string))
+	startSniffFn func(ctx context.Context, sess *session.Session, cwd, kind string, rootPID int, onCapture func(sid string))
 
 	// aiSidCallback is set by app.go after startRelayHost returns; it
 	// receives AI recovery projection updates and emits a Wails event. An empty
@@ -725,7 +725,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				return
 			}
 			logDebug("ai-sid", "classified session=%s kind=%s generation=%d — start resolve", id, kind, generation)
-			h.startSniffFn(generationCtx, sess, resolveCwd, kind, func(aiSid string) {
+			h.startSniffFn(generationCtx, sess, resolveCwd, kind, pty.Pid(), func(aiSid string) {
 				resolveMu.Lock()
 				if generation == resolveGeneration {
 					// Keep validation + publication in one critical section. Otherwise

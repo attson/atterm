@@ -151,6 +151,11 @@ func (m *serviceHostManager) open(frame proto.Frame) {
 		fail("invalid_request")
 		return
 	}
+	targetAddr, err := serviceLoopbackTarget(fields.Host, fields.Port)
+	if err != nil {
+		fail("invalid_request")
+		return
+	}
 	keys, err := e2eecrypto.DeriveServiceKeys(accountKey, serviceID)
 	if err != nil {
 		fail("e2ee_required")
@@ -178,7 +183,7 @@ func (m *serviceHostManager) open(frame proto.Frame) {
 		m.mu.Unlock()
 	}()
 
-	host, err := m.connect(serviceID, frame.SessionID, fields.Port, req.HostTicket, codec)
+	host, err := m.connect(serviceID, frame.SessionID, targetAddr, req.HostTicket, codec)
 	if err != nil {
 		logWarn("service-host", "open service=%s failed: %v", serviceID, err)
 		fail("upstream_unavailable")
@@ -212,7 +217,21 @@ func (m *serviceHostManager) open(frame proto.Frame) {
 	}()
 }
 
-func (m *serviceHostManager) connect(serviceID, sessionID uuid.UUID, port uint16, ticket string, codec *serviceproxy.Codec) (*serviceHost, error) {
+func serviceLoopbackTarget(host string, port uint16) (string, error) {
+	switch host {
+	case "", "localhost":
+		host = "localhost"
+	case "127.0.0.1", "::1":
+	default:
+		return "", errors.New("service target must be loopback")
+	}
+	if port == 0 {
+		return "", errors.New("service target port is required")
+	}
+	return net.JoinHostPort(host, fmt.Sprintf("%d", port)), nil
+}
+
+func (m *serviceHostManager) connect(serviceID, sessionID uuid.UUID, targetAddr, ticket string, codec *serviceproxy.Codec) (*serviceHost, error) {
 	dialCtx, cancel := context.WithTimeout(m.ctx, serviceHostDialTimeout)
 	defer cancel()
 	opts := &websocket.DialOptions{HTTPHeader: http.Header{}}
@@ -254,7 +273,7 @@ func (m *serviceHostManager) connect(serviceID, sessionID uuid.UUID, port uint16
 	return &serviceHost{
 		id:          serviceID,
 		sessionID:   sessionID,
-		targetAddr:  net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port)),
+		targetAddr:  targetAddr,
 		ctx:         ctx,
 		cancel:      cancelHost,
 		ws:          conn,

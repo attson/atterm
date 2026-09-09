@@ -382,11 +382,12 @@ type ServiceOpenPayload struct {
 }
 
 // SealedServiceOpenFields are the owner-only fields carried by
-// ServiceOpenPayload.Sealed. There is deliberately no host field: phase 1 can
-// only dial owner loopback, so the wire cannot be turned into an SSRF surface.
+// ServiceOpenPayload.Sealed. Host is restricted by the owner to loopback
+// aliases, so selecting an address family cannot turn Preview into SSRF.
 type SealedServiceOpenFields struct {
 	Port   uint16 `json:"port"`
 	Scheme string `json:"scheme,omitempty"`
+	Host   string `json:"host,omitempty"`
 }
 
 // ServiceOpenedPayload is the answer to ServiceOpenPayload. ClientTicket is

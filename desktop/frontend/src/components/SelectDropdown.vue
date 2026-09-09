@@ -187,6 +187,11 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 .trigger {
+  /* Keep this a styled button/listbox in WebKit instead of falling back to
+     the platform's native popup-button appearance. */
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -200,6 +205,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
+  line-height: 1.3;
   cursor: pointer;
   text-align: left;
 }

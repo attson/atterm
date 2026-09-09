@@ -12,7 +12,7 @@ import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { createReplayInputGuard } from "../lib/replayInputGuard";
-import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
+import { copyTerminalSelection, fallbackCopyText, isTerminalCopyShortcut } from "../lib/terminalCopy";
 import { composeFontFamily } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
 import {
@@ -58,6 +58,7 @@ import {
 import { useQuickTemplates } from "../composables/useQuickTemplates";
 import { usePlatform } from "../platform";
 import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
+import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
 
@@ -187,7 +188,49 @@ const platform = usePlatform();
 const fileRevealStore = useFileRevealStore();
 const previewBusy = ref(false);
 const previewMode = ref(false);
-const preview = ref<{ id: string; serviceId: string; url: string; port: number } | null>(null);
+const preview = ref<{ id: string; serviceId: string; serviceIds: string[]; url: string; port: number } | null>(null);
+const previewPortEditing = ref(false);
+const previewPortText = ref("3000");
+const previewExtraMappings = ref<Array<{ port: string; pathPrefix: string }>>([]);
+const previewTargetHost = ref<"localhost" | "127.0.0.1" | "::1">("127.0.0.1");
+const previewTargetHostOptions: SelectOption[] = [
+  { value: "127.0.0.1", label: "127.0.0.1 (IPv4)" },
+  { value: "localhost", label: "localhost" },
+  { value: "::1", label: "::1 (IPv6)" },
+];
+const previewPortInput = ref<HTMLInputElement | null>(null);
+const previewTarget = computed(() => `#service-preview-slot-${props.sessionId}`);
+const previewDraftKey = computed(() => `atterm.service-preview.${props.sessionId}`);
+
+function loadPreviewDraft(): void {
+  try {
+    const raw = localStorage.getItem(previewDraftKey.value);
+    if (!raw) return;
+    const draft = JSON.parse(raw) as { port?: string; host?: string; mappings?: Array<{ port?: string; pathPrefix?: string }> };
+    if (typeof draft.port === "string") previewPortText.value = draft.port;
+    if (draft.host === "localhost" || draft.host === "127.0.0.1" || draft.host === "::1") previewTargetHost.value = draft.host;
+    if (platform.servicePreview?.supportsMappings !== false && Array.isArray(draft.mappings)) {
+      previewExtraMappings.value = draft.mappings
+        .filter((mapping) => typeof mapping.port === "string" && typeof mapping.pathPrefix === "string")
+        .slice(0, 7)
+        .map((mapping) => ({ port: mapping.port!, pathPrefix: mapping.pathPrefix! }));
+    }
+  } catch {
+    // A corrupt local draft should never block a session from opening.
+  }
+}
+
+function savePreviewDraft(): void {
+  try {
+    localStorage.setItem(previewDraftKey.value, JSON.stringify({
+      port: previewPortText.value,
+      host: previewTargetHost.value,
+      mappings: previewExtraMappings.value,
+    }));
+  } catch {
+    // Storage is optional in private/native webviews.
+  }
+}
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -352,6 +395,7 @@ const canOpenPreview = computed(() =>
     effectiveRemotePermission(props.remotePermission) === "full",
   )
 );
+const canConfigurePreviewMappings = computed(() => platform.servicePreview?.supportsMappings !== false);
 const bottomBarCount = computed(() =>
   previewMode.value ? 0 : (templatesHidden.value ? 0 : 1) + (showAuxKeyBar.value ? 1 : 0)
 );
@@ -368,7 +412,11 @@ async function stopPreview(): Promise<void> {
   preview.value = null;
   previewMode.value = false;
   if (!running) return;
-  conn?.closeService(running.serviceId);
+  if (running.serviceIds.length === 0) {
+    conn?.closeService(running.serviceId);
+  } else {
+    for (const serviceId of running.serviceIds) conn?.closeService(serviceId);
+  }
   try {
     await platform.servicePreview?.stop(running.id);
   } catch (e) {
@@ -378,39 +426,105 @@ async function stopPreview(): Promise<void> {
   safeFit();
 }
 
-async function openPreview(): Promise<void> {
-  if (!canOpenPreview.value || !conn || !platform.servicePreview || previewBusy.value) return;
-  const raw = window.prompt(t("terminal.preview.portPrompt"), "3000");
-  if (raw === null) return;
-  const port = Number(raw.trim());
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    emit("toast", t("terminal.preview.invalidPort"));
+function beginPreviewPortEntry(): void {
+  if (previewBusy.value) return;
+  if (!platform.servicePreview) {
+    emit("toast", t("terminal.preview.desktopOnly"));
     return;
   }
+  if (status.value !== "attached") {
+    emit("toast", t("terminal.preview.requiresConnection"));
+    return;
+  }
+  if (!isDriver.value) {
+    emit("toast", t("terminal.preview.requiresDriver"));
+    return;
+  }
+  if (effectiveRemotePermission(props.remotePermission) !== "full") {
+    emit("toast", t("terminal.preview.requiresFullPermission"));
+    return;
+  }
+  if (props.isLocalSession) return;
+  previewPortEditing.value = true;
+  nextTick(() => {
+    previewPortInput.value?.focus();
+    previewPortInput.value?.select();
+  });
+}
+
+function normalizePreviewPathPrefix(raw: string, root: boolean): string | null {
+  const value = raw.trim();
+  if (root) return value === "" || value === "/" ? "" : null;
+  if (!value.startsWith("/") || value.includes("?") || value.includes("#")) return null;
+  const normalized = value.replace(/\/+$/, "");
+  const segments = normalized.split("/");
+  if (normalized === "" || segments.slice(1).some((segment) => segment === "" || segment === "." || segment === "..")) return null;
+  return normalized;
+}
+
+function cancelPreviewPortEntry(): void {
+  previewPortEditing.value = false;
+  focusTerminalIfDriver();
+}
+
+function setPreviewTargetHost(value: string): void {
+  if (value === "localhost" || value === "127.0.0.1" || value === "::1") {
+    previewTargetHost.value = value;
+  }
+}
+
+async function openPreview(): Promise<void> {
+  if (!canOpenPreview.value || !conn || !platform.servicePreview || previewBusy.value) return;
+  const enteredMappings = [
+    { port: previewPortText.value.trim(), pathPrefix: "" },
+    ...previewExtraMappings.value.map((mapping) => ({ port: mapping.port.trim(), pathPrefix: mapping.pathPrefix.trim() })),
+  ];
+  const ports = enteredMappings.map((mapping) => Number(mapping.port));
+  if (ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)) {
+    emit("toast", t("terminal.preview.invalidPort"));
+    nextTick(() => previewPortInput.value?.select());
+    return;
+  }
+  const prefixes = enteredMappings.map((mapping, index) => normalizePreviewPathPrefix(mapping.pathPrefix, index === 0));
+  if (prefixes.some((prefix) => prefix === null) || new Set(prefixes).size !== prefixes.length) {
+    emit("toast", t("terminal.preview.invalidPathPrefix"));
+    return;
+  }
+  const normalizedPrefixes = prefixes as string[];
+  previewExtraMappings.value.forEach((mapping, index) => { mapping.pathPrefix = normalizedPrefixes[index + 1]; });
   previewBusy.value = true;
-  let opened: Awaited<ReturnType<SessionConnection["openService"]>> | null = null;
+  const openedServices: Array<Awaited<ReturnType<SessionConnection["openService"]>>> = [];
   try {
     if (preview.value) await stopPreview();
-    opened = await conn.openService(port);
-    if (!isAlive || !canOpenPreview.value) {
-      conn.closeService(opened.serviceId);
-      throw new Error(t("terminal.preview.noLongerAllowed"));
+    for (const port of ports) {
+      const opened = await conn.openService(port, previewTargetHost.value);
+      openedServices.push(opened);
+      if (!isAlive || !canOpenPreview.value) {
+        conn.closeService(opened.serviceId);
+        throw new Error(t("terminal.preview.noLongerAllowed"));
+      }
     }
     const local = await platform.servicePreview.start({
-      serviceId: opened.serviceId,
-      clientTicket: opened.clientTicket,
-      clientToHostKey: opened.clientToHostKey,
-      hostToClientKey: opened.hostToClientKey,
+      mappings: openedServices.map((service, index) => ({
+        serviceId: service.serviceId,
+        clientTicket: service.clientTicket,
+        clientToHostKey: service.clientToHostKey,
+        hostToClientKey: service.hostToClientKey,
+        port: ports[index],
+        pathPrefix: normalizedPrefixes[index] || undefined,
+      })),
     });
+    savePreviewDraft();
     if (!isAlive || !canOpenPreview.value) {
-      conn.closeService(opened.serviceId);
+      for (const service of openedServices) conn.closeService(service.serviceId);
       await platform.servicePreview.stop(local.id);
       throw new Error(t("terminal.preview.noLongerAllowed"));
     }
-    preview.value = { id: local.id, serviceId: opened.serviceId, url: local.url, port };
+    preview.value = { id: local.id, serviceId: openedServices[0].serviceId, serviceIds: openedServices.map((service) => service.serviceId), url: local.url, port: ports[0] };
+    previewPortEditing.value = false;
     previewMode.value = true;
   } catch (e) {
-    if (opened) conn?.closeService(opened.serviceId);
+    for (const service of openedServices) conn?.closeService(service.serviceId);
     emit("toast", t("terminal.preview.openFailed", { error: errText(e) }));
   } finally {
     previewBusy.value = false;
@@ -420,6 +534,33 @@ async function openPreview(): Promise<void> {
 function showTerminal(): void {
   previewMode.value = false;
   nextTick(() => safeFit());
+}
+
+async function openPreviewInBrowser(): Promise<void> {
+  const url = preview.value?.url;
+  if (!url) return;
+  try {
+    await platform.system.openExternalURL(url);
+  } catch (e) {
+    logWarn("service-preview", "open external browser failed", { error: errText(e) });
+    emit("toast", t("terminal.preview.browserOpenFailed"));
+  }
+}
+
+async function copyPreviewURL(): Promise<void> {
+  const url = preview.value?.url;
+  if (!url) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else if (!fallbackCopyText(url)) {
+      throw new Error("clipboard unavailable");
+    }
+    emit("toast", t("terminal.preview.urlCopied"));
+  } catch (e) {
+    logWarn("service-preview", "copy preview URL failed", { error: errText(e) });
+    emit("toast", t("terminal.preview.copyFailed"));
+  }
 }
 
 function focusTerminalForPaneActivation() {
@@ -2135,7 +2276,17 @@ let templatesOff: (() => void) | null = null;
 let shortcutsOff: (() => void) | null = null;
 let prefsChangedOff: (() => void) | null = null;
 
+function onServicePreviewRequest(event: Event): void {
+  const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+  if (detail?.sessionId !== props.sessionId) return;
+  beginPreviewPortEntry();
+}
+
+watch([previewPortText, previewTargetHost, previewExtraMappings], savePreviewDraft, { deep: true });
+
 onMounted(async () => {
+  loadPreviewDraft();
+  window.addEventListener("atterm:open-service-preview", onServicePreviewRequest);
   await ensureTerm();
   if (!isAlive) return;
   // Resolve the local hostname before opening the WS so the very first ATTACH
@@ -2202,6 +2353,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", onDocumentPointerDown, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
+  window.removeEventListener("atterm:open-service-preview", onServicePreviewRequest);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
@@ -2366,16 +2518,56 @@ watch(
       sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
       allow="clipboard-read; clipboard-write"
     ></iframe>
-    <div v-if="canOpenPreview || preview" class="service-preview-controls">
-      <template v-if="preview">
-        <button type="button" :class="{ active: !previewMode }" @click="showTerminal">{{ t("terminal.preview.terminal") }}</button>
-        <button type="button" :class="{ active: previewMode }" @click="previewMode = true">{{ t("terminal.preview.previewPort", { port: preview.port }) }}</button>
-        <button type="button" class="close" @click="stopPreview">{{ t("common.close") }}</button>
-      </template>
-      <button v-else type="button" data-testid="open-service-preview" :disabled="previewBusy" @click="openPreview">
-        {{ previewBusy ? t("terminal.preview.opening") : t("terminal.preview.open") }}
-      </button>
-    </div>
+    <Teleport v-if="preview || previewPortEditing" :to="previewTarget">
+      <div class="service-preview-controls" :class="{ configuring: previewPortEditing && !preview }">
+        <template v-if="preview">
+          <button type="button" :class="{ active: !previewMode }" @click="showTerminal">{{ t("terminal.preview.terminal") }}</button>
+          <button type="button" :class="{ active: previewMode }" @click="previewMode = true">{{ t("terminal.preview.previewPort", { port: preview.port }) }}</button>
+          <button type="button" class="preview-action" :title="t('terminal.preview.openInBrowser')" :aria-label="t('terminal.preview.openInBrowser')" @click="openPreviewInBrowser">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8l4 4-4 4"/></svg>
+          </button>
+          <button type="button" class="preview-action" :title="t('terminal.preview.copyURL')" :aria-label="t('terminal.preview.copyURL')" @click="copyPreviewURL">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button type="button" class="close" @click="stopPreview">{{ t("common.close") }}</button>
+        </template>
+        <form v-else-if="previewPortEditing && canOpenPreview" class="service-preview-port-form" @submit.prevent="openPreview">
+          <SelectDropdown
+            class="service-preview-host"
+            :model-value="previewTargetHost"
+            :options="previewTargetHostOptions"
+            :aria-label="t('terminal.preview.targetHost')"
+            @update:model-value="setPreviewTargetHost"
+          />
+          <div class="service-preview-mapping-row root-mapping">
+            <input
+              ref="previewPortInput"
+              v-model="previewPortText"
+              data-testid="service-preview-port"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              :aria-label="t('terminal.preview.portPrompt')"
+              @keydown.esc.prevent.stop="cancelPreviewPortEntry"
+            />
+            <span class="service-preview-path">/</span>
+          </div>
+          <div v-for="(mapping, index) in previewExtraMappings" :key="index" class="service-preview-mapping-row">
+            <input v-model="mapping.port" type="text" inputmode="numeric" pattern="[0-9]*" :aria-label="t('terminal.preview.additionalPort')" />
+            <input v-model="mapping.pathPrefix" type="text" placeholder="/api" :aria-label="t('terminal.preview.pathPrefix')" />
+            <button type="button" class="preview-action" :title="t('terminal.preview.removeMapping')" :aria-label="t('terminal.preview.removeMapping')" @click="previewExtraMappings.splice(index, 1)">×</button>
+          </div>
+          <div class="service-preview-form-actions">
+            <button v-if="canConfigurePreviewMappings && previewExtraMappings.length < 7" type="button" class="preview-add-mapping" @click="previewExtraMappings.push({ port: '', pathPrefix: '/api' })">＋ {{ t('terminal.preview.addMapping') }}</button>
+            <span class="service-preview-form-spacer"></span>
+            <button type="submit" :disabled="previewBusy">
+              {{ previewBusy ? t("terminal.preview.opening") : t("terminal.preview.open") }}
+            </button>
+            <button type="button" :disabled="previewBusy" @click="cancelPreviewPortEntry">{{ t("common.cancel") }}</button>
+          </div>
+        </form>
+      </div>
+    </Teleport>
     <TerminalSelectionPopover
       :visible="selectionPopover.visible"
       :x="selectionPopover.x"
@@ -2666,20 +2858,25 @@ watch(
   border: 0;
   background: #fff;
 }
-.service-preview-controls {
-  position: absolute;
-  top: 8px;
-  left: 10px;
-  z-index: 7;
+:global(.service-preview-controls) {
   display: flex;
   gap: 4px;
-  padding: 3px;
+  padding: 0;
+  pointer-events: auto;
+}
+:global(.service-preview-controls.configuring) {
+  position: absolute;
+  top: 24px;
+  right: 0;
+  z-index: 8;
+  width: 330px;
+  padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--terminal-overlay);
-  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
 }
-.service-preview-controls button {
+:global(.service-preview-controls button:not(.trigger)) {
   border: 0;
   border-radius: 5px;
   padding: 4px 8px;
@@ -2688,16 +2885,91 @@ watch(
   font: 12px var(--font-mono);
   cursor: pointer;
 }
-.service-preview-controls button.active {
+:global(.service-preview-controls button.active) {
   color: var(--fg);
   background: rgba(255, 255, 255, 0.1);
 }
-.service-preview-controls button.close {
+:global(.service-preview-controls button.preview-action) {
+  width: 24px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+:global(.service-preview-controls button.preview-action svg) { display: block; margin: 0 auto; }
+:global(.service-preview-controls button.close) {
   color: var(--bad);
 }
-.service-preview-controls button:disabled {
+:global(.service-preview-controls button:disabled) {
   opacity: 0.55;
   cursor: default;
+}
+:global(.service-preview-port-form) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+:global(.service-preview-host) {
+  width: 100%;
+}
+:global(.service-preview-host .trigger) {
+  height: 27px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--bg);
+  font: 12px var(--font-mono);
+}
+:global(.service-preview-host .menu) {
+  background: var(--terminal-overlay);
+  font: 12px var(--font-mono);
+}
+:global(.service-preview-host .option) {
+  padding: 6px 8px;
+}
+:global(.service-preview-mapping-row) {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 5px;
+}
+:global(.service-preview-mapping-row input) {
+  width: auto;
+  min-width: 0;
+}
+:global(.service-preview-mapping-row input + input) {
+  width: auto;
+}
+:global(.service-preview-mapping-row.root-mapping) {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+:global(.service-preview-path) {
+  color: var(--fg-dim);
+  font: 12px var(--font-mono);
+}
+:global(.preview-add-mapping) {
+  white-space: nowrap;
+}
+:global(.service-preview-form-actions) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+:global(.service-preview-form-spacer) { flex: 1; }
+:global(.service-preview-port-form input) {
+  width: 76px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+  color: var(--fg);
+  background: var(--bg);
+  font: 12px var(--font-mono);
+  outline: none;
+}
+:global(.service-preview-port-form input:focus) {
+  border-color: var(--accent);
+}
+:global(.service-preview-port-form .service-preview-mapping-row input) {
+  width: 100%;
 }
 .template-bar {
   position: absolute;

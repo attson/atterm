@@ -1832,6 +1832,7 @@ defineExpose({ me });
             :command-notify-threshold-sec="commandNotifyThresholdSec"
             :search-request-seq="terminalSearchSeq"
             :appearance="terminalAppearance"
+            :service-preview-available="Boolean($platform.servicePreview)"
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
             @close-pane="(idx) => requestClosePane(t, idx)"
             @drop-session="(p) => onPaneDropSession(t, p)"

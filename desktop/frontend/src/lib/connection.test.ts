@@ -177,6 +177,13 @@ describe("SessionConnection FS RPC", () => {
     expect(ws.sent).toHaveLength(1); // ATTACH only
   });
 
+  test("openService only accepts loopback target hosts", async () => {
+    setAccountKeyProvider(() => new Uint8Array(32).fill(0x42));
+    const { conn, ws } = openConnection();
+    await expect(conn.openService(3000, "10.0.0.7")).rejects.toThrow(/loopback/);
+    expect(ws.sent).toHaveLength(1); // ATTACH only
+  });
+
   test("closeService sends the additive SERVICE_CLOSE frame", () => {
     const { conn, ws } = openConnection();
     conn.closeService("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");

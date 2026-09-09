@@ -36,6 +36,7 @@ import {
   Trash,
 } from '../../wailsjs/go/main/PluginFS'
 import type { Platform, EnvironmentInfo, RemoteSession } from './types'
+import { main as WailsModels } from '../../wailsjs/go/models'
 import { setAccountKeyProvider } from '../lib/account-key'
 
 // In-memory cache of the unlocked account_key. Mirrors the Capacitor
@@ -126,13 +127,32 @@ export function createWailsPlatform(): Platform {
       signOutOtherRelaySessions: api.signOutOtherRelaySessions,
     },
     servicePreview: {
+      supportsMappings: true,
       start: async (req) => {
-        const result = await StartServicePreview({
-          service_id: req.serviceId,
-          client_ticket: req.clientTicket,
-          client_to_host_key: Array.from(req.clientToHostKey),
-          host_to_client_key: Array.from(req.hostToClientKey),
+        const mappings = req.mappings ?? (req.serviceId && req.clientTicket && req.clientToHostKey && req.hostToClientKey ? [{
+          serviceId: req.serviceId,
+          clientTicket: req.clientTicket,
+          clientToHostKey: req.clientToHostKey,
+          hostToClientKey: req.hostToClientKey,
+          port: 0,
+        }] : [])
+        if (mappings.length === 0) throw new Error("service preview requires at least one mapping")
+        const first = mappings[0]
+        const request = new WailsModels.ServicePreviewStartRequest({
+          mappings: mappings.map((mapping) => ({
+            service_id: mapping.serviceId,
+            client_ticket: mapping.clientTicket,
+            client_to_host_key: Array.from(mapping.clientToHostKey),
+            host_to_client_key: Array.from(mapping.hostToClientKey),
+            port: mapping.port,
+            path_prefix: mapping.pathPrefix || "",
+          })),
+          service_id: first.serviceId,
+          client_ticket: first.clientTicket,
+          client_to_host_key: Array.from(first.clientToHostKey),
+          host_to_client_key: Array.from(first.hostToClientKey),
         })
+        const result = await StartServicePreview(request)
         return { id: result.id, url: result.url }
       },
       stop: async (id) => StopServicePreview(id),

@@ -174,7 +174,7 @@ ATTACH(sid, client_id)  ───►
 
 帧格式与字节级语义见 [protocol.md](./protocol.md) §Driver / Viewer 模型。前端实现在 `desktop/frontend/src/components/TerminalView.vue`（`isDriver` ref + `onDriverChange` handler + Space 拦截调 `claimDriver()`）——web 现在挂载的就是这同一个组件（见「前端架构细节」节），不再有独立的 `web/src/main/` 实现。
 
-### 流 5：远程 Web Preview（阶段 1）
+### 流 5：远程 Web Preview（阶段 1–4）
 
 远程 session 的当前 driver 可手工输入 owner desktop 上的 loopback HTTP
 端口，并在同一个 `TerminalView` 内切到 Preview。控制与数据刻意分流：
@@ -187,14 +187,21 @@ ATTACH(sid, client_id)  ───►
 
 数据：原生 client loopback listener
        ⇄ /service-client ⇄ relay keyless pair ⇄ /service-host
-       ⇄ owner 127.0.0.1:<port>
+       ⇄ owner <loopback>:<port>（localhost / IPv4 / IPv6）
 ```
 
 relay 为两条 service WS 发一次性 ticket，只看 multiplex header/额度并转发
 AES-GCM 密文。两端以 `HKDF(account_key, "atterm-service-v1" || service_id)`
-派生方向独立的临时 key；`account_key` 不交给 Wails/Swift 代理。wire 不存在
-任意 host 字段，owner 固定只拨 `127.0.0.1`，因此该能力不能被改造成 relay
-侧或 owner 侧 SSRF。
+派生方向独立的临时 key；`account_key` 不交给 Wails/Swift 代理。wire 不接受
+任意 host：sealed 字段只允许 `localhost`、`127.0.0.1`、`::1`，owner 在拨号前
+再次校验，因此该能力不能被改造成 relay 侧或 owner 侧 SSRF。
+
+Preview 的本地端还提供一个 HTTP gateway：一个入口服务和多个附加服务 lease
+（例如 `/` → 3000、`/api` → 8080、`/ws` → 9001）汇聚到同一个本地 URL。
+gateway 使用普通 HTTP reverse proxy，保留 WebSocket upgrade、SSE flush 和
+上传请求；iframe 与“在系统浏览器打开”使用同一个 URL。多个映射复用既有的
+单端口 `SERVICE_OPEN` lease，不改变 relay wire。端口、路径前缀和 loopback
+地址选择按 session 保存在客户端 `localStorage`；它们是本地偏好，不上传 relay。
 
 service hub 不调用 `Subscribe`，数据 WS 也不经过 session mirror，所以打开
 Preview 不会改变 0→1/N→0 subscriber lifecycle，更不会让静默 PTY 开始 lazy

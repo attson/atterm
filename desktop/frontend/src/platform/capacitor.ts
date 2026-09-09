@@ -513,16 +513,26 @@ export function createCapacitorPlatform(): Platform {
       // setUplinkPaused omitted — desktop-only
     },
     servicePreview: {
+      supportsMappings: false,
       start: async (req) => {
+        const mappings = req.mappings ?? (req.serviceId && req.clientTicket && req.clientToHostKey && req.hostToClientKey ? [{
+          serviceId: req.serviceId,
+          clientTicket: req.clientTicket,
+          clientToHostKey: req.clientToHostKey,
+          hostToClientKey: req.hostToClientKey,
+          port: 0,
+        }] : [])
+        if (mappings.length !== 1) throw new Error('multiple preview mappings are not supported on this mobile build yet')
+        const mapping = mappings[0]
         const cfg = loadLegacyFromLocalStorage()
           ?? parseRelayJSON(await secureStorage.get(STORAGE_KEY))
         if (!cfg?.url || !cfg.token) throw new Error('relay_not_configured')
         const serviceRelayURL = cfg.homeInstanceURL || cfg.url
         return NativeServicePreview.start({
-          serviceId: req.serviceId,
-          clientTicket: req.clientTicket,
-          clientToHostKey: bytesToB64Std(req.clientToHostKey),
-          hostToClientKey: bytesToB64Std(req.hostToClientKey),
+          serviceId: mapping.serviceId,
+          clientTicket: mapping.clientTicket,
+          clientToHostKey: bytesToB64Std(mapping.clientToHostKey),
+          hostToClientKey: bytesToB64Std(mapping.hostToClientKey),
           relayUrl: serviceRelayURL,
           token: cfg.token,
           allowInsecure: cfg.allow_insecure_relay ?? false,

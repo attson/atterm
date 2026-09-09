@@ -635,13 +635,16 @@ export class SessionConnection {
     });
   }
 
-  openService(port: number, timeoutMs = DEFAULT_SERVICE_OPEN_TIMEOUT_MS): Promise<ServiceOpenResult> {
+  openService(port: number, host = "localhost", timeoutMs = DEFAULT_SERVICE_OPEN_TIMEOUT_MS): Promise<ServiceOpenResult> {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("service preview failed: websocket is not open"));
     }
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       return Promise.reject(new Error("service preview failed: invalid port"));
+    }
+    if (!["localhost", "127.0.0.1", "::1"].includes(host)) {
+      return Promise.reject(new Error("service preview failed: target must be loopback"));
     }
     const accountKey = getCurrentAccountKey();
     if (!accountKey || accountKey.length !== 32) {
@@ -654,7 +657,7 @@ export class SessionConnection {
       accountKey,
       this.sessionId,
       TYPE.SERVICE_OPEN,
-      encodeText(JSON.stringify({ port, scheme: "http" })),
+      encodeText(JSON.stringify({ port, scheme: "http", host })),
     );
     const payload = encodeText(JSON.stringify({
       request_id: requestId,

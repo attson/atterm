@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"path"
+	"strings"
 	"sync"
 
 	"github.com/attson/atterm/internal/e2eecrypto"
@@ -19,10 +23,25 @@ import (
 // account_key and relay credential are deliberately absent: the former stays
 // in the renderer, while the latter is read from config by the App binding.
 type ServicePreviewStartRequest struct {
+	// Mappings is the multi-service form. The first mapping is the preview
+	// entry point; later mappings are selected by PathPrefix (for example
+	// /api -> a backend port). The legacy fields below remain accepted so old
+	// frontends can still open a single-port preview.
+	Mappings []ServicePreviewMapping `json:"mappings,omitempty"`
+
 	ServiceID       string `json:"service_id"`
 	ClientTicket    string `json:"client_ticket"`
 	ClientToHostKey []byte `json:"client_to_host_key"`
 	HostToClientKey []byte `json:"host_to_client_key"`
+}
+
+type ServicePreviewMapping struct {
+	ServiceID       string `json:"service_id"`
+	ClientTicket    string `json:"client_ticket"`
+	ClientToHostKey []byte `json:"client_to_host_key"`
+	HostToClientKey []byte `json:"host_to_client_key"`
+	Port            uint16 `json:"port"`
+	PathPrefix      string `json:"path_prefix,omitempty"`
 }
 
 type ServicePreviewStartResponse struct {
@@ -32,7 +51,21 @@ type ServicePreviewStartResponse struct {
 
 type servicePreviewManager struct {
 	mu       sync.Mutex
-	previews map[uuid.UUID]*servicePreview
+	previews map[uuid.UUID]*servicePreviewGateway
+}
+
+type servicePreviewGateway struct {
+	id        uuid.UUID
+	cancel    context.CancelFunc
+	listener  net.Listener
+	server    *http.Server
+	pipes     []*servicePreview
+	closeOnce sync.Once
+}
+
+type servicePreviewRoute struct {
+	prefix string
+	proxy  *httputil.ReverseProxy
 }
 
 type servicePreview struct {
@@ -73,19 +106,113 @@ func (a *App) StopServicePreview(id string) {
 }
 
 func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req ServicePreviewStartRequest) (ServicePreviewStartResponse, error) {
-	serviceID, err := uuid.Parse(req.ServiceID)
-	if err != nil || serviceID == uuid.Nil || req.ClientTicket == "" {
-		return ServicePreviewStartResponse{}, errors.New("invalid service preview request")
-	}
-	if len(req.ClientToHostKey) != e2eecrypto.SessionKeySize || len(req.HostToClientKey) != e2eecrypto.SessionKeySize {
-		return ServicePreviewStartResponse{}, errors.New("invalid service preview keys")
-	}
-	codec, err := serviceproxy.NewCodec(serviceID, req.ClientToHostKey, req.HostToClientKey)
-	if err != nil {
-		return ServicePreviewStartResponse{}, err
-	}
 	if parent == nil {
 		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	mappings := req.Mappings
+	if len(mappings) == 0 {
+		mappings = []ServicePreviewMapping{{
+			ServiceID: req.ServiceID, ClientTicket: req.ClientTicket,
+			ClientToHostKey: req.ClientToHostKey, HostToClientKey: req.HostToClientKey,
+		}}
+	}
+	if len(mappings) == 0 || len(mappings) > 8 {
+		cancel()
+		return ServicePreviewStartResponse{}, errors.New("invalid service preview mappings")
+	}
+	pipes := make([]*servicePreview, 0, len(mappings))
+	routes := make([]servicePreviewRoute, 0, len(mappings))
+	seenPrefixes := make(map[string]struct{}, len(mappings))
+	for i, mapping := range mappings {
+		prefix, err := normalizeServicePreviewPrefix(mapping.PathPrefix, i == 0)
+		if err != nil {
+			cancel()
+			return ServicePreviewStartResponse{}, err
+		}
+		if _, exists := seenPrefixes[prefix]; exists {
+			cancel()
+			return ServicePreviewStartResponse{}, errors.New("service preview path prefixes must be distinct")
+		}
+		seenPrefixes[prefix] = struct{}{}
+		mapping.PathPrefix = prefix
+		pipe, err := m.startPipe(ctx, cfg, mapping)
+		if err != nil {
+			for _, started := range pipes {
+				started.close()
+			}
+			cancel()
+			return ServicePreviewStartResponse{}, err
+		}
+		pipes = append(pipes, pipe)
+		target, _ := url.Parse("http://" + pipe.listener.Addr().String())
+		routes = append(routes, newServicePreviewRoute(mapping.PathPrefix, target))
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		for _, pipe := range pipes {
+			pipe.close()
+		}
+		cancel()
+		return ServicePreviewStartResponse{}, err
+	}
+	gatewayID := uuid.New()
+	gateway := &servicePreviewGateway{id: gatewayID, cancel: cancel, listener: listener, pipes: pipes}
+	gateway.server = &http.Server{Handler: newServicePreviewHandler(routes)}
+	m.mu.Lock()
+	if m.previews == nil {
+		m.previews = make(map[uuid.UUID]*servicePreviewGateway)
+	}
+	if _, exists := m.previews[gatewayID]; exists {
+		m.mu.Unlock()
+		gateway.close()
+		return ServicePreviewStartResponse{}, errors.New("service preview already running")
+	}
+	m.previews[gatewayID] = gateway
+	m.mu.Unlock()
+	go func() {
+		gateway.run()
+		m.mu.Lock()
+		if m.previews[gatewayID] == gateway {
+			delete(m.previews, gatewayID)
+		}
+		m.mu.Unlock()
+	}()
+	return ServicePreviewStartResponse{
+		ID:  gatewayID.String(),
+		URL: "http://" + listener.Addr().String() + "/",
+	}, nil
+}
+
+func normalizeServicePreviewPrefix(raw string, root bool) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if root {
+		if raw == "" || raw == "/" {
+			return "", nil
+		}
+		return "", errors.New("first service preview mapping must be the root")
+	}
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, "?#") {
+		return "", errors.New("additional service preview mappings require a path prefix")
+	}
+	cleaned := path.Clean(raw)
+	if cleaned == "/" || cleaned == "." || cleaned != strings.TrimRight(raw, "/") {
+		return "", errors.New("invalid service preview path prefix")
+	}
+	return cleaned, nil
+}
+
+func (m *servicePreviewManager) startPipe(parent context.Context, cfg appConfig, mapping ServicePreviewMapping) (*servicePreview, error) {
+	serviceID, err := uuid.Parse(mapping.ServiceID)
+	if err != nil || serviceID == uuid.Nil || mapping.ClientTicket == "" {
+		return nil, errors.New("invalid service preview request")
+	}
+	if len(mapping.ClientToHostKey) != e2eecrypto.SessionKeySize || len(mapping.HostToClientKey) != e2eecrypto.SessionKeySize {
+		return nil, errors.New("invalid service preview keys")
+	}
+	codec, err := serviceproxy.NewCodec(serviceID, mapping.ClientToHostKey, mapping.HostToClientKey)
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
 	opts := &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + cfg.RelaySessionToken}}}
@@ -97,10 +224,10 @@ func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req
 	cancelDial()
 	if err != nil {
 		cancel()
-		return ServicePreviewStartResponse{}, fmt.Errorf("connect relay service: %w", err)
+		return nil, fmt.Errorf("connect relay service: %w", err)
 	}
 	ws.SetReadLimit(serviceproxy.MaxPacketSize)
-	reg, err := json.Marshal(serviceRegistration{ServiceID: serviceID.String(), Ticket: req.ClientTicket})
+	reg, err := json.Marshal(serviceRegistration{ServiceID: serviceID.String(), Ticket: mapping.ClientTicket})
 	if err == nil {
 		wctx, wc := context.WithTimeout(ctx, serviceHostWriteWait)
 		err = ws.Write(wctx, websocket.MessageBinary, reg)
@@ -109,7 +236,7 @@ func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req
 	if err != nil {
 		cancel()
 		_ = ws.CloseNow()
-		return ServicePreviewStartResponse{}, fmt.Errorf("register relay service: %w", err)
+		return nil, fmt.Errorf("register relay service: %w", err)
 	}
 	ackCtx, ackCancel := context.WithTimeout(ctx, serviceHostWriteWait)
 	_, ackRaw, err := ws.Read(ackCtx)
@@ -121,47 +248,67 @@ func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req
 		if err == nil {
 			err = errors.New("service registration rejected")
 		}
-		return ServicePreviewStartResponse{}, fmt.Errorf("register relay service: %w", err)
+		return nil, fmt.Errorf("register relay service: %w", err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		cancel()
 		_ = ws.CloseNow()
-		return ServicePreviewStartResponse{}, err
+		return nil, err
 	}
-	preview := &servicePreview{
-		id:          serviceID,
-		ctx:         ctx,
-		cancel:      cancel,
-		listener:    listener,
-		ws:          ws,
-		codec:       codec,
-		send:        make(chan serviceHostMessage, serviceHostQueueDepth),
-		connections: make(map[uint32]net.Conn),
-	}
-	m.mu.Lock()
-	if m.previews == nil {
-		m.previews = make(map[uuid.UUID]*servicePreview)
-	}
-	if _, exists := m.previews[serviceID]; exists {
-		m.mu.Unlock()
-		preview.close()
-		return ServicePreviewStartResponse{}, errors.New("service preview already running")
-	}
-	m.previews[serviceID] = preview
-	m.mu.Unlock()
-	go func() {
-		preview.run()
-		m.mu.Lock()
-		if m.previews[serviceID] == preview {
-			delete(m.previews, serviceID)
+	pipe := &servicePreview{id: serviceID, ctx: ctx, cancel: cancel, listener: listener, ws: ws, codec: codec, send: make(chan serviceHostMessage, serviceHostQueueDepth), connections: make(map[uint32]net.Conn)}
+	go pipe.run()
+	return pipe, nil
+}
+
+func newServicePreviewHandler(routes []servicePreviewRoute) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var selected *servicePreviewRoute
+		for i := range routes {
+			prefix := routes[i].prefix
+			if prefix == "" || (strings.HasPrefix(r.URL.Path, prefix) && (len(r.URL.Path) == len(prefix) || strings.HasPrefix(r.URL.Path[len(prefix):], "/"))) {
+				if selected == nil || len(prefix) > len(selected.prefix) {
+					selected = &routes[i]
+				}
+			}
 		}
-		m.mu.Unlock()
-	}()
-	return ServicePreviewStartResponse{
-		ID:  serviceID.String(),
-		URL: "http://" + listener.Addr().String() + "/",
-	}, nil
+		if selected == nil {
+			http.NotFound(w, r)
+			return
+		}
+		selected.proxy.ServeHTTP(w, r)
+	})
+}
+
+func newServicePreviewRoute(prefix string, target *url.URL) servicePreviewRoute {
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	// Immediate flushing is required for event streams. ReverseProxy also
+	// handles WebSocket upgrades, so HTTP, SSE, and WS share the same route.
+	proxy.FlushInterval = -1
+	return servicePreviewRoute{prefix: prefix, proxy: proxy}
+}
+
+func (g *servicePreviewGateway) run() {
+	err := g.server.Serve(g.listener)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+		logDebug("service-preview", "gateway=%s closed: %v", g.id, err)
+	}
+	g.close()
+}
+
+func (g *servicePreviewGateway) close() {
+	g.closeOnce.Do(func() {
+		g.cancel()
+		if g.server != nil {
+			_ = g.server.Close()
+		}
+		if g.listener != nil {
+			_ = g.listener.Close()
+		}
+		for _, pipe := range g.pipes {
+			pipe.close()
+		}
+	})
 }
 
 func stringsTrimRightSlash(raw string) string {
@@ -183,11 +330,11 @@ func (m *servicePreviewManager) stop(id uuid.UUID) {
 
 func (m *servicePreviewManager) stopAll() {
 	m.mu.Lock()
-	previews := make([]*servicePreview, 0, len(m.previews))
+	previews := make([]*servicePreviewGateway, 0, len(m.previews))
 	for _, preview := range m.previews {
 		previews = append(previews, preview)
 	}
-	m.previews = make(map[uuid.UUID]*servicePreview)
+	m.previews = make(map[uuid.UUID]*servicePreviewGateway)
 	m.mu.Unlock()
 	for _, preview := range previews {
 		preview.close()

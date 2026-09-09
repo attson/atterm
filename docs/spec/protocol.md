@@ -476,10 +476,16 @@ session subscriber，不触发 `STREAM_REQUEST/STOP`。
 ```
 
 - client 生成 `request_id/service_id`；`host_ticket` 留空并由 relay 覆盖。
-- `sealed` 打开后是 `{ "port": 3000, "scheme": "http" }`，AAD 鉴别字节
-  `0x3d`。目标 host 不上 wire：desktop 固定只拨 `127.0.0.1:<port>`。
+- `sealed` 打开后通常是 `{ "port": 3000, "scheme": "http", "host": "localhost" }`，
+  AAD 鉴别字节 `0x3d`。`host` 只接受 `localhost`、`127.0.0.1` 或 `::1`，
+  缺省为 `localhost`（桌面 UI 默认选择 `127.0.0.1`）；它只选择 owner 的
+  loopback 地址族，不能指向任意内网主机。
 - relay 只在 client 已 attach、当前为 driver、session 的
   `remote_permission=full` 时转发；desktop 按自己的 raw permission 再验一次。
+
+一个多端口 Preview 会为每个映射分别发送一条 `SERVICE_OPEN`，随后在 client
+侧本地 gateway 按路径前缀汇聚这些 lease；现有帧结构和 relay 鉴权语义不变。
+例如 `/`、`/api`、`/ws` 分别对应三个独立的 `service_id`。
 
 `SERVICE_OPENED` payload：
 

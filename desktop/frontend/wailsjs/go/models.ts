@@ -1362,32 +1362,74 @@ export namespace main {
 	        this.key_type = source["key_type"];
 	    }
 	}
-	export class ServicePreviewStartRequest {
+	export class ServicePreviewMapping {
 	    service_id: string;
 	    client_ticket: string;
 	    client_to_host_key: number[];
 	    host_to_client_key: number[];
-
+	    port: number;
+	    path_prefix?: string;
+	
 	    static createFrom(source: any = {}) {
-	        return new ServicePreviewStartRequest(source);
+	        return new ServicePreviewMapping(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.service_id = source["service_id"];
 	        this.client_ticket = source["client_ticket"];
 	        this.client_to_host_key = source["client_to_host_key"];
 	        this.host_to_client_key = source["host_to_client_key"];
+	        this.port = source["port"];
+	        this.path_prefix = source["path_prefix"];
 	    }
+	}
+	export class ServicePreviewStartRequest {
+	    mappings?: ServicePreviewMapping[];
+	    service_id: string;
+	    client_ticket: string;
+	    client_to_host_key: number[];
+	    host_to_client_key: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ServicePreviewStartRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mappings = this.convertValues(source["mappings"], ServicePreviewMapping);
+	        this.service_id = source["service_id"];
+	        this.client_ticket = source["client_ticket"];
+	        this.client_to_host_key = source["client_to_host_key"];
+	        this.host_to_client_key = source["host_to_client_key"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ServicePreviewStartResponse {
 	    id: string;
 	    url: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ServicePreviewStartResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1593,3 +1635,4 @@ export namespace main {
 	}
 
 }
+

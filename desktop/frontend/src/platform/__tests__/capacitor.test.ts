@@ -42,6 +42,7 @@ describe('createCapacitorPlatform', () => {
     localStorage.clear()
     await secureStorage.remove('atterm.relay.session')
     vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('caps disables all desktop-only flags', () => {
@@ -109,6 +110,17 @@ describe('createCapacitorPlatform', () => {
       hostToClientKey: btoa(String.fromCharCode(...new Uint8Array(32).fill(2))),
     }))
     expect(NativeServicePreview.start).not.toHaveBeenCalledWith(expect.objectContaining({ accountKey: expect.anything() }))
+  })
+
+  it('keeps the current native Preview plugin on one mapping', async () => {
+    const p = createCapacitorPlatform()
+    const mapping = {
+      serviceId: 'service-id', clientTicket: 'ticket',
+      clientToHostKey: new Uint8Array(32).fill(1), hostToClientKey: new Uint8Array(32).fill(2), port: 3000,
+    }
+    await expect(p.servicePreview!.start({ mappings: [mapping, { ...mapping, serviceId: 'service-api', pathPrefix: '/api' }] }))
+      .rejects.toThrow(/multiple preview mappings/)
+    expect(NativeServicePreview.start).not.toHaveBeenCalled()
   })
 
   it('relay.load returns null when nothing stored', async () => {

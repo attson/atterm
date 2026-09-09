@@ -1372,7 +1372,34 @@ describe("Remote Web Preview", () => {
     expect(source).toMatch(/!props\.isLocalSession/);
     expect(source).toMatch(/isDriver\.value/);
     expect(source).toMatch(/effectiveRemotePermission\(props\.remotePermission\) === "full"/);
-    expect(source).toContain('data-testid="open-service-preview"');
+    expect(paneSource).toContain('data-testid="remote-preview-trigger"');
+  });
+
+  test("uses an in-app port form instead of a WebView-native prompt", () => {
+    expect(source).not.toContain("window.prompt");
+    expect(source).not.toContain('<select v-model="previewTargetHost"');
+    expect(source).toContain("<SelectDropdown");
+    expect(source).toContain(':options="previewTargetHostOptions"');
+    expect(source).toContain('data-testid="service-preview-port"');
+    expect(source).toContain('@submit.prevent="openPreview"');
+    expect(source).toContain('atterm:open-service-preview');
+    expect(source).toContain('@keydown.esc.prevent.stop="cancelPreviewPortEntry"');
+    expect(source).toContain('("127.0.0.1")');
+    expect(source).toContain('class="service-preview-controls" :class="{ configuring: previewPortEditing && !preview }"');
+  });
+
+  test("mounts preview controls in the remote host controls row", () => {
+    expect(source).toContain("<Teleport v-if=\"preview || previewPortEditing\" :to=\"previewTarget\">");
+    expect(source).toContain("const previewTarget = computed(() => `#service-preview-slot-${props.sessionId}`)");
+    expect(paneSource).toContain('class="service-preview-slot"');
+    expect(paneSource).toContain('`service-preview-slot-${pane.sessionId}`');
+  });
+
+  test("uses the compact host-badge icon as the preview trigger", () => {
+    expect(paneSource).toContain('class="remote-preview-trigger"');
+    expect(paneSource).toContain('@click.stop="requestServicePreview(pane)"');
+    expect(source).toContain('atterm:open-service-preview');
+    expect(source).toContain('beginPreviewPortEntry();');
   });
 
   test("switches inside the pane and tears the lease down on role or lifecycle loss", () => {
@@ -1382,5 +1409,19 @@ describe("Remote Web Preview", () => {
     expect(source).toMatch(/if \(!isMe && preview\.value\) void stopPreview\(\)/);
     expect(source).toMatch(/onBeforeUnmount\(\(\) => \{[\s\S]*?void stopPreview\(\)/);
     expect(source.match(/!isAlive \|\| !canOpenPreview\.value/g)).toHaveLength(2);
+  });
+
+  test("offers the local preview URL to the system browser and clipboard", () => {
+    expect(source).toContain("platform.system.openExternalURL(url)");
+    expect(source).toContain("navigator.clipboard.writeText(url)");
+    expect(source).toContain("terminal.preview.openInBrowser");
+    expect(source).toContain("terminal.preview.copyURL");
+  });
+
+  test("persists and restores path mappings for each session", () => {
+    expect(source).toContain('`atterm.service-preview.${props.sessionId}`');
+    expect(source).toContain('localStorage.setItem(previewDraftKey.value');
+    expect(source).toContain('watch([previewPortText, previewTargetHost, previewExtraMappings], savePreviewDraft, { deep: true })');
+    expect(source).toContain('pathPrefix: normalizedPrefixes[index] || undefined');
   });
 });

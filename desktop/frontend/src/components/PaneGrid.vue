@@ -27,6 +27,7 @@ const props = defineProps<{
   commandNotifyThresholdSec: number;
   searchRequestSeq?: number;
   appearance?: TerminalAppearance;
+  servicePreviewAvailable?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -169,6 +170,13 @@ function formatWho(info: SessionInfo | null): string {
   if (u && h) return `${u}@${h}`;
   return h || u || "";
 }
+
+function requestServicePreview(pane: Pane): void {
+  if (!pane.sessionId) return;
+  window.dispatchEvent(new CustomEvent("atterm:open-service-preview", {
+    detail: { sessionId: pane.sessionId },
+  }));
+}
 </script>
 
 <template>
@@ -237,22 +245,29 @@ function formatWho(info: SessionInfo | null): string {
               : '') + t('sessions.sessionTitle', { sessionId: pane.sessionId })
           "
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="11" height="11"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.4"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
+          <button
+            v-if="servicePreviewAvailable"
+            type="button"
+            class="remote-preview-trigger"
+            data-testid="remote-preview-trigger"
+            :title="t('terminal.preview.open')"
+            :aria-label="t('terminal.preview.open')"
+            @mousedown.stop
+            @click.stop="requestServicePreview(pane)"
           >
-            <path d="M2 16.1A5 5 0 0 1 5.9 20" />
-            <path d="M2 12.05A9 9 0 0 1 9.95 20" />
-            <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
-            <line x1="2" y1="20" x2="2.01" y2="20" />
-          </svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 16.1A5 5 0 0 1 5.9 20" />
+              <path d="M2 12.05A9 9 0 0 1 9.95 20" />
+              <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
+              <line x1="2" y1="20" x2="2.01" y2="20" />
+            </svg>
+          </button>
+          <span
+            v-if="servicePreviewAvailable"
+            class="service-preview-slot"
+            :id="`service-preview-slot-${pane.sessionId}`"
+            aria-live="polite"
+          ></span>
           <span v-if="formatWho(sessionInfoFor(pane))" class="who">
             {{ formatWho(sessionInfoFor(pane)) }}
           </span>
@@ -365,6 +380,11 @@ function formatWho(info: SessionInfo | null): string {
      between them should pass through to xterm. Each child opts back in. */
   pointer-events: none;
 }
+.service-preview-slot {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
 .remote-badge {
   display: inline-flex;
   align-items: center;
@@ -381,6 +401,23 @@ function formatWho(info: SessionInfo | null): string {
   /* badge is informational only; let clicks fall through to terminal */
   pointer-events: none;
 }
+.remote-badge .service-preview-slot { pointer-events: auto; }
+.remote-preview-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.remote-preview-trigger:hover { color: var(--fg); background: rgba(255, 255, 255, 0.1); }
+.remote-preview-trigger svg { display: block; }
 .remote-badge svg { display: block; }
 .viewers-badge {
   position: absolute;

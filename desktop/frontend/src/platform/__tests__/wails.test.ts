@@ -42,6 +42,8 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetPluginConfig: vi.fn().mockResolvedValue({ enabled_plugins: [] }),
   SetPluginConfig: vi.fn().mockResolvedValue(undefined),
   GetAppVersion: vi.fn().mockResolvedValue('v0.3.19'),
+  StartServicePreview: vi.fn().mockResolvedValue({ id: 'preview-1', url: 'http://127.0.0.1:49000/' }),
+  StopServicePreview: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
@@ -54,7 +56,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 
 import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
-import { GetPluginConfig, SetPluginConfig, GetAppVersion } from '../../../wailsjs/go/main/App'
+import { GetPluginConfig, SetPluginConfig, GetAppVersion, StartServicePreview } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import {
   fetchRelayMe,
@@ -174,6 +176,24 @@ describe('createWailsPlatform', () => {
     const version = await p.system.getAppVersion()
     expect(GetAppVersion).toHaveBeenCalledOnce()
     expect(version).toBe('v0.3.19')
+  })
+
+  it('servicePreview converts multiple mappings for the desktop gateway', async () => {
+    const p = createWailsPlatform()
+    const firstKey = new Uint8Array(32).fill(1)
+    const secondKey = new Uint8Array(32).fill(2)
+    await p.servicePreview!.start({
+      mappings: [
+        { serviceId: 'service-root', clientTicket: 'ticket-root', clientToHostKey: firstKey, hostToClientKey: secondKey, port: 3000 },
+        { serviceId: 'service-api', clientTicket: 'ticket-api', clientToHostKey: secondKey, hostToClientKey: firstKey, port: 8080, pathPrefix: '/api' },
+      ],
+    })
+    expect(StartServicePreview).toHaveBeenCalledWith(expect.objectContaining({
+      mappings: [
+        expect.objectContaining({ service_id: 'service-root', port: 3000, path_prefix: '' }),
+        expect.objectContaining({ service_id: 'service-api', port: 8080, path_prefix: '/api' }),
+      ],
+    }))
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {

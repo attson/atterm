@@ -287,11 +287,22 @@ export interface WidgetBridge {
   pushState(json: string): Promise<void>
 }
 
-export interface ServicePreviewStartRequest {
+export interface ServicePreviewMapping {
   serviceId: string
   clientTicket: string
   clientToHostKey: Uint8Array
   hostToClientKey: Uint8Array
+  port: number
+  pathPrefix?: string
+}
+
+export interface ServicePreviewStartRequest {
+  mappings?: ServicePreviewMapping[]
+  /** Legacy single-mapping fields kept for native plugin compatibility. */
+  serviceId?: string
+  clientTicket?: string
+  clientToHostKey?: Uint8Array
+  hostToClientKey?: Uint8Array
 }
 
 export interface ServicePreviewStartResult {
@@ -300,6 +311,8 @@ export interface ServicePreviewStartResult {
 }
 
 export interface ServicePreviewBridge {
+  /** Native desktop gateway supports multiple path-to-port mappings. */
+  supportsMappings?: boolean
   start(req: ServicePreviewStartRequest): Promise<ServicePreviewStartResult>
   stop(id: string): Promise<void>
 }

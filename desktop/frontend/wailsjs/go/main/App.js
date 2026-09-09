@@ -414,6 +414,10 @@ export function RemoveKnownHost(arg1) {
   return window['go']['main']['App']['RemoveKnownHost'](arg1);
 }
 
+export function RevealSSHKey(arg1) {
+  return window['go']['main']['App']['RevealSSHKey'](arg1);
+}
+
 export function RevokeRelaySession(arg1) {
   return window['go']['main']['App']['RevokeRelaySession'](arg1);
 }

@@ -99,3 +99,33 @@ func TestUpdateSSHKeyKeepsPrivateKeyWhenBlank(t *testing.T) {
 		t.Fatal("private key should be kept")
 	}
 }
+
+// TestRevealSSHKeyReturnsStoredMaterial covers the eye button in the key
+// drawer: the PEM the user pasted comes back byte for byte, so "view" is a
+// view and not a re-render.
+func TestRevealSSHKeyReturnsStoredMaterial(t *testing.T) {
+	a := newKeysTestApp(t)
+	pemStr := testKeyPEM(t)
+	k, err := a.AddSSHKey("aws", pemStr, "")
+	if err != nil {
+		t.Fatalf("AddSSHKey: %v", err)
+	}
+
+	got, err := a.RevealSSHKey(k.ID)
+	if err != nil {
+		t.Fatalf("RevealSSHKey: %v", err)
+	}
+	if got.PrivateKey != pemStr {
+		t.Errorf("private key not returned verbatim")
+	}
+	if got.Passphrase != "" {
+		t.Errorf("passphrase = %q, want empty", got.Passphrase)
+	}
+}
+
+func TestRevealSSHKeyUnknownID(t *testing.T) {
+	a := newKeysTestApp(t)
+	if _, err := a.RevealSSHKey("nope"); err == nil {
+		t.Fatal("expected an error for an unknown key id")
+	}
+}

@@ -211,6 +211,8 @@ export function RememberRelayPassword(arg1:string):Promise<void>;
 
 export function RemoveKnownHost(arg1:string):Promise<void>;
 
+export function RevealSSHKey(arg1:string):Promise<main.SSHKeySecret>;
+
 export function RevokeRelaySession(arg1:string):Promise<void>;
 
 export function RunSnippetOnHosts(arg1:string,arg2:string,arg3:Array<string>):Promise<string>;

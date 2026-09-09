@@ -12,6 +12,7 @@ const listSSHKeys = vi.fn();
 const addSSHKey = vi.fn();
 const updateSSHKey = vi.fn();
 const deleteSSHKey = vi.fn();
+const revealSSHKey = vi.fn();
 const previewSSHConfigImport = vi.fn();
 const importSSHHosts = vi.fn();
 const startForward = vi.fn();
@@ -27,6 +28,7 @@ vi.mock("../lib/api", () => ({
   addSSHKey: (...a: unknown[]) => addSSHKey(...a),
   updateSSHKey: (...a: unknown[]) => updateSSHKey(...a),
   deleteSSHKey: (...a: unknown[]) => deleteSSHKey(...a),
+  revealSSHKey: (...a: unknown[]) => revealSSHKey(...a),
   previewSSHConfigImport: (...a: unknown[]) => previewSSHConfigImport(...a),
   importSSHHosts: (...a: unknown[]) => importSSHHosts(...a),
   startForward: (...a: unknown[]) => startForward(...a),
@@ -51,6 +53,7 @@ beforeEach(() => {
   addSSHKey.mockReset();
   updateSSHKey.mockReset();
   deleteSSHKey.mockReset();
+  revealSSHKey.mockReset();
   previewSSHConfigImport.mockReset();
   importSSHHosts.mockReset();
   startForward.mockReset().mockResolvedValue(undefined);
@@ -1559,5 +1562,291 @@ describe("SshHostsPanel 活跃隧道面板", () => {
     const row = wrapper.find('[data-test="ssh-tunnel-row-h1-d1"]');
     expect(row.text()).toContain("127.0.0.1:1080");
     expect(row.text()).toContain("SOCKS5");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tunnels tab: creating and editing a rule without going through the host.
+// ---------------------------------------------------------------------------
+
+describe("SshHostsPanel 隧道抽屉", () => {
+  async function openTunnels(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('[data-test="ssh-tab-tunnels"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+  }
+
+  it("从隧道页新建规则时写回所选主机的完整记录", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    updateSSHHost.mockResolvedValue(undefined);
+    await openTunnels(wrapper);
+    await wrapper.find('[data-test="ssh-tunnel-new"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    await wrapper.find('[data-test="ssh-tunnel-bind-port"]').setValue("9112");
+    await wrapper.find('[data-test="ssh-tunnel-target-host"]').setValue("db.internal");
+    await wrapper.find('[data-test="ssh-tunnel-target-port"]').setValue("3306");
+    await wrapper.find('[data-test="ssh-tunnel-note"]').setValue("写库");
+    await wrapper.find('[data-test="ssh-tunnel-save"]').trigger("click");
+    await flushPromises();
+
+    const [payload, cred] = updateSSHHost.mock.calls[0] as [
+      { id: string; alias?: string; user?: string; forwards?: RuleLike[] },
+      unknown,
+    ];
+    // The whole record, not just the rules: UpdateSSHHost lets the caller's
+    // value win for every UI-owned field, so a partial payload would wipe the
+    // rest of the host.
+    expect(payload.id).toBe("h1");
+    expect(payload.alias).toBe("box");
+    expect(payload.user).toBe("root");
+    expect(cred).toBeNull();
+    // Appended, never replacing what was already there.
+    expect(payload.forwards).toHaveLength(2);
+    expect(payload.forwards?.[0].id).toBe("f1");
+    expect(payload.forwards?.[1]).toMatchObject({
+      kind: "local", bind_port: "9112", target_host: "db.internal",
+      target_port: "3306", note: "写库",
+    });
+    // Saving alone must not open a listener.
+    expect(startForward).not.toHaveBeenCalled();
+  });
+
+  it("「保存并启动」保存后立刻启动新建的那条规则", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    updateSSHHost.mockResolvedValue(undefined);
+    await openTunnels(wrapper);
+    await wrapper.find('[data-test="ssh-tunnel-new"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-tunnel-bind-port"]').setValue("9112");
+    await wrapper.find('[data-test="ssh-tunnel-target-host"]').setValue("db.internal");
+    await wrapper.find('[data-test="ssh-tunnel-target-port"]').setValue("3306");
+    await wrapper.find('[data-test="ssh-tunnel-save-start"]').trigger("click");
+    await flushPromises();
+
+    const [payload] = updateSSHHost.mock.calls[0] as [{ forwards?: RuleLike[] }];
+    const created = payload.forwards?.[1];
+    expect(startForward).toHaveBeenCalledWith("h1", created?.id);
+  });
+
+  it("目标未填完时保存按钮不可用,动态转发则不要求目标", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    await wrapper.find('[data-test="ssh-tunnel-new"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    const save = wrapper.find('[data-test="ssh-tunnel-save"]');
+    expect(save.attributes("disabled")).toBeDefined();
+    await wrapper.find('[data-test="ssh-tunnel-bind-port"]').setValue("9112");
+    await wrapper.vm.$nextTick();
+    // A local rule still needs somewhere to send the traffic.
+    expect(wrapper.find('[data-test="ssh-tunnel-save"]').attributes("disabled")).toBeDefined();
+
+    await wrapper.find('[data-test="ssh-tunnel-kind-dynamic"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="ssh-tunnel-target-host"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="ssh-tunnel-save"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("编辑已有规则时替换而不是追加,并锁住主机选择", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    updateSSHHost.mockResolvedValue(undefined);
+    await openTunnels(wrapper);
+    await wrapper.find('[data-test="ssh-tunnel-edit-h1-f1"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-test="ssh-tunnel-host"] button').attributes("disabled")).toBeDefined();
+    await wrapper.find('[data-test="ssh-tunnel-bind-port"]').setValue("15432");
+    await wrapper.find('[data-test="ssh-tunnel-save"]').trigger("click");
+    await flushPromises();
+
+    const [payload] = updateSSHHost.mock.calls[0] as [{ forwards?: RuleLike[] }];
+    expect(payload.forwards).toHaveLength(1);
+    expect(payload.forwards?.[0]).toMatchObject({ id: "f1", bind_port: "15432" });
+  });
+
+  it("删除规则时先停掉隧道再写回不含该规则的记录", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    updateSSHHost.mockResolvedValue(undefined);
+    listActiveForwards.mockResolvedValue([
+      {
+        host_id: "h1", rule_id: "f1", kind: "local", listen_addr: "127.0.0.1:5432",
+        target: "db.internal:5432", conns: 0, started_at: 1, running: true, error: "",
+      },
+    ]);
+    await openTunnels(wrapper);
+    await wrapper.find('[data-test="ssh-tunnel-delete-h1-f1"]').trigger("click");
+    await flushPromises();
+
+    expect(stopForward).toHaveBeenCalledWith("h1", "f1");
+    const [payload] = updateSSHHost.mock.calls[0] as [{ forwards?: RuleLike[] }];
+    expect(payload.forwards).toHaveLength(0);
+  });
+
+  it("没有可用主机时新建按钮禁用", async () => {
+    const wrapper = await mountPanel([
+      { id: "p1", host: "h", user: "u", auth_kind: "password", proxy_command: "ssh -W %h:%p b" },
+    ]);
+    await openTunnels(wrapper);
+    expect(wrapper.find('[data-test="ssh-tunnel-new"]').attributes("disabled")).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Startup command (JumpServer): the lines typed at the bastion's own prompts.
+// ---------------------------------------------------------------------------
+
+describe("SshHostsPanel 启动命令", () => {
+  it("保存主机时带上启动命令和步骤间隔", async () => {
+    addSSHHost.mockResolvedValueOnce({ id: "2" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-add-host"]').setValue("jump.example.com");
+    await wrapper.find('[data-test="ssh-add-user"]').setValue("ad");
+    await wrapper.find('[data-test="ssh-startup-command"]').setValue("php-compose-仓库\n2");
+    await wrapper.find('[data-test="ssh-startup-delay"]').setValue("2000");
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+
+    const [payload] = addSSHHost.mock.calls[0] as [
+      { startup_command?: string; startup_delay_ms?: number },
+    ];
+    expect(payload.startup_command).toBe("php-compose-仓库\n2");
+    expect(payload.startup_delay_ms).toBe(2000);
+  });
+
+  it("间隔留空或填了非法值时传 0,由后端用默认值", async () => {
+    addSSHHost.mockResolvedValue({ id: "2" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-add-host"]').setValue("h");
+    await wrapper.find('[data-test="ssh-add-user"]').setValue("u");
+    await wrapper.find('[data-test="ssh-startup-delay"]').setValue("abc");
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+
+    const [payload] = addSSHHost.mock.calls[0] as [{ startup_delay_ms?: number }];
+    expect(payload.startup_delay_ms).toBe(0);
+  });
+
+  it("编辑主机时回填启动命令,并数出会发送几步", async () => {
+    const wrapper = await mountPanel([
+      {
+        id: "h1", host: "10.0.0.1", user: "ad", auth_kind: "password",
+        startup_command: "php-compose-仓库\n\n2\n", startup_delay_ms: 2500,
+      },
+    ]);
+    await openHostDrawer(wrapper, "h1");
+    const ta = wrapper.find('[data-test="ssh-startup-command"]')
+      .element as HTMLTextAreaElement;
+    expect(ta.value).toBe("php-compose-仓库\n\n2\n");
+    const delay = wrapper.find('[data-test="ssh-startup-delay"]').element as HTMLInputElement;
+    expect(delay.value).toBe("2500");
+    // Blank lines are dropped on the Go side, so the count says 2, not 4.
+    expect(wrapper.find('[data-test="ssh-startup-steps"]').text()).toContain("2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Key drawer: revealing the stored private key.
+// ---------------------------------------------------------------------------
+
+describe("SshHostsPanel 私钥查看", () => {
+  async function openKeyDrawer(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('[data-test="ssh-tab-keys"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-key-edit-k1"]').trigger("click");
+    await wrapper.vm.$nextTick();
+  }
+
+  beforeEach(() => {
+    listSSHKeys.mockResolvedValue([{ id: "k1", name: "jump", key_type: "ED25519" }]);
+  });
+
+  it("打开编辑抽屉时不读私钥", async () => {
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openKeyDrawer(wrapper);
+    expect(revealSSHKey).not.toHaveBeenCalled();
+    expect((wrapper.find('[data-test="ssh-key-pem"]').element as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("点眼睛才拉取私钥,再点一次清空", async () => {
+    revealSSHKey.mockResolvedValue({ private_key: "-----BEGIN X-----\nzz\n", passphrase: "pp" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openKeyDrawer(wrapper);
+
+    await wrapper.find('[data-test="ssh-key-reveal"]').trigger("click");
+    await flushPromises();
+    expect(revealSSHKey).toHaveBeenCalledWith("k1");
+    expect((wrapper.find('[data-test="ssh-key-pem"]').element as HTMLTextAreaElement).value)
+      .toBe("-----BEGIN X-----\nzz\n");
+    expect((wrapper.find('[data-test="ssh-key-passphrase"]').element as HTMLInputElement).value)
+      .toBe("pp");
+
+    await wrapper.find('[data-test="ssh-key-reveal"]').trigger("click");
+    await flushPromises();
+    expect((wrapper.find('[data-test="ssh-key-pem"]').element as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("新建密钥时没有查看按钮", async () => {
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-tab-keys"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-key-new"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="ssh-key-reveal"]').exists()).toBe(false);
+  });
+
+  it("读取失败时把错误显示出来,不把私钥框写成空值", async () => {
+    revealSSHKey.mockRejectedValue(new Error("no stored private key for: k1"));
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openKeyDrawer(wrapper);
+    await wrapper.find('[data-test="ssh-key-reveal"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-hosts-error"]').text()).toContain("no stored private key");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tag field: leaving the field commits what is in it.
+// ---------------------------------------------------------------------------
+
+describe("SshHostsPanel 标签失焦提交", () => {
+  it("失焦时把半打完的标签提交成 chip", async () => {
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    const input = wrapper.find('[data-test="ssh-add-tag-input"]');
+    await input.setValue("玩心不止");
+    await input.trigger("blur");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="ssh-add-tag-chip-玩心不止"]').exists()).toBe(true);
+    expect((input.element as HTMLInputElement).value).toBe("");
+  });
+
+  it("失焦提交后保存主机会带上这个标签", async () => {
+    addSSHHost.mockResolvedValueOnce({ id: "2" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-add-host"]').setValue("h");
+    await wrapper.find('[data-test="ssh-add-user"]').setValue("u");
+    const input = wrapper.find('[data-test="ssh-add-tag-input"]');
+    await input.setValue("玩心不止");
+    await input.trigger("blur");
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+    const [payload] = addSSHHost.mock.calls[0] as [{ tags?: string[] }];
+    expect(payload.tags).toEqual(["玩心不止"]);
   });
 });

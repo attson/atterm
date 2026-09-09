@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import {
   Server, Plus, X, Pencil, Trash2, Search, Zap, KeyRound, Upload, FileUp, FileDown,
-  Network, Play, Square, RefreshCw,
+  Network, Play, Square, RefreshCw, Eye, EyeOff, Copy,
 } from "lucide-vue-next";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
@@ -21,6 +21,7 @@ import {
   addSSHKey,
   updateSSHKey,
   deleteSSHKey,
+  revealSSHKey,
   previewSSHConfigImport,
   importSSHHosts,
   startForward,
@@ -145,6 +146,16 @@ function onTagBackspace() {
   if (fTagInput.value === "") fTags.value = fTags.value.slice(0, -1);
 }
 function onTagBlur() {
+  // Commit whatever is half-typed. Without this, tabbing out of the field (or
+  // going straight for Save) silently threw the tag away — the text was
+  // visibly *there*, so the only signal that it had not been added was the
+  // missing chip, which is exactly the thing you are not looking at while
+  // typing. Enter and comma still commit as before; this just stops leaving
+  // by any other route from being a data-loss route.
+  //
+  // It cannot swallow a suggestion click: the options commit through
+  // @mousedown.prevent, which suppresses the blur entirely.
+  commitTagInput();
   // Delay so a mousedown on a suggestion registers before the menu closes.
   window.setTimeout(() => (tagMenuOpen.value = false), 120);
 }
@@ -401,6 +412,26 @@ const fTagInput = ref("");
 const fAuthKind = ref<"password" | "key">("password");
 const fPassword = ref("");
 const fKeyID = ref("");
+// Startup command: the lines typed into the shell after login, one per
+// prompt, and the pause before each. Empty delay means "use the backend
+// default" — the field is left blank rather than pre-filled with 1500 so that
+// changing the default later reaches hosts the user never touched.
+const fStartupCommand = ref("");
+const fStartupDelayMs = ref("");
+
+// startupDelayValue parses the delay field for the save payload. Anything
+// unparseable becomes 0, which the Go side reads as "default" — the same
+// answer as leaving it blank, so a typo cannot produce a host that types its
+// startup command 3ms after login.
+function startupDelayValue(): number {
+  const n = Number.parseInt(fStartupDelayMs.value.trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+// Mirrors startupCommandLines in desktop/ssh_startup_command.go: blank lines
+// are dropped, so the preview counts the steps that will actually be sent.
+const startupStepCount = computed(
+  () => fStartupCommand.value.split("\n").filter((l) => l.trim() !== "").length,
+);
 
 function openNewHost() {
   hostEditId.value = "";
@@ -414,6 +445,8 @@ function openNewHost() {
   fAuthKind.value = "password";
   fPassword.value = "";
   fKeyID.value = keys.value[0]?.id ?? "";
+  fStartupCommand.value = "";
+  fStartupDelayMs.value = "";
   fForwards.value = [];
   hostDrawer.value = true;
 }
@@ -429,6 +462,8 @@ function openEditHost(h: SSHHost) {
   fAuthKind.value = h.auth_kind;
   fPassword.value = "";
   fKeyID.value = h.key_id ?? keys.value[0]?.id ?? "";
+  fStartupCommand.value = h.startup_command ?? "";
+  fStartupDelayMs.value = h.startup_delay_ms ? String(h.startup_delay_ms) : "";
   fForwards.value = cloneForwards(h.forwards);
   hostDrawer.value = true;
 }
@@ -453,6 +488,10 @@ async function saveHost() {
     tags: fTags.value,
     auth_kind: fAuthKind.value,
     key_id: fAuthKind.value === "key" ? fKeyID.value : undefined,
+    // Same ownership rule as forwards below: the drawer has a control for
+    // both, so the payload always carries them and clearing one sticks.
+    startup_command: fStartupCommand.value,
+    startup_delay_ms: startupDelayValue(),
     // The drawer owns Forwards, and UpdateSSHHost lets the caller's value
     // win — including an empty list, so deleting the last rule is a saveable
     // edit. The flip side is that a payload built without this line deletes
@@ -696,6 +735,127 @@ function openTunnelsTab() {
   void refreshActiveForwards();
 }
 
+// ---- Port forwarding: create / edit a rule from the Tunnels tab ----
+// A rule lives on a host, so until now the only way to add one was to go find
+// that host and open its drawer — which is backwards when what you are doing
+// is "I need a tunnel", not "I am editing this host". This drawer inverts it:
+// pick the host (the bastion the tunnel rides), then describe the rule.
+//
+// It writes through UpdateSSHHost like the host drawer does, and for the same
+// reason has to send the host record *whole*: a payload built from the rule
+// alone would clear every other field the store lets the caller own.
+const tunnelDrawer = ref(false);
+const tunnelHostID = ref("");
+const tunnelEditRuleID = ref("");
+const tunnelSaving = ref(false);
+const tunnelDraft = ref<ForwardRule | null>(null);
+
+// Hosts a tunnel can actually be built on. A ProxyCommand host is absent
+// rather than present-and-broken: StartForward refuses it outright, so
+// offering it here would only produce a saved rule that can never run.
+const tunnelHostOptions = computed<SelectOption[]>(() =>
+  hosts.value
+    .filter((h) => !runsProxyCommand(h))
+    .map((h) => ({ value: h.id, label: hostLabel(h) })),
+);
+
+function openNewTunnel() {
+  errorMsg.value = "";
+  tunnelEditRuleID.value = "";
+  tunnelHostID.value = tunnelHostOptions.value[0]?.value ?? "";
+  tunnelDraft.value = {
+    id: newForwardRuleID(),
+    kind: "local",
+    bind_addr: "127.0.0.1",
+    bind_port: "",
+    target_host: "",
+    target_port: "",
+    note: "",
+  };
+  tunnelDrawer.value = true;
+}
+
+// The host picker is locked while editing. Moving a rule between hosts would
+// be two writes to two different records, and a half-applied move leaves the
+// rule on both — not worth the affordance when "delete and re-add" says the
+// same thing in two clicks.
+function openEditTunnel(h: SSHHost, r: ForwardRule) {
+  errorMsg.value = "";
+  tunnelEditRuleID.value = r.id;
+  tunnelHostID.value = h.id;
+  tunnelDraft.value = cloneForwards([r])[0];
+  tunnelDrawer.value = true;
+}
+
+function closeTunnelDrawer() {
+  tunnelDrawer.value = false;
+  tunnelDraft.value = null;
+  tunnelEditRuleID.value = "";
+}
+
+const canSaveTunnel = computed(() => {
+  const r = tunnelDraft.value;
+  if (!r || tunnelHostID.value === "") return false;
+  if ((r.bind_port ?? "").trim() === "") return false;
+  // Dynamic names its destination per connection, so it has none to require.
+  if (r.kind === "dynamic") return true;
+  return (r.target_host ?? "").trim() !== "" && (r.target_port ?? "").trim() !== "";
+});
+
+// saveTunnel returns the rule it wrote so "save and start" can start exactly
+// that one, and undefined when the save did not happen.
+async function saveTunnel(): Promise<{ host: SSHHost; rule: ForwardRule } | undefined> {
+  const draft = tunnelDraft.value;
+  if (!canSaveTunnel.value || !draft || tunnelSaving.value) return undefined;
+  const host = hosts.value.find((h) => h.id === tunnelHostID.value);
+  if (!host) return undefined;
+  errorMsg.value = "";
+  tunnelSaving.value = true;
+  const rule = cloneForwards([draft])[0];
+  const existing = cloneForwards(host.forwards);
+  const at = existing.findIndex((r) => r.id === rule.id);
+  const forwards = at >= 0
+    ? existing.map((r, i) => (i === at ? rule : r))
+    : [...existing, rule];
+  try {
+    await updateSSHHost({ ...host, forwards }, null);
+    await reload();
+    closeTunnelDrawer();
+    return { host, rule };
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+    return undefined;
+  } finally {
+    tunnelSaving.value = false;
+  }
+}
+
+// Saving does not start the tunnel — a tunnel occupies a local port, and that
+// stays an explicit act (§5.3). This is the opt-in shortcut for the case where
+// you came here to bring one up right now.
+async function saveAndStartTunnel() {
+  const saved = await saveTunnel();
+  if (saved) await startRule(saved.host, saved.rule);
+}
+
+async function removeTunnelRule(h: SSHHost, r: ForwardRule) {
+  errorMsg.value = "";
+  try {
+    // Stop first: the rule is about to stop existing, and reconcile on the Go
+    // side would kill the listener anyway — doing it here means the error, if
+    // any, arrives attached to the click that caused it.
+    if (forwardState(h.id, r.id)) await stopForward(h.id, r.id);
+    await updateSSHHost(
+      { ...h, forwards: cloneForwards(h.forwards).filter((x) => x.id !== r.id) },
+      null,
+    );
+    await reload();
+    await refreshActiveForwards();
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 // ---- Key drawer ----
 const keyDrawer = ref(false);
 const keyEditId = ref<string | null>(null);
@@ -706,11 +866,64 @@ const kPassphrase = ref("");
 // so instead of letting the user hit a backend parse error on save.
 const kNeedsPassphrase = ref(false);
 
+// kRevealed tracks whether the drawer is currently showing the *stored* key.
+// While false, a blank PEM means "leave the stored key alone" (UpdateSSHKey's
+// contract); once revealed the textarea holds the real thing, so saving
+// rewrites it with what is on screen — which is what makes the revealed form
+// editable rather than just readable.
+const kRevealed = ref(false);
+const kRevealing = ref(false);
+
 function resetKeyForm() {
   kName.value = "";
   kPem.value = "";
   kPassphrase.value = "";
   kNeedsPassphrase.value = false;
+  kRevealed.value = false;
+  kRevealing.value = false;
+}
+
+// toggleRevealKey fetches the private material on demand, and clears it again
+// on the way back. Nothing is fetched when the drawer opens: renaming a key
+// must not put a private key on screen, and the value is dropped from
+// component state the moment the user hides it.
+async function toggleRevealKey() {
+  if (!keyEditId.value || kRevealing.value) return;
+  if (kRevealed.value) {
+    kRevealed.value = false;
+    kPem.value = "";
+    kPassphrase.value = "";
+    kNeedsPassphrase.value = false;
+    return;
+  }
+  errorMsg.value = "";
+  kRevealing.value = true;
+  try {
+    const sec = await revealSSHKey(keyEditId.value);
+    kPem.value = sec.private_key;
+    kPassphrase.value = sec.passphrase ?? "";
+    kRevealed.value = true;
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    kRevealing.value = false;
+  }
+}
+
+// copyKeyPem puts the stored private key on the clipboard without needing it
+// on screen first — the common reason to want it back is to move it onto
+// another machine, not to read it.
+async function copyKeyPem() {
+  if (!keyEditId.value) return;
+  errorMsg.value = "";
+  try {
+    const pem = kRevealed.value ? kPem.value : (await revealSSHKey(keyEditId.value)).private_key;
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (clipboard?.writeText) await clipboard.writeText(pem);
+    else fallbackCopyText(pem);
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  }
 }
 
 function openNewKey() {
@@ -929,9 +1142,17 @@ async function confirmConfigImport() {
         <button v-else-if="activeTab === 'keys'" class="new-btn" data-test="ssh-key-new" @click="openNewKey">
           <Plus :size="14" /> {{ t("ssh.newKey") }}
         </button>
-        <button v-else class="new-btn ghost" data-test="ssh-tunnels-refresh" @click="refreshActiveForwards">
-          <RefreshCw :size="14" /> {{ t("ssh.forwards.refresh") }}
-        </button>
+        <template v-else>
+          <button class="new-btn ghost" data-test="ssh-tunnels-refresh" @click="refreshActiveForwards">
+            <RefreshCw :size="14" /> {{ t("ssh.forwards.refresh") }}
+          </button>
+          <button
+            class="new-btn" data-test="ssh-tunnel-new"
+            :disabled="tunnelHostOptions.length === 0"
+            :title="tunnelHostOptions.length === 0 ? t('ssh.forwards.newNeedsHost') : ''"
+            @click="openNewTunnel"
+          ><Plus :size="14" /> {{ t("ssh.forwards.new") }}</button>
+        </template>
         <button class="close-x" :title="t('common.close')" @click="$emit('close')"><X :size="16" /></button>
       </header>
 
@@ -1041,7 +1262,7 @@ async function confirmConfigImport() {
               <div class="card-sub">{{ k.key_type ? t("ssh.keys.typeLabel", { type: k.key_type }) : t("ssh.keys.genericSubtitle") }}</div>
             </div>
             <div class="card-actions">
-              <button class="act" :title="t('ssh.edit')" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
+              <button class="act" :data-test="`ssh-key-edit-${k.id}`" :title="t('ssh.edit')" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
               <button class="act danger" :data-test="`ssh-key-delete-${k.id}`" :title="t('common.delete')" @click.stop="removeKey(k.id)"><Trash2 :size="13" /></button>
             </div>
           </article>
@@ -1054,6 +1275,10 @@ async function confirmConfigImport() {
           <Network :size="40" class="empty-icon" />
           <p class="empty-title">{{ t("ssh.forwards.emptyTitle") }}</p>
           <p class="empty-sub">{{ t("ssh.forwards.emptySub") }}</p>
+          <button
+            v-if="tunnelHostOptions.length" class="new-btn ghost"
+            data-test="ssh-tunnel-new-empty" @click="openNewTunnel"
+          ><Plus :size="14" /> {{ t("ssh.forwards.new") }}</button>
         </div>
         <section
           v-for="h in forwardHosts" :key="h.id" class="fwd-host"
@@ -1078,17 +1303,22 @@ async function confirmConfigImport() {
             v-if="runsProxyCommand(h)" class="fwd-proxy-reason"
             :data-test="`ssh-tunnel-proxy-reason-${h.id}`"
           >{{ t("ssh.forwards.proxyBlocked") }} {{ proxyReason(h) }}</p>
-          <ul class="fwd-list">
-            <li
-              v-for="r in h.forwards" :key="r.id" class="fwd-row"
+          <!-- One card per rule, same grid the Hosts and Keys tabs use. The
+               host heading above stays: a rule is only meaningful together
+               with the machine its tunnel rides, and the cards alone would
+               not say which one that is. -->
+          <div class="card-grid">
+            <article
+              v-for="r in h.forwards" :key="r.id" class="card fwd-card"
               :data-test="`ssh-tunnel-row-${h.id}-${r.id}`"
             >
-              <div class="fwd-row-main">
-                <div class="fwd-row-title">
+              <div class="card-glyph"><Network :size="16" /></div>
+              <div class="card-main">
+                <div class="card-label">
                   <span class="fwd-kind">{{ forwardKindLabel(r.kind) }}</span>
                   <span v-if="r.note" class="fwd-note">{{ r.note }}</span>
                 </div>
-                <div class="fwd-row-route">
+                <div class="card-sub fwd-route">
                   {{ forwardListenText(h, r) }} → {{ forwardTargetText(h, r) }}
                 </div>
                 <div v-if="forwardState(h.id, r.id)" class="fwd-row-conns">
@@ -1099,39 +1329,49 @@ async function confirmConfigImport() {
                   :data-test="`ssh-tunnel-error-${h.id}-${r.id}`"
                 >{{ forwardState(h.id, r.id)?.error }}</p>
               </div>
-              <span
-                class="fwd-state" :class="forwardStateClass(h, r)"
-                :data-test="`ssh-tunnel-state-${h.id}-${r.id}`"
-              >{{ forwardStateLabel(h, r) }}</span>
-              <div class="fwd-row-actions">
-                <!-- A stopped-with-an-error entry gets a restart and a
-                     dismiss, never a stop: its listener is already gone. -->
-                <button
-                  v-if="isForwardRunning(h.id, r.id)" class="act danger"
-                  :data-test="`ssh-tunnel-stop-${h.id}-${r.id}`"
-                  :title="t('ssh.forwards.stop')"
-                  :disabled="forwardBusyKey !== ''"
-                  @click="stopRule(h, r)"
-                ><Square :size="13" /></button>
-                <template v-else>
+              <div class="fwd-card-side">
+                <span
+                  class="fwd-state" :class="forwardStateClass(h, r)"
+                  :data-test="`ssh-tunnel-state-${h.id}-${r.id}`"
+                >{{ forwardStateLabel(h, r) }}</span>
+                <div class="card-actions">
+                  <!-- A stopped-with-an-error entry gets a restart and a
+                       dismiss, never a stop: its listener is already gone. -->
                   <button
-                    class="act connect"
-                    :data-test="`ssh-tunnel-start-${h.id}-${r.id}`"
-                    :title="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
-                    :disabled="runsProxyCommand(h) || forwardBusyKey !== ''"
-                    @click="startRule(h, r)"
-                  ><Play :size="13" /></button>
-                  <button
-                    v-if="forwardState(h.id, r.id)" class="act"
-                    :data-test="`ssh-tunnel-dismiss-${h.id}-${r.id}`"
-                    :title="t('ssh.forwards.dismiss')"
+                    v-if="isForwardRunning(h.id, r.id)" class="act danger"
+                    :data-test="`ssh-tunnel-stop-${h.id}-${r.id}`"
+                    :title="t('ssh.forwards.stop')"
                     :disabled="forwardBusyKey !== ''"
                     @click="stopRule(h, r)"
-                  ><X :size="13" /></button>
-                </template>
+                  ><Square :size="13" /></button>
+                  <template v-else>
+                    <button
+                      class="act connect"
+                      :data-test="`ssh-tunnel-start-${h.id}-${r.id}`"
+                      :title="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
+                      :disabled="runsProxyCommand(h) || forwardBusyKey !== ''"
+                      @click="startRule(h, r)"
+                    ><Play :size="13" /></button>
+                    <button
+                      v-if="forwardState(h.id, r.id)" class="act"
+                      :data-test="`ssh-tunnel-dismiss-${h.id}-${r.id}`"
+                      :title="t('ssh.forwards.dismiss')"
+                      :disabled="forwardBusyKey !== ''"
+                      @click="stopRule(h, r)"
+                    ><X :size="13" /></button>
+                  </template>
+                  <button
+                    class="act" :data-test="`ssh-tunnel-edit-${h.id}-${r.id}`"
+                    :title="t('ssh.edit')" @click="openEditTunnel(h, r)"
+                  ><Pencil :size="13" /></button>
+                  <button
+                    class="act danger" :data-test="`ssh-tunnel-delete-${h.id}-${r.id}`"
+                    :title="t('common.delete')" @click="removeTunnelRule(h, r)"
+                  ><Trash2 :size="13" /></button>
+                </div>
               </div>
-            </li>
-          </ul>
+            </article>
+          </div>
         </section>
       </div>
 
@@ -1215,6 +1455,38 @@ async function confirmConfigImport() {
                 </button>
               </div>
             </template>
+
+            <!-- STARTUP COMMAND -->
+            <!-- For a bastion that puts a menu in front of the shell.
+                 JumpServer asks for the asset at `Opt>` and then for the
+                 system user at `ID>`, so this is a *list* of answers, not one
+                 command — hence a textarea and a per-step interval rather
+                 than a single line. -->
+            <div class="fwd-section" data-test="ssh-startup-section">
+              <div class="fwd-section-head">
+                <span class="fl">{{ t("ssh.startup.sectionTitle") }}</span>
+              </div>
+              <p class="hint">{{ t("ssh.startup.sectionHint") }}</p>
+              <label class="field">
+                <textarea
+                  data-test="ssh-startup-command" v-model="fStartupCommand" rows="3"
+                  spellcheck="false" autocomplete="off"
+                  :placeholder="t('ssh.startup.placeholder')"
+                ></textarea>
+              </label>
+              <div class="field-row">
+                <label class="field port">
+                  <span class="fl">{{ t("ssh.startup.delay") }}</span>
+                  <input
+                    data-test="ssh-startup-delay" v-model="fStartupDelayMs"
+                    :placeholder="String(1500)" autocomplete="off"
+                  />
+                </label>
+                <p v-if="startupStepCount" class="hint grow" data-test="ssh-startup-steps">
+                  {{ t("ssh.startup.steps", { count: startupStepCount }) }}
+                </p>
+              </div>
+            </div>
 
             <!-- PORT FORWARDING RULES -->
             <div class="fwd-section" data-test="ssh-forwards-section">
@@ -1314,7 +1586,24 @@ async function confirmConfigImport() {
           <div class="drawer-body">
             <label class="field"><span class="fl">{{ t("ssh.keyDrawer.name") }}</span><input data-test="ssh-key-name" v-model="kName" :placeholder="t('ssh.keyDrawer.namePlaceholder')" autocomplete="off" /></label>
             <label class="field">
-              <span class="fl">{{ t("ssh.keyDrawer.pem") }}<template v-if="keyEditId"> <em>{{ t("ssh.keyDrawer.keepBlank") }}</em></template></span>
+              <span class="fl pem-label">
+                <span>{{ t("ssh.keyDrawer.pem") }}<template v-if="keyEditId && !kRevealed"> <em>{{ t("ssh.keyDrawer.keepBlank") }}</em></template></span>
+                <!-- Reveal is opt-in and edit-only: there is nothing stored
+                     to show for a key being created, and opening a saved key
+                     to rename it must not put a private key on screen. -->
+                <span v-if="keyEditId" class="pem-tools">
+                  <button
+                    type="button" class="act" data-test="ssh-key-reveal"
+                    :disabled="kRevealing"
+                    :title="kRevealed ? t('ssh.keyDrawer.hide') : t('ssh.keyDrawer.reveal')"
+                    @click.prevent="toggleRevealKey"
+                  ><EyeOff v-if="kRevealed" :size="13" /><Eye v-else :size="13" /></button>
+                  <button
+                    type="button" class="act" data-test="ssh-key-copy"
+                    :title="t('ssh.keyDrawer.copy')" @click.prevent="copyKeyPem"
+                  ><Copy :size="13" /></button>
+                </span>
+              </span>
               <!-- The placeholder is the literal PEM header the user is
                    expected to paste, not prose — it stays untranslated. -->
               <textarea data-test="ssh-key-pem" v-model="kPem" rows="6" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
@@ -1351,6 +1640,99 @@ async function confirmConfigImport() {
           <div class="drawer-foot">
             <button class="btn ghost" @click="closeKeyDrawer">{{ t("common.cancel") }}</button>
             <button class="btn primary" data-test="ssh-key-submit" :disabled="!canSaveKey" @click="saveKey">{{ keyEditId ? t("common.save") : t("ssh.keyDrawer.submitNew") }}</button>
+          </div>
+        </aside>
+      </transition>
+
+      <!-- TUNNEL DRAWER -->
+      <transition name="drawer">
+        <aside v-if="tunnelDrawer && tunnelDraft" class="drawer" data-test="ssh-tunnel-drawer">
+          <div class="drawer-head">
+            <span>{{ tunnelEditRuleID ? t("ssh.forwards.drawerTitleEdit") : t("ssh.forwards.drawerTitleNew") }}</span>
+            <button class="close-x" @click="closeTunnelDrawer"><X :size="15" /></button>
+          </div>
+          <div class="drawer-body">
+            <label class="field">
+              <span class="fl">{{ t("ssh.forwards.hostPicker") }}</span>
+              <!-- Locked while editing: moving a rule between hosts is two
+                   writes to two records, and a half-applied move leaves it on
+                   both. Delete and re-add says the same thing safely. -->
+              <div data-test="ssh-tunnel-host">
+                <SelectDropdown
+                  v-model="tunnelHostID" :options="tunnelHostOptions"
+                  :disabled="tunnelEditRuleID !== ''"
+                  :aria-label="t('ssh.forwards.hostPickerAria')"
+                />
+              </div>
+            </label>
+            <p class="hint">{{ t("ssh.forwards.hostPickerHint") }}</p>
+
+            <div class="seg">
+              <button
+                type="button" :class="{ on: tunnelDraft.kind === 'local' }"
+                data-test="ssh-tunnel-kind-local" @click.prevent="tunnelDraft.kind = 'local'"
+              >{{ t("ssh.forwards.kindLocal") }}</button>
+              <button
+                type="button" :class="{ on: tunnelDraft.kind === 'remote' }"
+                data-test="ssh-tunnel-kind-remote" @click.prevent="tunnelDraft.kind = 'remote'"
+              >{{ t("ssh.forwards.kindRemote") }}</button>
+              <button
+                type="button" :class="{ on: tunnelDraft.kind === 'dynamic' }"
+                data-test="ssh-tunnel-kind-dynamic" @click.prevent="tunnelDraft.kind = 'dynamic'"
+              >{{ t("ssh.forwards.kindDynamic") }}</button>
+            </div>
+            <p class="hint">{{ forwardKindHint(tunnelDraft.kind) }}</p>
+
+            <div class="field-row">
+              <label class="field grow">
+                <span class="fl">{{ t("ssh.forwards.bindAddr") }}</span>
+                <input
+                  data-test="ssh-tunnel-bind-addr" v-model="tunnelDraft.bind_addr"
+                  placeholder="127.0.0.1" spellcheck="false" autocomplete="off"
+                />
+              </label>
+              <label class="field port">
+                <span class="fl">{{ t("ssh.forwards.bindPort") }}</span>
+                <input data-test="ssh-tunnel-bind-port" v-model="tunnelDraft.bind_port" autocomplete="off" />
+              </label>
+            </div>
+            <div v-if="tunnelDraft.kind !== 'dynamic'" class="field-row">
+              <label class="field grow">
+                <span class="fl">{{ t("ssh.forwards.targetHost") }}</span>
+                <input
+                  data-test="ssh-tunnel-target-host" v-model="tunnelDraft.target_host"
+                  spellcheck="false" autocomplete="off"
+                />
+              </label>
+              <label class="field port">
+                <span class="fl">{{ t("ssh.forwards.targetPort") }}</span>
+                <input data-test="ssh-tunnel-target-port" v-model="tunnelDraft.target_port" autocomplete="off" />
+              </label>
+            </div>
+            <label class="field">
+              <span class="fl">{{ t("ssh.forwards.label") }}</span>
+              <input
+                data-test="ssh-tunnel-note" v-model="tunnelDraft.note"
+                :placeholder="t('ssh.forwards.labelPlaceholder')" autocomplete="off"
+              />
+            </label>
+            <p
+              v-if="forwardBindWarning(tunnelDraft)" class="fwd-warn"
+              data-test="ssh-tunnel-bind-warning"
+            >{{ forwardBindWarning(tunnelDraft) }}</p>
+          </div>
+          <div class="drawer-foot">
+            <button class="btn ghost" @click="closeTunnelDrawer">{{ t("common.cancel") }}</button>
+            <!-- Saving alone does not open a listener (§5.3). This is the
+                 opt-in for the case where bringing it up now is the point. -->
+            <button
+              class="btn" data-test="ssh-tunnel-save-start"
+              :disabled="!canSaveTunnel || tunnelSaving" @click="saveAndStartTunnel"
+            >{{ t("ssh.forwards.saveAndStart") }}</button>
+            <button
+              class="btn primary" data-test="ssh-tunnel-save"
+              :disabled="!canSaveTunnel || tunnelSaving" @click="saveTunnel"
+            >{{ t("common.save") }}</button>
           </div>
         </aside>
       </transition>
@@ -1682,17 +2064,25 @@ async function confirmConfigImport() {
 .fwd-host-name { font-size: 13px; font-weight: 600; color: var(--fg); }
 .fwd-host-sub { font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); }
 .fwd-proxy-reason { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: var(--warn, #d29922); }
-.fwd-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.fwd-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
-.fwd-row-main { flex: 1; min-width: 0; }
-.fwd-row-title { display: flex; align-items: center; gap: 6px; }
+/* A tunnel card is a .card whose right-hand column stacks the state pill
+   over the buttons: the row layout put them side by side, which at card
+   width pushed the route text into a two-line wrap on every rule. */
+.fwd-card { align-items: flex-start; }
+.fwd-card-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.fwd-card .card-label { display: flex; align-items: baseline; gap: 6px; }
+/* The route is the one thing on the card you actually read, so it wraps
+   instead of inheriting .card-sub's ellipsis — a truncated address is not
+   worth having on screen. */
+.fwd-route { white-space: normal; overflow: visible; word-break: break-all; }
 .fwd-kind { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
 .fwd-note { font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fwd-row-route { margin-top: 3px; font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); word-break: break-all; }
 .fwd-row-conns { margin-top: 2px; font-size: 10px; color: var(--fg-dim); }
 .fwd-row-error { margin: 5px 0 0; font-size: 11px; line-height: 1.5; color: var(--bad); }
 .fwd-state { flex: none; font-size: 10px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); background: rgba(139, 148, 158, 0.14); }
 .fwd-state.running { color: var(--good, #3fb950); border-color: rgba(63, 185, 80, 0.35); background: rgba(63, 185, 80, 0.12); }
 .fwd-state.stopped { color: var(--bad); border-color: rgba(248, 81, 73, 0.35); background: rgba(248, 81, 73, 0.12); }
-.fwd-row-actions { flex: none; display: flex; gap: 4px; align-items: center; }
+
+/* --- key drawer: reveal / copy --- */
+.pem-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pem-tools { display: flex; gap: 4px; }
 </style>

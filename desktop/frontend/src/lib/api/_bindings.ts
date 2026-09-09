@@ -122,6 +122,16 @@ export interface SSHHost {
   key_id?: string;
   tags?: string[];
   note?: string;
+  // startup_command is typed into the shell after login, one line per prompt,
+  // with startup_delay_ms (0 → 1500) before each. It exists for bastions that
+  // put a menu in front of the shell — JumpServer asks for the asset at
+  // `Opt>` and then for the system user at `ID>`, neither of which is a shell
+  // command you could pass on a command line.
+  //
+  // The drawer owns both, so a save payload that drops them clears them (same
+  // shape as forwards below).
+  startup_command?: string;
+  startup_delay_ms?: number;
   // identity_file / proxy_jump / proxy_command are populated by ssh_config
   // import (desktop/ssh_config_import.go) and are otherwise empty for
   // manually-added hosts. identity_file is a path only — atterm never reads
@@ -245,6 +255,15 @@ export interface SSHKey {
   id: string;
   name: string;
   key_type?: string;
+}
+
+// SSHKeySecret mirrors desktop SSHKeySecret — a vault key's private material,
+// returned only by RevealSSHKey and only when the user asks for it. Never part
+// of the list: ListSSHKeys stays non-secret so a panel render cannot put a
+// private key in memory nobody asked for.
+export interface SSHKeySecret {
+  private_key: string;
+  passphrase?: string;
 }
 
 // SSHConfigImportSkipped mirrors desktop SSHConfigImportSkipped, one entry of
@@ -706,6 +725,7 @@ export interface AppBindings {
   AddSSHKey(name: string, privateKeyPEM: string, passphrase: string): Promise<SSHKey>;
   UpdateSSHKey(id: string, name: string, privateKeyPEM: string, passphrase: string): Promise<void>;
   DeleteSSHKey(id: string): Promise<void>;
+  RevealSSHKey(id: string): Promise<SSHKeySecret>;
   CloseSession(sessionID: string): Promise<void>;
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;

@@ -135,6 +135,9 @@ func (a *App) NewSshSessionByID(id string, accepted AcceptedHostKey) (NewSession
 		// never shown. See acceptedHostKey.
 		AcceptedHostKeyHost:        accepted.Host,
 		AcceptedHostKeyFingerprint: accepted.Fingerprint,
+		// Only a saved host can carry these — see SSHConnectReq.
+		StartupCommand: found.StartupCommand,
+		StartupDelayMs: found.StartupDelayMs,
 	}
 	switch found.AuthKind {
 	case "key":
@@ -289,6 +292,14 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 	h.sessions[id] = &activeSession{host: host, cleanup: cleanup}
 	h.mu.Unlock()
 	h.notifyChange()
+
+	// Type the host's startup command into the shell, if it has one. This
+	// runs after AdoptSession on purpose: the writes go to the remote's
+	// stdin, and the echo comes back through the session everyone is already
+	// watching, so what happens looks the same to the user as typing it.
+	if lines := startupCommandLines(req.StartupCommand); len(lines) > 0 {
+		go sendStartupCommand(ctx, host, lines, startupDelay(req.StartupDelayMs))
+	}
 
 	// Watch for remote shell exit / disconnect → clean up the session, so a
 	// dropped SSH connection ends the session the same way a local PTY exit

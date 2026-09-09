@@ -1234,6 +1234,8 @@ export namespace main {
 	    key_id?: string;
 	    tags?: string[];
 	    note?: string;
+	    startup_command?: string;
+	    startup_delay_ms?: number;
 	    identity_file?: string;
 	    proxy_jump?: string;
 	    proxy_command?: string;
@@ -1254,6 +1256,8 @@ export namespace main {
 	        this.key_id = source["key_id"];
 	        this.tags = source["tags"];
 	        this.note = source["note"];
+	        this.startup_command = source["startup_command"];
+	        this.startup_delay_ms = source["startup_delay_ms"];
 	        this.identity_file = source["identity_file"];
 	        this.proxy_jump = source["proxy_jump"];
 	        this.proxy_command = source["proxy_command"];
@@ -1360,6 +1364,20 @@ export namespace main {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.key_type = source["key_type"];
+	    }
+	}
+	export class SSHKeySecret {
+	    private_key: string;
+	    passphrase?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHKeySecret(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.private_key = source["private_key"];
+	        this.passphrase = source["passphrase"];
 	    }
 	}
 	export class ServicePreviewMapping {

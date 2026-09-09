@@ -137,6 +137,42 @@ func TestUpdateSSHHostStillClearsUIOwnedFields(t *testing.T) {
 	}
 }
 
+// TestUpdateSSHHostRoundTripsStartupCommand pins the startup command as a
+// UI-owned field on both sides of the same edit. The drawer has a control for
+// it, so a save must carry it — and a save that *clears* it has to stick,
+// because "stop typing that into the bastion" is exactly the edit a user
+// makes when the target machine changes.
+func TestUpdateSSHHostRoundTripsStartupCommand(t *testing.T) {
+	a := newHostsTestApp(t)
+	stored, err := a.AddSSHHost(SSHHost{Host: "h", User: "u", AuthKind: "password"}, sshCredential{})
+	if err != nil {
+		t.Fatalf("AddSSHHost: %v", err)
+	}
+
+	stored.StartupCommand = "php-compose-仓库\n2"
+	stored.StartupDelayMs = 2000
+	if err := a.UpdateSSHHost(stored, nil); err != nil {
+		t.Fatalf("UpdateSSHHost: %v", err)
+	}
+	got := a.ListSSHHosts()[0]
+	if got.StartupCommand != "php-compose-仓库\n2" {
+		t.Errorf("StartupCommand = %q", got.StartupCommand)
+	}
+	if got.StartupDelayMs != 2000 {
+		t.Errorf("StartupDelayMs = %d", got.StartupDelayMs)
+	}
+
+	got.StartupCommand = ""
+	got.StartupDelayMs = 0
+	if err := a.UpdateSSHHost(got, nil); err != nil {
+		t.Fatalf("UpdateSSHHost clear: %v", err)
+	}
+	if cleared := a.ListSSHHosts()[0]; cleared.StartupCommand != "" || cleared.StartupDelayMs != 0 {
+		t.Errorf("startup command must be clearable, got %q / %d",
+			cleared.StartupCommand, cleared.StartupDelayMs)
+	}
+}
+
 func TestDeleteSSHHostClearsCredential(t *testing.T) {
 	a := newHostsTestApp(t)
 	h, _ := a.AddSSHHost(SSHHost{Host: "h", User: "u", AuthKind: "password"}, sshCredential{Password: "pw"})

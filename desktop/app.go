@@ -113,6 +113,17 @@ type SSHConnectReq struct {
 	// connection can find the host's ProxyJump chain. Empty for ad-hoc
 	// connections. Not part of the frontend-facing request shape.
 	SSHHostID string `json:"-"`
+	// StartupCommand / StartupDelayMs are copied from the saved host by
+	// NewSshSessionByID and typed into the shell once it is open (see
+	// ssh_startup_command.go).
+	//
+	// `json:"-"` is the security property, not tidiness: these type
+	// arbitrary input into a remote shell, so they must only ever come from a
+	// host record the user saved. NewSshSession is a bound method the
+	// frontend can call with any request it likes, and a marshalled field
+	// here would make "type this into that machine" part of that surface.
+	StartupCommand string `json:"-"`
+	StartupDelayMs int    `json:"-"`
 }
 
 // acceptedHostKey is the (host, fingerprint) pair the user agreed to, in the

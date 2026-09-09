@@ -74,6 +74,53 @@ func (a *App) ListSSHKeys() []SSHKey {
 	return ks
 }
 
+// SSHKeySecret is the private material on its way *back* to the key drawer.
+//
+// This is the one place a stored secret leaves the keychain for the UI, and it
+// is a narrower affordance than it looks: SshHostsPanel only mounts on the
+// desktop build (the button that opens it is gated on caps.localPty), so the
+// PEM travels from the OS keychain to a webview in the same process on the
+// same machine — it never touches the relay. The drawer still keeps it behind
+// an explicit reveal rather than prefilling, so opening a key to rename it
+// does not put a private key on screen.
+//
+// Host *passwords* deliberately have no equivalent. There is nothing to do
+// with a revealed password that the app does not already do for you, whereas a
+// private key is a file the user legitimately needs to get back out (to copy
+// onto another machine, to check which key a host is actually using).
+type SSHKeySecret struct {
+	PrivateKey string `json:"private_key"`
+	Passphrase string `json:"passphrase,omitempty"`
+}
+
+// RevealSSHKey returns one key's stored private material. It errors for an
+// unknown ID and for a key whose keychain entry is missing, rather than
+// returning a blank PEM the drawer would then happily save back over the
+// (possibly still fine) stored one.
+func (a *App) RevealSSHKey(id string) (SSHKeySecret, error) {
+	if a.cfgStore == nil {
+		return SSHKeySecret{}, fmt.Errorf("config store not ready")
+	}
+	found := false
+	for _, k := range a.ListSSHKeys() {
+		if k.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return SSHKeySecret{}, fmt.Errorf("no such key: %s", id)
+	}
+	sec, err := sshKeySecretSlot(id).Load()
+	if err != nil {
+		return SSHKeySecret{}, fmt.Errorf("read key: %w", err)
+	}
+	if sec.PrivateKey == "" {
+		return SSHKeySecret{}, fmt.Errorf("no stored private key for: %s", id)
+	}
+	return SSHKeySecret{PrivateKey: sec.PrivateKey, Passphrase: sec.Passphrase}, nil
+}
+
 // AddSSHKey validates the PEM, stores non-secret fields in config and the
 // private key in the keyring. On config failure it rolls back the keyring.
 func (a *App) AddSSHKey(name, privateKeyPEM, passphrase string) (SSHKey, error) {

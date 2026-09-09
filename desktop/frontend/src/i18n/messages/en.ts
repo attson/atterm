@@ -287,6 +287,18 @@ export const en = {
       dropzone: "Drag and drop a private key file to import",
       importFromFile: "Import from key file",
       submitNew: "Add Key",
+      reveal: "Show the stored private key",
+      hide: "Hide",
+      copy: "Copy the private key",
+    },
+    // Startup command (JumpServer and other menu bastions): the lines typed
+    // at the prompts that appear after login, before you have a shell.
+    startup: {
+      sectionTitle: "Startup command",
+      sectionHint: "For a bastion that shows a menu instead of a shell. Each line is typed and followed by Enter, one per prompt — for JumpServer that is the asset at Opt>, then the system user at ID>.",
+      placeholder: "one answer per line",
+      delay: "Step interval (ms)",
+      steps: "{count} steps will be sent after login.",
     },
     // Port forwarding (roadmap item 26). "Local / Remote / Dynamic" keep the
     // ssh(1) meanings of -L / -R / -D; the hints spell them out because the
@@ -320,7 +332,15 @@ export const en = {
       warnDynamic:
         "Binding {addr} instead of 127.0.0.1 makes this an unauthenticated SOCKS5 open proxy: anyone on the same network can reach everything this SSH host can reach, to any destination they name, using your SSH credential and appearing in the far side's logs as you. This rule syncs to every device you sign in on and binds the same way there.",
       emptyTitle: "No forwarding rules",
-      emptySub: "Add a rule in a host's Port forwarding section, then start it here.",
+      emptySub: "Create one here, or add a rule in a host's Port forwarding section.",
+      new: "New tunnel",
+      newNeedsHost: "Save an SSH host first — a tunnel runs over one.",
+      drawerTitleNew: "New tunnel",
+      drawerTitleEdit: "Edit tunnel",
+      hostPicker: "SSH host",
+      hostPickerAria: "SSH host this tunnel runs over",
+      hostPickerHint: "The tunnel runs over this host's connection — the bastion, when the target is behind one. It is saved as one of that host's forwarding rules.",
+      saveAndStart: "Save and start",
       start: "Start",
       stop: "Stop",
       dismiss: "Dismiss",

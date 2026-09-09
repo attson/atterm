@@ -44,6 +44,18 @@ type SSHHost struct {
 	Tags     []string `json:"tags,omitempty"`
 	Note     string   `json:"note,omitempty"`
 
+	// StartupCommand is typed into the shell after login, one line per
+	// prompt, and StartupDelayMs is the pause before each line (0 → the
+	// default). See ssh_startup_command.go for why this is typed rather than
+	// passed on the command line, and why it is delay-driven.
+	//
+	// It is a *host* field and never comes off the wire from the frontend:
+	// SSHConnectReq carries it as an internal, un-marshalled field that only
+	// NewSshSessionByID fills, so an ad-hoc connect cannot use it to type
+	// arbitrary input into a remote shell.
+	StartupCommand string `json:"startup_command,omitempty"`
+	StartupDelayMs int    `json:"startup_delay_ms,omitempty"`
+
 	// IdentityFile, ProxyJump and ProxyCommand are populated by ssh_config
 	// import (see ssh_config_import.go) and are otherwise empty for
 	// manually-added hosts.
@@ -132,7 +144,8 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 // UpdateSSHHost replaces the non-secret fields of the host with matching ID.
 // If cred is non-nil the credential is replaced too; nil leaves it untouched.
 //
-// The UI *owns* Alias, Host, Port, User, Tags, AuthKind, KeyID, Forwards and Note, so
+// The UI *owns* Alias, Host, Port, User, Tags, AuthKind, KeyID, Forwards,
+// StartupCommand, StartupDelayMs and Note, so
 // whatever the caller passes wins — including the empty string, because
 // clearing a label or a tag list is a legitimate edit. The drawer has a
 // control for all of them except Note, which has no editor today and simply

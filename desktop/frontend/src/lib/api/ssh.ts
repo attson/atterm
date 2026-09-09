@@ -11,6 +11,7 @@ import type {
   SSHCredential,
   SSHHost,
   SSHKey,
+  SSHKeySecret,
 } from "./_bindings";
 
 export type {
@@ -27,6 +28,7 @@ export type {
   SSHCredential,
   SSHHost,
   SSHKey,
+  SSHKeySecret,
 } from "./_bindings";
 
 // ACCEPT_NO_HOST_KEY is what a connection that has not been through a TOFU
@@ -185,4 +187,13 @@ export function updateSSHKey(id: string, name: string, privateKeyPEM: string, pa
 
 export function deleteSSHKey(id: string): Promise<void> {
   return bindings().DeleteSSHKey(id);
+}
+
+// revealSSHKey reads one key's private material back out of the OS keychain.
+// It is called only from the key drawer's reveal button, never on render:
+// opening a key to rename it must not put a private key on screen, and a list
+// that fetched secrets eagerly would defeat the point of storing them
+// separately in the first place.
+export function revealSSHKey(id: string): Promise<SSHKeySecret> {
+  return bindings().RevealSSHKey(id);
 }

@@ -89,6 +89,12 @@ jobs:
       #
       # Do not replace this with `git diff --exit-code`: a brand-new asset is
       # untracked, and `git diff` reports untracked files as no change.
+      #
+      # --stat, not a `| head` of the full diff: web-dist is minified bundle
+      # output, so a content diff is one unreadable megabyte-long line per
+      # file. It also cost us the exit code — `head` closes the pipe, git dies
+      # of SIGPIPE, and under `pipefail` the step reported 141 instead of
+      # reaching the `exit 1` below, which reads as a crash rather than drift.
       - name: verify embed has no drift
         run: |
           set -euo pipefail
@@ -96,7 +102,7 @@ jobs:
             echo "::error::internal/relay/web-dist/ is out of date with web/src and desktop/frontend/src."
             echo "Run ./scripts/build-web.sh (Node 20, Go ${GO_VERSION}) and commit the result."
             git status --porcelain internal/relay/web-dist/
-            git diff -- internal/relay/web-dist/ | head -200
+            git --no-pager diff --stat -- internal/relay/web-dist/
             exit 1
           fi
           echo "web-dist matches a fresh build."

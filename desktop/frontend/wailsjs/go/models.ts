@@ -1115,6 +1115,7 @@ export namespace main {
 	    last_email: string;
 	    connected: boolean;
 	    remote_proxy_url: string;
+	    remote_http_proxy_url: string;
 	    paused: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -1132,6 +1133,7 @@ export namespace main {
 	        this.last_email = source["last_email"];
 	        this.connected = source["connected"];
 	        this.remote_proxy_url = source["remote_proxy_url"];
+	        this.remote_http_proxy_url = source["remote_http_proxy_url"];
 	        this.paused = source["paused"];
 	    }
 	}

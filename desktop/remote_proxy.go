@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -48,6 +49,10 @@ func startRemoteProxy(cfgStore *configStore) (*remoteProxy, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/client", p.handleClient)
 	mux.HandleFunc("/client-sessions", p.handleClientSessions)
+	// /relay-http/ forwards ordinary REST calls (e.g. /admin/api/users) to the
+	// relay over Go's TLS stack. See handleHTTPProxy for why the WebView can't
+	// issue these directly.
+	mux.HandleFunc("/relay-http/", p.handleHTTPProxy)
 	p.httpSrv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := p.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -66,6 +71,17 @@ func (p *remoteProxy) wsURL() string {
 	return "ws://" + p.addr
 }
 
+// httpURL is the http:// base the frontend uses as apiFetch's baseURL, so REST
+// calls to the relay ride through handleHTTPProxy instead of a direct WebView
+// fetch. The frontend appends "/relay-http" + path (see setup in wails.ts).
+// Empty when the proxy failed to start.
+func (p *remoteProxy) httpURL() string {
+	if p == nil || p.addr == "" {
+		return ""
+	}
+	return "http://" + p.addr
+}
+
 func (p *remoteProxy) Stop() {
 	if p == nil || p.httpSrv == nil {
 		return
@@ -81,6 +97,70 @@ func (p *remoteProxy) handleClient(w http.ResponseWriter, r *http.Request) {
 
 func (p *remoteProxy) handleClientSessions(w http.ResponseWriter, r *http.Request) {
 	p.handleWSProxy(w, r, "/client-sessions")
+}
+
+// handleHTTPProxy forwards a REST request under /relay-http/ to the configured
+// relay over Go's TLS stack, injecting the stored Bearer token.
+//
+// Why it exists: on the same networks that fingerprint-RST the WebView's WS
+// handshake (see handleWSProxy), the WebView's fetch() to the relay is also
+// filtered — and in the desktop build apiFetch has no relay baseURL to begin
+// with (relay config lives Go-side, not in localStorage), so admin/REST calls
+// otherwise resolve to the wails:// origin and never reach the relay. Pointing
+// apiFetch's baseURL at this loopback endpoint routes every REST call through
+// Go, exactly like ListRemoteSessions/FetchRelayMe already do.
+//
+// The relay path is whatever follows the "/relay-http" prefix, so
+// GET /relay-http/admin/api/users?limit=10 becomes GET <relay>/admin/api/users?limit=10.
+// Status code, body and Content-Type are passed through unchanged so apiFetch's
+// 401 -> /login.html bounce and JSON parsing keep working.
+func (p *remoteProxy) handleHTTPProxy(w http.ResponseWriter, r *http.Request) {
+	cfg := p.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		http.Error(w, "no relay configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	relayPath := strings.TrimPrefix(r.URL.Path, "/relay-http")
+	if relayPath == "" || !strings.HasPrefix(relayPath, "/") {
+		relayPath = "/" + relayPath
+	}
+	target := strings.TrimRight(relayHTTPBase(cfg.RelayURL), "/") + relayPath
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	outReq, err := http.NewRequestWithContext(ctx, r.Method, target, r.Body)
+	if err != nil {
+		http.Error(w, "bad proxy request", http.StatusBadGateway)
+		return
+	}
+	// Carry the caller's Content-Type/Accept but replace auth with the stored
+	// session token — the WebView never has it, so any inbound Authorization is
+	// meaningless here.
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		outReq.Header.Set("Content-Type", ct)
+	}
+	if ac := r.Header.Get("Accept"); ac != "" {
+		outReq.Header.Set("Accept", ac)
+	}
+	outReq.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
+
+	resp, err := relayHTTPClient(cfg.AllowInsecureRelay, 30*time.Second).Do(outReq)
+	if err != nil {
+		logWarn("remote-proxy", "http proxy %s %s: %v", r.Method, relayPath, err)
+		http.Error(w, "relay request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (p *remoteProxy) handleWSProxy(w http.ResponseWriter, r *http.Request, relayPath string) {

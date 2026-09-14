@@ -67,6 +67,7 @@ import {
   type RecoverySnapshot,
 } from "./lib/api";
 import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState, SessionProfile } from "./lib/api";
+import { saveRelayConfig, clearRelayConfig } from "@webshared/api/relay-config";
 import type { RemoteSession } from "./platform/types";
 import { type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
@@ -809,7 +810,7 @@ function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpo
 }
 
 async function refreshRelayConfig() {
-  let cfg: { url: string; token: string; connected: boolean; remote_proxy_url?: string } = {
+  let cfg: { url: string; token: string; connected: boolean; remote_proxy_url?: string; remote_http_proxy_url?: string } = {
     url: "",
     token: "",
     connected: false,
@@ -818,6 +819,23 @@ async function refreshRelayConfig() {
     cfg = await getRelayConfig();
   } catch (e) {
     logDebug("app", "getRelayConfig failed; keeping last known", { error: errText(e) });
+  }
+  // Point apiFetch's baseURL at the Go loopback HTTP proxy (remote_http_proxy_url
+  // + "/relay-http") so REST calls (admin/api, api/push, ...) tunnel through Go.
+  // The desktop build otherwise has no relay baseURL in localStorage at all, so
+  // those requests resolve to the wails:// origin and never reach the relay. The
+  // proxy injects the real Bearer token Go-side; the token stored here only has
+  // to be truthy so apiFetch treats the session as authenticated.
+  const httpProxy = cfg.remote_http_proxy_url ?? "";
+  if (cfg.token && httpProxy) {
+    saveRelayConfig({
+      baseURL: httpProxy + "/relay-http",
+      sessionToken: cfg.token,
+      expiresAt: null,
+      allowInsecure: false,
+    });
+  } else {
+    clearRelayConfig();
   }
   // Attach remote sessions through the Go loopback proxy (remote_proxy_url),
   // not the relay URL directly: the WebView can't TLS-dial the relay on some

@@ -212,7 +212,13 @@ type RelayConfig struct {
 	// unavailable. The WebView can't TLS-dial the relay directly on some
 	// networks, so remote /client attaches tunnel through Go via this URL.
 	RemoteProxyURL string `json:"remote_proxy_url"`
-	Paused         bool   `json:"paused"`
+	// RemoteHTTPProxyURL is the loopback http:// base apiFetch uses as its
+	// baseURL so REST calls (admin/api, api/me, ...) tunnel through Go instead
+	// of a direct WebView fetch — same fingerprint-RST networks, plus the
+	// desktop build has no relay baseURL in localStorage at all. Read-only;
+	// empty if the proxy is unavailable. The frontend appends "/relay-http".
+	RemoteHTTPProxyURL string `json:"remote_http_proxy_url"`
+	Paused             bool   `json:"paused"`
 }
 
 type LoggingConfig struct {
@@ -776,6 +782,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 		Connected:          connected,
 		Paused:             cfg.RelayPaused,
 		RemoteProxyURL:     a.remoteProxy.wsURL(),
+		RemoteHTTPProxyURL: a.remoteProxy.httpURL(),
 	}
 }
 

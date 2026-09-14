@@ -148,3 +148,59 @@ func TestRemoteProxyHTTPURL_EmptyWhenNil(t *testing.T) {
 		t.Errorf("nil proxy httpURL() = %q; want empty", got)
 	}
 }
+
+func TestRemoteProxyHTTP_PreflightAnsweredLocally(t *testing.T) {
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("OPTIONS preflight must be answered locally, not forwarded to relay (got %s %s)", r.Method, r.URL.Path)
+	}))
+	defer relay.Close()
+
+	p := newHTTPProxyFixture(t, relay)
+
+	req, _ := http.NewRequest("OPTIONS", p.httpURL()+"/relay-http/admin/api/users", nil)
+	req.Header.Set("Origin", "wails://wails.localhost:34115")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "authorization")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("OPTIONS through proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("preflight status = %d; want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "wails://wails.localhost:34115" {
+		t.Errorf("ACAO = %q; want the request Origin echoed", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); got == "" {
+		t.Errorf("preflight missing Access-Control-Allow-Methods")
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); got == "" {
+		t.Errorf("preflight missing Access-Control-Allow-Headers")
+	}
+}
+
+func TestRemoteProxyHTTP_ActualResponseCarriesCORS(t *testing.T) {
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer relay.Close()
+
+	p := newHTTPProxyFixture(t, relay)
+
+	req, _ := http.NewRequest("GET", p.httpURL()+"/relay-http/admin/api/users", nil)
+	req.Header.Set("Origin", "wails://wails.localhost:34115")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET through proxy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// The real (non-preflight) response must also carry ACAO so the WebView's
+	// fetch() is allowed to read the body.
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "wails://wails.localhost:34115" {
+		t.Errorf("ACAO on actual response = %q; want the request Origin echoed", got)
+	}
+}

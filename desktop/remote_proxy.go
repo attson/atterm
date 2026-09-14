@@ -115,6 +115,25 @@ func (p *remoteProxy) handleClientSessions(w http.ResponseWriter, r *http.Reques
 // Status code, body and Content-Type are passed through unchanged so apiFetch's
 // 401 -> /login.html bounce and JSON parsing keep working.
 func (p *remoteProxy) handleHTTPProxy(w http.ResponseWriter, r *http.Request) {
+	// The WebView's fetch() runs from the wails:// origin, so a request to this
+	// loopback endpoint is cross-origin and triggers CORS. This proxy is a
+	// trusted same-machine hop, so we allow the calling origin outright:
+	// answer the preflight locally (never forwarding OPTIONS to the relay,
+	// whose own CORS policy doesn't know the wails:// origin) and echo the
+	// allow-origin header on real responses too.
+	setLoopbackCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		reqHeaders := r.Header.Get("Access-Control-Request-Headers")
+		if reqHeaders == "" {
+			reqHeaders = "Authorization, Content-Type"
+		}
+		w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+		w.Header().Set("Access-Control-Max-Age", "600")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	cfg := p.cfgStore.Get()
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		http.Error(w, "no relay configured", http.StatusServiceUnavailable)
@@ -161,6 +180,19 @@ func (p *remoteProxy) handleHTTPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// setLoopbackCORS echoes the caller's Origin as the allow-origin. The proxy
+// only ever binds 127.0.0.1, so the caller is always a local process (the
+// WebView); echoing the origin — rather than "*" — keeps credentialed fetches
+// working without widening access beyond this machine.
+func setLoopbackCORS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		origin = "*"
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Vary", "Origin")
 }
 
 func (p *remoteProxy) handleWSProxy(w http.ResponseWriter, r *http.Request, relayPath string) {

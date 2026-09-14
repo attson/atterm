@@ -707,7 +707,17 @@ func localSubscriberFrameRequestsRepaint(f proto.Frame) bool {
 		return false
 	}
 	seq, data, err := proto.DecodeOut(f.Payload)
-	return err == nil && seq == 0 && bytes.Equal(data, []byte("\x1b[?1049h\x1b[2J\x1b[H"))
+	if err != nil || seq != 0 {
+		return false
+	}
+	// The session layer injects a screen-clear (seq 0) ahead of a truncated or
+	// caught-up replay: the alt-screen reset "\x1b[?1049h\x1b[2J\x1b[H" or its
+	// non-alt-screen counterpart "\x1b[2J\x1b[H". Both wipe the viewer's xterm,
+	// and on a caught-up reattach no replay content follows to repaint it — so
+	// both must nudge the local app to redraw. The seq-0 guard above keeps this
+	// off app-emitted clears (which carry a real seq) and their resize storms.
+	return bytes.Equal(data, []byte("\x1b[?1049h\x1b[2J\x1b[H")) ||
+		bytes.Equal(data, []byte("\x1b[2J\x1b[H"))
 }
 
 func (u *uplink) SendCommandEvent(sessionID uuid.UUID, exit, elapsedMS int, label string) {

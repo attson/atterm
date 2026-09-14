@@ -142,6 +142,42 @@ func TestForwardLocalSubscriberFrameRequestsRepaintForAltScreenReset(t *testing.
 	}
 }
 
+func TestForwardLocalSubscriberFrameRequestsRepaintForPlainClear(t *testing.T) {
+	// A caught-up remote reattach delivers the non-alt-screen replay reset
+	// marker "\x1b[2J\x1b[H" (seq 0) with no replay content behind it. Without a
+	// repaint nudge the viewer's xterm is cleared and never redrawn, leaving the
+	// remote session permanently blank. The nudge must fire for this 7-byte
+	// clear exactly as it does for the 13-byte alt-screen reset.
+	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	out := make(chan proto.Frame, 1)
+	repaints := 0
+	frame := proto.EncodeOut(id, 0, []byte("\x1b[2J\x1b[H"))
+
+	if ok := forwardLocalSubscriberFrame(context.Background(), out, frame, nil, func() { repaints++ }, nil); !ok {
+		t.Fatal("forwardLocalSubscriberFrame returned false")
+	}
+	if repaints != 1 {
+		t.Fatalf("repaints = %d; want 1", repaints)
+	}
+}
+
+func TestForwardLocalSubscriberFrameSkipsRepaintForSequencedClear(t *testing.T) {
+	// A clear emitted by the running app itself carries a real (non-zero) seq.
+	// Nudging a repaint on every app-emitted "\x1b[2J\x1b[H" would cause resize
+	// storms, so only the seq-0 replay marker requests a repaint.
+	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	out := make(chan proto.Frame, 1)
+	repaints := 0
+	frame := proto.EncodeOut(id, 42, []byte("\x1b[2J\x1b[H"))
+
+	if ok := forwardLocalSubscriberFrame(context.Background(), out, frame, nil, func() { repaints++ }, nil); !ok {
+		t.Fatal("forwardLocalSubscriberFrame returned false")
+	}
+	if repaints != 0 {
+		t.Fatalf("repaints = %d; want 0 (sequenced app clear must not nudge)", repaints)
+	}
+}
+
 func TestDesktopUplinkFrameLogDetailsSummarizesPasteImage(t *testing.T) {
 	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	payload, err := json.Marshal(proto.PasteImagePayload{

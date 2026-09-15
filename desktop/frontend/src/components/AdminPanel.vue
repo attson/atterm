@@ -8,8 +8,9 @@ import Invitations from "./admin/Invitations.vue";
 import Users from "./admin/Users.vue";
 import Config from "./admin/Config.vue";
 import FeishuConfig from "./admin/FeishuConfig.vue";
+import Traffic from "./admin/Traffic.vue";
 
-type AdminTabKey = "invitations" | "users" | "config" | "feishu";
+type AdminTabKey = "invitations" | "users" | "config" | "feishu" | "traffic";
 
 const { t } = useI18n();
 
@@ -29,6 +30,7 @@ const tabs = computed<{ key: AdminTabKey; label: string }[]>(() => [
   { key: "users", label: t("admin.users") },
   { key: "config", label: t("admin.configTab") },
   { key: "feishu", label: t("admin.feishuTab") },
+  { key: "traffic", label: t("admin.trafficTab") },
 ]);
 
 // All four admin tab components consume `useMessage()` from naive-ui, which
@@ -68,6 +70,7 @@ const overrides = getNaiveOverrides();
           <Users v-if="active === 'users'" />
           <Config v-if="active === 'config'" />
           <FeishuConfig v-if="active === 'feishu'" />
+          <Traffic v-if="active === 'traffic'" />
         </div>
       </div>
     </n-message-provider>

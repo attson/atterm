@@ -5,8 +5,9 @@ import Invitations from "./admin/Invitations.vue";
 import Users from "./admin/Users.vue";
 import Config from "./admin/Config.vue";
 import FeishuConfig from "./admin/FeishuConfig.vue";
+import Traffic from "./admin/Traffic.vue";
 
-// The 4 admin tab components make real API calls on mount (apiFetch to
+// The admin tab components make real API calls on mount (apiFetch to
 // /api/admin/*). AdminPanel's own contract is tab switching / conditional
 // rendering, so stub the children out to keep this test focused and quiet.
 const stubs = {
@@ -14,6 +15,7 @@ const stubs = {
   Users: true,
   Config: true,
   FeishuConfig: true,
+  Traffic: true,
 };
 
 describe("AdminPanel", () => {
@@ -47,22 +49,23 @@ describe("AdminPanel", () => {
   test("renders each tab's child only while it is active", async () => {
     const w = mount(AdminPanel, { global: { stubs } });
 
-    for (const key of ["invitations", "users", "config", "feishu"] as const) {
+    for (const key of ["invitations", "users", "config", "feishu", "traffic"] as const) {
       await w.get(`[data-test="admin-tab-${key}"]`).trigger("click");
-      const components = [Invitations, Users, Config, FeishuConfig];
-      const activeIndex = ["invitations", "users", "config", "feishu"].indexOf(key);
+      const components = [Invitations, Users, Config, FeishuConfig, Traffic];
+      const activeIndex = ["invitations", "users", "config", "feishu", "traffic"].indexOf(key);
       components.forEach((comp, idx) => {
         expect(w.findComponent(comp).exists()).toBe(idx === activeIndex);
       });
     }
   });
 
-  test("renders exactly 4 tab buttons with the expected data-test hooks", () => {
+  test("renders exactly 5 tab buttons with the expected data-test hooks", () => {
     const w = mount(AdminPanel, { global: { stubs } });
     expect(w.find('[data-test="admin-tab-invitations"]').exists()).toBe(true);
     expect(w.find('[data-test="admin-tab-users"]').exists()).toBe(true);
     expect(w.find('[data-test="admin-tab-config"]').exists()).toBe(true);
     expect(w.find('[data-test="admin-tab-feishu"]').exists()).toBe(true);
+    expect(w.find('[data-test="admin-tab-traffic"]').exists()).toBe(true);
   });
 
   // Regression: every admin child calls `useMessage()` from naive-ui, which

@@ -145,3 +145,23 @@ export type TaskState =
   | 'failed'
   | 'disconnected'
   | 'closed'
+
+export type TrafficView = 'detail' | 'group' | 'summary'
+
+export interface AdminTrafficRow {
+  user_id: string
+  email?: string
+  frame_type?: number
+  frame_type_name?: string
+  category?: string
+  direction: number // 0 = in, 1 = out
+  bytes: number
+  frames: number
+}
+
+export interface AdminTrafficResponse {
+  view: TrafficView
+  from: string
+  to: string
+  rows: AdminTrafficRow[]
+}

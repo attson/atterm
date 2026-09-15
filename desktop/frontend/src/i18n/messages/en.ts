@@ -152,6 +152,7 @@ export const en = {
       openLink: "Open Link",
       copyLink: "Copy Link",
     },
+    resize: "Resize PTY to current terminal size",
     link: {
       openFailed: "Failed to open link",
       openFailedNoHome: "Cannot resolve ~ (home directory unavailable)",
@@ -1113,6 +1114,19 @@ export const en = {
     drawerReconnectsReason: "reason",
     drawerReconnectsDowntime: "downtime",
     drawerSeqGaps: "Seq gaps observed:",
+  },
+  startupUpdate: {
+    title: "Update available",
+    currentToLatest: "{current} → {latest}",
+    releaseNotes: "release notes",
+    statusAvailable: "{version} is available",
+    statusDownloading: "downloading {version} ({pct}%)",
+    statusReady: "{version} downloaded — ready to install",
+    downloadInstall: "Download & install",
+    cancel: "Cancel ({pct}%)",
+    cancelling: "Cancelling…",
+    installRestart: "Install & restart",
+    later: "Later",
   },
   recovery: {
     dialog: {

@@ -151,6 +151,7 @@ export const zhCN = {
       openLink: "打开链接",
       copyLink: "复制链接",
     },
+    resize: "将 PTY 调整为当前终端尺寸",
     link: {
       openFailed: "无法打开链接",
       openFailedNoHome: "无法解析 ~（拿不到 home 目录）",
@@ -1080,6 +1081,19 @@ export const zhCN = {
     drawerReconnectsReason: "原因",
     drawerReconnectsDowntime: "断开时长",
     drawerSeqGaps: "观察到的序号跳跃:",
+  },
+  startupUpdate: {
+    title: "有可用更新",
+    currentToLatest: "{current} → {latest}",
+    releaseNotes: "更新说明",
+    statusAvailable: "{version} 可用",
+    statusDownloading: "正在下载 {version}（{pct}%）",
+    statusReady: "{version} 已下载 — 可安装",
+    downloadInstall: "下载并安装",
+    cancel: "取消（{pct}%）",
+    cancelling: "正在取消…",
+    installRestart: "安装并重启",
+    later: "稍后",
   },
   recovery: {
     dialog: {

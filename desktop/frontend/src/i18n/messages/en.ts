@@ -1115,6 +1115,19 @@ export const en = {
     drawerReconnectsDowntime: "downtime",
     drawerSeqGaps: "Seq gaps observed:",
   },
+  startupUpdate: {
+    title: "Update available",
+    currentToLatest: "{current} → {latest}",
+    releaseNotes: "release notes",
+    statusAvailable: "{version} is available",
+    statusDownloading: "downloading {version} ({pct}%)",
+    statusReady: "{version} downloaded — ready to install",
+    downloadInstall: "Download & install",
+    cancel: "Cancel ({pct}%)",
+    cancelling: "Cancelling…",
+    installRestart: "Install & restart",
+    later: "Later",
+  },
   recovery: {
     dialog: {
       title: "Restore your previous session?",

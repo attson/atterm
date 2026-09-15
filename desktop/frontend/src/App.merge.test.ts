@@ -152,6 +152,8 @@ describe("App — merge & batch close (integration)", () => {
       NewSession: vi.fn().mockResolvedValue({ session_id: "local-1" }),
       CloseSession: closeSessionMock,
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({

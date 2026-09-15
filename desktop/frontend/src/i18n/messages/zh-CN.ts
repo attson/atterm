@@ -1082,6 +1082,19 @@ export const zhCN = {
     drawerReconnectsDowntime: "断开时长",
     drawerSeqGaps: "观察到的序号跳跃:",
   },
+  startupUpdate: {
+    title: "有可用更新",
+    currentToLatest: "{current} → {latest}",
+    releaseNotes: "更新说明",
+    statusAvailable: "{version} 可用",
+    statusDownloading: "正在下载 {version}（{pct}%）",
+    statusReady: "{version} 已下载 — 可安装",
+    downloadInstall: "下载并安装",
+    cancel: "取消（{pct}%）",
+    cancelling: "正在取消…",
+    installRestart: "安装并重启",
+    later: "稍后",
+  },
   recovery: {
     dialog: {
       title: "恢复上次的会话？",

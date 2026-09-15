@@ -172,10 +172,44 @@ describe("TitleBar running indicator", () => {
     expect(w.get('[data-testid="titlebar-root"]').classes()).not.toContain("is-running");
   });
 
-  it("uses a static running underline without perpetual animation", () => {
+  it("drives the running underline from the shared clock, not a CSS keyframe loop", () => {
+    // The sweep moves via a --sweep-offset custom property fed by the shared
+    // rAF clock (useRunningSpin). It must not reintroduce the perpetual CSS
+    // keyframe animation PR #373 removed, whose moving background-position
+    // repainted on the main thread every frame on GPU-less machines.
     expect(titleBarSource).toMatch(/\.titlebar\.is-running::after/);
     expect(titleBarSource).not.toMatch(/animation[^;]*infinite/);
     expect(titleBarSource).not.toContain("@keyframes titlebar-running-sweep");
+    expect(titleBarSource).toContain("useRunningSpin");
+    expect(titleBarSource).toContain("--sweep-offset");
+  });
+
+  it("advances the sweep offset while running as the shared clock ticks", async () => {
+    const spin = await import("../composables/useRunningSpin");
+    spin.__resetForTests();
+    const w = await mountForPlatform("linux", { currentTaskState: "running" });
+    const root = w.get('[data-testid="titlebar-root"]');
+    const before = root.attributes("style") ?? "";
+    expect(before).toContain("--sweep-offset");
+    spin.useRunningSpin().phase.value += 1;
+    await w.vm.$nextTick();
+    const after = root.attributes("style") ?? "";
+    expect(after).not.toBe(before);
+    spin.__resetForTests();
+  });
+
+  it("does not start the shared clock when not running", async () => {
+    const spin = await import("../composables/useRunningSpin");
+    spin.__resetForTests();
+    let scheduled = false;
+    vi.stubGlobal("requestAnimationFrame", () => {
+      scheduled = true;
+      return 1;
+    });
+    await mountForPlatform("linux", { currentTaskState: "idle" });
+    expect(scheduled).toBe(false);
+    vi.unstubAllGlobals();
+    spin.__resetForTests();
   });
 });
 

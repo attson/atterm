@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, watch } from "vue";
 import type { TaskState, TaskStatePreset } from "../lib/taskState";
 import { useTaskPreset } from "../composables/useTaskPreset";
+import { useRunningSpin } from "../composables/useRunningSpin";
 
 // Renders the per-session state indicator as pure inline SVG. Previously
 // dispatched on text glyphs (·, ◐, ✓, ✗) via preset.glyphOf, but iOS 26.3
@@ -35,6 +36,41 @@ const color = computed(() => preset.value.colorOf(props.state));
 // black. taskState.ts hardcodes the state palette for the same reason.
 const KNOCKOUT = "#0d1117";
 const glyphColor = computed(() => (showUnread.value ? KNOCKOUT : color.value));
+
+// Running icons rotate off one shared, throttled rAF clock (see useRunningSpin)
+// instead of a per-copy CSS animation, which is what pinned the renderer CPU on
+// GPU-less machines. Reference-count the clock only while this icon is running,
+// so the loop stops the moment the last running icon unmounts or leaves the
+// running state.
+const spin = useRunningSpin();
+const isRunning = computed(() => props.state === "running");
+// 12 steps per turn at ~8fps ≈ 1.5s per revolution — the cadence the old
+// spinnerDurationMs used.
+const runAngle = computed(() => (isRunning.value ? (spin.phase.value * 30) % 360 : 0));
+const runArcTransform = computed(() =>
+  isRunning.value ? `rotate(${runAngle.value} 8 8)` : undefined,
+);
+
+let held = false;
+watch(
+  isRunning,
+  (running) => {
+    if (running && !held) {
+      held = true;
+      spin.acquire();
+    } else if (!running && held) {
+      held = false;
+      spin.release();
+    }
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => {
+  if (held) {
+    held = false;
+    spin.release();
+  }
+});
 </script>
 
 <template>
@@ -68,8 +104,9 @@ const glyphColor = computed(() => (showUnread.value ? KNOCKOUT : color.value));
         :fill="color"
       />
       <g :transform="showUnread ? 'translate(8,8) scale(0.62) translate(-8,-8)' : undefined">
-        <!-- A static 3/4 arc remains legible at small sizes without scheduling
-             a repaint for every mounted copy of a running session. -->
+        <!-- 3/4 arc, spun via the shared clock's transform (no per-copy CSS
+             animation). rotate(deg 8 8) turns it about the icon centre and is
+             unaffected by the parent unread scale. -->
         <path
           v-if="state === 'running'"
           class="task-running-arc"
@@ -77,6 +114,7 @@ const glyphColor = computed(() => (showUnread.value ? KNOCKOUT : color.value));
           :stroke="glyphColor"
           stroke-width="2"
           stroke-linecap="round"
+          :transform="runArcTransform"
         />
         <!-- completed: check mark -->
         <path

@@ -151,6 +151,7 @@ export const zhCN = {
       openLink: "打开链接",
       copyLink: "复制链接",
     },
+    resize: "将 PTY 调整为当前终端尺寸",
     link: {
       openFailed: "无法打开链接",
       openFailedNoHome: "无法解析 ~（拿不到 home 目录）",

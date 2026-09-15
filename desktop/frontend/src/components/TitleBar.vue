@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../lib/log";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePlatform } from "../platform";
 import WindowControls from "./WindowControls.vue";
 import { setMaximized, useWindowMaximized } from "../composables/useWindowMaximized";
@@ -8,6 +8,7 @@ import { getRelayConfig, type Endpoint } from "../lib/api";
 import type { TaskState } from "../lib/taskState";
 import { useI18n } from "../i18n/useI18n";
 import { useUplinkHealth } from "../composables/useUplinkHealth";
+import { useRunningSpin } from "../composables/useRunningSpin";
 import ConnHealthPill from "@shared/components/ConnHealthPill.vue";
 import ConnHealthDrawer from "@shared/components/ConnHealthDrawer.vue";
 
@@ -50,6 +51,39 @@ const props = defineProps<{
 }>();
 
 const isRunning = computed(() => props.currentTaskState === "running");
+
+// The running underline sweeps via the shared, throttled rAF clock (see
+// useRunningSpin) rather than a perpetual CSS keyframe animation, whose moving
+// background-position repainted on the main thread every frame on GPU-less
+// machines (PR #373). One SWEEP_TILE-wide tile shifts by SWEEP_STEP_PX per
+// clock step; the clock only runs while some running indicator is mounted.
+const SWEEP_TILE = 1120;
+const SWEEP_STEP_PX = 40;
+const spin = useRunningSpin();
+const sweepOffset = computed(() =>
+  isRunning.value ? (spin.phase.value * SWEEP_STEP_PX) % SWEEP_TILE : 0,
+);
+
+let spinHeld = false;
+watch(
+  isRunning,
+  (running) => {
+    if (running && !spinHeld) {
+      spinHeld = true;
+      spin.acquire();
+    } else if (!running && spinHeld) {
+      spinHeld = false;
+      spin.release();
+    }
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => {
+  if (spinHeld) {
+    spinHeld = false;
+    spin.release();
+  }
+});
 
 // e2eeDisabled tracks the per-desktop "stop sealing" toggle. The chip
 // is always visible while this is true so the user doesn't forget the
@@ -100,6 +134,8 @@ onMounted(async () => {
 
 const rootStyle = computed(() => ({
   "padding-left": os.value === "darwin" ? "80px" : undefined,
+  // Consumed by the .titlebar::after sweep; only meaningful while running.
+  "--sweep-offset": isRunning.value ? `${sweepOffset.value}px` : undefined,
 }));
 
 const showWindowControls = computed(() => os.value !== "darwin");
@@ -244,9 +280,13 @@ function onTitleDblClick() {
   line-height: 1;
 }
 
-/* Keep running visible without a perpetual paint loop. The titlebar remains
-   mounted while its indicator is transparent, so a moving gradient consumes
-   rendering time even when no running state is visible. */
+/* Running underline: a long green wave (720px) travelling L→R inside a 1120px
+   repeating tile. The position is driven by --sweep-offset, fed from the shared
+   rAF clock (useRunningSpin) in JS — NOT a CSS keyframe animation, which is
+   what PR #373 removed: a perpetual moving background-position repaints on the
+   main thread every frame, and on GPU-less machines that pinned the CPU. The
+   clock only advances while a running indicator is mounted, and the pseudo-
+   element is transparent (opacity 0) otherwise, so nothing paints when idle. */
 .titlebar::after {
   content: "";
   position: absolute;
@@ -254,16 +294,28 @@ function onTitleDblClick() {
   right: 0;
   bottom: -1px;
   height: 3px;
-  background: linear-gradient(90deg,
-    transparent 0%,
-    rgba(74, 222, 128, 0.35) 18%,
-    #4ade80 50%,
-    rgba(74, 222, 128, 0.35) 82%,
-    transparent 100%);
+  background: repeating-linear-gradient(90deg,
+    transparent 0px,
+    transparent 200px,
+    rgba(74, 222, 128, 0.3) 320px,
+    #4ade80 500px,
+    #bbf7d0 560px,
+    #4ade80 620px,
+    rgba(74, 222, 128, 0.3) 800px,
+    transparent 920px,
+    transparent 1120px);
+  background-size: 1120px 100%;
+  background-position: var(--sweep-offset, 0px) 0;
   box-shadow: 0 -1px 6px rgba(74, 222, 128, 0.4);
   opacity: 0;
   transition: opacity 0.25s ease;
   pointer-events: none;
 }
 .titlebar.is-running::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  /* Honour reduced-motion: a solid underline, no travelling wave. */
+  .titlebar::after {
+    background: #4ade80;
+  }
+}
 </style>

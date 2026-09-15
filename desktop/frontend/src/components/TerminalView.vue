@@ -377,6 +377,12 @@ const menuCanSend = computed(() =>
     isDriver: isDriver.value,
   }),
 );
+const menuCanResize = computed(() =>
+  status.value === "attached" &&
+  isDriver.value &&
+  !props.resizeSuspended &&
+  effectiveRemotePermission(props.remotePermission) !== "view",
+);
 const showAuxKeyBar = computed(() =>
   !platform.caps.wailsBindings && !platform.caps.localPty && auxKeys.value.length > 0
 );
@@ -1636,6 +1642,18 @@ function onMenuClear() {
   term.clear();
 }
 
+function onMenuResize() {
+  closeContextMenu();
+  if (!term || !conn || !menuCanResize.value) return;
+  // This is intentionally a force-send even when xterm's dimensions did not
+  // change: it lets the user repair a PTY that drifted in an extreme layout
+  // or reconnect race without resizing the application window first.
+  conn.sendResize(term.cols, term.rows);
+  lastResizeSent.value = { cols: term.cols, rows: term.rows };
+  ptyCols.value = term.cols;
+  ptyRows.value = term.rows;
+}
+
 function safeFit() {
   // In viewer mode, FitAddon must not size the terminal — the PTY dims drive
   // term.cols/rows via applyViewerSize. Skip the fit entirely.
@@ -2626,6 +2644,7 @@ watch(
         <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">{{ t("common.paste") }}</button>
         <button class="term-context-item" :disabled="!menuCanSend" @click="onMenuSend">{{ t("terminal.sendSelection") }}</button>
         <button class="term-context-item" @click="onMenuClear">{{ t("terminal.clearBuffer") }}</button>
+        <button class="term-context-item" :disabled="!menuCanResize" @click="onMenuResize">{{ t("terminal.resize") }}</button>
         <button
           v-if="canDetach"
           class="term-context-item"

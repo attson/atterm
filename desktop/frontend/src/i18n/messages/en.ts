@@ -152,6 +152,7 @@ export const en = {
       openLink: "Open Link",
       copyLink: "Copy Link",
     },
+    resize: "Resize PTY to current terminal size",
     link: {
       openFailed: "Failed to open link",
       openFailedNoHome: "Cannot resolve ~ (home directory unavailable)",

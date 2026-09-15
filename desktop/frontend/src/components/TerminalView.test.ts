@@ -1055,6 +1055,19 @@ describe("TerminalView right-click send", () => {
   });
 });
 
+describe("TerminalView manual resize", () => {
+  test("adds a driver-only resize action", () => {
+    expect(source).toContain('t("terminal.resize")');
+    expect(source).toContain(':disabled="!menuCanResize"');
+    expect(source).toMatch(/const\s+menuCanResize\s*=\s*computed/);
+  });
+
+  test("force-sends the current xterm dimensions", () => {
+    expect(source).toMatch(/function\s+onMenuResize[\s\S]*?conn\.sendResize\(term\.cols, term\.rows\)/);
+    expect(source).toMatch(/lastResizeSent\.value\s*=\s*\{ cols: term\.cols, rows: term\.rows \}/);
+  });
+});
+
 describe("TerminalView template bar", () => {
   test("includes the template bar markup and click sends directly (no preview)", () => {
     expect(source).toContain('data-testid="template-bar"');

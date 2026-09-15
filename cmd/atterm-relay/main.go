@@ -331,6 +331,7 @@ func main() {
 	for _, s := range servers {
 		_ = s.Shutdown(shutdownCtx)
 	}
+	srv.Close() // stop the traffic flush loop and drain a final snapshot
 }
 
 func envEnabled(name string) bool {

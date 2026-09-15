@@ -1,10 +1,13 @@
 package relay
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/userstore"
 )
 
 func TestTrafficMeterAddAndSnapshot(t *testing.T) {
@@ -69,5 +72,29 @@ func TestTrafficMeterConcurrentAdd(t *testing.T) {
 	}
 	if total != 100 {
 		t.Errorf("concurrent add total = %d, want 100", total)
+	}
+}
+
+func TestServerFlushTrafficPersists(t *testing.T) {
+	store := userstore.NewInMemory(t)
+	srv := NewServer(Config{Store: store, Resolver: NewIdentityResolver(store)})
+	defer srv.Close()
+
+	srv.recordTraffic("u1", proto.TypeOut, trafficOut, 120)
+	srv.flushTraffic(store) // force a flush without waiting for the ticker
+
+	day := time.Now().UTC().Format("2006-01-02")
+	rows, err := store.QueryTraffic(context.Background(), day, day)
+	if err != nil {
+		t.Fatalf("QueryTraffic: %v", err)
+	}
+	var total int64
+	for _, r := range rows {
+		if r.UserID == "u1" {
+			total += r.Bytes
+		}
+	}
+	if total != 120 {
+		t.Errorf("persisted bytes = %d, want 120", total)
 	}
 }

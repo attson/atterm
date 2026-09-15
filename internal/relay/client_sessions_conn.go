@@ -49,7 +49,7 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 				return
 			}
 		case <-prefsSub.C():
-			if !s.writePrefsChanged(ctx, c) {
+			if !s.writePrefsChanged(ctx, c, ownerUserID) {
 				return
 			}
 		}
@@ -63,16 +63,18 @@ func (s *Server) notifyPreferencesChanged(userID string) {
 	s.prefsNotify.Notify(userID)
 }
 
-func (s *Server) writePrefsChanged(ctx context.Context, c *websocket.Conn) bool {
+func (s *Server) writePrefsChanged(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {
 	frame := proto.Frame{Type: proto.TypePrefsChanged}
 	s.debugFrame("client-sessions", "send", frame)
 	wctx, cancel := context.WithTimeout(ctx, clientSessionsWriteWait)
-	err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(frame))
+	b := proto.Marshal(frame)
+	err := c.Write(wctx, websocket.MessageBinary, b)
 	cancel()
 	if err != nil {
 		s.debugf("client-sessions prefs_changed_write_failed error=%q", err)
 		return false
 	}
+	s.recordTraffic(ownerUserID, frame.Type, trafficOut, len(b))
 	return true
 }
 
@@ -91,12 +93,14 @@ func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerU
 	frame := proto.Frame{Type: proto.TypeListResp, Payload: payload}
 	s.debugFrame("client-sessions", "send", frame)
 	wctx, cancel := context.WithTimeout(ctx, clientSessionsWriteWait)
-	err = c.Write(wctx, websocket.MessageBinary, proto.Marshal(frame))
+	b := proto.Marshal(frame)
+	err = c.Write(wctx, websocket.MessageBinary, b)
 	cancel()
 	if err != nil {
 		s.debugf("client-sessions write_failed error=%q", err)
 		return false
 	}
+	s.recordTraffic(ownerUserID, frame.Type, trafficOut, len(b))
 	return true
 }
 

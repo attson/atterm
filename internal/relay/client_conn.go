@@ -120,7 +120,8 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			case f := <-targetedOut:
 				s.debugFrame("client", "send", f)
 				ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
-				err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
+				b := proto.Marshal(f)
+				err := c.Write(ctx, websocket.MessageBinary, b)
 				cancel()
 				if err != nil {
 					// A write that cannot complete inside clientWriteWait
@@ -134,6 +135,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					_ = c.CloseNow()
 					return
 				}
+				s.recordTraffic(ownerUserID, f.Type, trafficOut, len(b))
 			case <-ticker.C:
 				ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
 				err := c.Ping(ctx)
@@ -151,7 +153,8 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			case f := <-subOut:
 				s.debugFrame("client", "send", f)
 				ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
-				err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
+				b := proto.Marshal(f)
+				err := c.Write(ctx, websocket.MessageBinary, b)
 				cancel()
 				if err != nil {
 					// Same close as the targeted path above: the live
@@ -163,6 +166,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					_ = c.CloseNow()
 					return
 				}
+				s.recordTraffic(ownerUserID, f.Type, trafficOut, len(b))
 				if pacer.observe(f) {
 					timer := time.NewTimer(2 * time.Millisecond)
 					select {
@@ -203,6 +207,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			return
 		}
 		s.debugFrame("client", "recv", f)
+		s.recordTraffic(ownerUserID, f.Type, trafficIn, 22+len(f.Payload))
 		switch f.Type {
 		case proto.TypeList:
 			var infos []proto.SessionInfo
@@ -215,12 +220,14 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			resp := proto.Frame{Type: proto.TypeListResp, Payload: payload}
 			s.debugFrame("client", "send", resp)
 			ctx, cancel := context.WithTimeout(ctx, clientWriteWait)
-			err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(resp))
+			respBytes := proto.Marshal(resp)
+			err := c.Write(ctx, websocket.MessageBinary, respBytes)
 			cancel()
 			if err != nil {
 				s.debugf("client write_failed frame=LIST_RESP error=%q", err)
 				return
 			}
+			s.recordTraffic(ownerUserID, resp.Type, trafficOut, len(respBytes))
 
 		case proto.TypeAttach:
 			if sess != nil {
@@ -497,12 +504,14 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			// (which drains sub.Out()) is fine.
 			pong := proto.Frame{Type: proto.TypePong, SessionID: f.SessionID, Payload: f.Payload}
 			wctx, wcancel := context.WithTimeout(ctx, clientWriteWait)
-			err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(pong))
+			pongBytes := proto.Marshal(pong)
+			err := c.Write(wctx, websocket.MessageBinary, pongBytes)
 			wcancel()
 			if err != nil {
 				s.debugf("client pong_write_failed error=%q", err)
 				return
 			}
+			s.recordTraffic(ownerUserID, pong.Type, trafficOut, len(pongBytes))
 
 		case proto.TypePong:
 			// keepalive response

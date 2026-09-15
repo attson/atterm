@@ -487,6 +487,8 @@ describe("remote tab session retention", () => {
       NewSession: vi.fn().mockResolvedValue({ session_id: "local-1" }),
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({
@@ -695,6 +697,8 @@ describe("recovery pin migration integration", () => {
       NewSession: vi.fn().mockResolvedValue({ session_id: "new-sid" }),
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({
@@ -812,6 +816,8 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       NewSession: newSessionMock,
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({
@@ -899,6 +905,8 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       NewSession: newSessionMock,
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       // No recovery snapshot — this is the boot path that used to fall
@@ -967,6 +975,8 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       NewSession: newSessionMock,
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({
@@ -1047,6 +1057,8 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       NewSession: newSessionMock,
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({
@@ -1174,6 +1186,8 @@ describe("split new pane cwd inheritance", () => {
       NewSession: newSessionMock,
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({
@@ -1353,6 +1367,8 @@ describe("session profile selection wires into newSession", () => {
       NewSession: newSessionMock,
       CloseSession: vi.fn().mockResolvedValue(undefined),
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
+      CheckUpdate: vi.fn().mockResolvedValue(undefined),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
       LoadRecoverySnapshot: vi.fn().mockResolvedValue({
@@ -1635,3 +1651,41 @@ describe("recovery snapshot gated on caps.wailsBindings (web)", () => {
 // shortcutBindingsGuard.test.ts — a fixed list only protects the files
 // someone remembered to add to it, which is exactly how ShortcutHints.vue
 // was missed in the first pass.
+
+describe("startup update gate", () => {
+  test("gate is desktop-only and respects the auto-check preference", () => {
+    expect(source).toContain("caps.autoUpdate");
+    expect(source).toContain("getAutoCheckUpdates()");
+    expect(source).toContain("checkForUpdateBounded");
+    expect(source).toContain("BOOT_UPDATE_CHECK_TIMEOUT_MS");
+  });
+
+  test("bounded check races checkUpdate against a timeout", () => {
+    expect(source).toContain("Promise.race");
+    expect(source).toContain("checkUpdate()");
+  });
+
+  test("recovery/auto-start is extracted into resumeBoot and deferred by the dialog", () => {
+    expect(source).toContain("function resumeBoot()");
+    expect(source).toContain("function onStartupUpdateDismiss()");
+    expect(source).toMatch(/onStartupUpdateDismiss[\s\S]{0,80}resumeBoot\(\)/);
+  });
+
+  test("INVARIANT: the dialog is opened in exactly one place (the boot gate)", () => {
+    const opens = source.match(/startupUpdateOpen\.value\s*=\s*true/g) ?? [];
+    expect(opens.length).toBe(1);
+  });
+
+  test("INVARIANT: the 5s update poll only toggles the badge, never the dialog", () => {
+    // The poll interval body sets updateBadge and must not reference the dialog flag.
+    const poll = source.match(/updatePollHandle\s*=\s*window\.setInterval\(([\s\S]*?)\},\s*5000\)/)?.[1] ?? "";
+    expect(poll).toContain("updateBadge");
+    expect(poll).not.toContain("startupUpdateOpen");
+  });
+
+  test("template renders StartupUpdateDialog gated on startupUpdateOpen", () => {
+    expect(source).toContain("<StartupUpdateDialog");
+    expect(source).toContain('v-if="startupUpdateOpen"');
+    expect(source).toContain('@dismiss="onStartupUpdateDismiss"');
+  });
+});

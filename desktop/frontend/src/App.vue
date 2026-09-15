@@ -14,6 +14,7 @@ import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import StartupFatalPanel from "./components/StartupFatalPanel.vue";
 import ConfirmCloseSessionDialog from "./components/ConfirmCloseSessionDialog.vue";
 import RecoveryDialog from "./components/RecoveryDialog.vue";
+import StartupUpdateDialog from "./components/StartupUpdateDialog.vue";
 import ShortcutHints from "./components/ShortcutHints.vue";
 import PasteImagePreviewHost from "./components/PasteImagePreviewHost.vue";
 import PasteFilePreviewHost from "./components/PasteFilePreviewHost.vue";
@@ -54,6 +55,8 @@ import {
   getTerminalScrollback,
   getShortcutBindings,
   getUpdateState,
+  checkUpdate,
+  getAutoCheckUpdates,
   listShells,
   newSession,
   markSessionsSeen,
@@ -467,6 +470,46 @@ const { recoveryDialogState, onRecoveryRestore, onRecoveryDiscard } = useRecover
   predictCellDims,
   pauseRecoverySnapshot: () => recovery?.pause(),
 });
+
+// Startup update gate (see docs/superpowers/specs/2026-09-15-startup-update-prompt-design.md).
+// The dialog opens EXACTLY ONCE from the boot auto-start block below — never from
+// the 5s update poll or the 24h background check (those only feed the ⚙ badge).
+const startupUpdateOpen = ref(false);
+const bootRecoverySnap = ref<RecoverySnapshot | null>(null);
+const bootRecoveryEnabled = ref(true);
+const BOOT_UPDATE_CHECK_TIMEOUT_MS = 3000;
+
+// resumeBoot performs the original recovery-or-startNewTab decision. It is called
+// either immediately (no update) or after the user dismisses the update dialog.
+function resumeBoot() {
+  const snap = bootRecoverySnap.value;
+  const hasRecovery = bootRecoveryEnabled.value && (snap?.tabs?.length ?? 0) > 0;
+  if (hasRecovery && snap) {
+    recoveryDialogState.value = { open: true, snapshot: snap };
+  } else if (caps.localPty) {
+    startNewTab();
+  }
+  // else: no recovery snapshot and no local PTY (web build) — render empty state.
+}
+
+function onStartupUpdateDismiss() {
+  startupUpdateOpen.value = false;
+  resumeBoot();
+}
+
+// checkForUpdateBounded forces a check but never blocks boot longer than `ms`.
+// Returns true only when state.available is set within the budget; any
+// timeout/error returns false so boot proceeds and the ⚙ badge covers the rest.
+async function checkForUpdateBounded(ms: number): Promise<boolean> {
+  try {
+    const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+    await Promise.race([checkUpdate().catch(() => {}), timeout]);
+    const st = await getUpdateState();
+    return !!st.available;
+  } catch {
+    return false;
+  }
+}
 
 let autoStarted = false;
 let toastHandle: number | null = null;
@@ -1720,18 +1763,21 @@ onMounted(async () => {
       // both are no-ops on desktop/capacitor, so we fall straight through to
       // the recovery / auto-start branch there.
       if (!webTabs.tryRestoreOnBoot()) {
-        const hasRecovery = recoveryEnabled && (recoverySnap?.tabs?.length ?? 0) > 0;
-        if (hasRecovery) {
-          // Dialog handlers (onRecoveryRestore / onRecoveryDiscard) decide
-          // whether to spawn restored panes or fall back to startNewTab — so
-          // we deliberately do NOT call startNewTab() here.
-          recoveryDialogState.value = { open: true, snapshot: recoverySnap };
-        } else if (caps.localPty) {
-          startNewTab();
+        // Snapshot the boot-local recovery decision so resumeBoot() (and the
+        // dialog's dismiss handler) can reach it after an async gate.
+        bootRecoverySnap.value = recoverySnap;
+        bootRecoveryEnabled.value = recoveryEnabled;
+
+        // Startup update gate (Wails only, and only if auto-check is on). If an
+        // update is available within the time budget, show the dialog and defer
+        // resumeBoot() until dismiss. Otherwise fall straight through.
+        if (caps.wailsBindings && caps.autoUpdate && (await getAutoCheckUpdates())) {
+          if (await checkForUpdateBounded(BOOT_UPDATE_CHECK_TIMEOUT_MS)) {
+            startupUpdateOpen.value = true;
+            return; // onStartupUpdateDismiss() → resumeBoot()
+          }
         }
-        // else: no recovery snapshot and no local PTY (web build) — render
-        // the empty state (sidebar only, no tab) instead of crashing on a
-        // startNewTab() that has nothing to spawn.
+        resumeBoot();
       }
     }
   } catch (e: any) {
@@ -1932,6 +1978,10 @@ defineExpose({ me });
       :snapshot="recoveryDialogState.snapshot"
       @restore="onRecoveryRestore"
       @discard="onRecoveryDiscard"
+    />
+    <StartupUpdateDialog
+      v-if="startupUpdateOpen"
+      @dismiss="onStartupUpdateDismiss"
     />
     <ShortcutHints :bindings="shortcutBindings" />
   </div>

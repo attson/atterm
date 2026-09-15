@@ -227,6 +227,13 @@ type Store interface {
 	RemoveWebPushSubscription(ctx context.Context, userID, endpoint string) error
 	ListWebPushSubscriptions(ctx context.Context, userID string) ([]WebPushSubscription, error)
 
+	// Traffic accounting (per-user daily byte/frame rollup by frame type).
+	// AddTrafficDeltas upserts-and-accumulates so multiple relay instances
+	// converge to a global total; QueryTraffic returns raw daily rows for the
+	// caller to aggregate into detail/group/summary views.
+	AddTrafficDeltas(ctx context.Context, day string, deltas []TrafficDelta) error
+	QueryTraffic(ctx context.Context, from, to string) ([]TrafficRow, error)
+
 	Close() error
 }
 

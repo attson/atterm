@@ -2,6 +2,7 @@ import { apiFetch } from './client'
 import type {
   AdminConfig,
   AdminConfigUpdate,
+  AdminTrafficResponse,
   AdminUserRow,
   FeishuAdminConfig,
   FeishuAdminConfigUpdate,
@@ -9,6 +10,7 @@ import type {
   InvitationCreated,
   InvitationRow,
   ResetPasswordResponse,
+  TrafficView,
 } from './types'
 
 // User listing + role + status (admin/api/users).
@@ -98,4 +100,21 @@ export async function generateFeishuKey(): Promise<string> {
     method: 'POST',
   })
   return data.encrypt_key
+}
+
+// getTrafficStats fetches per-user network traffic rollups. view selects the
+// aggregation granularity (detail = per frame type, group = per semantic
+// category, summary = per direction). from/to are YYYY-MM-DD; omit to let the
+// server default to the last 7 days.
+export async function getTrafficStats(params: {
+  view?: TrafficView
+  from?: string
+  to?: string
+}): Promise<AdminTrafficResponse> {
+  const q = new URLSearchParams()
+  if (params.view) q.set('view', params.view)
+  if (params.from) q.set('from', params.from)
+  if (params.to) q.set('to', params.to)
+  const { data } = await apiFetch<AdminTrafficResponse>(`/admin/api/traffic?${q.toString()}`)
+  return data
 }

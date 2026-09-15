@@ -110,6 +110,12 @@ type Server struct {
 	// without a restart. debugPayload additionally dumps PTY byte contents.
 	debugEnabled        atomic.Bool
 	debugPayloadEnabled atomic.Bool
+	// traffic accumulates per-user byte/frame counts on the send/receive
+	// paths; flushStop signals the flush goroutine to drain and exit, and
+	// flushDone is closed once it has.
+	traffic   *trafficMeter
+	flushStop chan struct{}
+	flushDone chan struct{}
 }
 
 // NewServer builds a Server with its routes installed.
@@ -136,6 +142,12 @@ func NewServer(cfg Config) *Server {
 	s.allowedOrigins.Store(&originsInit)
 	s.debugEnabled.Store(cfg.Debug)
 	s.debugPayloadEnabled.Store(cfg.DebugPayload)
+	s.traffic = newTrafficMeter()
+	if cfg.Store != nil {
+		s.flushStop = make(chan struct{})
+		s.flushDone = make(chan struct{})
+		go s.trafficFlushLoop(cfg.Store)
+	}
 	// WebSocket + session-API routes — gated by requireSession.
 	s.mux.HandleFunc("/agent", s.requireSession(s.handleAgentHTTP))
 	s.mux.HandleFunc("/uplink", s.requireSession(s.handleUplinkHTTP))
@@ -155,6 +167,7 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/admin/api/config", s.requireSession(s.handleAdminConfigHTTP))
 	s.mux.HandleFunc("/admin/api/feishu", s.requireSession(s.handleAdminFeishuHTTP))
 	s.mux.HandleFunc("/admin/api/feishu/generate-key", s.requireSession(s.handleAdminFeishuGenerateKey))
+	s.mux.HandleFunc("GET /admin/api/traffic", s.requireSession(s.requireAdminAccess(s.handleAdminTrafficHTTP)))
 	// Web-push — all four routes need an authenticated user.
 	s.mux.HandleFunc("/api/push/key", s.requireSession(s.handlePushKey))
 	s.mux.HandleFunc("/api/push/subscribe", s.requireSession(s.handlePushSubscribe))

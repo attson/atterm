@@ -371,4 +371,43 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 			t.Fatalf("after remove len = %d, want 0", len(list2))
 		}
 	})
+
+	t.Run("traffic rollup", func(t *testing.T) {
+		st := open(t)
+		day := "2026-09-15"
+		// First fold.
+		if err := st.AddTrafficDeltas(ctx, day, []TrafficDelta{
+			{UserID: "u1", FrameType: 0x03, Direction: 1, Bytes: 100, Frames: 2},
+			{UserID: "u1", FrameType: 0x02, Direction: 0, Bytes: 10, Frames: 1},
+		}); err != nil {
+			t.Fatalf("AddTrafficDeltas #1: %v", err)
+		}
+		// Second fold on the same key must accumulate, not overwrite.
+		if err := st.AddTrafficDeltas(ctx, day, []TrafficDelta{
+			{UserID: "u1", FrameType: 0x03, Direction: 1, Bytes: 50, Frames: 1},
+		}); err != nil {
+			t.Fatalf("AddTrafficDeltas #2: %v", err)
+		}
+		rows, err := st.QueryTraffic(ctx, "2026-09-01", "2026-09-30")
+		if err != nil {
+			t.Fatalf("QueryTraffic: %v", err)
+		}
+		var outBytes, outFrames int64
+		for _, r := range rows {
+			if r.UserID == "u1" && r.FrameType == 0x03 && r.Direction == 1 {
+				outBytes, outFrames = r.Bytes, r.Frames
+			}
+		}
+		if outBytes != 150 || outFrames != 3 {
+			t.Errorf("u1 OUT rollup = (%d bytes, %d frames), want (150, 3)", outBytes, outFrames)
+		}
+		// Out-of-range day excluded.
+		if got, _ := st.QueryTraffic(ctx, "2026-10-01", "2026-10-31"); len(got) != 0 {
+			t.Errorf("out-of-range query returned %d rows, want 0", len(got))
+		}
+		// Empty delta slice is a no-op, not an error.
+		if err := st.AddTrafficDeltas(ctx, day, nil); err != nil {
+			t.Errorf("AddTrafficDeltas(nil): %v", err)
+		}
+	})
 }

@@ -97,16 +97,16 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			UserID string `json:"user_id"`
 		}
 		authPayload, _ := json.Marshal(authInfoPayload{UserID: ownerUserID})
+		authFrame := proto.Frame{Type: proto.TypeAuthInfo, Payload: authPayload}
 		wctx, wc := context.WithTimeout(ctx, uplinkWriteWait)
-		err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
-			Type:    proto.TypeAuthInfo,
-			Payload: authPayload,
-		}))
+		authBytes := proto.Marshal(authFrame)
+		err := c.Write(wctx, websocket.MessageBinary, authBytes)
 		wc()
 		if err != nil {
 			logging.Warn("relay-uplink", "send AUTH_INFO failed: %v", err)
 			return
 		}
+		s.recordTraffic(ownerUserID, proto.TypeAuthInfo, trafficOut, len(authBytes))
 		s.debugf("uplink auth_info_sent user_id=%s", ownerUserID)
 	}
 
@@ -121,6 +121,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		return
 	}
 	s.debugFrame("uplink", "recv", first)
+	s.recordTraffic(ownerUserID, first.Type, trafficIn, 22+len(first.Payload))
 	var ann proto.AnnouncePayload
 	if err := json.Unmarshal(first.Payload, &ann); err != nil {
 		_ = c.Close(websocket.StatusPolicyViolation, "bad ANNOUNCE payload")
@@ -463,12 +464,14 @@ func (u *uplinkSession) writeLoop() {
 		case f := <-u.out:
 			u.server.debugFrame("uplink", "send", f)
 			wctx, wc := context.WithTimeout(u.ctx, uplinkWriteWait)
-			err := u.conn.Write(wctx, websocket.MessageBinary, proto.Marshal(f))
+			b := proto.Marshal(f)
+			err := u.conn.Write(wctx, websocket.MessageBinary, b)
 			wc()
 			if err != nil {
 				u.server.debugf("uplink write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 				return
 			}
+			u.server.recordTraffic(u.ownerUserID, f.Type, trafficOut, len(b))
 		}
 	}
 }
@@ -487,6 +490,7 @@ func (u *uplinkSession) readLoop() {
 			return
 		}
 		u.server.debugFrame("uplink", "recv", f)
+		u.server.recordTraffic(u.ownerUserID, f.Type, trafficIn, 22+len(f.Payload))
 		switch f.Type {
 		case proto.TypeAnnounce:
 			var p proto.AnnouncePayload

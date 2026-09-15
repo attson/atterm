@@ -36,6 +36,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 		return
 	}
 	s.debugFrame("agent", "recv", openFrame)
+	s.recordTraffic(ownerUserID, openFrame.Type, trafficIn, 22+len(openFrame.Payload))
 	var op proto.OpenPayload
 	if err := json.Unmarshal(openFrame.Payload, &op); err != nil {
 		_ = c.Close(websocket.StatusPolicyViolation, "bad OPEN payload")
@@ -96,12 +97,14 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 					}
 				}
 				ctx, cancel := context.WithTimeout(writerCtx, agentWriteWait)
-				err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
+				b := proto.Marshal(f)
+				err := c.Write(ctx, websocket.MessageBinary, b)
 				cancel()
 				if err != nil {
 					s.debugf("agent write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 					return
 				}
+				s.recordTraffic(ownerUserID, f.Type, trafficOut, len(b))
 			}
 		}
 	}()
@@ -117,6 +120,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 			return
 		}
 		s.debugFrame("agent", "recv", f)
+		s.recordTraffic(ownerUserID, f.Type, trafficIn, 22+len(f.Payload))
 		switch f.Type {
 		case proto.TypeOut:
 			seq, data, err := proto.DecodeOut(f.Payload)

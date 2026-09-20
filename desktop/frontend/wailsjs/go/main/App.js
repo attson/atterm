@@ -382,6 +382,10 @@ export function PushWidgetState(arg1) {
   return window['go']['main']['App']['PushWidgetState'](arg1);
 }
 
+export function RebindServicePreview(arg1) {
+  return window['go']['main']['App']['RebindServicePreview'](arg1);
+}
+
 export function ReceivedFilesClearAll() {
   return window['go']['main']['App']['ReceivedFilesClearAll']();
 }

@@ -1404,6 +1404,28 @@ export namespace main {
 	        this.path_prefix = source["path_prefix"];
 	    }
 	}
+	export class ServicePreviewRebindRequest {
+	    gateway_id: string;
+	    mapping_index: number;
+	    service_id: string;
+	    client_ticket: string;
+	    client_to_host_key: number[];
+	    host_to_client_key: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ServicePreviewRebindRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.gateway_id = source["gateway_id"];
+	        this.mapping_index = source["mapping_index"];
+	        this.service_id = source["service_id"];
+	        this.client_ticket = source["client_ticket"];
+	        this.client_to_host_key = source["client_to_host_key"];
+	        this.host_to_client_key = source["host_to_client_key"];
+	    }
+	}
 	export class ServicePreviewStartRequest {
 	    mappings?: ServicePreviewMapping[];
 	    service_id: string;

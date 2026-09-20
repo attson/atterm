@@ -21,10 +21,17 @@ import (
 )
 
 const (
-	servicePendingTTL      = 30 * time.Second
-	serviceIdleTTL         = 10 * time.Minute
+	servicePendingTTL = 30 * time.Second
+	// serviceIdleTTL bounds an abandoned lease. Ping keepalive (servicePingPeriod)
+	// keeps a live-but-idle preview's transport alive, but pings do not flow
+	// through observePacket so they do not refresh lastActive; a genuinely idle
+	// preview is still reaped here. The window is generous (30m) so ordinary
+	// idle browsing survives, and desktop-side reconnect (RebindServicePreview)
+	// transparently rebuilds a reaped lease on the next request.
+	serviceIdleTTL         = 30 * time.Minute
 	serviceSweepPeriod     = 15 * time.Second
 	serviceWriteWait       = 10 * time.Second
+	servicePingPeriod      = 25 * time.Second
 	serviceRegisterLimit   = 4096
 	serviceMaxPerUser      = 4
 	serviceMaxConnections  = 16
@@ -486,6 +493,31 @@ func (s *Server) forwardService(ctx context.Context, lease *serviceLease, role s
 	if dst == nil {
 		return errors.New("service peer missing")
 	}
+	// Keepalive: these data sockets carry an opaque sealed byte stream with no
+	// room for an application PING frame, so we ping at the control-frame level
+	// like the main uplink (uplinkPingPeriod). Without this an idle preview WS
+	// is dropped by any intermediary (~60s) and every later request 502s. A
+	// ping failure cancels the read below so the lease tears down promptly.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		ticker := time.NewTicker(servicePingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pctx, pc := context.WithTimeout(ctx, serviceWriteWait)
+				err := src.Ping(pctx)
+				pc()
+				if err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	for {
 		mt, packet, err := src.Read(ctx)
 		if err != nil {

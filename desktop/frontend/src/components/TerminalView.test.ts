@@ -1,5 +1,6 @@
 import { describe, expect, it, test, vi } from "vitest";
 import source from "./TerminalView.vue?raw";
+import switcherSource from "./ServicePreviewSwitcher.vue?raw";
 import quickTemplatesSource from "../composables/useQuickTemplates.ts?raw";
 import paneSource from "./PaneGrid.vue?raw";
 import appSource from "../App.vue?raw";
@@ -1398,14 +1399,19 @@ describe("Remote Web Preview", () => {
     expect(source).toContain('atterm:open-service-preview');
     expect(source).toContain('@keydown.esc.prevent.stop="cancelPreviewPortEntry"');
     expect(source).toContain('("127.0.0.1")');
-    expect(source).toContain('class="service-preview-controls" :class="{ configuring: previewPortEditing && !preview }"');
+    expect(source).toContain('class="service-preview-port-form"');
   });
 
-  test("mounts preview controls in the remote host controls row", () => {
-    expect(source).toContain("<Teleport v-if=\"preview || previewPortEditing\" :to=\"previewTarget\">");
-    expect(source).toContain("const previewTarget = computed(() => `#service-preview-slot-${props.sessionId}`)");
-    expect(paneSource).toContain('class="service-preview-slot"');
-    expect(paneSource).toContain('`service-preview-slot-${pane.sessionId}`');
+  test("mounts preview controls in their own slot beside the host badge", () => {
+    // Controls teleport into a dedicated slot, NOT into the host badge, so the
+    // remote-terminal badge is never replaced when a preview opens.
+    expect(source).toContain('<Teleport v-if="previews.length || previewPortEditing" :to="previewTarget">');
+    expect(source).toContain("const previewTarget = computed(() => `#service-preview-controls-${props.sessionId}`)");
+    expect(paneSource).toContain('class="service-preview-controls-slot"');
+    expect(paneSource).toContain('`service-preview-controls-${pane.sessionId}`');
+    // Host badge label is always present (not gated on preview state).
+    expect(paneSource).not.toContain("servicePreviewActive.has(pane.sessionId)");
+    expect(source).toContain("<ServicePreviewSwitcher");
   });
 
   test("uses the compact host-badge icon as the preview trigger", () => {
@@ -1415,20 +1421,27 @@ describe("Remote Web Preview", () => {
     expect(source).toContain('beginPreviewPortEntry();');
   });
 
-  test("switches inside the pane and tears the lease down on role or lifecycle loss", () => {
+  test("switches inside the pane and tears leases down on role or lifecycle loss", () => {
     expect(source).toContain('class="service-preview-frame"');
-    expect(source).toMatch(/conn\?\.closeService\(running\.serviceId\)/);
+    // One iframe per preview, only the active one shown.
+    expect(source).toContain('v-for="p in previews"');
+    expect(source).toContain('v-show="activePreviewId === p.id"');
+    expect(source).toMatch(/for \(const serviceId of running\.serviceIds\) conn\?\.closeService\(serviceId\)/);
     expect(source).toMatch(/platform\.servicePreview\?\.stop\(running\.id\)/);
-    expect(source).toMatch(/if \(!isMe && preview\.value\) void stopPreview\(\)/);
-    expect(source).toMatch(/onBeforeUnmount\(\(\) => \{[\s\S]*?void stopPreview\(\)/);
+    expect(source).toMatch(/if \(!isMe && previews\.value\.length\) void stopAllPreviews\(\)/);
+    expect(source).toMatch(/onBeforeUnmount\(\(\) => \{[\s\S]*?void stopAllPreviews\(\)/);
     expect(source.match(/!isAlive \|\| !canOpenPreview\.value/g)).toHaveLength(2);
   });
 
-  test("offers the local preview URL to the system browser and clipboard", () => {
+  test("offers the active preview URL to the system browser and clipboard", () => {
     expect(source).toContain("platform.system.openExternalURL(url)");
     expect(source).toContain("navigator.clipboard.writeText(url)");
-    expect(source).toContain("terminal.preview.openInBrowser");
-    expect(source).toContain("terminal.preview.copyURL");
+    expect(source).toContain("const url = activePreview.value?.url;");
+    // The switcher emits; TerminalView wires the handlers.
+    expect(source).toContain('@open-browser="openPreviewInBrowser"');
+    expect(source).toContain('@copy="copyPreviewURL"');
+    expect(switcherSource).toContain("terminal.preview.openInBrowser");
+    expect(switcherSource).toContain("terminal.preview.copyURL");
   });
 
   test("persists and restores path mappings for each session", () => {
@@ -1436,5 +1449,82 @@ describe("Remote Web Preview", () => {
     expect(source).toContain('localStorage.setItem(previewDraftKey.value');
     expect(source).toContain('watch([previewPortText, previewTargetHost, previewExtraMappings], savePreviewDraft, { deep: true })');
     expect(source).toContain('pathPrefix: normalizedPrefixes[index] || undefined');
+  });
+});
+
+describe("TerminalView remote preview self-heal", () => {
+  test("subscribes to pipe-dead only when the rebind bridge exists", () => {
+    expect(source).toContain('if (platform.servicePreview?.rebind) {');
+    expect(source).toContain('platform.events.on("service-preview:pipe-dead"');
+    expect(source).toMatch(/previews\.value\.some\(\(p\) => p\.id === d\.gateway_id\)/);
+    expect(source).toMatch(/reconnectPreviewMapping\(d\.gateway_id, typeof d\.mapping_index === "number" \? d\.mapping_index : 0\)/);
+  });
+
+  test("unsubscribes the pipe-dead listener on unmount", () => {
+    const unmount = source.match(/onBeforeUnmount\([^]*?\n\}\)/)![0];
+    expect(unmount).toContain("previewPipeDeadOff?.();");
+    expect(unmount).toContain("previewPipeDeadOff = null;");
+  });
+
+  test("reconnect re-runs the control handshake then hands the fresh lease to rebind", () => {
+    const fn = source.match(/async function reconnectPreviewMapping[^]*?\n\}/)![0];
+    expect(fn).toContain("conn.openService(current.ports[index], current.host)");
+    expect(fn).toContain("await rebind({");
+    expect(fn).toContain("gatewayId,");
+    expect(fn).toContain("mappingIndex: index");
+    expect(fn).toContain("current.serviceIds[index] = opened.serviceId");
+  });
+
+  test("reconnect backs off and gives up when previewing is no longer possible", () => {
+    const fn = source.match(/async function reconnectPreviewMapping[^]*?\n\}/)![0];
+    expect(fn).toContain("const backoff = [500, 1000, 2000, 4000, 8000];");
+    expect(fn).toContain("if (!conn || !canOpenPreview.value) {");
+    expect(fn).toContain("await closePreview(gatewayId);");
+    expect(fn).toMatch(/preview_gone/);
+  });
+
+  test("closing a preview clears its in-flight reconnect", () => {
+    const fn = source.match(/async function closePreview[^]*?\n\}/)![0];
+    expect(fn).toContain("clearPreviewReconnect(running);");
+  });
+
+  test("shows a reconnecting overlay over the active preview iframe", () => {
+    expect(source).toContain('v-if="activePreview?.reconnecting"');
+    expect(source).toContain('terminal.preview.reconnecting');
+    expect(source).toContain('.service-preview-reconnecting {');
+  });
+
+  test("switcher tabs do not squish or wrap per-character", () => {
+    const style = switcherSource.match(/\.sp-seg button \{([^}]*)\}/)![1];
+    expect(style).toContain("white-space: nowrap");
+    expect(style).toContain("flex: 0 0 auto");
+  });
+});
+
+describe("PaneGrid preview badge layout", () => {
+  test("keeps the host badge intact and puts preview controls in their own slot", () => {
+    // The host remote-terminal badge must never be replaced/gated by preview
+    // state; preview controls live in a separate sibling slot.
+    expect(paneSource).not.toContain(".remote-badge:has(");
+    expect(paneSource).not.toContain(".remote-badge.has-preview");
+    expect(paneSource).not.toContain("servicePreviewActive.has(pane.sessionId)");
+    expect(paneSource).toContain('class="service-preview-controls-slot"');
+    // Antenna trigger + host label are unconditional (only gated on availability).
+    expect(paneSource).toContain('v-if="servicePreviewAvailable"');
+    expect(paneSource).toContain('<span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>');
+  });
+
+  test("flushes the cell-controls shrink-to-fit width when preview state changes", () => {
+    // WebKit doesn't recompute the right-anchored absolute box on the teleport
+    // insert; a display off/on toggle forces the relayout a manual resize did.
+    expect(paneSource).toContain("watch(servicePreviewActive, async () => {");
+    expect(paneSource).toContain('.querySelectorAll<HTMLElement>(".cell-controls")');
+    expect(paneSource).toContain('el.style.display = "none";');
+    expect(paneSource).toContain("void el.offsetHeight;");
+  });
+
+  test("TerminalView publishes preview-open state for the controls-slot reflow", () => {
+    expect(source).toContain('import { setServicePreviewActive } from "../composables/useServicePreviewActive"');
+    expect(source).toContain("watch(() => previews.value.length > 0, (active) => setServicePreviewActive(props.sessionId, active))");
   });
 });

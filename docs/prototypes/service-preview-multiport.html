@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>远程预览 · 多端口管理 · 交互原型</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --pane-bg: #0d1117;
+    --titlebar: #010409;
+    --panel: rgba(13, 17, 23, 0.92);
+    --border: #30363d;
+    --fg: #e6edf3;
+    --fg-dim: #8b949e;
+    --accent: #3fb950;
+    --accent-soft: #bbf7d0;
+    --active-bg: rgba(255, 255, 255, 0.1);
+    --warn: #d29922;
+    --bad: #f85149;
+    --host: #d29922;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #05070b;
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  .sub { color: var(--fg-dim); margin: 0 0 18px; font-size: 12px; }
+
+  .toolbar-switch {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .toolbar-switch button {
+    font: 12px var(--mono); color: var(--fg-dim); background: #11161f;
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+  }
+  .toolbar-switch button.on { color: var(--fg); border-color: var(--accent); background: rgba(63,185,80,0.12); }
+  .toolbar-switch .spacer { flex: 1; }
+  .toolbar-switch .hint { color: var(--fg-dim); font-size: 11px; }
+
+  /* ---- window mock ---- */
+  .window {
+    width: 100%; max-width: 1180px; margin: 0 auto;
+    border-radius: 12px; overflow: hidden; border: 1px solid #000;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+    background: var(--bg);
+  }
+  .titlebar {
+    height: 40px; background: var(--titlebar); display: flex; align-items: center;
+    padding: 0 14px; gap: 10px; position: relative;
+  }
+  .dots { display: flex; gap: 8px; }
+  .dots span { width: 12px; height: 12px; border-radius: 50%; }
+  .dots .r { background: #ff5f57; } .dots .y { background: #febc2e; } .dots .g { background: #28c840; }
+  .titlebar .title { position: absolute; left: 50%; transform: translateX(-50%); color: var(--fg-dim); font-size: 12px; }
+  .titlebar .right { margin-left: auto; color: var(--fg-dim); font-size: 12px; display: flex; gap: 12px; align-items: center; }
+  .pill-live { color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+
+  .tabstrip { height: 40px; background: #0d1117; display: flex; align-items: stretch; border-bottom: 1px solid #161b22; }
+  .tabstrip .tab { display: flex; align-items: center; gap: 8px; padding: 0 14px; color: var(--fg-dim); font-size: 12px; border-right: 1px solid #161b22; }
+  .tabstrip .tab.active { color: var(--fg); background: #0b0e14; border-bottom: 2px solid var(--accent); }
+
+  /* ---- pane ---- */
+  .pane { position: relative; height: 440px; background: var(--pane-bg); }
+  .pane .content { position: absolute; inset: 0; overflow: hidden; }
+  .pane .terminal { padding: 16px; color: #c9d1d9; font-size: 12.5px; white-space: pre-wrap; }
+  .pane .terminal .g { color: var(--accent); }
+  .pane .terminal .d { color: var(--fg-dim); }
+  .pane .browser { position: absolute; inset: 0; background: #f3f4f6; display: flex; align-items: center; justify-content: center; }
+  .pane .browser .card { background: #fff; border-radius: 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.12); padding: 28px 32px; width: 320px; color: #111; }
+  .pane .browser h2 { margin: 0 0 18px; font-size: 20px; }
+  .pane .browser label { display: block; font-size: 13px; color: #444; margin: 12px 0 6px; }
+  .pane .browser input { width: 100%; padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; }
+  .pane .browser .btn { margin-top: 18px; width: 100%; padding: 10px; border-radius: 8px; border: 0; background: #2b7fff; color: #fff; font-size: 15px; cursor: pointer; }
+  .pane .browser .btn.ghost { background: #fff; border: 1px solid #d0d5dd; color: #111; margin-top: 10px; }
+  .pane .browser .port-tag { position: absolute; top: 12px; left: 14px; font: 11px var(--mono); color: #667085; background: #eef1f5; border-radius: 6px; padding: 2px 8px; }
+
+  /* ---- top-right controls (the thing being designed) ---- */
+  .cell-controls {
+    position: absolute; top: 10px; right: 12px; display: flex; align-items: center; gap: 8px; z-index: 5;
+  }
+  .seg {
+    display: inline-flex; align-items: center; gap: 2px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; padding: 3px; box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  }
+  .seg button {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    font: 12px var(--mono); color: var(--fg-dim); background: transparent; border: 0;
+    border-radius: 7px; padding: 5px 10px; cursor: pointer;
+  }
+  .seg button:hover { color: var(--fg); background: rgba(255,255,255,0.06); }
+  .seg button.active { color: var(--fg); background: var(--active-bg); }
+  .seg button.add { color: var(--fg-dim); padding: 5px 9px; font-size: 14px; }
+  .seg .tabclose {
+    margin-left: 2px; width: 15px; height: 15px; border-radius: 4px; display: inline-flex;
+    align-items: center; justify-content: center; color: var(--fg-dim); font-size: 12px;
+  }
+  .seg .tabclose:hover { color: var(--bad); background: rgba(248,81,73,0.12); }
+  .seg .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .seg .dot.reconnecting { background: var(--warn); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+
+  .actions {
+    display: inline-flex; align-items: center; gap: 2px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; padding: 3px; box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  }
+  .actions button {
+    width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--fg-dim); background: transparent; border: 0; border-radius: 7px; cursor: pointer;
+  }
+  .actions button:hover { color: var(--fg); background: rgba(255,255,255,0.06); }
+  .actions button.close:hover { color: var(--bad); background: rgba(248,81,73,0.12); }
+  .actions svg { width: 14px; height: 14px; }
+
+  /* dropdown switcher (variant C) */
+  .seg .caret { margin-left: 4px; color: var(--fg-dim); font-size: 10px; }
+  .pv-menu {
+    position: absolute; top: 46px; z-index: 25; min-width: 220px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 5px; box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+  }
+  .pv-menu .item {
+    display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px;
+    cursor: pointer; color: var(--fg-dim); font-size: 12px; white-space: nowrap;
+  }
+  .pv-menu .item:hover { background: rgba(255,255,255,0.06); color: var(--fg); }
+  .pv-menu .item.active { color: var(--fg); background: var(--active-bg); }
+  .pv-menu .item .lbl { flex: 1; }
+  .pv-menu .item .mini {
+    width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 6px; color: var(--fg-dim);
+  }
+  .pv-menu .item .mini:hover { color: var(--fg); background: rgba(255,255,255,0.1); }
+  .pv-menu .item .mini.close:hover { color: var(--bad); background: rgba(248,81,73,0.12); }
+  .pv-menu .item .mini svg { width: 13px; height: 13px; }
+  .pv-menu .sep { height: 1px; background: var(--border); margin: 4px 2px; }
+  .pv-menu .add { color: var(--accent); }
+  .pv-menu .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .pv-menu .dot.reconnecting { background: var(--warn); animation: pulse 1s infinite; }
+
+  .host-badge {
+    display: inline-flex; align-items: center; gap: 6px; background: rgba(13,17,23,0.85);
+    border: 1px solid var(--border); border-radius: 10px; padding: 3px 9px;
+    color: var(--host); font-size: 11px; white-space: nowrap;
+  }
+  .host-badge .who { font-weight: 600; }
+  .host-badge .sid { color: var(--fg-dim); }
+  .host-badge .sid::before { content: "·"; margin-right: 4px; }
+  .host-badge .antenna { display: inline-flex; cursor: pointer; color: inherit; }
+  .host-badge .antenna:hover { color: var(--fg); }
+  .host-badge svg { width: 12px; height: 12px; display: block; }
+
+  /* add-port popover */
+  .add-pop {
+    position: absolute; top: 46px; right: 12px; z-index: 20; width: 300px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); display: none;
+  }
+  .add-pop.open { display: block; }
+  .add-pop .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .add-pop label { font-size: 11px; color: var(--fg-dim); width: 46px; }
+  .add-pop input, .add-pop select {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 6px; padding: 6px 8px; font: 12px var(--mono);
+  }
+  .add-pop .foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+  .add-pop .foot button { font: 12px var(--mono); border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--fg-dim); }
+  .add-pop .foot button.primary { background: var(--accent); border-color: var(--accent); color: #04260f; font-weight: 600; }
+  .add-pop .advanced { color: var(--fg-dim); font-size: 11px; cursor: pointer; margin: 4px 0 8px; }
+  .add-pop .adv-rows { display: none; }
+  .add-pop .adv-rows.open { display: block; }
+  .add-pop .hint { color: var(--fg-dim); font-size: 10.5px; margin-top: 2px; }
+
+  .legend { max-width: 1180px; margin: 16px auto 0; color: var(--fg-dim); font-size: 12px; }
+  .legend b { color: var(--fg); }
+  .legend ul { margin: 6px 0 0; padding-left: 18px; }
+  .legend code { color: var(--accent-soft); }
+</style>
+</head>
+<body>
+  <h1>远程预览 · 多端口管理 · 交互原型</h1>
+  <p class="sub">模型：多个独立预览并列可切换（每个预览 = 独立端口 + 独立本地 URL）；host 远程终端徽标常驻最右，不被替换。点下面的元素可交互。</p>
+
+  <div class="toolbar-switch">
+    <span class="hint">布局变体：</span>
+    <button id="varC" class="on" onclick="setVariant('C')">C · 下拉切换（多预览推荐）</button>
+    <button id="varA" onclick="setVariant('A')">A · 横向标签 + 独立动作簇</button>
+    <button id="varB" onclick="setVariant('B')">B · 横向标签 + 内联动作</button>
+    <span class="spacer"></span>
+    <button onclick="addMany()">＋ 多加几个预览</button>
+    <button onclick="reset()">↺ 重置</button>
+    <button onclick="demoReconnect()">▶ 演示「重连中」</button>
+  </div>
+
+  <div class="window">
+    <div class="titlebar">
+      <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+      <div class="title">[Image #1] 1. 移到后面筛选一起 2. 增加按创建时间/更新时间 …</div>
+      <div class="right"><span>21 个会话 · uplink 已开启</span><span class="pill-live">13 ms</span></div>
+    </div>
+    <div class="tabstrip">
+      <div class="tab">1: · liuzaisen</div>
+      <div class="tab active">2: ➜ [Image #1] 1. 移到… ✕</div>
+    </div>
+
+    <div class="pane">
+      <div class="content" id="paneContent"><!-- filled by JS --></div>
+
+      <!-- top-right controls: the design -->
+      <div class="cell-controls" id="cellControls"><!-- filled by JS --></div>
+
+      <!-- variant C: preview switcher dropdown -->
+      <div class="pv-menu" id="pvMenu" style="display:none"><!-- filled by JS --></div>
+
+      <!-- add-port popover -->
+      <div class="add-pop" id="addPop">
+        <div class="row">
+          <label>目标</label>
+          <select id="addHost"><option>localhost</option><option>127.0.0.1</option><option>::1</option></select>
+        </div>
+        <div class="row">
+          <label>端口</label>
+          <input id="addPort" placeholder="例如 8080" inputmode="numeric" />
+        </div>
+        <div class="advanced" onclick="toggleAdv()">▸ 高级：为该预览添加路径映射（可选）</div>
+        <div class="adv-rows" id="advRows">
+          <div class="row"><input placeholder="端口 如 3000" style="flex:0 0 110px" /><input placeholder="/api" /></div>
+          <div class="hint">同一预览下 <code>/api/*</code> 会转发到该端口，其余走根端口。</div>
+        </div>
+        <div class="foot">
+          <button onclick="closeAdd()">取消</button>
+          <button class="primary" onclick="confirmAdd()">打开预览</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>交互说明</b>
+    <ul>
+      <li><b>终端</b> 标签：切回终端视图（预览仍在后台运行，不断开）。</li>
+      <li><b>预览 :PORT</b> 标签：切到该预览。左侧圆点 = 连接状态（绿=正常，黄闪=重连中）。多个预览并列，点击切换。</li>
+      <li><b>+</b>：弹出「加端口」表单，填端口即新开一个独立预览并激活；高级里可为它再挂路径映射。</li>
+      <li><b>↗ 打开系统浏览器</b> / <b>⧉ 复制 URL</b> / <b>✕ 关闭</b>：作用于<i>当前活跃</i>预览（变体 A 独立成簇；变体 B 内联在活跃标签里）。关掉最后一个预览后，控制区回到「仅 host 徽标 + 天线按钮」的初始态。</li>
+      <li><b>host 徽标</b>（📡 attson@… · 642d4ae9）：常驻最右，开不开预览都在，天线按钮也可用来新开预览。</li>
+    </ul>
+  </div>
+
+<script>
+  // ---- state ----
+  let variant = 'C';
+  const state = {
+    active: 'preview',      // 'terminal' | 'preview'
+    activeId: 5175,
+    previews: [
+      { port: 5175, status: 'ok' },
+      { port: 8080, status: 'ok' },
+    ],
+  };
+
+  const ICON = {
+    antenna: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16.1A5 5 0 0 1 5.9 20"/><path d="M2 12.05A9 9 0 0 1 9.95 20"/><path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>',
+    ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8l4 4-4 4"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  };
+
+  function hostBadge() {
+    return `<div class="host-badge" title="host_id 64bc0428… 会话 642d4ae9">
+      <span class="antenna" title="新开预览" onclick="openAdd()">${ICON.antenna}</span>
+      <span class="who">attson@attson-B365M-DS3H</span>
+      <span class="sid">642d4ae9</span>
+    </div>`;
+  }
+
+  let menuOpen = false;
+
+  function activePreview() {
+    return state.previews.find(p => p.port === state.activeId) || state.previews[0];
+  }
+
+  function renderControls() {
+    const cc = document.getElementById('cellControls');
+    if (state.previews.length === 0) {
+      // initial state: just the host badge (antenna opens first preview)
+      cc.innerHTML = hostBadge();
+      return;
+    }
+
+    // ---- Variant C: dropdown switcher (compact, count-independent) ----
+    if (variant === 'C') {
+      const ap = activePreview();
+      const onPrev = state.active === 'preview';
+      let seg = `<div class="seg">`;
+      seg += `<button class="${state.active==='terminal'?'active':''}" onclick="switchTerminal()">终端</button>`;
+      const dot = `<span class="dot ${ap && ap.status==='reconnecting'?'reconnecting':''}"></span>`;
+      seg += `<button class="${onPrev?'active':''}" onclick="toggleMenu(event)">${dot}预览 :${ap?ap.port:'—'}<span class="caret">▾</span></button>`;
+      seg += `</div>`;
+      let actions = '';
+      if (onPrev && ap) {
+        actions = `<div class="actions">
+          <button title="打开系统浏览器">${ICON.ext}</button>
+          <button title="复制 URL">${ICON.copy}</button>
+          <button class="close" title="关闭该预览" onclick="closePreview(${ap.port})">✕</button>
+        </div>`;
+      }
+      cc.innerHTML = seg + actions + hostBadge();
+      renderMenu();
+      return;
+    }
+
+    // segmented control: 终端 | 预览:PORT... | +
+    let seg = `<div class="seg">`;
+    seg += `<button class="${state.active==='terminal'?'active':''}" onclick="switchTerminal()">终端</button>`;
+    for (const p of state.previews) {
+      const on = state.active==='preview' && state.activeId===p.port;
+      const dot = `<span class="dot ${p.status==='reconnecting'?'reconnecting':''}"></span>`;
+      const close = variant==='B'
+        ? '' // in B, close lives in the inline action set on active tab
+        : `<span class="tabclose" title="关闭该预览" onclick="event.stopPropagation();closePreview(${p.port})">✕</span>`;
+      let inlineActs = '';
+      if (variant==='B' && on) {
+        inlineActs = ` <span class="tabclose" title="打开浏览器" onclick="event.stopPropagation()">${ICON.ext}</span>`
+          + `<span class="tabclose" title="复制 URL" onclick="event.stopPropagation()">${ICON.copy}</span>`
+          + `<span class="tabclose" title="关闭该预览" onclick="event.stopPropagation();closePreview(${p.port})">✕</span>`;
+      }
+      seg += `<button class="${on?'active':''}" onclick="switchPreview(${p.port})">${dot}预览 :${p.port}${close}${inlineActs}</button>`;
+    }
+    seg += `<button class="add" title="新开预览" onclick="openAdd()">+</button>`;
+    seg += `</div>`;
+
+    // action cluster (variant A only), applies to active preview
+    let actions = '';
+    if (variant==='A' && state.active==='preview') {
+      actions = `<div class="actions">
+        <button title="打开系统浏览器">${ICON.ext}</button>
+        <button title="复制 URL">${ICON.copy}</button>
+        <button class="close" title="关闭该预览" onclick="closePreview(${state.activeId})">✕</button>
+      </div>`;
+    }
+
+    cc.innerHTML = seg + actions + hostBadge();
+  }
+
+  function renderPane() {
+    const el = document.getElementById('paneContent');
+    if (state.active==='terminal' || state.previews.length===0) {
+      el.innerHTML = `<div class="terminal"><span class="g">Ran</span> git diff --check &amp;&amp; git status --short\n  <span class="d">M cmd/server/main.go</span>\n  <span class="d">M gen/personal/v1/personal.pb.go</span>\n\n<span class="g">Ran</span> go build ./... &amp;&amp; go vet ./...\n  <span class="d">(no output)</span>\n\n已按要求调整：\n  - 仓库筛选移到目标分支后面。\n  - 新增按创建时间 / 更新时间排序。\n\n<span class="d">gpt-5.6-sol high · ~/WebstormProjects/team-manage-root</span></div>`;
+    } else {
+      const p = state.previews.find(x=>x.port===state.activeId);
+      const reconnecting = p && p.status==='reconnecting';
+      el.innerHTML = `<div class="browser">
+        <div class="port-tag">127.0.0.1:${53000 + (state.activeId%1000)}  →  :${state.activeId}</div>
+        ${reconnecting ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:10px;background:rgba(13,17,23,0.9);color:#e6edf3;font:13px var(--mono)"><span style="width:14px;height:14px;border:2px solid rgba(255,255,255,.25);border-top-color:#e6edf3;border-radius:50%;display:inline-block;animation:spin .8s linear infinite"></span>正在重连…</div>` : ''}
+        <div class="card">
+          <h2>Team Hub</h2>
+          <label>用户名</label><input value="admin" />
+          <label>密码</label><input value="admin123" />
+          <button class="btn">登录</button>
+          <button class="btn ghost">飞书登录</button>
+        </div>
+      </div>`;
+    }
+  }
+
+  function render() { renderControls(); renderPane(); }
+
+  function renderMenu() {
+    const menu = document.getElementById('pvMenu');
+    if (variant !== 'C' || !menuOpen) { menu.style.display = 'none'; return; }
+    let html = '';
+    for (const p of state.previews) {
+      const on = state.active==='preview' && state.activeId===p.port;
+      const dot = `<span class="dot ${p.status==='reconnecting'?'reconnecting':''}"></span>`;
+      html += `<div class="item ${on?'active':''}" onclick="switchPreview(${p.port});closeMenu()">
+        ${dot}<span class="lbl">预览 :${p.port}</span>
+        <span class="mini" title="打开浏览器" onclick="event.stopPropagation()">${ICON.ext}</span>
+        <span class="mini" title="复制 URL" onclick="event.stopPropagation()">${ICON.copy}</span>
+        <span class="mini close" title="关闭" onclick="event.stopPropagation();closePreview(${p.port})">✕</span>
+      </div>`;
+    }
+    html += `<div class="sep"></div>`;
+    html += `<div class="item add" onclick="closeMenu();openAdd()">＋ 新开预览…</div>`;
+    menu.innerHTML = html;
+    menu.style.display = 'block';
+    // position under the segmented control (left-align to it)
+    const seg = document.querySelector('#cellControls .seg');
+    const pane = menu.parentElement;
+    if (seg && pane) {
+      const sb = seg.getBoundingClientRect();
+      const pb = pane.getBoundingClientRect();
+      menu.style.left = Math.max(8, sb.left - pb.left) + 'px';
+      menu.style.right = 'auto';
+    }
+  }
+  function toggleMenu(e){ if(e) e.stopPropagation(); if(state.active!=='preview'){state.active='preview';} menuOpen=!menuOpen; render(); }
+  function closeMenu(){ menuOpen=false; renderMenu(); }
+  document.addEventListener('click', (e)=>{ if(menuOpen && !e.target.closest('#pvMenu') && !e.target.closest('.seg')) closeMenu(); });
+
+  // ---- actions ----
+  function switchTerminal() { state.active='terminal'; menuOpen=false; render(); }
+  function switchPreview(port) { state.active='preview'; state.activeId=port; render(); }
+  function closePreview(port) {
+    state.previews = state.previews.filter(p=>p.port!==port);
+    if (state.activeId===port) {
+      if (state.previews.length) { state.activeId = state.previews[0].port; state.active='preview'; }
+      else { state.active='terminal'; }
+    }
+    closeAdd(); render();
+  }
+  function openAdd() { document.getElementById('addPop').classList.add('open'); document.getElementById('addPort').focus(); }
+  function closeAdd() { document.getElementById('addPop').classList.remove('open'); document.getElementById('advRows').classList.remove('open'); document.getElementById('addPort').value=''; }
+  function toggleAdv() { document.getElementById('advRows').classList.toggle('open'); }
+  function confirmAdd() {
+    const raw = document.getElementById('addPort').value.trim();
+    const port = Number(raw);
+    if (!Number.isInteger(port) || port<1 || port>65535) { document.getElementById('addPort').focus(); return; }
+    if (!state.previews.some(p=>p.port===port)) state.previews.push({ port, status:'ok' });
+    state.active='preview'; state.activeId=port; closeAdd(); render();
+  }
+  function setVariant(v){ variant=v; menuOpen=false; ['A','B','C'].forEach(x=>document.getElementById('var'+x).classList.toggle('on', v===x)); render(); }
+  function reset(){ state.active='preview'; state.activeId=5175; state.previews=[{port:5175,status:'ok'},{port:8080,status:'ok'}]; menuOpen=false; render(); }
+  function addMany(){ [1080,2000,2220,3000].forEach(p=>{ if(!state.previews.some(x=>x.port===p)) state.previews.push({port:p,status:'ok'}); }); render(); }
+  function demoReconnect(){
+    const p = state.previews.find(x=>x.port===state.activeId) || state.previews[0];
+    if (!p) return; state.active='preview'; state.activeId=p.port; p.status='reconnecting'; render();
+    setTimeout(()=>{ p.status='ok'; render(); }, 2600);
+  }
+
+  const style = document.createElement('style');
+  style.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+  document.head.appendChild(style);
+
+  render();
+</script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, ref, type CSSProperties } from "vue";
+import { computed, nextTick, ref, watch, type CSSProperties } from "vue";
 import TerminalView from "./TerminalView.vue";
 import PaneSplitter from "./PaneSplitter.vue";
 import type { Endpoint } from "../lib/api";
@@ -7,6 +7,7 @@ import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab, TerminalAppearance } from "../lib/types";
 import type { TerminalThemeDefinition } from "../lib/terminalThemes";
 import { extractSessionLabel } from "../lib/terminalBell";
+import { useServicePreviewActive } from "../composables/useServicePreviewActive";
 import { useI18n } from "../i18n/useI18n";
 import { RATIO_DEFAULT, clampRatio } from "../lib/layout";
 import {
@@ -41,6 +42,23 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const servicePreviewActive = useServicePreviewActive();
+
+// `.cell-controls` is a right-anchored, width:auto (shrink-to-fit) absolute box.
+// When the preview controls teleport into the badge, the WebKit build Wails
+// ships does not recompute that shrink-to-fit width — the pill stays collapsed
+// (~18px) until a real window resize forces a full relayout. Toggling display
+// off/on flushes the cached width so it sizes correctly the moment a preview
+// opens or closes, without the user having to resize the window.
+watch(servicePreviewActive, async () => {
+  await nextTick();
+  gridRoot.value?.querySelectorAll<HTMLElement>(".cell-controls").forEach((el) => {
+    const prev = el.style.display;
+    el.style.display = "none";
+    void el.offsetHeight;
+    el.style.display = prev;
+  });
+});
 
 const AREA_FOR_LAYOUT = {
   single:     ["a"],
@@ -236,6 +254,16 @@ function requestServicePreview(pane: Pane): void {
           <span>{{ viewerCountFor!(pane.sessionId) }}</span>
         </div>
 
+        <!-- Preview controls live in their OWN block to the left of the host
+             badge so opening a preview never replaces the remote-terminal badge.
+             TerminalView teleports its switcher / add-form into this slot. -->
+        <span
+          v-if="pane.sessionId && pane.remote && servicePreviewAvailable"
+          class="service-preview-controls-slot"
+          :id="`service-preview-controls-${pane.sessionId}`"
+          aria-live="polite"
+        ></span>
+
         <div
           v-if="pane.sessionId && pane.remote"
           class="remote-badge"
@@ -262,12 +290,6 @@ function requestServicePreview(pane: Pane): void {
               <line x1="2" y1="20" x2="2.01" y2="20" />
             </svg>
           </button>
-          <span
-            v-if="servicePreviewAvailable"
-            class="service-preview-slot"
-            :id="`service-preview-slot-${pane.sessionId}`"
-            aria-live="polite"
-          ></span>
           <span v-if="formatWho(sessionInfoFor(pane))" class="who">
             {{ formatWho(sessionInfoFor(pane)) }}
           </span>
@@ -380,10 +402,11 @@ function requestServicePreview(pane: Pane): void {
      between them should pass through to xterm. Each child opts back in. */
   pointer-events: none;
 }
-.service-preview-slot {
+.service-preview-controls-slot {
   display: inline-flex;
   align-items: center;
   min-width: 0;
+  pointer-events: auto;
 }
 .remote-badge {
   display: inline-flex;
@@ -401,7 +424,6 @@ function requestServicePreview(pane: Pane): void {
   /* badge is informational only; let clicks fall through to terminal */
   pointer-events: none;
 }
-.remote-badge .service-preview-slot { pointer-events: auto; }
 .remote-preview-trigger {
   display: inline-flex;
   align-items: center;

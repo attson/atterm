@@ -2,7 +2,7 @@ import { describe, expect, test, it, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { __setPlatformForTests } from "./platform";
-import { createFakePlatform } from "./platform/__tests__/_fakePlatform";
+import { createFakePlatform, fakeEventBus } from "./platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "./lib/api";
 import { TYPE, NIL_SID, encodeFrame, encodeText } from "./lib/proto";
 import type { SessionInfo } from "./lib/connection";
@@ -81,10 +81,12 @@ describe("web capability gates", () => {
     expect(source).toContain('<TranslatePanelHost v-if="caps.pluginHost"');
   });
 
-  test("settings close only refreshes desktop relay config when Wails bindings exist", () => {
+  test("relay config changes refresh both desktop connection state and identity", () => {
     expect(source).toContain("function refreshDesktopRelayConfig()");
+    expect(source).toContain("function onRelayConfigChanged()");
     expect(source).toContain("if (caps.wailsBindings)");
-    expect(source).toContain('@relay-config-changed="refreshDesktopRelayConfig"');
+    expect(source).toContain("void refreshRelayIdentity()");
+    expect(source).toContain('@relay-config-changed="onRelayConfigChanged"');
     expect(source).toContain('@close="onSettingsClose"');
     expect(source).not.toContain('@close="showSettings = false; settingsInitialTab = undefined; refreshRelayConfig()"');
   });
@@ -1572,6 +1574,49 @@ describe("admin view (main-area swap)", () => {
     await flushPromises();
 
     expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
+  });
+
+  it("refreshes admin identity when the desktop uplink authenticates after boot", async () => {
+    const platform = createFakePlatform();
+    platform.events = fakeEventBus();
+    platform.relay.fetchMe = vi.fn()
+      .mockRejectedValueOnce(new Error("relay unavailable during boot"))
+      .mockResolvedValueOnce({ user_id: "u1", email: "a@b.com", is_admin: true });
+    __setPlatformForTests(platform);
+
+    const wrapper = mountAdminApp();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="toggle-admin"]').exists()).toBe(false);
+
+    platform.events.emit("relay:auth-info", { user_id: "u1" });
+    await flushPromises();
+
+    expect(platform.relay.fetchMe).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="toggle-admin"]').exists()).toBe(true);
+  });
+
+  it("ignores an older identity request that completes after a new relay user", async () => {
+    const platform = createFakePlatform();
+    platform.events = fakeEventBus();
+    let resolveBootIdentity!: (value: { user_id: string; email: string; is_admin: boolean }) => void;
+    const bootIdentity = new Promise<{ user_id: string; email: string; is_admin: boolean }>((resolve) => {
+      resolveBootIdentity = resolve;
+    });
+    platform.relay.fetchMe = vi.fn()
+      .mockReturnValueOnce(bootIdentity)
+      .mockResolvedValueOnce({ user_id: "u2", email: "user@b.com", is_admin: false });
+    __setPlatformForTests(platform);
+
+    const wrapper = mountAdminApp();
+    await vi.waitFor(() => expect(platform.relay.fetchMe).toHaveBeenCalledTimes(1));
+
+    platform.events.emit("relay:auth-info", { user_id: "u2" });
+    await flushPromises();
+    resolveBootIdentity({ user_id: "u1", email: "admin@b.com", is_admin: true });
+    await flushPromises();
+
+    expect(platform.relay.fetchMe).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="toggle-admin"]').exists()).toBe(false);
   });
 });
 

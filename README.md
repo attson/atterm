@@ -30,7 +30,8 @@ go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure   # 终端 1
 cd desktop && wails dev -tags webkit2_41                          # 终端 2(macOS/Windows 省略 -tags)
 ```
 
-依赖 Go 1.23+ / Node 20+ / Wails v2.12.0。Linux 需 `libgtk-3-dev libwebkit2gtk-4.1-dev`。
+依赖 Go 1.23+ / Node 20+ / Wails v2.12.0。Linux 需
+`libgtk-3-dev libwebkit2gtk-4.1-dev libxext-dev`。
 
 ---
 

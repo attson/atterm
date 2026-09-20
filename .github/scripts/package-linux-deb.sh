@@ -32,7 +32,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: liuzaisen <liuzaisen@wanxinbuzhi.com>
 Installed-Size: ${installed_size}
-Depends: libgtk-3-0, libwebkit2gtk-4.1-0
+Depends: libgtk-3-0, libwebkit2gtk-4.1-0, libxext6
 Description: AT Term desktop app
  Cross-platform terminal emulator with attachable synced sessions.
 CONTROL

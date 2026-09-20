@@ -58,6 +58,7 @@ func TestInstallersUseATTermNameAndIcons(t *testing.T) {
 			`Exec=AT-Term`,
 			`Icon=AT-Term`,
 			`/usr/share/icons/hicolor/1024x1024/apps/AT-Term.png`,
+			`libxext6`,
 		},
 		"../.github/scripts/package-macos-dmg.sh": {
 			`AT Term.app`,

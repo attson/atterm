@@ -188,11 +188,22 @@ Wails IPC 和 WebKit DOM 此时都仍然存活，所以新的状态事件不会�
 2. 不含 WebKit 的纯 GTK label 程序也复现：GLib tick 持续，`draw` 只在启动时发生。
 3. 同一程序在无 Mutter 的 Xephyr 中持续出帧。
 4. 只关闭该窗口的 GDK X11 frame sync 后，宿主会话中每个 tick 都重新触发 `draw`。
+5. 长时间运行后再次冻结的现场里，`_NET_WM_SYNC_REQUEST_COUNTER` 的 extended counter 停在
+   奇数且不再变化；同进程主窗口的 counter 持续以偶数递增。对挂件做一次 unmap/remap 后，
+   counter 立即恢复递增且动画继续，证明进程、stdin、Vue 都没死，卡住的是单帧生命周期。
 
-修复位于 `desktop/widget_window_linux.go::applyWidgetPostStartup`。Wails 从 Go goroutine 调
-`OnStartup`，因此必须用 `g_idle_add` 把 GTK 操作派发到主循环；挂件是独立子进程，只枚举并
-修改该进程的唯一顶层窗口，不影响 AT Term 主窗口。不要用定时重启、WebKit reload、GPU flag
-或强制 queue-draw 掩盖：frame clock 仍在等待时，这些操作都不能完成新帧。
+修复位于 `desktop/widget_window_linux.go::applyWidgetPostStartup` + `applyWidgetPostReady`。
+Wails 从 Go goroutine 调这两个 hook，因此必须把 GTK 操作派发到主循环；挂件是独立子进程，
+只修改标题为 `AT Term Widget` 的顶层窗口，不影响 AT Term 主窗口。`OnStartup` 的有界重试是
+主路径，必须赶在隐藏 WebView 的首帧前关闭同步：`gdk_x11_window_set_frame_sync_enabled(FALSE)`
+只影响后续帧，不能解冻已经在等 `_NET_WM_FRAME_DRAWN` 的 frame clock。`Ready` 再跑一次仅作
+native window 延迟 realization 的兜底。运行期另有 XSync watchdog 每秒读取 extended counter；
+正常帧的奇数阶段只持续数毫秒，只有连续 3 次采样仍为奇数才执行一次 GTK hide/show。GTK 的
+`UnmapNotify` 路径会清 `frame_pending` 并 thaw frame clock，下一 main-loop turn 映射窗口前再
+关闭 frame sync。恢复前必须保存窗口位置和尺寸、remap 后还原并清 urgency hint；否则 Mutter
+可能把挂件重新摆放并加 `_NET_WM_STATE_DEMANDS_ATTENTION`。后者由 Mutter 在 MapNotify 后异步
+添加，必须延后一轮通过标准 EWMH `_NET_WM_STATE_REMOVE` 消息清掉。不要用定时重启、WebKit
+reload、GPU flag 或单纯 queue-draw 掩盖：frame clock 仍在等待时，这些操作都不能完成新帧。
 
 ## Interaction
 

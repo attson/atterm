@@ -341,11 +341,39 @@ const starting = ref(false);
 const showSettings = ref(false);
 const toast = ref<string>("");
 
-// Current relay identity, fetched once at boot (see onMounted). Exposed via
-// defineExpose so tests can drive the isAdmin-transition watcher below
-// without a second live fetchMe() call.
+// Current relay identity, refreshed at boot and whenever relay authentication
+// changes. Exposed via defineExpose so tests can drive the isAdmin-transition
+// watcher below without a second live fetchMe() call.
 const me = ref<RelayMe | null>(null);
 const isAdmin = computed(() => me.value?.is_admin === true);
+let relayIdentityRequestSeq = 0;
+
+function clearRelayIdentity() {
+  relayIdentityRequestSeq++;
+  me.value = null;
+}
+
+async function refreshRelayIdentity(expectedUserID = "", reportFailure = false) {
+  const requestSeq = ++relayIdentityRequestSeq;
+  try {
+    const next = await $platform.relay.fetchMe();
+    if (requestSeq !== relayIdentityRequestSeq) return;
+    // relay:auth-info identifies the connection that triggered this refresh.
+    // A mismatch means the relay config changed while /api/me was in flight.
+    if (expectedUserID && next.user_id !== expectedUserID) {
+      me.value = null;
+      logWarn("app", "discarded relay identity from a different authenticated user");
+      return;
+    }
+    me.value = next;
+  } catch (e) {
+    if (requestSeq !== relayIdentityRequestSeq) return;
+    me.value = null;
+    if (reportFailure) {
+      logWarn("app", "failed to refresh relay identity", { error: errText(e) });
+    }
+  }
+}
 // Whether the main area shows AdminPanel instead of the pane-grid tabs.
 // Not persisted (see spec §4.10) — always starts closed.
 const adminViewOpen = ref(false);
@@ -361,6 +389,9 @@ const showSshHosts = ref(false);
 let quitListenerOff: (() => void) | null = null;
 let notificationClickListenerOff: (() => void) | null = null;
 let widgetActivateListenerOff: (() => void) | null = null;
+let relayAuthInfoListenerOff: (() => void) | null = null;
+let relayAuthRestoredListenerOff: (() => void) | null = null;
+let relayAuthErrorListenerOff: (() => void) | null = null;
 
 function handleBeforeClose() {
   // Best-effort final persist so a clean quit always lands the latest state.
@@ -900,6 +931,11 @@ function refreshDesktopRelayConfig() {
   if (caps.wailsBindings) {
     void refreshRelayConfig();
   }
+}
+
+function onRelayConfigChanged() {
+  refreshDesktopRelayConfig();
+  void refreshRelayIdentity();
 }
 
 function onSettingsClose() {
@@ -1571,9 +1607,19 @@ onMounted(async () => {
   } catch {
     /* keep default empty; .is-maximized stays off on darwin-bug-side */
   }
-  $platform.events.on('relay:auth-error', (data) => {
+  relayAuthErrorListenerOff = $platform.events.on('relay:auth-error', (data) => {
     const d = data as { reason: string };
     authError.value = d?.reason ?? null;
+    clearRelayIdentity();
+  });
+  relayAuthInfoListenerOff = $platform.events.on('relay:auth-info', (data) => {
+    const d = data as { user_id?: unknown };
+    const userID = typeof d?.user_id === "string" ? d.user_id : "";
+    if (!userID) {
+      clearRelayIdentity();
+      return;
+    }
+    void refreshRelayIdentity(userID, true);
   });
   $platform.events.on('relay:viewers', (data) => {
     const d = data as { session_id: string; count: number };
@@ -1602,7 +1648,8 @@ onMounted(async () => {
     void refreshShortcutBindings();
     void refreshProfiles();
   });
-  $platform.events.on('relay:auth-restored', () => {
+  relayAuthRestoredListenerOff = $platform.events.on('relay:auth-restored', () => {
+    void refreshRelayIdentity("", true);
     if (caps.wailsBindings) return;
     void (async () => {
       try {
@@ -1617,15 +1664,9 @@ onMounted(async () => {
     })();
   });
   // Fire-and-forget: drives TabBar's admin button + AdminPanel gating only.
-  // Not on the critical boot path — an unconfigured/unauthenticated relay
-  // rejects immediately and just leaves isAdmin false.
-  void (async () => {
-    try {
-      me.value = await $platform.relay.fetchMe();
-    } catch {
-      me.value = null;
-    }
-  })();
+  // Not on the critical boot path; auth lifecycle events retry this request
+  // after a transient startup failure or relay configuration change.
+  void refreshRelayIdentity();
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
   if (caps.wailsBindings) {
@@ -1796,6 +1837,13 @@ onUnmounted(() => {
   notificationClickListenerOff = null;
   widgetActivateListenerOff?.();
   widgetActivateListenerOff = null;
+  relayAuthInfoListenerOff?.();
+  relayAuthInfoListenerOff = null;
+  relayAuthRestoredListenerOff?.();
+  relayAuthRestoredListenerOff = null;
+  relayAuthErrorListenerOff?.();
+  relayAuthErrorListenerOff = null;
+  clearRelayIdentity();
   window.removeEventListener("hashchange", syncRoute);
   sessionListStreams.detachAll();
   if (toastHandle !== null) window.clearTimeout(toastHandle);
@@ -1941,7 +1989,7 @@ defineExpose({ me });
       @appearance-changed="onAppearanceChanged"
       @bindings-changed="onBindingsChanged"
       @profiles-changed="onProfilesChanged"
-      @relay-config-changed="refreshDesktopRelayConfig"
+      @relay-config-changed="onRelayConfigChanged"
       @session-created="onMobileSessionCreated"
       @close="onSettingsClose"
     />

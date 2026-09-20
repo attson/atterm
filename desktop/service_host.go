@@ -21,8 +21,15 @@ const (
 	serviceHostDialTimeout = 10 * time.Second
 	serviceTargetTimeout   = 5 * time.Second
 	serviceHostWriteWait   = 10 * time.Second
+	serviceHostPingPeriod  = 25 * time.Second
 	serviceHostQueueDepth  = 128
 )
+
+// serviceEnqueueWait bounds how long enqueue blocks on a momentarily full send
+// buffer before tearing the pipe down. Prefer a brief stall over nuking the
+// whole lease on a transient burst; reconnect rebuilds on the rare genuine
+// timeout. A var (not const) so tests can shorten it.
+var serviceEnqueueWait = 5 * time.Second
 
 // serviceHostManager owns Remote Web Preview leases for one uplink
 // connection. It never subscribes to a PTY session: the session id is used
@@ -309,10 +316,19 @@ func (h *serviceHost) run() {
 }
 
 func (h *serviceHost) writeLoop() error {
+	ticker := time.NewTicker(serviceHostPingPeriod)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-h.ctx.Done():
 			return h.ctx.Err()
+		case <-ticker.C:
+			pctx, cancel := context.WithTimeout(h.ctx, serviceHostWriteWait)
+			err := h.ws.Ping(pctx)
+			cancel()
+			if err != nil {
+				return err
+			}
 		case msg := <-h.send:
 			packet, err := h.codec.Seal(msg.kind, msg.id, msg.data)
 			if err != nil {
@@ -421,8 +437,19 @@ func (h *serviceHost) enqueue(msg serviceHostMessage) bool {
 	case <-h.ctx.Done():
 		return false
 	default:
-		// Packets are never silently dropped. Saturation closes the lease so
-		// neither endpoint can mistake a gapped byte stream for valid TCP.
+	}
+	// Buffer momentarily full: block briefly rather than nuking the pipe on a
+	// transient burst. Packets are never silently dropped (a gapped byte stream
+	// would corrupt TCP), so only a genuinely stuck writer/peer — enqueue still
+	// blocked after serviceEnqueueWait — tears the lease down.
+	timer := time.NewTimer(serviceEnqueueWait)
+	defer timer.Stop()
+	select {
+	case h.send <- msg:
+		return true
+	case <-h.ctx.Done():
+		return false
+	case <-timer.C:
 		h.cancel()
 		return false
 	}

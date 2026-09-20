@@ -20,6 +20,7 @@ import {
   PushWidgetState,
   StartServicePreview,
   StopServicePreview,
+  RebindServicePreview,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -156,6 +157,16 @@ export function createWailsPlatform(): Platform {
         return { id: result.id, url: result.url }
       },
       stop: async (id) => StopServicePreview(id),
+      rebind: async (req) => {
+        await RebindServicePreview(new WailsModels.ServicePreviewRebindRequest({
+          gateway_id: req.gatewayId,
+          mapping_index: req.mappingIndex,
+          service_id: req.serviceId,
+          client_ticket: req.clientTicket,
+          client_to_host_key: Array.from(req.clientToHostKey),
+          host_to_client_key: Array.from(req.hostToClientKey),
+        }))
+      },
     },
     system: {
       showNotification: api.showNotification,

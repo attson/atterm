@@ -195,6 +195,8 @@ export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
 export function PushWidgetState(arg1:string):Promise<void>;
 
+export function RebindServicePreview(arg1:main.ServicePreviewRebindRequest):Promise<void>;
+
 export function ReceivedFilesClearAll():Promise<void>;
 
 export function ReceivedFilesClearSession(arg1:string):Promise<void>;

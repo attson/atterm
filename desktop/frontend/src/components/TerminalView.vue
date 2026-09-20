@@ -56,9 +56,11 @@ import {
   setTouchDebugEnabled,
 } from "../lib/touchScrollDebug";
 import { useQuickTemplates } from "../composables/useQuickTemplates";
+import { setServicePreviewActive } from "../composables/useServicePreviewActive";
 import { usePlatform } from "../platform";
 import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
+import ServicePreviewSwitcher from "./ServicePreviewSwitcher.vue";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
 
@@ -187,8 +189,29 @@ const selectionPopover = ref({
 const platform = usePlatform();
 const fileRevealStore = useFileRevealStore();
 const previewBusy = ref(false);
-const previewMode = ref(false);
-const preview = ref<{ id: string; serviceId: string; serviceIds: string[]; url: string; port: number } | null>(null);
+// A session can run several independent previews at once, each its own relay
+// gateway + loopback URL. activePreviewId is the one shown in the pane; null
+// means the terminal is shown (previews keep running in the background).
+interface PreviewInstance {
+  id: string; // relay gateway id (StartServicePreview result)
+  url: string;
+  port: number; // root/display port
+  serviceIds: string[]; // per-mapping lease ids (index-aligned with ports)
+  ports: number[];
+  prefixes: string[];
+  host: string;
+  reconnecting: boolean;
+  reconnectTimer: number | null;
+}
+const previews = ref<PreviewInstance[]>([]);
+const activePreviewId = ref<string | null>(null);
+const previewViewActive = computed(() => activePreviewId.value !== null);
+const activePreview = computed(() => previews.value.find((p) => p.id === activePreviewId.value) ?? null);
+let previewPipeDeadOff: (() => void) | null = null;
+// Publish "any preview open" so PaneGrid can flush the shrink-to-fit width of
+// the controls pill when the switcher mounts/unmounts (WebKit leaves it
+// collapsed until a reflow otherwise).
+watch(() => previews.value.length > 0, (active) => setServicePreviewActive(props.sessionId, active));
 const previewPortEditing = ref(false);
 const previewPortText = ref("3000");
 const previewExtraMappings = ref<Array<{ port: string; pathPrefix: string }>>([]);
@@ -199,7 +222,7 @@ const previewTargetHostOptions: SelectOption[] = [
   { value: "::1", label: "::1 (IPv6)" },
 ];
 const previewPortInput = ref<HTMLInputElement | null>(null);
-const previewTarget = computed(() => `#service-preview-slot-${props.sessionId}`);
+const previewTarget = computed(() => `#service-preview-controls-${props.sessionId}`);
 const previewDraftKey = computed(() => `atterm.service-preview.${props.sessionId}`);
 
 function loadPreviewDraft(): void {
@@ -403,7 +426,7 @@ const canOpenPreview = computed(() =>
 );
 const canConfigurePreviewMappings = computed(() => platform.servicePreview?.supportsMappings !== false);
 const bottomBarCount = computed(() =>
-  previewMode.value ? 0 : (templatesHidden.value ? 0 : 1) + (showAuxKeyBar.value ? 1 : 0)
+  previewViewActive.value ? 0 : (templatesHidden.value ? 0 : 1) + (showAuxKeyBar.value ? 1 : 0)
 );
 const terminalBottom = computed(() => `${bottomBarCount.value * 30}px`);
 const templateBarBottom = computed(() => showAuxKeyBar.value ? "30px" : "0");
@@ -413,23 +436,92 @@ function focusTerminalIfDriver() {
   term?.focus();
 }
 
-async function stopPreview(): Promise<void> {
-  const running = preview.value;
-  preview.value = null;
-  previewMode.value = false;
-  if (!running) return;
-  if (running.serviceIds.length === 0) {
-    conn?.closeService(running.serviceId);
-  } else {
-    for (const serviceId of running.serviceIds) conn?.closeService(serviceId);
+function clearPreviewReconnect(p: PreviewInstance): void {
+  if (p.reconnectTimer !== null) {
+    window.clearTimeout(p.reconnectTimer);
+    p.reconnectTimer = null;
   }
+  p.reconnecting = false;
+}
+
+// reconnectPreviewMapping re-establishes one mapping of one preview after its
+// pipe died. The gateway keeps the same URL; we only mint a fresh lease
+// (openService) and hand it to the Go side (rebind). Exponential backoff,
+// capped at 8s like the main connection. Gives up (and closes that preview)
+// when previewing is no longer possible or the gateway is gone.
+async function reconnectPreviewMapping(gatewayId: string, index: number): Promise<void> {
+  const rebind = platform.servicePreview?.rebind;
+  if (!rebind) return;
+  const backoff = [500, 1000, 2000, 4000, 8000];
+  const p = previews.value.find((x) => x.id === gatewayId);
+  if (!p) return;
+  p.reconnecting = true;
+  for (let attempt = 0; ; attempt++) {
+    const current = previews.value.find((x) => x.id === gatewayId);
+    if (!isAlive || !current || index < 0 || index >= current.ports.length) {
+      if (current) clearPreviewReconnect(current);
+      return;
+    }
+    if (!conn || !canOpenPreview.value) {
+      await closePreview(gatewayId);
+      return;
+    }
+    try {
+      const opened = await conn.openService(current.ports[index], current.host);
+      if (!isAlive || !previews.value.includes(current)) {
+        conn.closeService(opened.serviceId);
+        clearPreviewReconnect(current);
+        return;
+      }
+      await rebind({
+        gatewayId,
+        mappingIndex: index,
+        serviceId: opened.serviceId,
+        clientTicket: opened.clientTicket,
+        clientToHostKey: opened.clientToHostKey,
+        hostToClientKey: opened.hostToClientKey,
+      });
+      current.serviceIds[index] = opened.serviceId;
+      clearPreviewReconnect(current);
+      return;
+    } catch (e) {
+      const msg = errText(e);
+      if (msg.includes("preview_gone") || msg.includes("relay is not connected")) {
+        await closePreview(gatewayId);
+        return;
+      }
+      const delay = backoff[Math.min(attempt, backoff.length - 1)];
+      await new Promise<void>((resolve) => { current.reconnectTimer = window.setTimeout(resolve, delay); });
+    }
+  }
+}
+
+// closePreview tears down one preview (its gateway + leases) and updates the
+// active view. Closing the active preview falls back to another preview, or the
+// terminal when none remain.
+async function closePreview(gatewayId: string): Promise<void> {
+  const idx = previews.value.findIndex((p) => p.id === gatewayId);
+  if (idx < 0) return;
+  const [running] = previews.value.splice(idx, 1);
+  clearPreviewReconnect(running);
+  if (activePreviewId.value === gatewayId) {
+    activePreviewId.value = previews.value[0]?.id ?? null;
+  }
+  for (const serviceId of running.serviceIds) conn?.closeService(serviceId);
   try {
     await platform.servicePreview?.stop(running.id);
   } catch (e) {
     logDebug("service-preview", "stop failed", { error: errText(e) });
   }
   await nextTick();
-  safeFit();
+  if (!previewViewActive.value) safeFit();
+}
+
+// stopAllPreviews closes every running preview (used on teardown / permission
+// loss). Kept as the "clean up everything" entry point.
+async function stopAllPreviews(): Promise<void> {
+  const running = previews.value.slice();
+  for (const p of running) await closePreview(p.id);
 }
 
 function beginPreviewPortEntry(): void {
@@ -498,10 +590,17 @@ async function openPreview(): Promise<void> {
   }
   const normalizedPrefixes = prefixes as string[];
   previewExtraMappings.value.forEach((mapping, index) => { mapping.pathPrefix = normalizedPrefixes[index + 1]; });
+  // A new preview is appended, not replacing existing ones. If the same root
+  // port is already previewed, just switch to it rather than opening a dup.
+  const existing = previews.value.find((p) => p.port === ports[0] && p.host === previewTargetHost.value);
+  if (existing) {
+    activePreviewId.value = existing.id;
+    previewPortEditing.value = false;
+    return;
+  }
   previewBusy.value = true;
   const openedServices: Array<Awaited<ReturnType<SessionConnection["openService"]>>> = [];
   try {
-    if (preview.value) await stopPreview();
     for (const port of ports) {
       const opened = await conn.openService(port, previewTargetHost.value);
       openedServices.push(opened);
@@ -526,9 +625,19 @@ async function openPreview(): Promise<void> {
       await platform.servicePreview.stop(local.id);
       throw new Error(t("terminal.preview.noLongerAllowed"));
     }
-    preview.value = { id: local.id, serviceId: openedServices[0].serviceId, serviceIds: openedServices.map((service) => service.serviceId), url: local.url, port: ports[0] };
+    previews.value.push({
+      id: local.id,
+      url: local.url,
+      port: ports[0],
+      serviceIds: openedServices.map((service) => service.serviceId),
+      ports,
+      prefixes: normalizedPrefixes,
+      host: previewTargetHost.value,
+      reconnecting: false,
+      reconnectTimer: null,
+    });
+    activePreviewId.value = local.id;
     previewPortEditing.value = false;
-    previewMode.value = true;
   } catch (e) {
     for (const service of openedServices) conn?.closeService(service.serviceId);
     emit("toast", t("terminal.preview.openFailed", { error: errText(e) }));
@@ -537,13 +646,18 @@ async function openPreview(): Promise<void> {
   }
 }
 
+function switchPreview(gatewayId: string): void {
+  if (!previews.value.some((p) => p.id === gatewayId)) return;
+  activePreviewId.value = gatewayId;
+}
+
 function showTerminal(): void {
-  previewMode.value = false;
+  activePreviewId.value = null;
   nextTick(() => safeFit());
 }
 
 async function openPreviewInBrowser(): Promise<void> {
-  const url = preview.value?.url;
+  const url = activePreview.value?.url;
   if (!url) return;
   try {
     await platform.system.openExternalURL(url);
@@ -554,7 +668,7 @@ async function openPreviewInBrowser(): Promise<void> {
 }
 
 async function copyPreviewURL(): Promise<void> {
-  const url = preview.value?.url;
+  const url = activePreview.value?.url;
   if (!url) return;
   try {
     if (navigator.clipboard?.writeText) {
@@ -2074,7 +2188,7 @@ function startConnection() {
       },
       onStatus: (s) => {
         status.value = s;
-        if (s !== "attached" && preview.value) void stopPreview();
+        if (s !== "attached" && previews.value.length) void stopAllPreviews();
       },
       onReplayProgress: (progress) => {
         replayProgress.value = progress.phase === "end" ? null : progress;
@@ -2097,7 +2211,7 @@ function startConnection() {
         applyViewerSize();
         if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
         if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
-        if (!isMe && preview.value) void stopPreview();
+        if (!isMe && previews.value.length) void stopAllPreviews();
         if (wasDriver !== isMe) {
           emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
         }
@@ -2327,6 +2441,16 @@ onMounted(async () => {
   // template bar keeps rendering DEFAULT_TEMPLATES / the pre-sync list
   // until a manual edit or a full remount.
   prefsChangedOff = platform.events.on("prefs:changed", reloadShortcutBars);
+  // Self-heal a remote preview whose data pipe dropped: the Go gateway keeps
+  // the URL alive and emits this so we re-run the control handshake. Gated on
+  // the rebind bridge (Wails only) so web/mobile never subscribe.
+  if (platform.servicePreview?.rebind) {
+    previewPipeDeadOff = platform.events.on("service-preview:pipe-dead", (raw) => {
+      const d = raw as { gateway_id?: string; mapping_index?: number } | null;
+      if (!d || !d.gateway_id || !previews.value.some((p) => p.id === d.gateway_id)) return;
+      void reconnectPreviewMapping(d.gateway_id, typeof d.mapping_index === "number" ? d.mapping_index : 0);
+    });
+  }
   document.addEventListener("mousedown", onDocumentMouseDown);
   document.addEventListener("pointerdown", onDocumentPointerDown, { capture: true });
   document.addEventListener("keydown", onDocumentKeyDown);
@@ -2349,7 +2473,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   isAlive = false;
-  void stopPreview();
+  void stopAllPreviews();
   // Drop every external callback that could re-enter the term BEFORE we
   // touch conn / term. A queued ResizeObserver entry or a stray document
   // listener firing in the same tick used to call safeFit() → fit.fit() on
@@ -2367,6 +2491,9 @@ onBeforeUnmount(() => {
   shortcutsOff = null;
   prefsChangedOff?.();
   prefsChangedOff = null;
+  previewPipeDeadOff?.();
+  previewPipeDeadOff = null;
+  setServicePreviewActive(props.sessionId, false);
   document.removeEventListener("mousedown", onDocumentMouseDown);
   document.removeEventListener("pointerdown", onDocumentPointerDown, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", onDocumentKeyDown);
@@ -2448,8 +2575,8 @@ watch(
 watch(
   () => props.remotePermission,
   () => {
-    if (effectiveRemotePermission(props.remotePermission) !== "full" && preview.value) {
-      void stopPreview();
+    if (effectiveRemotePermission(props.remotePermission) !== "full" && previews.value.length) {
+      void stopAllPreviews();
     }
   },
 );
@@ -2518,7 +2645,7 @@ watch(
 <template>
   <div class="term-view" :class="{ focused }">
     <div
-      v-show="!previewMode"
+      v-show="!previewViewActive"
       ref="termContainer"
       class="term"
       :style="{ bottom: terminalBottom }"
@@ -2529,27 +2656,33 @@ watch(
       @mousedown.capture="onTermMouseDown"
     ></div>
     <iframe
-      v-if="preview && previewMode"
+      v-for="p in previews"
+      v-show="activePreviewId === p.id"
+      :key="p.id"
       class="service-preview-frame"
-      :src="preview.url"
-      :title="t('terminal.preview.frameTitle', { port: preview.port })"
+      :src="p.url"
+      :title="t('terminal.preview.frameTitle', { port: p.port })"
       sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
       allow="clipboard-read; clipboard-write"
     ></iframe>
-    <Teleport v-if="preview || previewPortEditing" :to="previewTarget">
-      <div class="service-preview-controls" :class="{ configuring: previewPortEditing && !preview }">
-        <template v-if="preview">
-          <button type="button" :class="{ active: !previewMode }" @click="showTerminal">{{ t("terminal.preview.terminal") }}</button>
-          <button type="button" :class="{ active: previewMode }" @click="previewMode = true">{{ t("terminal.preview.previewPort", { port: preview.port }) }}</button>
-          <button type="button" class="preview-action" :title="t('terminal.preview.openInBrowser')" :aria-label="t('terminal.preview.openInBrowser')" @click="openPreviewInBrowser">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8l4 4-4 4"/></svg>
-          </button>
-          <button type="button" class="preview-action" :title="t('terminal.preview.copyURL')" :aria-label="t('terminal.preview.copyURL')" @click="copyPreviewURL">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-          <button type="button" class="close" @click="stopPreview">{{ t("common.close") }}</button>
-        </template>
-        <form v-else-if="previewPortEditing && canOpenPreview" class="service-preview-port-form" @submit.prevent="openPreview">
+    <div v-if="activePreview?.reconnecting" class="service-preview-reconnecting" role="status">
+      <span class="service-preview-reconnecting-spinner" aria-hidden="true"></span>
+      <span>{{ t("terminal.preview.reconnecting") }}</span>
+    </div>
+    <Teleport v-if="previews.length || previewPortEditing" :to="previewTarget">
+      <div class="service-preview-controls">
+        <ServicePreviewSwitcher
+          v-if="previews.length"
+          :previews="previews"
+          :active-id="activePreviewId"
+          @show-terminal="showTerminal"
+          @select="switchPreview"
+          @close="closePreview"
+          @add="beginPreviewPortEntry"
+          @open-browser="openPreviewInBrowser"
+          @copy="copyPreviewURL"
+        />
+        <form v-if="previewPortEditing && canOpenPreview" class="service-preview-port-form" :class="{ 'as-popover': previews.length > 0 }" @submit.prevent="openPreview">
           <SelectDropdown
             class="service-preview-host"
             :model-value="previewTargetHost"
@@ -2661,7 +2794,7 @@ watch(
       </div>
     </Teleport>
     <div
-      v-if="!templatesHidden && !previewMode"
+      v-if="!templatesHidden && !previewViewActive"
       class="template-bar"
       data-testid="template-bar"
       :style="{ bottom: templateBarBottom }"
@@ -2684,7 +2817,7 @@ watch(
       >{{ tpl.label }}</button>
     </div>
     <div
-      v-if="showAuxKeyBar && !previewMode"
+      v-if="showAuxKeyBar && !previewViewActive"
       class="aux-key-bar"
       data-testid="terminal-aux-key-bar"
       @pointerdown.capture="onKeyboardControlPointerDown"
@@ -2877,25 +3010,59 @@ watch(
   border: 0;
   background: #fff;
 }
-:global(.service-preview-controls) {
+.service-preview-reconnecting {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
   display: flex;
-  gap: 4px;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  background: var(--terminal-overlay, rgba(13, 17, 23, 0.9));
+  font: 13px var(--font-mono);
+}
+.service-preview-reconnecting-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--fg);
+  border-radius: 50%;
+  animation: service-preview-spin 0.8s linear infinite;
+}
+@keyframes service-preview-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .service-preview-reconnecting-spinner { animation: none; }
+}
+:global(.service-preview-controls) {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 0;
   pointer-events: auto;
 }
-:global(.service-preview-controls.configuring) {
+/* The add-port form is always a popover panel anchored under the controls,
+   whether opened from the switcher (previews exist) or as the first preview. */
+:global(.service-preview-port-form) {
   position: absolute;
-  top: 24px;
+  top: 34px;
   right: 0;
   z-index: 8;
   width: 330px;
   padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--terminal-overlay);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
 }
-:global(.service-preview-controls button:not(.trigger)) {
+:global(.service-preview-port-form button:not(.trigger)) {
   border: 0;
   border-radius: 5px;
   padding: 4px 8px;
@@ -2904,29 +3071,13 @@ watch(
   font: 12px var(--font-mono);
   cursor: pointer;
 }
-:global(.service-preview-controls button.active) {
+:global(.service-preview-port-form button[type="submit"]) {
   color: var(--fg);
   background: rgba(255, 255, 255, 0.1);
 }
-:global(.service-preview-controls button.preview-action) {
-  width: 24px;
-  padding-left: 4px;
-  padding-right: 4px;
-}
-:global(.service-preview-controls button.preview-action svg) { display: block; margin: 0 auto; }
-:global(.service-preview-controls button.close) {
-  color: var(--bad);
-}
-:global(.service-preview-controls button:disabled) {
+:global(.service-preview-port-form button:disabled) {
   opacity: 0.55;
   cursor: default;
-}
-:global(.service-preview-port-form) {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
 }
 :global(.service-preview-host) {
   width: 100%;

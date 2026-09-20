@@ -310,11 +310,26 @@ export interface ServicePreviewStartResult {
   url: string
 }
 
+export interface ServicePreviewRebindRequest {
+  gatewayId: string
+  mappingIndex: number
+  serviceId: string
+  clientTicket: string
+  clientToHostKey: Uint8Array
+  hostToClientKey: Uint8Array
+}
+
 export interface ServicePreviewBridge {
   /** Native desktop gateway supports multiple path-to-port mappings. */
   supportsMappings?: boolean
   start(req: ServicePreviewStartRequest): Promise<ServicePreviewStartResult>
   stop(id: string): Promise<void>
+  /**
+   * Reattach a dead mapping's pipe using a freshly opened lease, keeping the
+   * gateway URL alive. Present only on the Wails desktop bridge; absent on
+   * native mobile (self-heal there is a native-plugin concern) and web.
+   */
+  rebind?(req: ServicePreviewRebindRequest): Promise<void>
 }
 
 export interface Platform {

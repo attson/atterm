@@ -405,7 +405,7 @@ func TestStartCodexKnownTitleResolve_FindsPreviousDaySidAndMirrorsUserTitle(t *t
 	t.Fatalf("session title = %q, want previous-day codex user message", sess.Info().Title)
 }
 
-func TestTrackCodexUserTitle_ReappliesAfterExternalTitleOverwrite(t *testing.T) {
+func TestTrackCodexUserTitle_ReappliesAfterFallbackTitleOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rollout-2026-07-30T00-13-54-019faea7-292e-7ad3-a408-4faf2bb8a848.jsonl")
 	writeJsonl(t, path,
@@ -455,6 +455,42 @@ func TestTrackCodexUserTitle_ReappliesAfterExternalTitleOverwrite(t *testing.T) 
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("session title after overwrite = %q, want latest codex user message reapplied", sess.Info().Title)
+}
+
+func TestTrackCodexUserTitle_PreservesMeaningfulOSCTitle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout-2026-09-21T09-00-00-019faea7-292e-7ad3-a408-4faf2bb8a848.jsonl")
+	writeJsonl(t, path,
+		`{"type":"session_meta","payload":{"id":"019faea7-292e-7ad3-a408-4faf2bb8a848","cwd":"/work/team-manage-root","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"initial raw prompt"}}`,
+	)
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: "/work/team-manage-root"})
+	defer sess.Close()
+	_ = sess.PushOut(1, []byte("\x1b]133;C;codex\x07"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go trackCodexUserTitle(ctx, sess, path)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if sess.Info().Title == "initial raw prompt" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := sess.Info().Title; got != "initial raw prompt" {
+		t.Fatalf("initial session title = %q, want rollout fallback", got)
+	}
+
+	const nativeTitle = "⠏ Generated conversation title | team-manage-root"
+	_ = sess.PushOut(2, []byte("\x1b]2;"+nativeTitle+"\x07"))
+	appendJsonl(t, path, `{"type":"event_msg","payload":{"type":"user_message","message":"new raw prompt"}}`)
+	time.Sleep(2 * codexTitleInterval)
+
+	if got := sess.Info().Title; got != nativeTitle {
+		t.Fatalf("session title = %q, want meaningful Codex OSC title %q", got, nativeTitle)
+	}
 }
 
 func TestAdvancedSids(t *testing.T) {

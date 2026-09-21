@@ -451,8 +451,8 @@ func codexResolverCount(cwd string) int {
 // retains the filename heuristic, but only while this is the sole resolver for
 // the cwd: a missing title is safer than attaching another pane's conversation.
 // Once captured, it keeps polling the rollout for the latest real user message
-// and mirrors that into the session title; Codex's OSC title is only spinner +
-// cwd basename.
+// as a fallback title. Newer Codex versions publish a richer generated title
+// over OSC; that native title stays authoritative when present.
 func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd string, rootPID int, onCapture func(sid string)) {
 	unregister := registerCodexResolver(cwd)
 	defer unregister()
@@ -529,7 +529,8 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 }
 
 func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string) {
-	last := ""
+	lastRead := ""
+	lastApplied := ""
 	var lastModTime time.Time
 	var lastSize int64 = -1
 	for {
@@ -538,15 +539,20 @@ func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string
 				lastSize = stat.Size()
 				lastModTime = stat.ModTime()
 				if title, ok := scanCodexJsonlForUserTitle(path); ok {
-					last = title
+					lastRead = title
 				}
 			}
 		}
-		// Codex's OSC title can overwrite this between rollout writes. Reapply
-		// the cached user title without rescanning an unchanged, potentially
-		// very large rollout file.
-		if last != "" && sess.Info().Title != last {
-			sess.UpdateCwdTitle("", last)
+		// Recent Codex versions publish a generated conversation title over OSC;
+		// that is more useful than the raw latest user message from the rollout.
+		// Keep the rollout title only as a fallback for older Codex versions, and
+		// update it when this tracker still owns the displayed value.
+		info := sess.Info()
+		if lastRead != "" && info.Title != lastRead &&
+			(info.Title == "" || info.Title == lastApplied || codexOSCIsFallbackTitle(info.Title, info.Cwd)) {
+			if sess.CompareAndSwapTitle(info.Title, lastRead) {
+				lastApplied = lastRead
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -554,6 +560,19 @@ func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string
 		case <-time.After(codexTitleInterval):
 		}
 	}
+}
+
+func codexOSCIsFallbackTitle(title, cwd string) bool {
+	stripped := strings.TrimSpace(strings.TrimLeftFunc(title, func(r rune) bool {
+		return unicode.IsSpace(r) ||
+			strings.ContainsRune(":：;·•∙.∷⋮⋯", r) ||
+			(r >= '\u2800' && r <= '\u28ff')
+	}))
+	if stripped == "codex" {
+		return true
+	}
+	base := filepath.Base(filepath.Clean(cwd))
+	return cwd != "" && base != "." && base != string(filepath.Separator) && stripped == base
 }
 
 func startCodexKnownTitleResolve(ctx context.Context, sess *session.Session, cwd, sid string) {

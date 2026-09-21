@@ -19,6 +19,15 @@ const stubs = {
 };
 
 describe("AdminPanel", () => {
+  test("keeps the constrained panel and scroll body in the same layout tree", () => {
+    const w = mount(AdminPanel, { global: { stubs } });
+    const body = w.get(".admin-body").element;
+
+    expect(w.element.classList.contains("admin-panel")).toBe(true);
+    expect(body.parentElement).toBe(w.element);
+    expect(w.find(".n-config-provider").exists()).toBe(false);
+  });
+
   test("defaults to the invitations tab", () => {
     const w = mount(AdminPanel, { global: { stubs } });
     expect(w.findComponent(Invitations).exists()).toBe(true);

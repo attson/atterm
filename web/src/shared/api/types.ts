@@ -147,10 +147,12 @@ export type TaskState =
   | 'closed'
 
 export type TrafficView = 'detail' | 'group' | 'summary'
+export type TrafficBucket = 'range' | 'day'
 
 export interface AdminTrafficRow {
   user_id: string
   email?: string
+  day?: string
   frame_type?: number
   frame_type_name?: string
   category?: string
@@ -161,7 +163,20 @@ export interface AdminTrafficRow {
 
 export interface AdminTrafficResponse {
   view: TrafficView
+  bucket: TrafficBucket
   from: string
   to: string
   rows: AdminTrafficRow[]
+}
+
+export interface AdminHealthResponse {
+  version: string
+  uptime_seconds: number
+  https: boolean
+  active_uplinks: number
+  active_sessions: number
+  relay_instances: number
+  traffic_flush_interval_seconds: number
+  generated_at: string
+  health_check_warnings?: string[]
 }

@@ -32,6 +32,9 @@ type HealthPayload struct {
 	RateLimitPerMinute       int      `json:"rate_limit_per_minute"`
 	MaxConnectionsPerKey     int      `json:"max_connections_per_key"`
 	ActiveUplinks            int64    `json:"active_uplinks"`
+	ActiveSessions           int      `json:"active_sessions"`
+	RelayInstances           int      `json:"relay_instances"`
+	TrafficFlushIntervalSec  int      `json:"traffic_flush_interval_seconds"`
 	MobileOriginCompatible   bool     `json:"mobile_origin_compatible"`
 	GeneratedAt              string   `json:"generated_at"`
 	Warnings                 []string `json:"health_check_warnings,omitempty"`
@@ -90,19 +93,29 @@ func collectHealth(ctx context.Context, s *Server, r *http.Request) HealthPayloa
 	originsCopy := append([]string(nil), s.currentAllowedOrigins()...)
 
 	payload := HealthPayload{
-		Version:                cfg.Version,
-		UptimeSeconds:          int64(time.Since(s.startTime).Seconds()),
-		HTTPS:                  httpsFromRequest(r),
-		ConfiguredOrigins:      originsCopy,
-		OriginsOpen:            len(originsCopy) == 0,
-		RateLimitPerMinute:     rateLimit,
-		MaxConnectionsPerKey:   connLimit,
-		ActiveUplinks:          s.UplinkCount(),
-		MobileOriginCompatible: isMobileOriginCompatible(originsCopy),
-		GeneratedAt:            time.Now().UTC().Format(time.RFC3339),
+		Version:                 cfg.Version,
+		UptimeSeconds:           int64(time.Since(s.startTime).Seconds()),
+		HTTPS:                   httpsFromRequest(r),
+		ConfiguredOrigins:       originsCopy,
+		OriginsOpen:             len(originsCopy) == 0,
+		RateLimitPerMinute:      rateLimit,
+		MaxConnectionsPerKey:    connLimit,
+		ActiveUplinks:           s.UplinkCount(),
+		ActiveSessions:          len(s.registry.List()),
+		RelayInstances:          1,
+		TrafficFlushIntervalSec: int(trafficFlushInterval / time.Second),
+		MobileOriginCompatible:  isMobileOriginCompatible(originsCopy),
+		GeneratedAt:             time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if cfg.Store != nil {
+		live, err := cfg.Store.ListLiveInstances(ctx, time.Now().Add(-InstanceLivenessWindow).Unix())
+		if err != nil {
+			payload.Warnings = append(payload.Warnings, "relay_instances_lookup_failed")
+		} else if len(live) > payload.RelayInstances {
+			payload.RelayInstances = len(live)
+		}
+
 		users, err := cfg.Store.ListUsers(ctx)
 		if err != nil {
 			payload.Warnings = append(payload.Warnings, "bootstrap_admin_lookup_failed")

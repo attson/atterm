@@ -78,6 +78,7 @@ func TestAdminTraffic_DetailView(t *testing.T) {
 		Rows []struct {
 			FrameType     int    `json:"frame_type"`
 			FrameTypeName string `json:"frame_type_name"`
+			Category      string `json:"category"`
 			Direction     int    `json:"direction"`
 			Bytes         int64  `json:"bytes"`
 		} `json:"rows"`
@@ -92,10 +93,51 @@ func TestAdminTraffic_DetailView(t *testing.T) {
 			if r.FrameTypeName == "" {
 				t.Error("detail row missing frame_type_name")
 			}
+			if r.Category != "terminal" {
+				t.Errorf("detail row category = %q, want terminal", r.Category)
+			}
 		}
 	}
 	if outBytes != 1000 {
 		t.Errorf("OUT frame bytes = %d, want 1000", outBytes)
+	}
+}
+
+func TestAdminTraffic_DayBucketKeepsDaysSeparate(t *testing.T) {
+	srv, store, adminID, tok := newAdminTestServer(t)
+	today := time.Now().UTC()
+	from := today.AddDate(0, 0, -1).Format("2006-01-02")
+	to := today.Format("2006-01-02")
+	for _, day := range []string{from, to} {
+		if err := store.AddTrafficDeltas(context.Background(), day, []userstore.TrafficDelta{
+			{UserID: adminID, FrameType: int(proto.TypeOut), Direction: trafficOut, Bytes: 100, Frames: 1},
+		}); err != nil {
+			t.Fatalf("seed traffic for %s: %v", day, err)
+		}
+	}
+
+	rec := adminGetBearer(srv, "/admin/api/traffic?view=detail&bucket=day&from="+from+"&to="+to, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Bucket string `json:"bucket"`
+		Rows   []struct {
+			Day   string `json:"day"`
+			Bytes int64  `json:"bytes"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Bucket != "day" {
+		t.Errorf("bucket = %q, want day", resp.Bucket)
+	}
+	if len(resp.Rows) != 2 {
+		t.Fatalf("len(rows) = %d, want 2", len(resp.Rows))
+	}
+	if resp.Rows[0].Day != from || resp.Rows[1].Day != to {
+		t.Errorf("days = [%q, %q], want [%q, %q]", resp.Rows[0].Day, resp.Rows[1].Day, from, to)
 	}
 }
 
@@ -139,6 +181,22 @@ func TestAdminTraffic_InvalidDate(t *testing.T) {
 func TestAdminTraffic_InvalidView(t *testing.T) {
 	srv, _, _, tok := newAdminTestServer(t)
 	rec := adminGetBearer(srv, "/admin/api/traffic?view=bogus", tok)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestAdminTraffic_InvalidBucket(t *testing.T) {
+	srv, _, _, tok := newAdminTestServer(t)
+	rec := adminGetBearer(srv, "/admin/api/traffic?bucket=hour", tok)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestAdminTraffic_ReversedDateRange(t *testing.T) {
+	srv, _, _, tok := newAdminTestServer(t)
+	rec := adminGetBearer(srv, "/admin/api/traffic?from=2026-09-21&to=2026-09-20", tok)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}

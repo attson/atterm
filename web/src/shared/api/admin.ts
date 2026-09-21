@@ -2,6 +2,7 @@ import { apiFetch } from './client'
 import type {
   AdminConfig,
   AdminConfigUpdate,
+  AdminHealthResponse,
   AdminTrafficResponse,
   AdminUserRow,
   FeishuAdminConfig,
@@ -11,6 +12,7 @@ import type {
   InvitationRow,
   ResetPasswordResponse,
   TrafficView,
+  TrafficBucket,
 } from './types'
 
 // User listing + role + status (admin/api/users).
@@ -108,13 +110,20 @@ export async function generateFeishuKey(): Promise<string> {
 // server default to the last 7 days.
 export async function getTrafficStats(params: {
   view?: TrafficView
+  bucket?: TrafficBucket
   from?: string
   to?: string
 }): Promise<AdminTrafficResponse> {
   const q = new URLSearchParams()
   if (params.view) q.set('view', params.view)
+  if (params.bucket) q.set('bucket', params.bucket)
   if (params.from) q.set('from', params.from)
   if (params.to) q.set('to', params.to)
   const { data } = await apiFetch<AdminTrafficResponse>(`/admin/api/traffic?${q.toString()}`)
+  return data
+}
+
+export async function getAdminHealth(): Promise<AdminHealthResponse> {
+  const { data } = await apiFetch<AdminHealthResponse>('/admin/api/health')
   return data
 }

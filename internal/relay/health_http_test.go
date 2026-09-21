@@ -349,6 +349,9 @@ func TestHealthPayload_JSONFieldsStable(t *testing.T) {
 		"rate_limit_per_minute",
 		"max_connections_per_key",
 		"active_uplinks",
+		"active_sessions",
+		"relay_instances",
+		"traffic_flush_interval_seconds",
 		"mobile_origin_compatible",
 		"generated_at",
 	}

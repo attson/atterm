@@ -2,6 +2,7 @@ package relay
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
@@ -10,6 +11,7 @@ import (
 type trafficRow struct {
 	UserID        string `json:"user_id"`
 	Email         string `json:"email,omitempty"`
+	Day           string `json:"day,omitempty"`
 	FrameType     int    `json:"frame_type,omitempty"`
 	FrameTypeName string `json:"frame_type_name,omitempty"`
 	Category      string `json:"category,omitempty"`
@@ -19,16 +21,18 @@ type trafficRow struct {
 }
 
 type trafficResponse struct {
-	View string       `json:"view"`
-	From string       `json:"from"`
-	To   string       `json:"to"`
-	Rows []trafficRow `json:"rows"`
+	View   string       `json:"view"`
+	Bucket string       `json:"bucket"`
+	From   string       `json:"from"`
+	To     string       `json:"to"`
+	Rows   []trafficRow `json:"rows"`
 }
 
 // handleAdminTrafficHTTP implements GET /admin/api/traffic. Query params:
 //
 //	view = detail | group | summary   (default: group)
-//	from, to = YYYY-MM-DD             (default: last 7 days ending today UTC)
+//	bucket = range | day               (default: range)
+//	from, to = YYYY-MM-DD              (default: last 7 days ending today UTC)
 //
 // It reads the daily rollup rows for [from, to] and aggregates them by the
 // requested view: detail keeps per-frame-type granularity, group folds frame
@@ -42,6 +46,15 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 		view = "group"
 	default:
 		http.Error(w, "invalid view", http.StatusBadRequest)
+		return
+	}
+	bucket := r.URL.Query().Get("bucket")
+	switch bucket {
+	case "range", "day":
+	case "":
+		bucket = "range"
+	default:
+		http.Error(w, "invalid bucket", http.StatusBadRequest)
 		return
 	}
 
@@ -58,6 +71,10 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid date, use YYYY-MM-DD", http.StatusBadRequest)
 		return
 	}
+	if from > to {
+		http.Error(w, "invalid date range", http.StatusBadRequest)
+		return
+	}
 
 	rows, err := s.cfg.Store.QueryTraffic(r.Context(), from, to)
 	if err != nil {
@@ -70,6 +87,7 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 	// summary both stay zero-valued, so only user+direction distinguish rows.
 	type aggKey struct {
 		user string
+		day  string
 		disc int
 		cat  string
 		dir  int
@@ -77,6 +95,9 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 	agg := map[aggKey]*trafficRow{}
 	for _, rr := range rows {
 		k := aggKey{user: rr.UserID, dir: rr.Direction}
+		if bucket == "day" {
+			k.day = rr.Day
+		}
 		switch view {
 		case "detail":
 			k.disc = rr.FrameType
@@ -85,11 +106,12 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		cell := agg[k]
 		if cell == nil {
-			cell = &trafficRow{UserID: rr.UserID, Email: emails[rr.UserID], Direction: rr.Direction}
+			cell = &trafficRow{UserID: rr.UserID, Email: emails[rr.UserID], Day: k.day, Direction: rr.Direction}
 			switch view {
 			case "detail":
 				cell.FrameType = rr.FrameType
 				cell.FrameTypeName = frameTypeName(proto.Type(rr.FrameType))
+				cell.Category = frameCategory(proto.Type(rr.FrameType))
 			case "group":
 				cell.Category = k.cat
 			}
@@ -102,7 +124,25 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 	for _, c := range agg {
 		out = append(out, *c)
 	}
-	writeJSONStatus(w, http.StatusOK, trafficResponse{View: view, From: from, To: to, Rows: out})
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Day != out[j].Day {
+			return out[i].Day < out[j].Day
+		}
+		if out[i].Email != out[j].Email {
+			return out[i].Email < out[j].Email
+		}
+		if out[i].UserID != out[j].UserID {
+			return out[i].UserID < out[j].UserID
+		}
+		if out[i].Category != out[j].Category {
+			return out[i].Category < out[j].Category
+		}
+		if out[i].FrameType != out[j].FrameType {
+			return out[i].FrameType < out[j].FrameType
+		}
+		return out[i].Direction < out[j].Direction
+	})
+	writeJSONStatus(w, http.StatusOK, trafficResponse{View: view, Bucket: bucket, From: from, To: to, Rows: out})
 }
 
 func validDay(s string) bool {

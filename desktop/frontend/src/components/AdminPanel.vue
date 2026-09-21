@@ -45,14 +45,15 @@ const overrides = getNaiveOverrides();
 </script>
 
 <template>
-  <n-config-provider
-    :theme="darkTheme"
-    :theme-overrides="overrides"
-    :locale="naiveLocaleValue"
-    :date-locale="naiveDateLocaleValue"
-  >
-    <n-message-provider>
-      <div class="admin-panel">
+  <div class="admin-panel">
+    <n-config-provider
+      abstract
+      :theme="darkTheme"
+      :theme-overrides="overrides"
+      :locale="naiveLocaleValue"
+      :date-locale="naiveDateLocaleValue"
+    >
+      <n-message-provider>
         <div class="admin-tabs">
           <button
             v-for="tab in tabs"
@@ -72,17 +73,20 @@ const overrides = getNaiveOverrides();
           <FeishuConfig v-if="active === 'feishu'" />
           <Traffic v-if="active === 'traffic'" />
         </div>
-      </div>
-    </n-message-provider>
-  </n-config-provider>
+      </n-message-provider>
+    </n-config-provider>
+  </div>
 </template>
 
 <style scoped>
 .admin-panel {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 .admin-tabs {
   display: flex;

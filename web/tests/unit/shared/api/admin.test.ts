@@ -8,6 +8,8 @@ import {
   promoteUser,
   demoteUser,
   getAdminConfig,
+  getAdminHealth,
+  getTrafficStats,
   setAdminConfig,
 } from '@shared/api/admin'
 import { clearRelayConfig, saveRelayConfig } from '@shared/api/relay-config'
@@ -190,5 +192,32 @@ describe('admin /admin/api/config', () => {
     const init = fetchMock.mock.calls[0]![1] as RequestInit
     expect(init.method).toBe('PUT')
     expect(JSON.parse(init.body as string)).toEqual({ rate_limit_per_minute: 200, max_connections_per_key: 32 })
+  })
+})
+
+describe('admin traffic dashboard APIs', () => {
+  beforeEach(() => {
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null, allowInsecure: false })
+    vi.restoreAllMocks()
+  })
+
+  it('requests daily detail traffic for the requested date range', async () => {
+    const response = { view: 'detail', bucket: 'day', from: '2026-09-01', to: '2026-09-14', rows: [] }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, response))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getTrafficStats({ view: 'detail', bucket: 'day', from: '2026-09-01', to: '2026-09-14' })
+
+    expect(fetchMock.mock.calls[0]![0]).toBe('/admin/api/traffic?view=detail&bucket=day&from=2026-09-01&to=2026-09-14')
+  })
+
+  it('loads platform health independently of user traffic', async () => {
+    const response = { active_sessions: 3, active_uplinks: 2, relay_instances: 1, traffic_flush_interval_seconds: 60 }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, response))
+    vi.stubGlobal('fetch', fetchMock)
+
+    expect(await getAdminHealth()).toEqual(response)
+    expect(fetchMock.mock.calls[0]![0]).toBe('/admin/api/health')
   })
 })

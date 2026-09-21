@@ -724,6 +724,18 @@ func TestMirrorUpdateCwdTitlePreservesAdoptedDriver(t *testing.T) {
 	}
 }
 
+func TestCompareAndSwapTitleDoesNotOverwriteNewerTitle(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Title: "observed"})
+	s.UpdateCwdTitle("", "newer OSC title")
+
+	if swapped := s.CompareAndSwapTitle("observed", "derived title"); swapped {
+		t.Fatal("stale compare-and-swap unexpectedly replaced the newer title")
+	}
+	if got := s.Info().Title; got != "newer OSC title" {
+		t.Fatalf("Title = %q, want newer OSC title", got)
+	}
+}
+
 func TestMirrorLateSubscriberSeesAdoptedUpstreamDriver(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 	s.SetDriverFromUpstream(true)

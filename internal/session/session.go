@@ -450,6 +450,27 @@ func (s *Session) UpdateCwdTitle(cwd, title string) {
 	}
 }
 
+// CompareAndSwapTitle replaces the title only when it still equals oldTitle.
+// Background metadata enrichers use this so a live OSC title that arrives
+// between their snapshot read and write remains authoritative.
+func (s *Session) CompareAndSwapTitle(oldTitle, newTitle string) bool {
+	if newTitle == "" || newTitle == oldTitle {
+		return false
+	}
+	s.mu.Lock()
+	if s.meta.Title != oldTitle {
+		s.mu.Unlock()
+		return false
+	}
+	s.meta.Title = newTitle
+	metaCopy := s.meta
+	driverID := s.driverClientID
+	driverName := s.driverClientName
+	s.mu.Unlock()
+	s.broadcastDriverMeta(metaCopy, driverID, driverName)
+	return true
+}
+
 // UpdateAdvertisedInfo reconciles metadata from an ANNOUNCE snapshot without
 // adopting driver state. ANNOUNCEs are owner-published session facts, not
 // subscriber-control facts.

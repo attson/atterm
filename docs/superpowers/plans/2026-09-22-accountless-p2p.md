@@ -10,13 +10,13 @@
 
 | Stage | Scope | Milestones | Plan |
 |---|---|---|---|
-| 0 | 规范冻结与风险 spike | P0 | [Stage 0 - Spec and spikes](./2026-09-22-accountless-p2p-stage-0-spec-spikes.md) |
-| 1 | Peer Space、邀请、去中心化配置副本 | P1-P2 | [Stage 1 - Space and sync](./2026-09-22-accountless-p2p-stage-1-space-sync.md) |
-| 2 | 加密 Peer transport 与 Rendezvous | P3-P4 | [Stage 2 - Transport and rendezvous](./2026-09-22-accountless-p2p-stage-2-transport-rendezvous.md) |
-| 3 | 全端接入、Settings 与 MVP 发布 | P5-P6 | [Stage 3 - Client and MVP](./2026-09-22-accountless-p2p-stage-3-client-settings-mvp.md) |
-| 4 | Quick Tunnel、Hybrid 与能力扩展 | P7-P9 | [Stage 4 - Routes and hardening](./2026-09-22-accountless-p2p-stage-4-routes-hardening.md) |
+| 0 | Relay P2P 规范与风险 spike | P0 | [Stage 0 - Relay P2P foundation](./2026-09-22-accountless-p2p-stage-0-relay-p2p-foundation.md) |
+| 1 | Relay 体系内直连加速与自动 fallback | P1-P2 | [Stage 1 - Relay acceleration](./2026-09-22-accountless-p2p-stage-1-relay-acceleration.md) |
+| 2 | Peer Space、去中心化同步与 Quick Tunnel | P3-P5 | [Stage 2 - Quick Tunnel and Peer Space](./2026-09-22-accountless-p2p-stage-2-quick-tunnel-peer-space.md) |
+| 3 | 官方/自建 Rendezvous 稳定发现 | P6-P7 | [Stage 3 - Rendezvous](./2026-09-22-accountless-p2p-stage-3-rendezvous.md) |
+| 4 | 统一选路、能力扩展与 hardening | P8-P9 | [Stage 4 - Hybrid and hardening](./2026-09-22-accountless-p2p-stage-4-hybrid-hardening.md) |
 
-依赖关系固定为 `Stage 0 -> Stage 1 -> Stage 2 -> Stage 3 -> Stage 4`。Stage 0 的 Quick Tunnel spike 只产生结论，不让 Stage 4 反向阻塞 MVP。
+依赖关系固定为 `Relay P2P 加速 -> Quick Tunnel 无账户模式 -> Rendezvous 稳定模式 -> Hybrid/hardening`。Stage 0 可以提前验证 Quick Tunnel/Rendezvous 可行性，但不让后两者阻塞 Relay 加速落地。
 
 ## 1. Goal
 
@@ -32,6 +32,8 @@
 - WebRTC DataChannel 是默认数据路径；Quick Tunnel 后续可作为账户无关的加密 WebSocket 回退路径。
 - Relay 与 Peer 可以独立启用。后续 Hybrid 模式优先 Peer，失败时回退 Relay。
 
+交付顺序刻意分层：第一阶段只在现有 Relay 账户体系内增加 WebRTC 直连数据面，复用 OPAQUE、`account_key`、session permission 和 Relay fallback；第二阶段才引入 Peer Space 与 Quick Tunnel，实现真正无账户连接；最后增加官方/自建 Rendezvous，解决稳定发现而不重新设计信任和数据通道。
+
 这套模式解决的是“脱离 Relay 账户体系”，不承诺所有网络环境都能纯直连。MVP 不提供 TURN；对称 NAT 等无法建立直连的场景会明确报错，并在后续由 Quick Tunnel 或用户自行配置的 TURN/Relay 路径解决。
 
 ## 2. Product Model
@@ -45,7 +47,19 @@
 | Session transport | WebRTC DataChannel、Quick Tunnel WSS、Relay WS | 必须通过 Peer 或 Relay 各自鉴权 | Yes |
 | Config replication | signed op log、version vector、snapshot | Peer Space membership + sync/vault epoch key | No terminal bytes |
 
-连接路径：
+第一阶段的 Relay P2P 加速：
+
+```text
+client -------- auth/list/signaling/driver --------> Relay <------ uplink presence
+   |                                                   |
+   +================ WebRTC terminal data =============+----> desktop host
+   |                                                   |
+   +------------ existing Relay WS fallback -----------+
+```
+
+Relay 仍是账户和控制面；WebRTC 是可失败的加速数据面。客户端先通过 Relay attach，再尝试 direct upgrade，因此这个阶段不会制造“直连失败后整个远程不可用”的新故障模式。
+
+最终的账户无关连接路径：
 
 ```text
                                +--------------------------+
@@ -81,6 +95,12 @@ MVP 不包含：
 - 把 Quick Tunnel 当作有 SLA 的平台服务；它始终标为实验性第三方路径。
 
 ## 4. Security Model
+
+### 4.0 Relay-assisted direct authentication
+
+Stage 1 不创建 Peer identity。Relay 先验证账户、session ownership 和 permission，并签发短期单次 direct ticket；随后双方还要验证绑定 ticket/session/client/host 的 `account_key` possession proof。Relay ticket 只能授权路由，不能单独完成直连认证，因为 Relay 本身不持有 `account_key`，也应按潜在恶意 signaling intermediary 处理。
+
+原始 `account_key` 仍留在现有 main-thread/Go owner。专用 helper 从它派生一次性的 direct proof key；Pion transport、signaling payload、日志和 Peer store 都不得接触原始 key。Stage 2 换成 Peer membership authenticator 时，只替换 handshake auth provider，不改变 DataChannel、record 或 frame path。
 
 ### 4.1 Identities
 
@@ -244,7 +264,7 @@ Peer Space 没有“服务器上的用户记录”。所有决策都是签名 op
   - 复用现有 v1 frame codec；MVP 不分配新 Type
   - `docs/spec/protocol.md` 新增“Peer transport envelope”章节，不改变现有 WS payload
 
-P3 开始前先做一个小型 refactor spike，验证现有 local relay/session router 的复用点。目标是把 `internal/relay/client_conn.go` 中与 WebSocket 无关的 frame dispatch 提取为 transport-neutral handler，由现有 WS 和 Peer adapter 共用；不复制一套 LIST/ATTACH/replay/driver state machine。若 spike 证明该改动会扩大现有 Relay 风险，则改用 `desktop/uplink.go` 的窄 adapter，但同样禁止复制 `internal/session` 状态。
+Stage 0/P1 先做一个小型 refactor spike，验证现有 local relay/session router 的复用点。目标是把 `internal/relay/client_conn.go` 中与 WebSocket 无关的 frame dispatch 提取为 transport-neutral handler，由现有 WS 和 direct adapter 共用；不复制一套 LIST/ATTACH/replay/driver state machine。若 spike 证明该改动会扩大现有 Relay 风险，则改用 `desktop/uplink.go` 的窄 adapter，但同样禁止复制 `internal/session` 状态。
 
 ### 5.2 TypeScript/client
 
@@ -399,21 +419,7 @@ Peer channel 已端到端加密，但同步 payload 仍使用 epoch key 封装�
 - 用户关闭 Relay 后只停 Relay adapter，不删除 local replica、Space keys 或 pending ops。
 - 用户退出/删除 Peer Space 只移除 Peer membership 与 Space keys，不清除本地业务配置；是否同时清配置必须另行确认。
 
-## 7. Rendezvous Service
-
-MVP Rendezvous 是无账户、无持久数据库的短期信令服务：
-
-- Host 维持到服务的 WSS registration，使用 peer identity challenge signature 证明 peer id 所有权。
-- Client 向高熵 opaque topic 投递 offer/ICE；Host 回 answer/ICE。
-- 信令 payload 在客户端与主机间加密，服务只看到 topic、大小、时间和来源 IP，不看到 SDP candidate 内容。
-- mailbox TTL 120 秒；单 message 64 KiB；单 topic、单 IP、全局连接数均有限制。
-- 不接受 terminal `proto.Frame`，不提供 store-and-forward，不提供 TURN。
-- 必须配置 TLS、Origin allowlist、rate limits；生产环境不支持明文公网 HTTP。
-- 官方与自建服务使用同一协议；客户端只把 URL 当配置，不把官方域名写死在 crypto transcript。
-
-建议接口在 spec 阶段定为 WebSocket-only，避免 polling 与 WS 两套状态机。服务可独立部署，也可由官方基础设施反代到固定路径。
-
-## 8. Quick Tunnel
+## 7. Quick Tunnel
 
 Quick Tunnel 是可选路径，不属于 atterm 账户或官方 Rendezvous：
 
@@ -430,6 +436,22 @@ Quick Tunnel 是可选路径，不属于 atterm 账户或官方 Rendezvous：
 - WebSocket upgrade、长连接和 idle timeout 实测。
 - `cloudflared` Apache-2.0 NOTICE、二进制体积、平台签名/公证与 release asset 供应链。
 - 是否随 app 打包。若未通过供应链 gate，首版只支持自动发现系统已有 `cloudflared`，UI 明确提示缺失，不静默下载未验签二进制。
+
+Quick Tunnel 是第一个无 Relay 账户交付路径。它先跑通 Peer Space、邀请、去中心化同步与加密 WSS fallback；临时 URL 的可用性问题由后续 Rendezvous 解决。
+
+## 8. Rendezvous Service
+
+Rendezvous 在 Quick Tunnel 无账户模式稳定之后交付，是无账户、无持久数据库的短期信令服务：
+
+- Host 维持到服务的 WSS registration，使用 peer identity challenge signature 证明 peer id 所有权。
+- Client 向高熵 opaque topic 投递 offer/ICE；Host 回 answer/ICE。
+- 信令 payload 在客户端与主机间加密，服务只看到 topic、大小、时间和来源 IP，不看到 SDP candidate 内容。
+- mailbox TTL 120 秒；单 message 64 KiB；单 topic、单 IP、全局连接数均有限制。
+- 不接受 terminal `proto.Frame`，不提供 store-and-forward，不提供 TURN。
+- 必须配置 TLS、Origin allowlist、rate limits；生产环境不支持明文公网 HTTP。
+- 官方与自建服务使用同一协议；客户端只把 URL 当配置，不把官方域名写死在 crypto transcript。
+
+建议接口在 spec 阶段定为 WebSocket-only，避免 polling 与 WS 两套状态机。服务可独立部署，也可由官方基础设施反代到固定路径。
 
 ## 9. Settings Information Architecture
 
@@ -462,195 +484,78 @@ Session UI 增加实际 route indicator：`Direct`、`Quick Tunnel`、`Relay`。
 
 ## 10. Delivery Plan
 
-### P0 - Spec, threat model, and compatibility spikes
+### P0 - Relay P2P protocol and spikes
 
-Deliverables:
+- [ ] 冻结 Relay signaling/direct ticket/account-key proof/record/route handover 规范。
+- [ ] 验证 Go↔Browser crypto vectors、Pion/WebKit、fragment/backpressure。
+- [ ] 证明 Relay→Direct→Relay 按 OUT seq 切换无 gap/duplicate，且只有一个 input/driver lease。
+- [ ] Quick Tunnel、Peer identity、config CRDT、Rendezvous 只做非阻塞可行性记录。
 
-- [ ] 新增 `docs/superpowers/specs/2026-09-22-accountless-p2p-design.md`，冻结 ticket/grant/handshake/record/rendezvous/config-sync schemas。
-- [ ] Go + Browser P-256 sign/verify/ECDH golden-vector spike，覆盖 Safari/WKWebView target。
-- [ ] Pion DataChannel host ↔ browser spike，验证 ordered/reliable、fragment size、backpressure、ICE restart。
-- [ ] local relay frame-dispatch reuse spike，记录选定 adapter 边界。
-- [ ] 用三设备分区模型验证 HLC/version-vector/CRDT 决策，冻结 Relay compatibility adapter 行为。
-- [ ] Quick Tunnel WSS capability/packaging spike，结果不阻塞 MVP。
-- [ ] 为 threat model 列出资产、攻击者能力、泄露面和 fail-closed 行为。
+### P1 - Relay signaling and direct transport
 
-Acceptance:
+- [ ] 增加 authenticated Relay signaling control plane 和 scoped one-time direct ticket。
+- [ ] Pion host、browser RTC adapter、可插拔 handshake authenticator。
+- [ ] 第一种 authenticator 使用 Relay account + `account_key` possession proof。
+- [ ] transport-neutral frame path 复用现有 LIST/ATTACH/replay/driver state。
 
-- Go/Chromium/WebKit 对同一 vectors 的 key encoding、signature、ECDH、HKDF 和 AEAD 结果一致。
-- 恶意 signaling relay 无法伪装 host/client 或读取 Peer record plaintext。
-- A/B/C 在离线并发修改后交换同一 op set，最终 materialized config byte-for-byte 一致。
-- 明确记录哪些 metadata 对 Rendezvous、STUN、Cloudflare 可见。
-- 在 spike 通过前不进入 UI 实现。
+### P2 - Relay-first direct upgrade and fallback
 
-### P1 - Peer Space identity, trust store, and pre-signed invitations
+- [ ] Relay attach 后 opportunistic upgrade，DIRECT_READY 后才释放 Relay subscriber。
+- [ ] Direct 失败按 last committed seq 恢复 Relay，不重复 OUT/IN。
+- [ ] 保持 lazy stream、REPLAY_PROGRESS、permission 双重 enforcement。
+- [ ] 上线 `Prefer direct connection`、route indicator、metrics 和 staged feature flag。
 
-Deliverables:
+Relay 加速 release gate 到此：旧客户端不变、直连失败永远可回现有 Relay。
 
-- [ ] `peercrypto`、`peerproto`、`peerstore` typed APIs 与 tests。
-- [ ] Peer Space create/join、membership certificate、capability delegation 与 governance log。
-- [ ] Desktop keyring identity + encrypted local trust store。
-- [ ] Web non-exportable WebCrypto identity；iOS Keychain identity plugin。
-- [ ] ticket batch create/list/revoke/consume ledger。
-- [ ] DeviceGrant issuance、delegation depth 1、permission narrowing、deny-wins revocation 和 epoch rotation。
-- [ ] Wails/Platform typed bindings；所有敏感值日志 redaction tests。
+### P3 - Peer Space and decentralized config
 
-Acceptance:
+- [ ] Device identity、Space genesis/membership、预签邀请、issuer-bound consume、revocation。
+- [ ] `configsync` signed op/HLC/version vector/CRDT/snapshot/epoch keys。
+- [ ] 现有 18 个同步 key 迁移；Relay 成为 optional compatibility adapter。
+- [ ] Stage 1 transport 接入 Peer membership authenticator，不复制 WebRTC/frame stack。
 
-- 重启后 device identity 稳定；清除 identity 是显式 destructive action。
-- 10 个并发 redemption 对单次 ticket 只有一个成功；非 redemption device 一律不能核销。
-- revoked/expired/unknown/consumed 对外返回同一错误。
-- ticket 可在没有当前 route URL 时预生成，之后能组合 Rendezvous 或 Quick Tunnel bundle。
-- Relay `account_key` 与 Peer store 之间没有 import、copy 或派生路径。
+### P4 - Quick Tunnel accountless route
 
-### P2 - Decentralized config replica
+- [ ] cloudflared lifecycle 和 loopback peer gateway。
+- [ ] 临时 route bundle、tunnel signaling、WebRTC-first。
+- [ ] 用户允许时使用 application-encrypted WSS fallback。
+- [ ] URL 轮换只刷新 route bundle，不重建 membership。
 
-Deliverables:
+### P5 - Accountless Quick Tunnel UX
 
-- [ ] `internal/configsync` signed op、HLC、version vector、merge 和 materialized view。
-- [ ] scalar LWW register、record-level remove-wins map、stable ordered collection。
-- [ ] sync/vault key epochs、per-member envelopes、snapshot/compaction。
-- [ ] current `prefssync.Adapter` values 到 new replica 的 one-time migration。
-- [ ] Relay compatibility adapter；替换双 engine 直接回写为一个 canonical engine。
-- [ ] profiles/SSH hosts 从 whole blob 到 record-level representation 的兼容桥。
+- [ ] Desktop/Web/iOS invitation join、bootstrap、reconnect、anti-entropy。
+- [ ] Settings 合并 `Relay 账户`，新增 `Peer 连接`、Quick Tunnel 和 sync state。
+- [ ] Relay devices 与 Peer members 分离；secret sync default off。
+- [ ] 无 Relay 账号完成 attach/control/config sync。
 
-Acceptance:
+Quick Tunnel accountless release gate 到此：明确临时 URL 与至少两台设备同时可达才同步的限制。
 
-- 三设备随机乱序/重复/延迟投递同一 op set 后状态一致，property test 连续运行至少 10,000 seeds。
-- 删除与并发更新按 remove-wins 收敛；不同 records 的并发修改都保留。
-- 被撤销成员不能解开新 epoch 的 sync/vault payload；无 `can_sync_secrets` 成员永远拿不到 vault key envelope。
-- Relay-only 升级后现有 18 个 synced keys 不丢值，旧客户端仍可通过现有 API 同步。
-- Peer adapter 关闭或无在线 peer 时本地 setter 仍立即成功，pending ops 跨重启保留。
+### P6 - Minimal Rendezvous service
 
-### P3 - Authenticated Peer transport core
+- [ ] `internal/rendezvous` + `cmd/atterm-rendezvous`。
+- [ ] TLS/WSS、encrypted SDP/ICE、presence TTL、limits、health/metrics。
+- [ ] 无账户 DB、无 config store、无 terminal relay、无 TURN。
+- [ ] 官方与自建运行同一 contract suite。
 
-Deliverables:
+### P7 - Stable discovery and Rendezvous UX
 
-- [ ] Pion host + native browser RTC client。
-- [ ] 双向 authenticated handshake、encrypted record、fragmentation 和 backpressure。
-- [ ] transport-neutral frame adapter 复用现有 `proto.Frame` 和 session state machine。
-- [ ] Peer principal、session scope、effective permission 双重 enforcement。
-- [ ] 只开放 MVP frame allowlist；其余 frame fail closed。
-- [ ] in-memory signaling integration tests，不依赖公网。
-- [ ] 独立 `atterm-sync-v1` DataChannel 和优先级/backpressure，不计入 terminal subscriber。
+- [ ] 稳定 member discovery、sync dialing、official/custom/disabled config。
+- [ ] Desktop restart 后无需重新分享 Quick Tunnel URL 即可重连。
+- [ ] Rendezvous 只参与连接建立；WebRTC 成功后数据不经过服务。
+- [ ] Direct 失败可选 Quick Tunnel；没有 fallback 时明确报告 NAT 限制。
 
-Acceptance:
+### P8 - Unified hybrid routing
 
-- 可 list、attach、加载 scrollback、view、claim driver、input、resize、close client connection。
-- 0 个 Peer subscriber 时不发送 PTY OUT；0→1/N→0 lazy lifecycle 与现有 Relay 一致。
-- 大 scrollback 仍有 `REPLAY_PROGRESS` 且客户端不卡在 connecting。
-- 篡改 transcript、重放 record、counter 回退、超限 fragment、越权 frame 均断开且不写 PTY。
-- Peer 连接失败不影响本地 terminal，也不改变 Relay uplink 状态。
-- terminal 高输出时 config sync 能最终完成；config snapshot 传输不能阻塞 input/control。
+- [ ] 按 `session_id` 合并 Direct、Quick Tunnel、Relay candidates。
+- [ ] `Direct > enabled Quick Tunnel > enabled Relay`，同时尊重 trust principal 和用户策略。
+- [ ] route generation + OUT seq 去重、single input lease、flap cooldown。
+- [ ] Peer-only 不触发 Relay 登录依赖。
 
-### P4 - Accountless Rendezvous
+### P9 - Capability expansion and hardening
 
-Deliverables:
-
-- [ ] `internal/rendezvous` 与 `cmd/atterm-rendezvous`。
-- [ ] encrypted WSS signaling protocol、TTL mailbox、limits、origin/TLS policy。
-- [ ] Desktop host registration/reconnect；client offer/answer/trickle ICE。
-- [ ] Space member presence 与 peer-to-peer sync dialing；presence 不暴露配置内容，也不成为成员真相源。
-- [ ] official/custom/disabled config，默认 STUN config 与隐私说明。
-- [ ] self-host deployment docs、health endpoint 和 metrics（无 payload logging）。
-
-Acceptance:
-
-- Rendezvous 无 user/account/token database，重启只丢失临时信令。
-- 抓包和 server logs 中无 invite secret、grant private material、SDP plaintext、terminal bytes。
-- 服务不可用时 Peer host/local terminal 正常；客户端得到可区分的 signaling failure。
-- 官方和自建实现跑同一 contract suite。
-
-### P5 - Shared client, join UX, and Peer sync (MVP feature complete)
-
-Deliverables:
-
-- [ ] `BinaryFrameTransport` + WS/RTC adapters。
-- [ ] Web/Wails/Capacitor route-aware session list and attach。
-- [ ] QR scan、paste invitation、fingerprint confirmation、join result。
-- [ ] route-independent invitation batch UI 与 trusted-device revoke UI。
-- [ ] bootstrap snapshot、background anti-entropy、pending/conflict/status events。
-- [ ] stable secure-origin handling；invite secret 仅进 URL fragment/deep-link payload，不进 query。
-- [ ] 中英文文案、keyboard/focus/mobile safe-area states。
-
-Acceptance:
-
-- 全新 iOS/Web/Desktop client 不登录 Relay 即可通过 invitation attach 桌面 session。
-- 同一 ticket 通过 official 和 self-hosted Rendezvous 都能兑换。
-- 刷新/重启后使用 DeviceGrant 重连，不再次消耗 invitation。
-- A 改主题、B 新增 template、C 删除一个 profile 后，即使三者不同时在线，也能经中间设备最终收敛。
-- profiles/SSH secrets 默认不传播；显式开启后只到 `can_sync_secrets` devices。
-- view/control 权限在 UI 与 host 实际行为一致。
-- 旧 Relay-only 用户不创建 Peer identity、不多开网络连接、不改变现有行为。
-
-### P6 - Settings integration and Relay account consolidation
-
-Deliverables:
-
-- [ ] `SettingsDialog.vue` 自适应尺寸与滚动布局。
-- [ ] Relay config、Account 与 `SettingsDevices` 合并为 `Relay 账户` tab。
-- [ ] 新增 `Peer 连接` tab，并按 platform capability 隐藏 host-only controls。
-- [ ] Peer Space members、sync status/pending/conflict、secret-sync policy 与 key epoch 状态。
-- [ ] dirty-state protection 覆盖 Relay 和 Peer 表单；即时动作不错误标 dirty。
-- [ ] prototype 中所有 loading/empty/error/expired/revoked/offline states 对应到真实实现。
-
-Acceptance:
-
-- Desktop 1280x720、1440x900、宽屏和 Mobile 320/390px viewport 均可滚到最后一项。
-- 无横向 overflow、按钮文字截断、嵌套 card 或 footer 遮挡。
-- 已登录设备只出现在 Relay 账户；Peer trusted devices 不与 Relay sessions 混列。
-- Playwright screenshot + scroll assertions 通过。
-
-P5 与 P6 可以在 code ownership 不冲突时并行，但合并顺序为 transport/client 先、最终 IA 后。
-
-MVP release gate 到此。MVP 明确显示 “Direct connection may be unavailable on restrictive NAT; no TURN fallback configured”，并显示“配置只会在至少两台设备同时可达时同步”。
-
-### P7 - Quick Tunnel optional route
-
-Deliverables:
-
-- [ ] cloudflared process lifecycle、binary discovery/packaging gate。
-- [ ] local peer gateway、route bundle refresh、QR regeneration。
-- [ ] WebRTC-over-tunnel signaling。
-- [ ] optional encrypted WSS terminal fallback，复用同一 Peer handshake/record codec。
-- [ ] visible route/privacy/temporary URL status 与诊断日志。
-
-Acceptance:
-
-- 不配置 Rendezvous 也能通过 Quick Tunnel invitation 完成 join。
-- 直连成功后终端 bytes 不再经过 Quick Tunnel。
-- 强制 ICE 失败时，用户允许 WSS fallback 才切换；UI 显示 “Quick Tunnel”，不是 “Direct”。
-- cloudflared 崩溃、URL 轮换和 app quit 均正确清理，旧 URL/ticket 不泄露到日志。
-- 未安装 cloudflared 时错误可操作，本地/Relay 路径不受影响。
-
-### P8 - Hybrid route selection and Relay fallback
-
-Deliverables:
-
-- [ ] `routeManager` 同时维护 Peer direct、Quick Tunnel、Relay candidates。
-- [ ] 按 `session_id` 合并同一会话，保留各 route health，不生成重复 sidebar item。
-- [ ] policy：Direct Peer > user-enabled Quick Tunnel > user-enabled Relay。
-- [ ] attach 前切换、连接中降级、重连回升策略；禁止双 driver/input duplicate。
-- [ ] route indicator 与 diagnostics。
-
-Acceptance:
-
-- Direct 建立后不重复订阅 Relay stream，保持 lazy upload。
-- Direct 中断只发生一次受控切换，输入不重复、OUT seq 不倒退。
-- Relay 未登录时 Hybrid 自动退化为 Peer-only，不弹账户登录阻塞。
-- 两条路径返回同一 `session_id` 时只展示一条。
-
-### P9 - Full capability expansion and hardening
-
-按独立 PR 逐项开放，每项都需 permission + record size + cancellation tests：
-
-- [ ] paste image/file。
-- [ ] remote file explorer。
-- [ ] remote session create from profile。
-- [ ] remote web preview 独立 byte channel。
-- [ ] optional user-configured TURN，明确标为 relayed ICE path。
-- [ ] LAN/mDNS、manual address、IPv6 route hints；完全无公网模式。
-- [ ] grant expiry renewal、trust export/import（仍不含私钥明文）。
-- [ ] soak/fuzz/chaos、mobile background/foreground reconnect、电池与流量测量。
+- [ ] paste、file explorer、session create、preview 各自单独开放权限。
+- [ ] optional TURN、LAN/mDNS、manual/IPv6、完全无公网模式。
+- [ ] fuzz/NAT/chaos/soak、资源上限、grant/key renewal、battery/data measurement。
 
 ## 11. Test Strategy
 
@@ -666,6 +571,7 @@ Acceptance:
 ### Integration
 
 - Pion host ↔ headless Chromium/WebKit client。
+- Relay attach → Direct upgrade → Relay fallback 重复切换，验证 OUT seq、single input lease 和 lazy subscriber continuity。
 - NAT matrix：host candidate、server-reflexive、blocked UDP、symmetric NAT simulation。
 - Rendezvous restart、packet reorder、duplicate ICE、late answer、host reconnect。
 - Quick Tunnel process fake + opt-in real smoke test。
@@ -695,7 +601,7 @@ Acceptance:
 
 | Risk | Impact | Mitigation / gate |
 |---|---|---|
-| Symmetric NAT / UDP blocked | WebRTC direct fails | MVP 明示无 TURN；P7 Quick Tunnel WSS；后续 user-configured TURN |
+| Symmetric NAT / UDP blocked | WebRTC direct fails | P1-P2 自动回现有 Relay；P4 Quick Tunnel WSS；后续 user-configured TURN |
 | Invite copied/replayed | Unauthorized device enrollment | 256-bit secret、short expiry、仅 issuer/redemption device 原子 consume、batch/device revoke |
 | Delegated issuer compromised | Can mint valid child invitations | `can_invite` off by default、depth 1、permission narrowing、issuer revoke invalidates descendants |
 | No online overlap | Config changes remain pending | 明确 eventually-consistent 语义；显示 pending/last-sync；Rendezvous 不偷偷存配置 |
@@ -706,6 +612,7 @@ Acceptance:
 | Sync/vault key confusion | Non-secret member receives credentials | separate epoch keys/capabilities/AAD namespaces；secret sync off by default |
 | Op-log/tombstone growth | Disk/memory growth | signed snapshots、ack vectors、bounded retention；stale device uses full bootstrap |
 | Malicious Rendezvous MITM | Host spoofing or terminal disclosure | Signed ephemeral ECDH transcript + application record encryption；signal payload encrypted |
+| Malicious/compromised Relay signaling | Direct-channel MITM | Relay ticket 只做路由授权；双方还必须验证 `account_key`-bound transcript proof |
 | DTLS identity not bound | Two-leg proxy reads app frames | Never treat DTLS alone as authorization; Peer handshake keys every record |
 | Browser insecure context | WebCrypto/WebRTC unavailable | HTTPS/localhost only; fail before join with actionable state |
 | DataChannel size/backpressure | Memory growth or Safari disconnect | 16 KiB fragments、bounded reassembly、bufferedAmount watermarks |
@@ -713,7 +620,7 @@ Acceptance:
 | Permission bypass | Remote PTY/filesystem access | transport gate + desktop host gate; exhaustive frame matrix; unknown Type deny |
 | Quick Tunnel outage/change | Optional connection path unavailable | never required for local/Relay/Rendezvous; capability spike; visible third-party status |
 | cloudflared supply chain | Unsigned executable execution | package from pinned upstream artifact with checksums/signing review, or system binary only |
-| `account_key` leakage | Breaks existing Relay E2EE | separate packages/storage/API; no Peer function accepts account key; redaction tests |
+| `account_key` leakage | Breaks existing Relay E2EE | 原始 key 只留现有 main-thread/Go owner；专用 API 派生一次性 direct proof key，transport/store 不持有原始 key；redaction tests |
 | Duplicate Relay/Peer routes | Duplicate input/subscription | merge by `session_id`; one active route lease; explicit handover state machine |
 | Browser origin changes | Device identity appears lost | stable HTTPS UI origin; Quick Tunnel is endpoint only, never identity storage origin |
 | Host trust DB loss | Old grants/replay ledger unavailable | fail closed; identity backup is out of scope; UI explains reset invalidates all devices |
@@ -722,16 +629,15 @@ Acceptance:
 
 Recommended PR sequence:
 
-1. Spec + crypto/WebRTC/frame-router/config-merge spikes.
-2. Peer Space crypto/proto/store and cross-language vectors.
-3. Decentralized config replica + current Relay sync compatibility adapter.
-4. Pion transport + in-memory signaling + permission enforcement + sync DataChannel.
-5. Accountless Rendezvous service and deployment docs.
-6. Shared client transport + join/bootstrap/reconnect/anti-entropy flow.
-7. Settings IA, invitation/trusted-device/sync UI; ship behind feature flag.
-8. MVP beta soak and security review.
-9. Quick Tunnel signaling and encrypted WSS fallback.
-10. Hybrid Peer-first/Relay-fallback route manager.
-11. Full capabilities and LAN/manual/no-public-infrastructure routes.
+1. Relay direct-path spec + account-key proof/Pion/route-handover spikes.
+2. Relay signaling control plane + Pion/browser transport adapters.
+3. Relay-first direct upgrade、seq handover、automatic Relay fallback and beta rollout.
+4. Peer Space identity/invitations + decentralized config replica.
+5. Quick Tunnel lifecycle、WebRTC signaling、encrypted WSS fallback.
+6. Accountless join/bootstrap/Settings/sync; Quick Tunnel MVP soak.
+7. Minimal accountless Rendezvous service + official/self-hosted contract.
+8. Stable discovery、sync dialing and Rendezvous UX soak.
+9. Unified Direct/Quick Tunnel/Relay route manager.
+10. Full capabilities and LAN/manual/TURN/no-public-infrastructure routes.
 
 每个 PR 必须保持现有 Relay-only flow 可独立运行；任何 Peer 初始化失败都只能降低 Peer 状态，不能阻止 desktop boot、local PTY、Relay uplink 或 Settings 打开。

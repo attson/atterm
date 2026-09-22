@@ -4,6 +4,20 @@
 > Date: 2026-09-22
 > Prototype: `docs/prototypes/peer-connect/index.html`
 
+## Execution Documents
+
+本文是架构与产品决策总览。实际开发按下列阶段文档执行；阶段文档中的 PR 边界、entry/exit gate 和验证命令是实施时的权威清单。本文件 §10 的 P0-P9 保留为跨阶段里程碑映射。
+
+| Stage | Scope | Milestones | Plan |
+|---|---|---|---|
+| 0 | 规范冻结与风险 spike | P0 | [Stage 0 - Spec and spikes](./2026-09-22-accountless-p2p-stage-0-spec-spikes.md) |
+| 1 | Peer Space、邀请、去中心化配置副本 | P1-P2 | [Stage 1 - Space and sync](./2026-09-22-accountless-p2p-stage-1-space-sync.md) |
+| 2 | 加密 Peer transport 与 Rendezvous | P3-P4 | [Stage 2 - Transport and rendezvous](./2026-09-22-accountless-p2p-stage-2-transport-rendezvous.md) |
+| 3 | 全端接入、Settings 与 MVP 发布 | P5-P6 | [Stage 3 - Client and MVP](./2026-09-22-accountless-p2p-stage-3-client-settings-mvp.md) |
+| 4 | Quick Tunnel、Hybrid 与能力扩展 | P7-P9 | [Stage 4 - Routes and hardening](./2026-09-22-accountless-p2p-stage-4-routes-hardening.md) |
+
+依赖关系固定为 `Stage 0 -> Stage 1 -> Stage 2 -> Stage 3 -> Stage 4`。Stage 0 的 Quick Tunnel spike 只产生结论，不让 Stage 4 反向阻塞 MVP。
+
 ## 1. Goal
 
 在保留现有 Relay 账户模式的前提下，新增一套不依赖 atterm 账户的 Peer 连接模式：

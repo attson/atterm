@@ -1,0 +1,1783 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AT Term Relay &amp; Peer Prototype</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #1c222b;
+      --panel-3: #11161d;
+      --border: #30363d;
+      --border-soft: #252c35;
+      --fg: #d5dbe3;
+      --fg-dim: #8b949e;
+      --fg-muted: #66707c;
+      --accent: #58a6ff;
+      --accent-soft: rgba(88, 166, 255, 0.12);
+      --good: #3fb950;
+      --good-soft: rgba(63, 185, 80, 0.12);
+      --warn: #d29922;
+      --warn-soft: rgba(210, 153, 34, 0.12);
+      --bad: #f85149;
+      --bad-soft: rgba(248, 81, 73, 0.12);
+      --purple: #bc8cff;
+      --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Helvetica Neue", Arial, sans-serif;
+      --font-mono: "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace, "PingFang SC", "Hiragino Sans GB";
+      --topbar-h: 48px;
+      --sidebar-w: 190px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    body { min-height: 100vh; overflow: hidden; }
+    button, input, select { font: inherit; letter-spacing: 0; }
+    button { color: inherit; }
+    svg { display: block; }
+    [hidden] { display: none !important; }
+
+    .host-shell {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-rows: 42px minmax(0, 1fr);
+      color: #aeb8c4;
+      background: #090d12;
+    }
+
+    .host-titlebar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 11px;
+      border-bottom: 1px solid #252c35;
+      background: #10151b;
+    }
+
+    .host-brand { display: flex; align-items: center; gap: 8px; color: #e8eef5; font: 650 12px var(--font-mono); }
+    .host-brand svg { width: 15px; height: 15px; color: var(--accent); }
+    .host-tabs { align-self: stretch; display: flex; align-items: stretch; gap: 2px; }
+    .host-tab { min-width: 142px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--fg-muted); }
+    .host-tab.active { border-bottom-color: var(--accent); color: var(--fg); background: rgba(255,255,255,.018); }
+    .host-tab svg { width: 14px; height: 14px; }
+    .host-window-actions { margin-left: auto; color: var(--fg-muted); font: 10px var(--font-mono); }
+
+    .host-body { min-height: 0; display: grid; grid-template-columns: 208px minmax(0, 1fr); }
+    .host-session-list { padding: 16px 10px; border-right: 1px solid #242b33; background: #0d1218; }
+    .host-session-heading { padding: 0 8px 10px; color: #5d6874; font-size: 10px; text-transform: uppercase; }
+    .host-session { display: grid; gap: 4px; padding: 9px 10px; border-radius: 6px; color: #7f8a96; }
+    .host-session.active { color: #cdd5de; background: #141b23; }
+    .host-session span:last-child { color: #52606d; font: 9px var(--font-mono); }
+    .host-terminal { min-width: 0; padding: 20px 24px; overflow: hidden; color: #6e7b87; font: 12px/1.7 var(--font-mono); }
+    .host-terminal pre { margin: 0; white-space: pre-wrap; }
+    .host-prompt { color: #769bc4; }
+    .host-cursor { display: inline-block; width: 7px; height: 14px; vertical-align: -2px; background: #8092a3; }
+
+    .modal-scrim { position: fixed; z-index: 5; inset: 0; background: rgba(3,6,10,.68); backdrop-filter: blur(2px); }
+
+    .app {
+      position: fixed;
+      z-index: 10;
+      inset: 0;
+      width: min(1080px, calc(100vw - 40px));
+      height: min(720px, calc(100vh - 40px));
+      margin: auto;
+      display: grid;
+      grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+      min-height: 0;
+      border: 1px solid #3b4652;
+      border-radius: 8px;
+      background: var(--bg);
+      box-shadow: 0 30px 90px rgba(0,0,0,.58);
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border);
+      background: #11161d;
+      user-select: none;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 126px;
+      color: #eef4fb;
+      font-weight: 650;
+    }
+
+    .brand-mark {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #3a4654;
+      border-radius: 5px;
+      color: var(--accent);
+      background: #0b0f14;
+    }
+
+    .brand-mark svg { width: 15px; height: 15px; }
+    .brand-text { font-family: var(--font-mono); font-size: 13px; }
+
+    .dialog-sync { display: flex; align-items: center; gap: 7px; color: var(--fg-muted); font-size: 10px; }
+
+    .window-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      min-width: 0;
+      height: 100%;
+    }
+
+    .window-tab {
+      position: relative;
+      height: 100%;
+      min-width: 118px;
+      max-width: 190px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 12px;
+      border: 0;
+      background: transparent;
+      color: var(--fg-dim);
+      cursor: pointer;
+    }
+
+    .window-tab.active { color: var(--fg); }
+    .window-tab.active::after {
+      content: "";
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 0;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .window-tab svg { width: 14px; height: 14px; flex: 0 0 auto; }
+    .window-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .topbar-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .icon-button {
+      width: 31px;
+      height: 31px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--fg-dim);
+      cursor: pointer;
+    }
+
+    .icon-button:hover { color: var(--fg); background: var(--panel-2); border-color: var(--border-soft); }
+    .icon-button svg { width: 16px; height: 16px; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      min-height: 0;
+      padding: 15px 10px 12px;
+      border-right: 1px solid var(--border);
+      background: #11161d;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .side-heading {
+      padding: 0 9px;
+      color: var(--fg-muted);
+      font-size: 10px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+
+    .side-nav { display: grid; gap: 3px; }
+
+    .side-item {
+      width: 100%;
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 9px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--fg-dim);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .side-item:hover { color: var(--fg); background: rgba(255,255,255,.025); }
+    .side-item.active { color: var(--fg); background: var(--accent-soft); border-color: rgba(88,166,255,.2); }
+    .side-item.active svg { color: var(--accent); }
+    .side-item svg { width: 15px; height: 15px; flex: 0 0 auto; }
+    .side-item .count { margin-left: auto; font: 10px var(--font-mono); color: var(--fg-muted); }
+
+    .side-status {
+      margin-top: auto;
+      padding: 11px 9px 2px;
+      border-top: 1px solid var(--border-soft);
+      display: grid;
+      gap: 7px;
+    }
+
+    .side-status-row { display: flex; align-items: center; gap: 7px; color: var(--fg-dim); font-size: 11px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
+    .side-peer-id { color: var(--fg-muted); font: 10px var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .content {
+      min-width: 0;
+      min-height: 0;
+      overflow-y: auto;
+      background: var(--bg);
+    }
+
+    .content-inner { width: min(1060px, calc(100% - 48px)); margin: 0 auto; padding: 28px 0 46px; }
+
+    .page-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    .page-title { min-width: 0; }
+    .page-title h1 { margin: 0 0 5px; color: #edf3fa; font-size: 21px; line-height: 1.25; font-weight: 680; }
+    .page-title p { margin: 0; color: var(--fg-dim); font-size: 12px; }
+
+    .page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+    .button {
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--fg);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .button:hover { border-color: #4d5a68; background: var(--panel-2); }
+    .button svg { width: 14px; height: 14px; }
+    .button.primary { color: #07111b; background: var(--accent); border-color: var(--accent); font-weight: 650; }
+    .button.primary:hover { background: #79b8ff; border-color: #79b8ff; }
+    .button.danger { color: var(--bad); background: transparent; border-color: rgba(248,81,73,.42); }
+    .button.danger:hover { background: var(--bad-soft); }
+    .button.ghost { border-color: transparent; background: transparent; color: var(--fg-dim); }
+    .button.ghost:hover { color: var(--fg); background: var(--panel-2); }
+    .button:disabled { opacity: .45; cursor: not-allowed; }
+
+    .route-strip {
+      position: relative;
+      min-height: 154px;
+      margin-bottom: 22px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #10151b;
+      overflow: hidden;
+    }
+
+    .route-strip-head {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 13px;
+      border-bottom: 1px solid var(--border-soft);
+      color: var(--fg-dim);
+      font-size: 11px;
+    }
+
+    .route-strip-head strong { color: var(--fg); font-weight: 600; }
+    .route-strip-head .route-live { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--good); }
+
+    .route-map {
+      position: relative;
+      height: 115px;
+      display: grid;
+      grid-template-columns: 1fr 1.1fr 1fr;
+      align-items: center;
+      padding: 0 44px;
+    }
+
+    .route-line {
+      position: absolute;
+      top: 58px;
+      height: 1px;
+      pointer-events: none;
+    }
+
+    .route-line.signal { left: 25%; right: 25%; border-top: 1px dashed #596573; }
+    .route-line.data { left: 17%; right: 17%; height: 2px; background: var(--good); opacity: .75; }
+    .route-line.data::after {
+      content: "";
+      position: absolute;
+      top: -2px;
+      left: 0;
+      width: 34px;
+      height: 6px;
+      background: linear-gradient(90deg, transparent, var(--good), transparent);
+      animation: route-pulse 2.5s linear infinite;
+    }
+
+    @keyframes route-pulse { from { transform: translateX(0); } to { transform: translateX(calc(66vw - 190px)); } }
+
+    .route-node {
+      position: relative;
+      z-index: 2;
+      justify-self: center;
+      min-width: 138px;
+      max-width: 210px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid #3b4652;
+      border-radius: 7px;
+      background: #171d24;
+      box-shadow: 0 6px 20px rgba(0,0,0,.15);
+    }
+
+    .route-node.middle { border-color: rgba(188,140,255,.42); }
+    .route-node-icon { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 5px; color: var(--accent); background: var(--accent-soft); flex: 0 0 auto; }
+    .route-node.middle .route-node-icon { color: var(--purple); background: rgba(188,140,255,.1); }
+    .route-node.owner .route-node-icon { color: var(--good); background: var(--good-soft); }
+    .route-node-icon svg { width: 16px; height: 16px; }
+    .route-node-text { min-width: 0; display: grid; gap: 3px; }
+    .route-node-text strong { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .route-node-text span { color: var(--fg-muted); font: 9px var(--font-mono); white-space: nowrap; }
+
+    .route-caption {
+      position: absolute;
+      z-index: 3;
+      left: 50%;
+      bottom: 9px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 3px 8px;
+      background: #10151b;
+      color: var(--fg-muted);
+      font: 9px var(--font-mono);
+      white-space: nowrap;
+    }
+
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-stroke { width: 18px; height: 2px; background: var(--good); }
+    .legend-stroke.dashed { height: 1px; background: transparent; border-top: 1px dashed #596573; }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-height: 37px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab {
+      position: relative;
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 2px;
+      border: 0;
+      background: transparent;
+      color: var(--fg-dim);
+      cursor: pointer;
+    }
+
+    .tab:hover { color: var(--fg); }
+    .tab.active { color: var(--fg); }
+    .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
+    .tab-count { min-width: 17px; height: 17px; padding: 0 5px; display: grid; place-items: center; border-radius: 9px; background: var(--panel-2); color: var(--fg-muted); font: 9px var(--font-mono); }
+
+    .settings-page { display: none; }
+    .settings-page.active { display: block; }
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .section { padding: 2px 0 22px; }
+    .section + .section { padding-top: 20px; border-top: 1px solid var(--border); }
+    .section-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 12px; }
+    .section-head h2 { margin: 0 0 4px; color: #e9eff6; font-size: 14px; font-weight: 640; }
+    .section-head p { margin: 0; color: var(--fg-muted); font-size: 11px; }
+    .section-head > :last-child:not(:first-child) { margin-left: auto; }
+
+    .health-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      overflow: hidden;
+      background: var(--panel-3);
+    }
+
+    .health-cell { min-width: 0; min-height: 80px; padding: 13px 14px; border-left: 1px solid var(--border-soft); display: grid; align-content: space-between; gap: 9px; }
+    .health-cell:first-child { border-left: 0; }
+    .health-label { display: flex; align-items: center; gap: 7px; color: var(--fg-dim); font-size: 10px; }
+    .health-label svg { width: 13px; height: 13px; }
+    .health-value { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+    .health-value strong { font-size: 14px; font-weight: 620; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .health-value span { color: var(--fg-muted); font: 9px var(--font-mono); }
+
+    .device-table { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+    .device-row {
+      display: grid;
+      grid-template-columns: minmax(210px, 1.4fr) minmax(130px, .8fr) minmax(120px, .8fr) 104px 36px;
+      align-items: center;
+      min-height: 60px;
+      padding: 0 10px 0 14px;
+      border-top: 1px solid var(--border-soft);
+      background: var(--panel-3);
+    }
+    .device-row:first-child { border-top: 0; }
+    .device-row:hover { background: #141a21; }
+    .device-main { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .device-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); background: var(--panel); flex: 0 0 auto; }
+    .device-icon svg { width: 16px; height: 16px; }
+    .device-copy { min-width: 0; display: grid; gap: 4px; }
+    .device-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .device-name strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 610; }
+    .device-meta { color: var(--fg-muted); font: 9px var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .online-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex: 0 0 auto; }
+    .online-dot.idle { background: var(--fg-muted); }
+    .permission-select {
+      width: 108px;
+      height: 28px;
+      padding: 0 25px 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--fg-dim);
+      background: #0f141a;
+      cursor: pointer;
+    }
+    .route-type { display: flex; align-items: center; gap: 7px; color: var(--fg-dim); font-size: 11px; }
+    .route-type svg { width: 13px; height: 13px; color: var(--good); }
+    .last-seen { color: var(--fg-muted); font-size: 10px; }
+
+    .provider-list { border-top: 1px solid var(--border); }
+    .provider-row {
+      display: grid;
+      grid-template-columns: 30px minmax(190px, 1fr) minmax(260px, 1.5fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 67px;
+      padding: 8px 4px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .provider-radio { width: 17px; height: 17px; display: grid; place-items: center; border: 1px solid #56616d; border-radius: 50%; }
+    .provider-row.active .provider-radio { border-color: var(--accent); }
+    .provider-row.active .provider-radio::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+    .provider-name { display: grid; gap: 4px; }
+    .provider-name strong { font-weight: 610; }
+    .provider-name span, .provider-detail { color: var(--fg-muted); font-size: 10px; }
+    .provider-detail { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; min-height: 19px; padding: 0 7px; border-radius: 10px; color: var(--good); background: var(--good-soft); font-size: 9px; white-space: nowrap; }
+    .badge.warn { color: var(--warn); background: var(--warn-soft); }
+    .badge.neutral { color: var(--fg-dim); background: rgba(139,148,158,.1); }
+
+    .field-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 14px; }
+    .field { display: grid; gap: 6px; min-width: 0; }
+    .field label { color: var(--fg-dim); font-size: 10px; }
+    .field input {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      outline: none;
+      color: var(--fg);
+      background: #0c1117;
+      font-family: var(--font-mono);
+    }
+    .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+    .field input:disabled { opacity: .5; }
+
+    .switch {
+      position: relative;
+      width: 34px;
+      height: 19px;
+      padding: 0;
+      border: 0;
+      border-radius: 10px;
+      background: #3b444f;
+      cursor: pointer;
+    }
+    .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #d7dde4; transition: transform 140ms ease; }
+    .switch.on { background: var(--accent); }
+    .switch.on::after { transform: translateX(15px); background: #fff; }
+
+    .setting-row { min-height: 58px; display: flex; align-items: center; gap: 18px; border-top: 1px solid var(--border-soft); }
+    .setting-row:first-of-type { border-top: 0; }
+    .setting-copy { display: grid; gap: 4px; min-width: 0; }
+    .setting-copy strong { font-weight: 590; }
+    .setting-copy span { color: var(--fg-muted); font-size: 10px; }
+    .setting-row > :last-child { margin-left: auto; }
+
+    .account-banner {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr);
+      margin-bottom: 22px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #10151b;
+      overflow: hidden;
+    }
+
+    .account-identity {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      padding: 17px;
+      border-right: 1px solid var(--border-soft);
+    }
+
+    .account-avatar {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(88,166,255,.34);
+      border-radius: 7px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      font: 650 15px var(--font-mono);
+      flex: 0 0 auto;
+    }
+
+    .account-copy { min-width: 0; display: grid; gap: 5px; }
+    .account-copy strong { color: #edf3fa; font-size: 13px; font-weight: 630; }
+    .account-copy span { color: var(--fg-muted); font: 9px var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .account-state {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      min-width: 0;
+    }
+
+    .account-state-cell { min-width: 0; padding: 14px 12px; border-left: 1px solid var(--border-soft); display: grid; align-content: center; gap: 6px; }
+    .account-state-cell:first-child { border-left: 0; }
+    .account-state-cell span { color: var(--fg-muted); font-size: 9px; }
+    .account-state-cell strong { color: var(--fg); font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .relay-control {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(285px, .72fr);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel-3);
+      overflow: hidden;
+    }
+
+    .relay-node-summary { min-width: 0; padding: 15px; display: grid; gap: 13px; }
+    .relay-node-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .relay-node-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 6px; color: var(--purple); background: rgba(188,140,255,.1); flex: 0 0 auto; }
+    .relay-node-icon svg { width: 16px; height: 16px; }
+    .relay-node-copy { min-width: 0; display: grid; gap: 4px; }
+    .relay-node-copy strong { font-weight: 610; }
+    .relay-node-copy span { color: var(--fg-muted); font: 9px var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .relay-path {
+      position: relative;
+      min-height: 42px;
+      display: grid;
+      grid-template-columns: auto minmax(48px, 1fr) auto minmax(48px, 1fr) auto;
+      align-items: center;
+      color: var(--fg-dim);
+      font-size: 9px;
+    }
+
+    .relay-path-node { display: grid; place-items: center; gap: 4px; white-space: nowrap; }
+    .relay-path-node svg { width: 15px; height: 15px; color: var(--accent); }
+    .relay-path-line { position: relative; height: 1px; margin: 0 8px; background: #3a4652; }
+    .relay-path-line::after { content: ""; position: absolute; right: 0; top: -2px; width: 5px; height: 5px; border-top: 1px solid var(--good); border-right: 1px solid var(--good); transform: rotate(45deg); }
+
+    .relay-contract { border-left: 1px solid var(--border-soft); display: grid; }
+    .contract-row { min-height: 52px; padding: 10px 13px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border-soft); }
+    .contract-row:first-child { border-top: 0; }
+    .contract-row span { color: var(--fg-muted); font-size: 10px; }
+    .contract-row strong { margin-left: auto; color: var(--fg-dim); font-size: 10px; font-weight: 580; text-align: right; }
+    .contract-row strong.good { color: var(--good); }
+
+    .relay-editor { margin-top: 12px; padding: 13px; border: 1px solid var(--border-soft); border-radius: 7px; background: #0e1319; }
+    .relay-editor .segment { max-width: 300px; margin-bottom: 11px; grid-template-columns: repeat(2, 1fr); }
+
+    .login-device-table { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+    .login-device-row {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.35fr) minmax(180px, .9fr) 120px 36px;
+      align-items: center;
+      min-height: 64px;
+      gap: 10px;
+      padding: 0 10px 0 14px;
+      border-top: 1px solid var(--border-soft);
+      background: var(--panel-3);
+    }
+    .login-device-row:first-child { border-top: 0; }
+    .login-device-row:hover { background: #141a21; }
+    .login-session { min-width: 0; display: grid; gap: 4px; color: var(--fg-dim); font-size: 10px; }
+    .login-session code { color: var(--fg-muted); font: 9px var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .login-current { color: var(--accent); background: var(--accent-soft); }
+
+    .security-list { border-top: 1px solid var(--border); }
+    .security-list .setting-row { padding: 0 4px; }
+
+    .signed-out-state {
+      min-height: 410px;
+      display: grid;
+      place-items: center;
+      padding: 36px 18px;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      background: #10151b;
+      text-align: center;
+    }
+    .signed-out-inner { width: min(390px, 100%); display: grid; justify-items: center; gap: 12px; }
+    .signed-out-icon { width: 46px; height: 46px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; color: var(--fg-dim); background: var(--panel); }
+    .signed-out-icon svg { width: 22px; height: 22px; }
+    .signed-out-inner h2 { margin: 3px 0 0; font-size: 16px; }
+    .signed-out-inner p { margin: 0 0 6px; color: var(--fg-muted); font-size: 11px; line-height: 1.65; }
+
+    .sidebar-backdrop { display: none; }
+
+    .empty-state { min-height: 220px; display: grid; place-items: center; border: 1px dashed var(--border); border-radius: 7px; color: var(--fg-muted); }
+    .empty-inner { display: grid; place-items: center; gap: 10px; text-align: center; }
+    .empty-inner svg { width: 27px; height: 27px; color: var(--fg-dim); }
+    .empty-inner strong { color: var(--fg); font-weight: 600; }
+
+    .modal-backdrop {
+      position: fixed;
+      z-index: 100;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(3,6,10,.72);
+      backdrop-filter: blur(3px);
+    }
+
+    .modal {
+      width: min(660px, 100%);
+      max-height: min(720px, calc(100vh - 36px));
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      border: 1px solid #3d4854;
+      border-radius: 8px;
+      background: #151b22;
+      box-shadow: 0 28px 80px rgba(0,0,0,.5);
+      overflow: hidden;
+    }
+
+    .modal-head { min-height: 55px; display: flex; align-items: center; gap: 12px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--border); }
+    .modal-head h2 { margin: 0; font-size: 15px; font-weight: 650; }
+    .modal-head .icon-button { margin-left: auto; }
+    .modal-body { min-height: 0; overflow-y: auto; padding: 18px; }
+    .modal-foot { min-height: 57px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 18px; border-top: 1px solid var(--border); background: #13181f; }
+
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 22px; }
+    .step { position: relative; display: flex; align-items: center; gap: 8px; color: var(--fg-muted); font-size: 10px; }
+    .step::after { content: ""; height: 1px; flex: 1; margin-right: 8px; background: var(--border); }
+    .step:last-child::after { display: none; }
+    .step-num { width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; font: 9px var(--font-mono); }
+    .step.active { color: var(--fg); }
+    .step.active .step-num { color: #07111b; border-color: var(--accent); background: var(--accent); }
+    .step.done { color: var(--good); }
+    .step.done .step-num { border-color: var(--good); color: var(--good); }
+
+    .choice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .choice {
+      min-height: 92px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #11161c;
+      color: var(--fg-dim);
+      text-align: left;
+      cursor: pointer;
+    }
+    .choice:hover { border-color: #4a5663; }
+    .choice.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); color: var(--fg); }
+    .choice svg { width: 17px; height: 17px; color: var(--accent); }
+    .choice strong { font-size: 11px; font-weight: 600; }
+    .choice span { color: var(--fg-muted); font-size: 9px; line-height: 1.45; }
+
+    .form-block { display: grid; gap: 9px; margin-top: 19px; }
+    .form-label { color: var(--fg-dim); font-size: 10px; }
+    .segment { display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px; border: 1px solid var(--border); border-radius: 7px; background: #0e1319; }
+    .segment button { min-height: 30px; border: 0; border-radius: 5px; background: transparent; color: var(--fg-dim); cursor: pointer; }
+    .segment button.active { color: var(--fg); background: #252d37; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+
+    .invite-layout { display: grid; grid-template-columns: 188px minmax(0, 1fr); gap: 20px; align-items: center; }
+    .qr-shell { width: 188px; aspect-ratio: 1; display: grid; place-items: center; border: 8px solid #eef3f8; border-radius: 7px; background: #eef3f8; }
+    .qr-grid { width: 100%; height: 100%; display: grid; grid-template-columns: repeat(21, 1fr); grid-template-rows: repeat(21, 1fr); background: #eef3f8; }
+    .qr-cell.on { background: #111820; }
+    .invite-copy { min-width: 0; display: grid; gap: 13px; }
+    .invite-copy h3 { margin: 0; font-size: 14px; font-weight: 640; }
+    .invite-code { display: flex; align-items: center; gap: 8px; }
+    .invite-code code { flex: 1; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px; background: #0d1218; color: #b7c3d0; font: 10px var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .expire-row { display: flex; align-items: center; gap: 7px; color: var(--fg-muted); font-size: 10px; }
+    .expire-row svg { width: 13px; height: 13px; color: var(--warn); }
+    .waiting { min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 10px 11px; border: 1px solid var(--border-soft); border-radius: 6px; background: #11171e; }
+    .spinner { width: 16px; height: 16px; border: 2px solid #3b4652; border-top-color: var(--accent); border-radius: 50%; animation: spin 900ms linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .approval { display: grid; gap: 16px; }
+    .approval-device { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 7px; background: #11161c; }
+    .approval-device .device-icon { width: 37px; height: 37px; color: var(--accent); }
+    .approval-device .device-icon svg { width: 19px; height: 19px; }
+    .fingerprint { padding: 10px 11px; border: 1px solid var(--border-soft); border-radius: 6px; background: #0d1218; color: #aeb9c5; font: 10px var(--font-mono); word-break: break-all; }
+
+    .success-state { min-height: 290px; display: grid; place-items: center; text-align: center; }
+    .success-inner { display: grid; place-items: center; gap: 11px; }
+    .success-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: var(--good); background: var(--good-soft); border: 1px solid rgba(63,185,80,.32); }
+    .success-icon svg { width: 24px; height: 24px; }
+    .success-inner h3 { margin: 2px 0 0; font-size: 16px; }
+    .success-inner p { margin: 0; color: var(--fg-muted); font-size: 11px; }
+
+    .confirm-copy { display: grid; gap: 9px; }
+    .confirm-copy p { margin: 0; color: var(--fg-dim); line-height: 1.6; }
+    .confirm-device { color: var(--fg); font-weight: 620; }
+
+    .toast-region { position: fixed; z-index: 200; right: 18px; bottom: 18px; display: grid; gap: 8px; pointer-events: none; }
+    .toast { min-width: 240px; max-width: 360px; display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid #3b4652; border-radius: 7px; background: #171d24; box-shadow: 0 12px 34px rgba(0,0,0,.34); animation: toast-in 160ms ease-out; }
+    .toast svg { width: 15px; height: 15px; color: var(--good); flex: 0 0 auto; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(7px); } }
+
+    .mobile-menu { display: none; }
+
+    @media (max-width: 820px) {
+      body { overflow: hidden; }
+      .host-shell, .modal-scrim { display: none; }
+      .app { inset: 0; width: 100%; height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
+      .workspace { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .sidebar.mobile-open { position: fixed; z-index: 95; top: var(--topbar-h); bottom: 0; left: 0; width: min(292px, calc(100vw - 52px)); display: flex; box-shadow: 22px 0 50px rgba(0,0,0,.42); }
+      .sidebar-backdrop.visible { position: fixed; z-index: 90; inset: var(--topbar-h) 0 0; display: block; border: 0; background: rgba(3,6,10,.66); }
+      .mobile-menu { display: grid; }
+      .window-tabs { display: none; }
+      .content-inner { width: min(100% - 28px, 680px); padding-top: 20px; }
+      .route-map { padding: 0 18px; }
+      .route-node { min-width: 100px; padding: 8px; }
+      .route-node-icon { display: none; }
+      .route-caption { bottom: 5px; }
+      .device-row { grid-template-columns: minmax(170px, 1fr) 108px 34px; gap: 8px; }
+      .device-row .route-type, .device-row .last-seen { display: none; }
+      .health-grid { grid-template-columns: 1fr; }
+      .health-cell { min-height: 62px; border-left: 0; border-top: 1px solid var(--border-soft); }
+      .health-cell:first-child { border-top: 0; }
+      .provider-row { grid-template-columns: 28px minmax(0, 1fr) auto; }
+      .provider-detail { display: none; }
+      .account-banner { grid-template-columns: 1fr; }
+      .account-identity { border-right: 0; border-bottom: 1px solid var(--border-soft); }
+      .relay-control { grid-template-columns: 1fr; }
+      .relay-contract { border-left: 0; border-top: 1px solid var(--border-soft); }
+      .login-device-row { grid-template-columns: minmax(180px, 1fr) 120px 34px; }
+      .login-device-row .login-session { display: none; }
+    }
+
+    @media (max-width: 560px) {
+      .topbar { padding: 0 8px; }
+      .brand { min-width: 0; }
+      .brand-text { display: none; }
+      .content-inner { width: calc(100% - 20px); }
+      .page-head { align-items: center; }
+      .page-title p { display: none; }
+      .page-actions .button:not(.primary) { display: none; }
+      [data-settings-page="relay"] .page-actions { gap: 4px; }
+      [data-settings-page="relay"] .page-actions .button { width: 34px; min-height: 34px; padding: 0; display: grid; }
+      [data-settings-page="relay"] .page-actions .button span { display: none; }
+      .route-strip { min-height: 244px; }
+      .route-map { height: 205px; grid-template-columns: 1fr; grid-template-rows: repeat(3, 1fr); padding: 10px 44px 24px; }
+      .route-line.signal { top: 25%; bottom: 25%; left: 50%; right: auto; height: auto; width: 1px; border-top: 0; border-left: 1px dashed #596573; }
+      .route-line.data { top: 16%; bottom: 16%; left: 50%; right: auto; width: 2px; height: auto; }
+      .route-line.data::after { width: 6px; height: 26px; top: 0; left: -2px; background: linear-gradient(180deg, transparent, var(--good), transparent); animation-name: route-pulse-mobile; }
+      @keyframes route-pulse-mobile { from { transform: translateY(0); } to { transform: translateY(120px); } }
+      .route-caption { bottom: 4px; }
+      .tabs { gap: 13px; overflow-x: auto; }
+      .tab { white-space: nowrap; }
+      .device-row { grid-template-columns: minmax(0, 1fr) 34px; min-height: 67px; }
+      .device-row .permission-select { display: none; }
+      .choice-grid { grid-template-columns: 1fr; }
+      .choice { min-height: 65px; grid-template-columns: auto 1fr; align-items: center; }
+      .choice span { grid-column: 2; }
+      .invite-layout { grid-template-columns: 1fr; justify-items: center; }
+      .invite-copy { width: 100%; }
+      .steps .step span:last-child { display: none; }
+      .field-grid { grid-template-columns: 1fr; }
+      .modal-foot { padding: 8px 12px; }
+      .account-state { grid-template-columns: 1fr; }
+      .account-state-cell { min-height: 51px; border-left: 0; border-top: 1px solid var(--border-soft); }
+      .account-state-cell:first-child { border-top: 0; }
+      .relay-path { grid-template-columns: auto minmax(24px, 1fr) auto minmax(24px, 1fr) auto; }
+      .relay-path-node span { display: none; }
+      .login-device-row { grid-template-columns: minmax(0, 1fr) 34px; min-height: 67px; }
+      .login-device-row .last-seen { display: none; }
+      .security-list .setting-row { align-items: flex-start; padding: 12px 4px; }
+      .security-list .setting-row .button { flex: 0 0 auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="host-shell" aria-hidden="true">
+    <header class="host-titlebar">
+      <div class="host-brand" data-icon="terminal"><span>AT Term</span></div>
+      <div class="host-tabs">
+        <div class="host-tab active" data-icon="terminal"><span>codex · atterm</span></div>
+        <div class="host-tab" data-icon="terminal"><span>server logs</span></div>
+      </div>
+      <div class="host-window-actions">Mac Studio · 3 sessions</div>
+    </header>
+    <div class="host-body">
+      <aside class="host-session-list">
+        <div class="host-session-heading">Sessions</div>
+        <div class="host-session active"><span>codex · atterm</span><span>~/GolandProjects/atterm</span></div>
+        <div class="host-session"><span>server logs</span><span>~/services/relay</span></div>
+        <div class="host-session"><span>local shell</span><span>~</span></div>
+      </aside>
+      <main class="host-terminal">
+        <pre><span class="host-prompt">attson@Mac-Studio</span> ~/GolandProjects/atterm % go test ./desktop/...<br>ok  github.com/attson/atterm/desktop  2.418s<br><span class="host-prompt">attson@Mac-Studio</span> ~/GolandProjects/atterm % <span class="host-cursor"></span></pre>
+      </main>
+    </div>
+  </div>
+  <div class="modal-scrim" aria-hidden="true"></div>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" data-icon="settings"></div>
+        <span class="brand-text">设置</span>
+      </div>
+      <div class="dialog-sync"><span class="status-dot"></span><span>配置已同步</span></div>
+      <div class="topbar-actions">
+        <button class="icon-button mobile-menu" type="button" title="菜单" aria-label="菜单" data-icon="menu"></button>
+        <button class="icon-button" type="button" title="关闭设置" aria-label="关闭设置" data-icon="x"></button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar">
+        <div>
+          <div class="side-heading">设置</div>
+          <nav class="side-nav" aria-label="设置导航">
+            <button class="side-item" type="button" data-icon="sliders"><span>常规</span></button>
+            <button class="side-item" type="button" data-icon="palette"><span>外观</span></button>
+            <button class="side-item" type="button" data-icon="keyboard"><span>终端</span></button>
+            <button class="side-item" type="button" data-settings-target="relay" data-icon="cloud"><span>Relay 账户</span><span class="count" id="relayDeviceCount">3</span></button>
+            <button class="side-item active" type="button" data-settings-target="peer" data-icon="radio"><span>Peer 连接</span><span class="count" id="peerNavCount">3</span></button>
+            <button class="side-item" type="button" data-icon="shield"><span>安全</span></button>
+            <button class="side-item" type="button" data-icon="activity"><span>诊断</span></button>
+          </nav>
+        </div>
+        <div class="side-status">
+          <div class="side-status-row"><span class="status-dot"></span><span id="sideStatusLabel">Peer 模式已启用</span></div>
+          <div class="side-peer-id" id="sideStatusMeta">peer 7ab4:d91e:02c8</div>
+        </div>
+      </aside>
+      <button class="sidebar-backdrop" id="sidebarBackdrop" type="button" aria-label="关闭菜单"></button>
+
+      <main class="content">
+        <div class="content-inner settings-page active" data-settings-page="peer" data-screen-label="Peer 连接">
+          <header class="page-head">
+            <div class="page-title">
+              <h1>Peer 连接</h1>
+              <p>此设备直接管理配对关系、会话权限与 P2P 连接。</p>
+            </div>
+            <div class="page-actions">
+              <button class="button" id="copyPeerId" type="button" data-icon="copy"><span>复制 Peer ID</span></button>
+              <button class="button primary" id="openPairing" type="button" data-icon="plus"><span>配对设备</span></button>
+            </div>
+          </header>
+
+          <section class="route-strip" aria-label="当前连接路径">
+            <div class="route-strip-head">
+              <span data-icon="route"></span>
+              <strong>当前连接路径</strong>
+              <span>iPhone 15 Pro</span>
+              <span class="route-live"><span class="status-dot"></span>P2P 已连接</span>
+            </div>
+            <div class="route-map">
+              <div class="route-line signal"></div>
+              <div class="route-line data"></div>
+              <div class="route-node">
+                <div class="route-node-icon" data-icon="phone"></div>
+                <div class="route-node-text"><strong>iPhone 15 Pro</strong><span>100.82.14.6:49218</span></div>
+              </div>
+              <div class="route-node middle">
+                <div class="route-node-icon" data-icon="radio"></div>
+                <div class="route-node-text"><strong>官方 Rendezvous</strong><span>信令已完成</span></div>
+              </div>
+              <div class="route-node owner">
+                <div class="route-node-icon" data-icon="monitor"></div>
+                <div class="route-node-text"><strong>Mac Studio</strong><span>此设备 · owner</span></div>
+              </div>
+              <div class="route-caption">
+                <span class="legend-item"><i class="legend-stroke"></i>终端数据</span>
+                <span class="legend-item"><i class="legend-stroke dashed"></i>建连信令</span>
+              </div>
+            </div>
+          </section>
+
+          <nav class="tabs" aria-label="Peer 设置视图">
+            <button class="tab active" type="button" data-view="devices">Peer 授权 <span class="tab-count" id="deviceCount">3</span></button>
+            <button class="tab" type="button" data-view="rendezvous">Rendezvous</button>
+            <button class="tab" type="button" data-view="direct">其他连接方式</button>
+          </nav>
+
+          <section class="view active" data-view-panel="devices">
+            <div class="section">
+              <div class="health-grid">
+                <div class="health-cell">
+                  <div class="health-label" data-icon="radio"><span>会合服务</span></div>
+                  <div class="health-value"><strong>上海</strong><span>24 ms</span></div>
+                </div>
+                <div class="health-cell">
+                  <div class="health-label" data-icon="network"><span>当前路径</span></div>
+                  <div class="health-value"><strong>srflx → srflx</strong><span>UDP</span></div>
+                </div>
+                <div class="health-cell">
+                  <div class="health-label" data-icon="lock"><span>会话密钥</span></div>
+                  <div class="health-value"><strong>端到端</strong><span>已轮换</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head">
+                <div><h2>本机授权</h2><p>保存的是 Peer 公钥与访问范围，不代表 Relay 账户登录状态。</p></div>
+                <button class="button ghost" id="refreshDevices" type="button" data-icon="refresh"><span>刷新</span></button>
+              </div>
+              <div class="device-table" id="deviceTable">
+                <div class="device-row" data-device="Pixel 10">
+                  <div class="device-main">
+                    <div class="device-icon" data-icon="phone"></div>
+                    <div class="device-copy">
+                      <div class="device-name"><span class="online-dot"></span><strong>Pixel 10</strong><span class="badge">直连</span></div>
+                      <div class="device-meta">peer 2cf7:80bb:741a · Android</div>
+                    </div>
+                  </div>
+                  <select class="permission-select" aria-label="Pixel 10 权限"><option>仅查看</option><option selected>可控制</option><option>完整访问</option></select>
+                  <div class="route-type" data-icon="zap"><span>直接连接</span></div>
+                  <div class="last-seen">刚刚</div>
+                  <button class="icon-button device-menu" type="button" title="设备操作" aria-label="设备操作" data-icon="more"></button>
+                </div>
+                <div class="device-row" data-device="ThinkPad X1">
+                  <div class="device-main">
+                    <div class="device-icon" data-icon="laptop"></div>
+                    <div class="device-copy">
+                      <div class="device-name"><span class="online-dot idle"></span><strong>ThinkPad X1</strong></div>
+                      <div class="device-meta">peer 819e:3451:c02f · Windows</div>
+                    </div>
+                  </div>
+                  <select class="permission-select" aria-label="ThinkPad X1 权限"><option>仅查看</option><option>可控制</option><option selected>完整访问</option></select>
+                  <div class="route-type" data-icon="radio"><span>Rendezvous</span></div>
+                  <div class="last-seen">18 分钟前</div>
+                  <button class="icon-button device-menu" type="button" title="设备操作" aria-label="设备操作" data-icon="more"></button>
+                </div>
+                <div class="device-row" data-device="一次性访客">
+                  <div class="device-main">
+                    <div class="device-icon" data-icon="globe"></div>
+                    <div class="device-copy">
+                      <div class="device-name"><span class="online-dot idle"></span><strong>一次性访客</strong><span class="badge warn">临时</span></div>
+                      <div class="device-meta">peer e480:b1ae:930d · 21:30 到期</div>
+                    </div>
+                  </div>
+                  <select class="permission-select" aria-label="一次性访客权限"><option selected>仅查看</option><option>可控制</option><option>完整访问</option></select>
+                  <div class="route-type" data-icon="radio"><span>Rendezvous</span></div>
+                  <div class="last-seen">2 小时前</div>
+                  <button class="icon-button device-menu" type="button" title="设备操作" aria-label="设备操作" data-icon="more"></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head"><div><h2>本机身份</h2><p>设备密钥保存在系统钥匙串。</p></div></div>
+              <div class="setting-row">
+                <div class="setting-copy"><strong>Mac Studio</strong><span>peer 7ab4:d91e:02c8 · Ed25519</span></div>
+                <button class="button" id="rotateIdentity" type="button" data-icon="refresh"><span>轮换密钥</span></button>
+              </div>
+            </div>
+          </section>
+
+          <section class="view" data-view-panel="rendezvous">
+            <div class="section">
+              <div class="section-head"><div><h2>会合服务</h2><p>只交换短期加密信令，不传输终端数据。</p></div><span class="badge" id="providerStatus">已连接</span></div>
+              <div class="provider-list" id="providerList">
+                <div class="provider-row active" tabindex="0" role="radio" aria-checked="true" data-provider="official">
+                  <span class="provider-radio"></span>
+                  <span class="provider-name"><strong>Atterm 官方</strong><span>自动选择最近节点</span></span>
+                  <span class="provider-detail">wss://rendezvous.atterm.dev/v1</span>
+                  <span class="badge">24 ms</span>
+                </div>
+                <div class="provider-row" tabindex="0" role="radio" aria-checked="false" data-provider="custom">
+                  <span class="provider-radio"></span>
+                  <span class="provider-name"><strong>自建服务</strong><span>兼容开放 Rendezvous 协议</span></span>
+                  <span class="provider-detail" id="customPreview">wss://rendezvous.example.com/v1</span>
+                  <span class="badge neutral">未测试</span>
+                </div>
+                <div class="provider-row" tabindex="0" role="radio" aria-checked="false" data-provider="disabled">
+                  <span class="provider-radio"></span>
+                  <span class="provider-name"><strong>禁用</strong><span>保留局域网和直接连接</span></span>
+                  <span class="provider-detail">no public rendezvous</span>
+                  <span class="badge neutral">高级</span>
+                </div>
+              </div>
+              <div class="field-grid" id="customProviderFields" hidden>
+                <div class="field"><label for="customProviderUrl">服务地址</label><input id="customProviderUrl" value="wss://rendezvous.example.com/v1" spellcheck="false"></div>
+                <button class="button" id="testProvider" type="button" data-icon="activity"><span>测试连接</span></button>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head"><div><h2>隐私</h2></div></div>
+              <div class="setting-row">
+                <div class="setting-copy"><strong>轮换查找标识</strong><span>当前标识将在 38 秒后更换</span></div>
+                <button class="switch on" type="button" role="switch" aria-checked="true" aria-label="轮换查找标识"></button>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><strong>连接后清除信令</strong><span>offer、answer 与 ICE 候选立即删除</span></div>
+                <button class="switch on" type="button" role="switch" aria-checked="true" aria-label="连接后清除信令"></button>
+              </div>
+            </div>
+          </section>
+
+          <section class="view" data-view-panel="direct">
+            <div class="section">
+              <div class="section-head"><div><h2>公网入口</h2><p>使用你自己的反向代理或隧道服务。</p></div><button class="switch" id="publicEndpointSwitch" type="button" role="switch" aria-checked="false" aria-label="公网入口"></button></div>
+              <div class="field-grid">
+                <div class="field"><label for="publicEndpoint">Public peer URL</label><input id="publicEndpoint" value="https://quiet-field.trycloudflare.com" disabled spellcheck="false"></div>
+                <button class="button" id="testEndpoint" type="button" disabled data-icon="activity"><span>验证入口</span></button>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head"><div><h2>本地发现</h2></div></div>
+              <div class="setting-row">
+                <div class="setting-copy"><strong>局域网发现</strong><span>Bonjour / mDNS · _atterm-peer._tcp</span></div>
+                <button class="switch on" type="button" role="switch" aria-checked="true" aria-label="局域网发现"></button>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><strong>网关端口映射</strong><span>UPnP、PCP、NAT-PMP</span></div>
+                <button class="switch on" type="button" role="switch" aria-checked="true" aria-label="网关端口映射"></button>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><strong>增强 NAT 穿透</strong><span>多 STUN 观测与有界候选预测</span></div>
+                <button class="switch on" type="button" role="switch" aria-checked="true" aria-label="增强 NAT 穿透"></button>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head"><div><h2>手动连接</h2><p>适用于离线交换连接信息。</p></div><button class="button" id="manualOffer" type="button" data-icon="scan"><span>生成连接码</span></button></div>
+              <div class="empty-state"><div class="empty-inner" data-icon="braces"><strong>尚未生成连接码</strong><span>连接信息仅在当前窗口保留。</span></div></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="content-inner settings-page" data-settings-page="relay" data-screen-label="Relay 账户">
+          <header class="page-head">
+            <div class="page-title">
+              <h1>Relay 账户</h1>
+              <p>账户负责跨设备发现、同步与通知；终端数据仍优先走 P2P。</p>
+            </div>
+            <div class="page-actions" id="relayHeaderActions">
+              <button class="button" id="syncRelay" type="button" data-icon="refresh"><span>立即同步</span></button>
+              <button class="button danger" id="signOutCurrent" type="button" data-icon="log-out"><span>退出登录</span></button>
+            </div>
+          </header>
+
+          <div id="relayAuthenticated">
+            <section class="account-banner" aria-label="Relay 账户概览">
+              <div class="account-identity">
+                <div class="account-avatar">AT</div>
+                <div class="account-copy">
+                  <strong>attson@example.com</strong>
+                  <span>account 8f31:c47a · OPAQUE 登录</span>
+                </div>
+                <span class="badge">已验证</span>
+              </div>
+              <div class="account-state">
+                <div class="account-state-cell"><span>账户状态</span><strong>已连接</strong></div>
+                <div class="account-state-cell"><span>登录设备</span><strong><span id="relayDeviceCountInline">3</span> 台</strong></div>
+                <div class="account-state-cell"><span>上次同步</span><strong id="lastSyncTime">刚刚</strong></div>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <div><h2>Relay 连接</h2><p>账户控制面保持在线，数据面按网络状况选择 P2P 或 Relay fallback。</p></div>
+                <span class="badge" id="relayConnectionStatus">已连接</span>
+              </div>
+              <div class="relay-control">
+                <div class="relay-node-summary">
+                  <div class="relay-node-title">
+                    <div class="relay-node-icon" data-icon="server"></div>
+                    <div class="relay-node-copy"><strong id="relayName">Atterm 官方 Relay</strong><span id="relayEndpointLabel">wss://relay.atterm.dev · home: sin-02</span></div>
+                    <button class="button ghost" id="changeRelay" type="button" data-icon="settings"><span>切换</span></button>
+                  </div>
+                  <div class="relay-path" aria-label="Relay 控制路径">
+                    <div class="relay-path-node" data-icon="monitor"><span>本机</span></div>
+                    <i class="relay-path-line"></i>
+                    <div class="relay-path-node" data-icon="server"><span>Relay</span></div>
+                    <i class="relay-path-line"></i>
+                    <div class="relay-path-node" data-icon="devices"><span>其他设备</span></div>
+                  </div>
+                </div>
+                <div class="relay-contract">
+                  <div class="contract-row"><span>会话目录</span><strong class="good">Relay 同步</strong></div>
+                  <div class="contract-row"><span>终端数据</span><strong>P2P 优先</strong></div>
+                  <div class="contract-row"><span>账户密钥</span><strong>仅设备持有</strong></div>
+                </div>
+              </div>
+              <div class="relay-editor" id="relayEditor" hidden>
+                <div class="segment" id="relayTypeSegment">
+                  <button class="active" type="button" data-relay-type="official">官方 Relay</button>
+                  <button type="button" data-relay-type="custom">自建 Relay</button>
+                </div>
+                <div class="field-grid">
+                  <div class="field"><label for="relayEndpointInput">Relay 地址</label><input id="relayEndpointInput" value="wss://relay.atterm.dev" disabled spellcheck="false"></div>
+                  <button class="button primary" id="saveRelay" type="button" data-icon="check"><span>连接</span></button>
+                </div>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <div><h2>已登录设备</h2><p>这些设备持有本账户的登录会话；Peer 访问权限在“Peer 连接”中单独管理。</p></div>
+                <button class="button ghost" id="signOutOthers" type="button" data-icon="log-out"><span>退出其他设备</span></button>
+              </div>
+              <div class="login-device-table" id="loginDeviceTable">
+                <div class="login-device-row current" data-login-device="Mac Studio">
+                  <div class="device-main">
+                    <div class="device-icon" data-icon="monitor"></div>
+                    <div class="device-copy"><div class="device-name"><span class="online-dot"></span><strong>Mac Studio</strong><span class="badge login-current">当前设备</span></div><div class="device-meta">macOS · Shanghai, CN</div></div>
+                  </div>
+                  <div class="login-session"><span>桌面客户端 · OPAQUE</span><code>session 3d7a:91c2</code></div>
+                  <div class="last-seen">刚刚</div>
+                  <button class="icon-button" type="button" title="当前设备" aria-label="当前设备" disabled data-icon="more"></button>
+                </div>
+                <div class="login-device-row" data-login-device="iPhone 15 Pro">
+                  <div class="device-main">
+                    <div class="device-icon" data-icon="phone"></div>
+                    <div class="device-copy"><div class="device-name"><span class="online-dot"></span><strong>iPhone 15 Pro</strong><span class="badge">在线</span></div><div class="device-meta">iOS · Shanghai, CN</div></div>
+                  </div>
+                  <div class="login-session"><span>移动客户端 · OPAQUE</span><code>session b210:4e8f</code></div>
+                  <div class="last-seen">2 分钟前</div>
+                  <button class="icon-button login-device-menu" type="button" title="设备操作" aria-label="设备操作" data-icon="more"></button>
+                </div>
+                <div class="login-device-row" data-login-device="Safari Web">
+                  <div class="device-main">
+                    <div class="device-icon" data-icon="globe"></div>
+                    <div class="device-copy"><div class="device-name"><span class="online-dot idle"></span><strong>Safari Web</strong></div><div class="device-meta">Web · Hangzhou, CN</div></div>
+                  </div>
+                  <div class="login-session"><span>浏览器 · OPAQUE</span><code>session 702e:cc19</code></div>
+                  <div class="last-seen">昨天 22:18</div>
+                  <button class="icon-button login-device-menu" type="button" title="设备操作" aria-label="设备操作" data-icon="more"></button>
+                </div>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-head"><div><h2>账户安全与同步</h2></div></div>
+              <div class="security-list">
+                <div class="setting-row">
+                  <div class="setting-copy"><strong>加密账户密钥</strong><span>当前设备已持有 account key；Relay 无法解密会话内容</span></div>
+                  <span class="badge">端到端</span>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-copy"><strong>终端数据 Relay fallback</strong><span>P2P 无法建立时，允许通过当前 Relay 转发密文</span></div>
+                  <button class="switch on" id="relayFallbackSwitch" type="button" role="switch" aria-checked="true" aria-label="终端数据 Relay fallback"></button>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-copy"><strong>会话目录同步</strong><span>同步会话元数据、置顶与客户端偏好</span></div>
+                  <button class="switch on" type="button" role="switch" aria-checked="true" aria-label="会话目录同步"></button>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-copy"><strong>Realm</strong><span>realm 9f8a:b14c:72de · home instance sin-02</span></div>
+                  <button class="button" id="copyRealm" type="button" data-icon="copy"><span>复制 ID</span></button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="signed-out-state" id="relaySignedOut" hidden>
+            <div class="signed-out-inner">
+              <div class="signed-out-icon" data-icon="cloud"></div>
+              <h2>未登录 Relay 账户</h2>
+              <p>Peer 直连和本地终端仍可正常使用。登录后可恢复跨设备会话目录、通知和 Relay fallback。</p>
+              <button class="button primary" id="relaySignIn" type="button" data-icon="log-in"><span>登录 Relay 账户</span></button>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="pairingModal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="pairingTitle">
+      <header class="modal-head"><h2 id="pairingTitle">配对新设备</h2><button class="icon-button" id="closePairing" type="button" aria-label="关闭" data-icon="x"></button></header>
+      <div class="modal-body">
+        <div class="steps" aria-label="配对步骤">
+          <div class="step active" data-step="1"><span class="step-num">1</span><span>设置访问</span></div>
+          <div class="step" data-step="2"><span class="step-num">2</span><span>扫描邀请</span></div>
+          <div class="step" data-step="3"><span class="step-num">3</span><span>确认设备</span></div>
+        </div>
+
+        <div class="pair-screen" data-pair-screen="1">
+          <div class="form-label">连接类型</div>
+          <div class="choice-grid" id="pairTypeChoices">
+            <button class="choice active" type="button" data-pair-type="device" data-icon="devices"><strong>我的设备</strong><span>保存设备身份，允许后续自动重连</span></button>
+            <button class="choice" type="button" data-pair-type="temporary" data-icon="clock"><strong>临时访问</strong><span>到期后自动撤销</span></button>
+            <button class="choice" type="button" data-pair-type="session" data-icon="terminal"><strong>单个会话</strong><span>仅授权当前选中的终端</span></button>
+          </div>
+          <div class="form-block">
+            <div class="form-label">访问权限</div>
+            <div class="segment" id="permissionSegment">
+              <button type="button" data-permission="view">仅查看</button>
+              <button class="active" type="button" data-permission="control">可控制</button>
+              <button type="button" data-permission="full">完整访问</button>
+            </div>
+          </div>
+          <div class="form-block">
+            <div class="form-label">会合路径</div>
+            <div class="segment" id="routeSegment">
+              <button class="active" type="button" data-route="official">官方</button>
+              <button type="button" data-route="custom">自建</button>
+              <button type="button" data-route="direct">直接入口</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pair-screen" data-pair-screen="2" hidden>
+          <div class="invite-layout">
+            <div class="qr-shell"><div class="qr-grid" id="qrGrid" aria-label="配对二维码"></div></div>
+            <div class="invite-copy">
+              <h3>在另一台设备上打开邀请</h3>
+              <div class="invite-code"><code id="inviteUrl">https://app.atterm.dev/peer#invite=atp_6V...</code><button class="icon-button" id="copyInvite" type="button" title="复制邀请" aria-label="复制邀请" data-icon="copy"></button></div>
+              <div class="expire-row" data-icon="clock"><span>04:59 后失效 · 单次使用</span></div>
+              <div class="waiting"><span class="spinner"></span><span>等待设备发起加密握手</span></div>
+              <button class="button" id="simulateDevice" type="button" data-icon="phone"><span>模拟设备加入</span></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pair-screen" data-pair-screen="3" hidden>
+          <div class="approval">
+            <div class="approval-device">
+              <div class="device-icon" data-icon="tablet"></div>
+              <div class="device-copy"><div class="device-name"><strong>iPad Pro</strong><span class="badge">待确认</span></div><div class="device-meta">iPadOS 26 · Shanghai, CN</div></div>
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:7px">设备密钥指纹</div>
+              <div class="fingerprint">SHA256 7F:21:A8:9C:04:51:EA:DD:8B:17:CE:62:91:3F</div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-copy"><strong>授权范围</strong><span id="approvalScope">所有会话 · 可控制</span></div>
+              <span class="badge">端到端认证</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pair-screen" data-pair-screen="4" hidden>
+          <div class="success-state"><div class="success-inner"><div class="success-icon" data-icon="check"></div><h3>iPad Pro 已配对</h3><p>设备已加入本机信任列表。</p></div></div>
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <button class="button" id="pairBack" type="button" hidden>返回</button>
+        <button class="button primary" id="pairNext" type="button">生成邀请</button>
+      </footer>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="deviceModal" hidden>
+    <section class="modal" style="width:min(460px,100%)" role="dialog" aria-modal="true" aria-labelledby="deviceModalTitle">
+      <header class="modal-head"><h2 id="deviceModalTitle">设备操作</h2><button class="icon-button" id="closeDeviceModal" type="button" aria-label="关闭" data-icon="x"></button></header>
+      <div class="modal-body">
+        <div class="confirm-copy"><p><span class="confirm-device" id="selectedDeviceName">设备</span></p><p>撤销后，该设备需要重新配对才能访问本机终端。</p></div>
+      </div>
+      <footer class="modal-foot"><button class="button" id="cancelDeviceModal" type="button">取消</button><button class="button danger" id="revokeDevice" type="button" data-icon="trash"><span>撤销设备</span></button></footer>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="accountActionModal" hidden>
+    <section class="modal" style="width:min(460px,100%)" role="dialog" aria-modal="true" aria-labelledby="accountActionTitle">
+      <header class="modal-head"><h2 id="accountActionTitle">移除登录设备</h2><button class="icon-button" id="closeAccountAction" type="button" aria-label="关闭" data-icon="x"></button></header>
+      <div class="modal-body">
+        <div class="confirm-copy"><p id="accountActionLead"><span class="confirm-device" id="accountActionDevice">设备</span></p><p id="accountActionDescription">该设备的 Relay 登录会话将立即失效；本机保存的 Peer 授权不会自动撤销。</p></div>
+      </div>
+      <footer class="modal-foot"><button class="button" id="cancelAccountAction" type="button">取消</button><button class="button danger" id="confirmAccountAction" type="button" data-icon="log-out"><span>移除设备</span></button></footer>
+    </section>
+  </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+  <script>
+    const ICONS = {
+      terminal: '<path d="m4 17 6-6-6-6"></path><path d="M12 19h8"></path>',
+      settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle>',
+      sliders: '<path d="M4 21v-7"></path><path d="M4 10V3"></path><path d="M12 21v-9"></path><path d="M12 8V3"></path><path d="M20 21v-5"></path><path d="M20 12V3"></path><path d="M1 14h6"></path><path d="M9 8h6"></path><path d="M17 16h6"></path>',
+      palette: '<circle cx="13.5" cy="6.5" r=".5"></circle><circle cx="17.5" cy="10.5" r=".5"></circle><circle cx="8.5" cy="7.5" r=".5"></circle><circle cx="6.5" cy="12.5" r=".5"></circle><path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 4-4 4h-1.8a2 2 0 0 0-1.8 2.9l.2.4A1.8 1.8 0 0 1 13 22z"></path>',
+      keyboard: '<rect width="20" height="14" x="2" y="5" rx="2"></rect><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 13h.01M12 13h.01M16 13h.01M7 17h10"></path>',
+      cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>',
+      radio: '<path d="M16.24 7.76a6 6 0 0 1 0 8.49"></path><path d="M7.76 16.24a6 6 0 0 1 0-8.49"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M4.93 19.07a10 10 0 0 1 0-14.14"></path><circle cx="12" cy="12" r="2"></circle>',
+      shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"></path>',
+      activity: '<path d="M3 12h4l3-8 4 16 3-8h4"></path>',
+      bell: '<path d="M10.27 21a2 2 0 0 0 3.46 0"></path><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>',
+      menu: '<path d="M4 6h16M4 12h16M4 18h16"></path>',
+      x: '<path d="M18 6 6 18M6 6l12 12"></path>',
+      copy: '<rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>',
+      plus: '<path d="M12 5v14M5 12h14"></path>',
+      route: '<circle cx="6" cy="19" r="3"></circle><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"></path><circle cx="18" cy="5" r="3"></circle>',
+      phone: '<rect width="14" height="20" x="5" y="2" rx="2"></rect><path d="M12 18h.01"></path>',
+      tablet: '<rect width="16" height="20" x="4" y="2" rx="2"></rect><path d="M12 18h.01"></path>',
+      monitor: '<rect width="20" height="14" x="2" y="3" rx="2"></rect><path d="M8 21h8M12 17v4"></path>',
+      network: '<rect width="6" height="6" x="9" y="2" rx="1"></rect><rect width="6" height="6" x="16" y="16" rx="1"></rect><rect width="6" height="6" x="2" y="16" rx="1"></rect><path d="M5 16v-3h14v3M12 8v5"></path>',
+      lock: '<rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path>',
+      refresh: '<path d="M20 6v5h-5"></path><path d="M4 18v-5h5"></path><path d="M18.6 9A7 7 0 0 0 6.1 5.3L4 7M5.4 15A7 7 0 0 0 17.9 18.7L20 17"></path>',
+      laptop: '<path d="M20 16V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10"></path><path d="M2 20h20M9 20v-1h6v1"></path>',
+      globe: '<circle cx="12" cy="12" r="10"></circle><path d="M2 12h20M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20"></path>',
+      zap: '<path d="M13 2 3 14h9l-1 8 10-12h-9z"></path>',
+      more: '<circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>',
+      devices: '<rect width="16" height="10" x="2" y="3" rx="2"></rect><path d="M8 21h8M12 13v8"></path><rect width="6" height="10" x="16" y="11" rx="1"></rect>',
+      clock: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>',
+      check: '<path d="m5 12 4 4L19 6"></path>',
+      trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"></path>',
+      scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"></path>',
+      braces: '<path d="M8 3H6a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h2M16 3h2a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-2"></path>',
+      server: '<rect width="20" height="8" x="2" y="2" rx="2"></rect><rect width="20" height="8" x="2" y="14" rx="2"></rect><path d="M6 6h.01M6 18h.01"></path>',
+      'log-out': '<path d="M10 17l5-5-5-5M15 12H3"></path><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>',
+      'log-in': '<path d="m14 8 4 4-4 4M18 12H6"></path><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"></path>'
+    };
+
+    function icon(name) {
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ICONS.terminal}</svg>`;
+    }
+
+    document.querySelectorAll('[data-icon]').forEach((el) => {
+      const name = el.dataset.icon;
+      if (el.children.length === 0) {
+        el.innerHTML = icon(name);
+      } else {
+        el.insertAdjacentHTML('afterbegin', icon(name));
+      }
+    });
+
+    function toast(message, tone = 'good') {
+      const region = document.getElementById('toastRegion');
+      const item = document.createElement('div');
+      item.className = 'toast';
+      item.innerHTML = icon(tone === 'bad' ? 'x' : 'check') + `<span>${message}</span>`;
+      if (tone === 'bad') item.querySelector('svg').style.color = 'var(--bad)';
+      region.appendChild(item);
+      window.setTimeout(() => item.remove(), 2600);
+    }
+
+    const sidebar = document.querySelector('.sidebar');
+    const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+    function closeSidebar() {
+      sidebar.classList.remove('mobile-open');
+      sidebarBackdrop.classList.remove('visible');
+    }
+    function setSettingsPage(name) {
+      document.querySelectorAll('[data-settings-page]').forEach((page) => page.classList.toggle('active', page.dataset.settingsPage === name));
+      document.querySelectorAll('[data-settings-target]').forEach((item) => item.classList.toggle('active', item.dataset.settingsTarget === name));
+      const label = document.getElementById('sideStatusLabel');
+      const meta = document.getElementById('sideStatusMeta');
+      if (name === 'relay') {
+        const signedOut = !document.getElementById('relaySignedOut').hidden;
+        label.textContent = signedOut ? 'Relay 账户未登录' : 'Relay 账户已连接';
+        meta.textContent = signedOut ? 'Peer 直连仍可使用' : 'home sin-02 · 31 ms';
+      } else {
+        label.textContent = 'Peer 模式已启用';
+        meta.textContent = 'peer 7ab4:d91e:02c8';
+      }
+      document.querySelector('.content').scrollTop = 0;
+      closeSidebar();
+    }
+    document.querySelectorAll('[data-settings-target]').forEach((item) => item.addEventListener('click', () => setSettingsPage(item.dataset.settingsTarget)));
+    document.querySelectorAll('.side-item:not([data-settings-target])').forEach((item) => item.addEventListener('click', () => toast('该设置页未包含在本次原型中')));
+    document.querySelector('.mobile-menu').addEventListener('click', () => {
+      const open = sidebar.classList.toggle('mobile-open');
+      sidebarBackdrop.classList.toggle('visible', open);
+    });
+    sidebarBackdrop.addEventListener('click', closeSidebar);
+    document.querySelector('[title="关闭设置"]').addEventListener('click', () => toast('原型中保留设置窗口'));
+
+    document.querySelectorAll('.tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === tab));
+        document.querySelectorAll('[data-view-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.viewPanel === tab.dataset.view));
+      });
+    });
+
+    document.querySelectorAll('.switch').forEach((toggle) => {
+      toggle.addEventListener('click', () => {
+        const on = toggle.classList.toggle('on');
+        toggle.setAttribute('aria-checked', String(on));
+      });
+    });
+
+    document.getElementById('copyPeerId').addEventListener('click', () => toast('Peer ID 已复制'));
+    document.getElementById('refreshDevices').addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      window.setTimeout(() => { button.disabled = false; toast('设备状态已刷新'); }, 700);
+    });
+    const providerRows = [...document.querySelectorAll('.provider-row')];
+    const customFields = document.getElementById('customProviderFields');
+    function chooseProvider(row) {
+      providerRows.forEach((item) => {
+        const active = item === row;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-checked', String(active));
+      });
+      customFields.hidden = row.dataset.provider !== 'custom';
+      const status = document.getElementById('providerStatus');
+      status.textContent = row.dataset.provider === 'disabled' ? '已禁用' : row.dataset.provider === 'custom' ? '待测试' : '已连接';
+      status.className = `badge${row.dataset.provider === 'official' ? '' : ' neutral'}`;
+    }
+    providerRows.forEach((row) => {
+      row.addEventListener('click', () => chooseProvider(row));
+      row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseProvider(row); } });
+    });
+    document.getElementById('customProviderUrl').addEventListener('input', (event) => { document.getElementById('customPreview').textContent = event.target.value || '未设置'; });
+    document.getElementById('testProvider').addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.querySelector('span').textContent = '正在测试';
+      window.setTimeout(() => {
+        button.disabled = false;
+        button.querySelector('span').textContent = '测试连接';
+        const status = document.getElementById('providerStatus');
+        status.textContent = '已连接';
+        status.className = 'badge';
+        toast('Rendezvous 响应 42 ms');
+      }, 950);
+    });
+
+    const endpointSwitch = document.getElementById('publicEndpointSwitch');
+    endpointSwitch.addEventListener('click', () => {
+      const on = endpointSwitch.classList.contains('on');
+      document.getElementById('publicEndpoint').disabled = !on;
+      document.getElementById('testEndpoint').disabled = !on;
+    });
+    document.getElementById('testEndpoint').addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      window.setTimeout(() => { button.disabled = false; toast('公网入口可以访问'); }, 900);
+    });
+    document.getElementById('manualOffer').addEventListener('click', () => toast('手动连接码已生成'));
+    document.getElementById('rotateIdentity').addEventListener('click', () => toast('原型中未执行密钥轮换', 'bad'));
+
+    const relayEditor = document.getElementById('relayEditor');
+    const relayEndpointInput = document.getElementById('relayEndpointInput');
+    document.getElementById('changeRelay').addEventListener('click', () => { relayEditor.hidden = !relayEditor.hidden; });
+    document.querySelectorAll('#relayTypeSegment button').forEach((button) => button.addEventListener('click', () => {
+      const custom = button.dataset.relayType === 'custom';
+      document.querySelectorAll('#relayTypeSegment button').forEach((item) => item.classList.toggle('active', item === button));
+      relayEndpointInput.disabled = !custom;
+      relayEndpointInput.value = custom ? 'wss://relay.example.com' : 'wss://relay.atterm.dev';
+      if (custom) relayEndpointInput.focus();
+    }));
+    document.getElementById('saveRelay').addEventListener('click', (event) => {
+      const custom = document.querySelector('#relayTypeSegment [data-relay-type="custom"]').classList.contains('active');
+      if (custom && !relayEndpointInput.value.startsWith('wss://')) {
+        toast('Relay 地址必须使用 wss://', 'bad');
+        relayEndpointInput.focus();
+        return;
+      }
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.querySelector('span').textContent = '连接中';
+      document.getElementById('relayConnectionStatus').textContent = '重连中';
+      document.getElementById('relayConnectionStatus').className = 'badge warn';
+      window.setTimeout(() => {
+        button.disabled = false;
+        button.querySelector('span').textContent = '连接';
+        document.getElementById('relayName').textContent = custom ? '自建 Relay' : 'Atterm 官方 Relay';
+        document.getElementById('relayEndpointLabel').textContent = `${relayEndpointInput.value} · home: ${custom ? 'custom-01' : 'sin-02'}`;
+        document.getElementById('relayConnectionStatus').textContent = '已连接';
+        document.getElementById('relayConnectionStatus').className = 'badge';
+        relayEditor.hidden = true;
+        toast(custom ? '已切换到自建 Relay' : '已连接官方 Relay');
+      }, 850);
+    });
+    document.getElementById('syncRelay').addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.querySelector('span').textContent = '同步中';
+      window.setTimeout(() => {
+        button.disabled = false;
+        button.querySelector('span').textContent = '立即同步';
+        document.getElementById('lastSyncTime').textContent = '刚刚';
+        toast('Relay 数据已同步');
+      }, 700);
+    });
+    document.getElementById('copyRealm').addEventListener('click', () => toast('Realm ID 已复制'));
+    document.getElementById('relayFallbackSwitch').addEventListener('click', (event) => {
+      toast(event.currentTarget.classList.contains('on') ? '已启用 Relay fallback' : '已关闭 Relay fallback');
+    });
+
+    const accountActionModal = document.getElementById('accountActionModal');
+    let accountAction = 'remove';
+    let selectedLoginDeviceRow = null;
+    function relayDeviceCount() { return document.querySelectorAll('.login-device-row').length; }
+    function updateRelayDeviceCount() {
+      const count = relayDeviceCount();
+      document.getElementById('relayDeviceCount').textContent = count;
+      document.getElementById('relayDeviceCountInline').textContent = count;
+    }
+    function openAccountAction(mode, row = null) {
+      accountAction = mode;
+      selectedLoginDeviceRow = row;
+      const title = document.getElementById('accountActionTitle');
+      const device = document.getElementById('accountActionDevice');
+      const description = document.getElementById('accountActionDescription');
+      const confirm = document.querySelector('#confirmAccountAction span');
+      if (mode === 'remove') {
+        title.textContent = '移除登录设备';
+        device.textContent = row.dataset.loginDevice;
+        description.textContent = '该设备的 Relay 登录会话将立即失效；本机保存的 Peer 授权不会自动撤销。';
+        confirm.textContent = '移除设备';
+      } else if (mode === 'others') {
+        const count = document.querySelectorAll('.login-device-row:not(.current)').length;
+        title.textContent = '退出其他设备';
+        device.textContent = `将退出 ${count} 台其他设备`;
+        description.textContent = '其他设备需要重新完成 OPAQUE 登录。本机与 Peer 授权不受影响。';
+        confirm.textContent = '全部退出';
+      } else {
+        title.textContent = '退出 Relay 账户';
+        device.textContent = 'attson@example.com';
+        description.textContent = '退出后停止账户同步与 Relay fallback；本地终端和 Peer 直连仍可使用。';
+        confirm.textContent = '退出登录';
+      }
+      accountActionModal.hidden = false;
+    }
+    function closeAccountAction() { accountActionModal.hidden = true; selectedLoginDeviceRow = null; }
+    document.querySelectorAll('.login-device-menu').forEach((button) => button.addEventListener('click', () => openAccountAction('remove', button.closest('.login-device-row'))));
+    document.getElementById('signOutOthers').addEventListener('click', () => {
+      if (!document.querySelector('.login-device-row:not(.current)')) { toast('没有其他登录设备'); return; }
+      openAccountAction('others');
+    });
+    document.getElementById('signOutCurrent').addEventListener('click', () => openAccountAction('current'));
+    document.getElementById('closeAccountAction').addEventListener('click', closeAccountAction);
+    document.getElementById('cancelAccountAction').addEventListener('click', closeAccountAction);
+    accountActionModal.addEventListener('click', (event) => { if (event.target === accountActionModal) closeAccountAction(); });
+    document.getElementById('confirmAccountAction').addEventListener('click', () => {
+      if (accountAction === 'remove' && selectedLoginDeviceRow) {
+        const name = selectedLoginDeviceRow.dataset.loginDevice;
+        selectedLoginDeviceRow.remove();
+        updateRelayDeviceCount();
+        closeAccountAction();
+        toast(`${name} 已退出 Relay 账户`);
+        return;
+      }
+      if (accountAction === 'others') {
+        document.querySelectorAll('.login-device-row:not(.current)').forEach((row) => row.remove());
+        updateRelayDeviceCount();
+        closeAccountAction();
+        toast('其他设备已全部退出');
+        return;
+      }
+      document.getElementById('relayAuthenticated').hidden = true;
+      document.getElementById('relaySignedOut').hidden = false;
+      document.getElementById('relayHeaderActions').hidden = true;
+      document.getElementById('relayDeviceCount').textContent = '0';
+      closeAccountAction();
+      setSettingsPage('relay');
+      toast('已退出 Relay 账户');
+    });
+    document.getElementById('relaySignIn').addEventListener('click', () => {
+      document.getElementById('relayAuthenticated').hidden = false;
+      document.getElementById('relaySignedOut').hidden = true;
+      document.getElementById('relayHeaderActions').hidden = false;
+      updateRelayDeviceCount();
+      setSettingsPage('relay');
+      toast('已重新登录 Relay 账户');
+    });
+
+    const pairingModal = document.getElementById('pairingModal');
+    const pairNext = document.getElementById('pairNext');
+    const pairBack = document.getElementById('pairBack');
+    let pairStep = 1;
+    let selectedPermission = 'control';
+    let selectedPairType = 'device';
+
+    function renderPairStep() {
+      document.querySelectorAll('[data-pair-screen]').forEach((screen) => { screen.hidden = Number(screen.dataset.pairScreen) !== pairStep; });
+      document.querySelectorAll('[data-step]').forEach((step) => {
+        const value = Number(step.dataset.step);
+        step.classList.toggle('active', value === Math.min(pairStep, 3));
+        step.classList.toggle('done', value < pairStep);
+      });
+      pairBack.hidden = pairStep === 1 || pairStep === 4;
+      pairNext.hidden = pairStep === 2;
+      pairNext.textContent = pairStep === 1 ? '生成邀请' : pairStep === 3 ? '确认配对' : '完成';
+    }
+
+    function openPairing() { pairStep = 1; renderPairStep(); pairingModal.hidden = false; }
+    function closePairing() { pairingModal.hidden = true; }
+    document.getElementById('openPairing').addEventListener('click', openPairing);
+    document.getElementById('closePairing').addEventListener('click', closePairing);
+    pairingModal.addEventListener('click', (event) => { if (event.target === pairingModal) closePairing(); });
+    pairNext.addEventListener('click', () => {
+      if (pairStep === 1) pairStep = 2;
+      else if (pairStep === 3) {
+        pairStep = 4;
+        addPairedDevice();
+      } else if (pairStep === 4) closePairing();
+      renderPairStep();
+    });
+    pairBack.addEventListener('click', () => { pairStep = Math.max(1, pairStep - 1); renderPairStep(); });
+
+    document.querySelectorAll('#pairTypeChoices .choice').forEach((choice) => choice.addEventListener('click', () => {
+      selectedPairType = choice.dataset.pairType;
+      document.querySelectorAll('#pairTypeChoices .choice').forEach((item) => item.classList.toggle('active', item === choice));
+    }));
+    document.querySelectorAll('#permissionSegment button').forEach((button) => button.addEventListener('click', () => {
+      selectedPermission = button.dataset.permission;
+      document.querySelectorAll('#permissionSegment button').forEach((item) => item.classList.toggle('active', item === button));
+    }));
+    document.querySelectorAll('#routeSegment button').forEach((button) => button.addEventListener('click', () => {
+      document.querySelectorAll('#routeSegment button').forEach((item) => item.classList.toggle('active', item === button));
+    }));
+    document.getElementById('copyInvite').addEventListener('click', () => toast('邀请链接已复制'));
+    document.getElementById('simulateDevice').addEventListener('click', () => {
+      pairStep = 3;
+      const permissionNames = { view: '仅查看', control: '可控制', full: '完整访问' };
+      const scopeNames = { device: '所有会话', temporary: '临时访问', session: '当前会话' };
+      document.getElementById('approvalScope').textContent = `${scopeNames[selectedPairType]} · ${permissionNames[selectedPermission]}`;
+      renderPairStep();
+    });
+
+    function addPairedDevice() {
+      if (document.querySelector('[data-device="iPad Pro"]')) return;
+      const permissionNames = { view: '仅查看', control: '可控制', full: '完整访问' };
+      const row = document.createElement('div');
+      row.className = 'device-row';
+      row.dataset.device = 'iPad Pro';
+      row.innerHTML = `
+        <div class="device-main"><div class="device-icon">${icon('tablet')}</div><div class="device-copy"><div class="device-name"><span class="online-dot"></span><strong>iPad Pro</strong><span class="badge">在线</span></div><div class="device-meta">peer 7f21:a89c:0451 · iPadOS</div></div></div>
+        <select class="permission-select" aria-label="iPad Pro 权限"><option ${selectedPermission === 'view' ? 'selected' : ''}>仅查看</option><option ${selectedPermission === 'control' ? 'selected' : ''}>可控制</option><option ${selectedPermission === 'full' ? 'selected' : ''}>完整访问</option></select>
+        <div class="route-type">${icon('zap')}<span>直接连接</span></div><div class="last-seen">刚刚</div><button class="icon-button device-menu" type="button" title="设备操作" aria-label="设备操作">${icon('more')}</button>`;
+      document.getElementById('deviceTable').appendChild(row);
+      bindDeviceRow(row);
+      updatePeerDeviceCount();
+      toast(`iPad Pro 已获得${permissionNames[selectedPermission]}权限`);
+    }
+
+    function updatePeerDeviceCount() {
+      const count = document.querySelectorAll('.device-row').length;
+      document.getElementById('deviceCount').textContent = count;
+      document.getElementById('peerNavCount').textContent = count;
+    }
+
+    const deviceModal = document.getElementById('deviceModal');
+    let selectedDeviceRow = null;
+    function bindDeviceRow(row) {
+      const menu = row.querySelector('.device-menu');
+      menu.addEventListener('click', () => {
+        selectedDeviceRow = row;
+        document.getElementById('selectedDeviceName').textContent = row.dataset.device;
+        deviceModal.hidden = false;
+      });
+      const select = row.querySelector('.permission-select');
+      select.addEventListener('change', () => toast(`权限已改为“${select.value}”`));
+    }
+    document.querySelectorAll('.device-row').forEach(bindDeviceRow);
+    function closeDeviceModal() { deviceModal.hidden = true; selectedDeviceRow = null; }
+    document.getElementById('closeDeviceModal').addEventListener('click', closeDeviceModal);
+    document.getElementById('cancelDeviceModal').addEventListener('click', closeDeviceModal);
+    deviceModal.addEventListener('click', (event) => { if (event.target === deviceModal) closeDeviceModal(); });
+    document.getElementById('revokeDevice').addEventListener('click', () => {
+      if (!selectedDeviceRow) return;
+      const name = selectedDeviceRow.dataset.device;
+      selectedDeviceRow.remove();
+      updatePeerDeviceCount();
+      closeDeviceModal();
+      toast(`${name} 已撤销`);
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      if (!accountActionModal.hidden) closeAccountAction();
+      else if (!deviceModal.hidden) closeDeviceModal();
+      else if (!pairingModal.hidden) closePairing();
+      else closeSidebar();
+    });
+
+    function makeQr() {
+      const grid = document.getElementById('qrGrid');
+      const size = 21;
+      const finder = (x, y, ox, oy) => {
+        const dx = x - ox;
+        const dy = y - oy;
+        return dx >= 0 && dx < 7 && dy >= 0 && dy < 7 && (dx === 0 || dx === 6 || dy === 0 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4));
+      };
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const cell = document.createElement('span');
+          const fixed = finder(x, y, 0, 0) || finder(x, y, 14, 0) || finder(x, y, 0, 14);
+          const pseudo = ((x * 17 + y * 31 + x * y * 3 + 11) % 7) < 3 && !(x < 8 && y < 8) && !(x > 12 && y < 8) && !(x < 8 && y > 12);
+          if (fixed || pseudo) cell.className = 'qr-cell on';
+          grid.appendChild(cell);
+        }
+      }
+    }
+    makeQr();
+  </script>
+</body>
+</html>

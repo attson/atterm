@@ -36,6 +36,7 @@ vi.mock('../../../wailsjs/runtime/runtime', () => ({
   Quit: vi.fn(),
   Environment: vi.fn().mockResolvedValue({ platform: 'darwin', arch: 'arm64', buildType: 'production' }),
   BrowserOpenURL: vi.fn(),
+  ClipboardSetText: vi.fn().mockResolvedValue(true),
 }))
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
@@ -55,7 +56,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 }))
 
 import { createWailsPlatform } from '../wails'
-import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
+import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
 import { GetPluginConfig, SetPluginConfig, GetAppVersion, StartServicePreview } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import {
@@ -138,6 +139,12 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.system.showNotification('t', 'b')
     expect(showNotification).toHaveBeenCalledWith('t', 'b')
+  })
+
+  it('system.setClipboardText delegates to native Wails clipboard', async () => {
+    const p = createWailsPlatform()
+    await p.system.setClipboardText!('selected output')
+    expect(ClipboardSetText).toHaveBeenCalledWith('selected output')
   })
 
   it('system.windowMinimize delegates to runtime WindowMinimise', async () => {

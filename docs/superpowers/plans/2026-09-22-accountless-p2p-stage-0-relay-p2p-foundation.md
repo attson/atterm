@@ -2,6 +2,7 @@
 
 > Parent: [Accountless P2P plan](./2026-09-22-accountless-p2p.md)
 > Milestone: P0
+> Release: v0.6.0 pre-release gate (not shipped independently)
 > Outcome: 冻结 Relay 体系内的 WebRTC 加速协议和切路语义；不交付用户功能。
 
 ## Why This Comes First

@@ -3,6 +3,7 @@
 > Parent: [Accountless P2P plan](./2026-09-22-accountless-p2p.md)
 > Depends on: [Stage 2](./2026-09-22-accountless-p2p-stage-2-quick-tunnel-peer-space.md)
 > Milestones: P6-P7
+> Release: v0.8.0
 > Outcome: Peer Space 成员通过官方或自建 Rendezvous 稳定发现并建立直连，不依赖临时 Quick Tunnel URL。
 
 ## Product Boundary

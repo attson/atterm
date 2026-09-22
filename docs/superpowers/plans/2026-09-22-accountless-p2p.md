@@ -4,17 +4,32 @@
 > Date: 2026-09-22
 > Prototype: `docs/prototypes/peer-connect/index.html`
 
+## Release Train
+
+当前 HEAD 可达的最新版本是 `v0.5.20`。路线图中以 v0.6/v0.7/v0.8 命名的 SSH、同步与 Preview 工作已经提前落在 v0.5.x，因此 P2P 从下一条 minor line 开始。版本号在实际打 tag 时仍按“当前 HEAD 可达 tag”重新核对，不从分支名推断。
+
+| Release | Included stages | User-visible outcome | Default / rollback | Compatibility gate |
+|---|---|---|---|---|
+| v0.6.0 | Stage 0 + Stage 1 | 已登录同一 Relay 账户的设备可启用 WebRTC 直连加速；失败自动回 Relay | beta 默认关闭；关闭 `Prefer direct connection` 即完整回到 v0.5 Relay-only 路径 | 老客户端、老 Relay、`proto.Version = 1` 和 Relay-only attach 全部继续工作 |
+| v0.6.x stable | Stage 1 soak fixes only | 直连加速达到默认可用质量 | 仅在 NAT/WebKit/route-flap gate 全绿后默认开启；服务端可全局 kill switch | 不引入 Peer identity、邀请或配置迁移 |
+| v0.7.0 | Stage 2 | 不登录 Relay，通过 Peer Space 邀请 + Quick Tunnel 接入并同步配置 | accountless beta 独立开关，Relay 模式默认配置不变；停 Quick Tunnel 不删除 membership | v0.6 direct transport 原样复用；Relay 账户和 Peer Space 数据严格分离 |
+| v0.7.x stable | Stage 2 soak fixes only | Quick Tunnel 无账户模式达到稳定可用质量 | 仍由用户显式启用第三方 tunnel；可随时退回 Relay 或纯本地 | URL 轮换只更新 route bundle，不重签 membership |
+| v0.8.0 | Stage 3 | 官方或自建 Rendezvous 提供稳定发现/信令 | Rendezvous 可选；服务不可用时 Quick Tunnel、Relay、本地路径不受影响 | 官方与自建实现必须通过同一 contract suite |
+| v0.9.0 | Stage 4 | 统一 Direct / Quick Tunnel / Relay 选路与高级能力扩展 | 自动 handover 先 opt-in；可退回每条独立路径 | 每项高级能力单独 allowlist、单独发布、单独回滚 |
+
+每个 minor release 必须能在不迁移或删除上一版本数据的情况下关闭新功能。Stage 0 是 v0.6.0 的工程准入门槛，不单独生成用户版本；没有通过 Stage 0 exit gate 就不能合入 v0.6 的生产启动路径。
+
 ## Execution Documents
 
 本文是架构与产品决策总览。实际开发按下列阶段文档执行；阶段文档中的 PR 边界、entry/exit gate 和验证命令是实施时的权威清单。本文件 §10 的 P0-P9 保留为跨阶段里程碑映射。
 
-| Stage | Scope | Milestones | Plan |
-|---|---|---|---|
-| 0 | Relay P2P 规范与风险 spike | P0 | [Stage 0 - Relay P2P foundation](./2026-09-22-accountless-p2p-stage-0-relay-p2p-foundation.md) |
-| 1 | Relay 体系内直连加速与自动 fallback | P1-P2 | [Stage 1 - Relay acceleration](./2026-09-22-accountless-p2p-stage-1-relay-acceleration.md) |
-| 2 | Peer Space、去中心化同步与 Quick Tunnel | P3-P5 | [Stage 2 - Quick Tunnel and Peer Space](./2026-09-22-accountless-p2p-stage-2-quick-tunnel-peer-space.md) |
-| 3 | 官方/自建 Rendezvous 稳定发现 | P6-P7 | [Stage 3 - Rendezvous](./2026-09-22-accountless-p2p-stage-3-rendezvous.md) |
-| 4 | 统一选路、能力扩展与 hardening | P8-P9 | [Stage 4 - Hybrid and hardening](./2026-09-22-accountless-p2p-stage-4-hybrid-hardening.md) |
+| Stage | Release | Scope | Milestones | Plan |
+|---|---|---|---|---|
+| 0 | v0.6.0 pre-release gate | Relay P2P 规范与风险 spike | P0 | [Stage 0 - Relay P2P foundation](./2026-09-22-accountless-p2p-stage-0-relay-p2p-foundation.md) |
+| 1 | v0.6.x | Relay 体系内直连加速与自动 fallback | P1-P2 | [Stage 1 - Relay acceleration](./2026-09-22-accountless-p2p-stage-1-relay-acceleration.md) |
+| 2 | v0.7.x | Peer Space、去中心化同步与 Quick Tunnel | P3-P5 | [Stage 2 - Quick Tunnel and Peer Space](./2026-09-22-accountless-p2p-stage-2-quick-tunnel-peer-space.md) |
+| 3 | v0.8.x | 官方/自建 Rendezvous 稳定发现 | P6-P7 | [Stage 3 - Rendezvous](./2026-09-22-accountless-p2p-stage-3-rendezvous.md) |
+| 4 | v0.9.x | 统一选路、能力扩展与 hardening | P8-P9 | [Stage 4 - Hybrid and hardening](./2026-09-22-accountless-p2p-stage-4-hybrid-hardening.md) |
 
 依赖关系固定为 `Relay P2P 加速 -> Quick Tunnel 无账户模式 -> Rendezvous 稳定模式 -> Hybrid/hardening`。Stage 0 可以提前验证 Quick Tunnel/Rendezvous 可行性，但不让后两者阻塞 Relay 加速落地。
 

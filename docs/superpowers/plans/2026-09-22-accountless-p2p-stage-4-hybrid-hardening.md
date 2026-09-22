@@ -3,6 +3,7 @@
 > Parent: [Accountless P2P plan](./2026-09-22-accountless-p2p.md)
 > Depends on: [Stage 3](./2026-09-22-accountless-p2p-stage-3-rendezvous.md)
 > Milestones: P8-P9
+> Release: v0.9.0 and later capability releases
 > Outcome: 统一 Relay direct、Rendezvous direct、Quick Tunnel 和 Relay fallback，并逐项开放高级远程能力。
 
 ## Entry Gate

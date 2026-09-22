@@ -3,6 +3,7 @@
 > Parent: [Accountless P2P plan](./2026-09-22-accountless-p2p.md)
 > Depends on: [Stage 0](./2026-09-22-accountless-p2p-stage-0-relay-p2p-foundation.md)
 > Milestones: P1-P2
+> Release: v0.6.0 beta, v0.6.x stable after soak
 > Outcome: 已登录 Relay 的设备优先直连传 terminal bytes，失败时无感回到现有 Relay path。
 
 ## Product Boundary

@@ -3,6 +3,7 @@
 > Parent: [Accountless P2P plan](./2026-09-22-accountless-p2p.md)
 > Depends on: [Stage 1](./2026-09-22-accountless-p2p-stage-1-relay-acceleration.md)
 > Milestones: P3-P5
+> Release: v0.7.0 beta, v0.7.x stable after soak
 > Outcome: 用户不登录 Relay，也能通过预签邀请和 Quick Tunnel 接管终端并同步配置。
 
 ## Why Quick Tunnel Before Rendezvous

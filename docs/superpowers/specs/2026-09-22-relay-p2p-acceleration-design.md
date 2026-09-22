@@ -146,7 +146,7 @@ The ordered reliable DataChannel label is `atterm-terminal-v1`, negotiated in-ba
 ```text
 client -> host  CLIENT_HELLO(attempt_id, client_pub, client_proof)
 host   -> client HOST_HELLO(host_pub, host_proof)
-client -> host  CLIENT_FINISH(HMAC(proof_key, "finish" || transcript_hash))
+client -> host  CLIENT_FINISH(HMAC(proof_key, "atterm-direct-finish-v1" || transcript_hash))
 host   -> client AUTH_OK(initial host record counter = 0)
 ```
 

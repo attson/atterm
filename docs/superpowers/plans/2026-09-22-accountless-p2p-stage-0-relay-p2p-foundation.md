@@ -79,8 +79,8 @@ These produce decisions, not production code, and cannot delay Relay P2P acceler
 
 ## Stage Exit Gate
 
-- [ ] Relay direct-path spec accepted.
-- [ ] Go/browser handshake and record vectors pass.
+- [x] Relay direct-path spec accepted.
+- [x] Go/browser handshake and record vectors pass.
 - [ ] WebKit/Pion channel and fragmentation behavior measured.
 - [ ] Route handover proves no output gap/duplicate and no duplicate input.
 - [ ] Router reuse boundary recorded; LIST/ATTACH/replay state machine will not be copied.

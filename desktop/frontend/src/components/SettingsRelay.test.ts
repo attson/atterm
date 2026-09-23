@@ -37,7 +37,6 @@ describe("SettingsRelay", () => {
 
   test("remote-session-permission selector is gone (single-user tool, no sharing)", () => {
     expect(source).not.toContain("settings.relay.remotePermissions");
-    expect(source).not.toContain("SelectDropdown");
     expect(source).not.toContain("remotePermission");
     // Sessions are always published with full permission.
     expect(source).toContain('remote_permission: "full"');
@@ -46,10 +45,12 @@ describe("SettingsRelay", () => {
   test("relay scheme explicitly supports HTTPS and loopback HTTP", () => {
     expect(source).toContain("const host = ref");
     expect(source).toContain("function stripScheme");
+    expect(source).toContain('import SelectDropdown');
     expect(source).toContain('id="relay-scheme"');
-    expect(source).toContain('<option value="https">https://</option>');
-    expect(source).toContain('<option value="http">http://</option>');
+    expect(source).toContain('{ value: "https", label: "https://" }');
+    expect(source).toContain('{ value: "http", label: "http://" }');
     expect(source).toContain('class="url-scheme"');
+    expect(source).not.toContain('<select');
     expect(source).toContain('relayScheme.value === "http" ? "ws" : "wss"');
     expect(source).toContain("probeRelayVersion(fullUrl.value, allowInsecureRelay.value)");
   });

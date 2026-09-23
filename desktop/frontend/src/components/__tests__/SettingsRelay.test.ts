@@ -113,7 +113,7 @@ describe('SettingsRelay relay protocol', () => {
     const w = mount(SettingsRelay)
     await flushPromises()
 
-    expect((w.get('#relay-scheme').element as HTMLSelectElement).value).toBe('http')
+    expect(w.get('#relay-scheme [data-testid="select-trigger"]').text()).toBe('http://')
     expect((w.get('#relay-host').element as HTMLInputElement).value).toBe('127.0.0.1:8080')
   })
 
@@ -124,7 +124,8 @@ describe('SettingsRelay relay protocol', () => {
 
     const w = mount(SettingsRelay)
     await flushPromises()
-    await w.get('#relay-scheme').setValue('http')
+    await w.get('#relay-scheme [data-testid="select-trigger"]').trigger('click')
+    await w.findAll('#relay-scheme [data-testid="select-option"]')[1].trigger('click')
     await w.get('#relay-host').setValue('127.0.0.1:8080')
     await (w.vm as unknown as { save: () => Promise<void> }).save()
     await flushPromises()

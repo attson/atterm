@@ -6,6 +6,7 @@ import { usePlatform } from '../platform'
 const platform = usePlatform()
 import PairingPanel from "./PairingPanel.vue";
 import AccountTrafficDashboard from "./AccountTrafficDashboard.vue";
+import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import { useI18n } from "../i18n/useI18n";
 
 const emit = defineEmits<{
@@ -20,6 +21,10 @@ type RelayScheme = "https" | "http";
 // the HTTP listener started by the documented `go run` command.
 const host = ref("");
 const relayScheme = ref<RelayScheme>("https");
+const relaySchemeOptions: SelectOption[] = [
+  { value: "https", label: "https://" },
+  { value: "http", label: "http://" },
+];
 // `token` mirrors the persisted session token (issued by /api/auth/login).
 // It is no longer user-editable — see the email/password login form below.
 const token = ref("");
@@ -463,16 +468,14 @@ defineExpose({
         </label>
       </div>
       <div class="url-input" :class="{ insecure: allowInsecureRelay }">
-        <select
+        <SelectDropdown
           id="relay-scheme"
           v-model="relayScheme"
           class="url-scheme"
+          :options="relaySchemeOptions"
           :aria-label="t('settings.relay.scheme')"
           :disabled="saving"
-        >
-          <option value="https">https://</option>
-          <option value="http">http://</option>
-        </select>
+        />
         <input
           id="relay-host"
           v-model="host"
@@ -647,35 +650,26 @@ defineExpose({
   align-items: stretch;
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
   background: var(--bg);
 }
 .url-input:focus-within {
   box-shadow: 0 0 0 2px var(--accent);
 }
 .url-scheme {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 8px;
-  font-size: 13px;
-  color: var(--fg);
+  flex: 0 0 90px;
+}
+.url-scheme :deep(.trigger) {
+  height: 100%;
+  min-height: 30px;
   background: var(--panel);
-  color-scheme: dark;
+  border: 0;
   border-right: 1px solid var(--border);
-  user-select: none;
-  white-space: nowrap;
-  border-top: 0;
-  border-bottom: 0;
-  border-left: 0;
-  border-radius: 0;
-  cursor: pointer;
-  font-family: inherit;
+  border-radius: 5px 0 0 5px;
 }
-.url-scheme option {
-  color: var(--fg);
-  background: var(--panel);
+.url-scheme :deep(.menu) {
+  min-width: 100%;
 }
-.url-input.insecure .url-scheme {
+.url-input.insecure .url-scheme :deep(.trigger-label) {
   color: var(--warn, #d97706);
 }
 .url-input input {

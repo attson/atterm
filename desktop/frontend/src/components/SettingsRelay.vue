@@ -13,17 +13,19 @@ const emit = defineEmits<{
   (e: "dirty", value: boolean): void;
 }>();
 
-// `host` holds the bare relay host the user types (no scheme). Relay
-// connections are always HTTPS/WSS; the scheme is rendered as a fixed
-// `https://` prefix. `fullUrl` reconstructs the URL sent to the backend.
+type RelayScheme = "https" | "http";
+
+// `host` holds the bare relay host the user types. `relayScheme` is explicit:
+// production relays stay on HTTPS while loopback development relays can use
+// the HTTP listener started by the documented `go run` command.
 const host = ref("");
+const relayScheme = ref<RelayScheme>("https");
 // `token` mirrors the persisted session token (issued by /api/auth/login).
 // It is no longer user-editable — see the email/password login form below.
 const token = ref("");
-// allowInsecureRelay = "trust self-signed certificate": when checked the
-// desktop skips TLS verification so it can reach a relay serving a
-// self-signed cert (atterm-relay's quick-start default). It no longer
-// downgrades the scheme to http:// — connections stay HTTPS either way.
+// For HTTPS this permits a self-signed certificate. For non-loopback HTTP it
+// is the explicit opt-in required by validateRelayEndpoint; loopback HTTP is
+// allowed without it.
 const allowInsecureRelay = ref(false);
 // disableE2EE = true means agent will NOT seal outbound session content.
 // Persisted in appConfig.DisableE2EE and applied immediately via the
@@ -56,6 +58,7 @@ const connectedUserID = ref("");
 const connectedEmail = ref("");
 
 const persistedHost = ref("");
+const persistedScheme = ref<RelayScheme>("https");
 const persistedToken = ref("");
 const persistedAllowInsecure = ref(false);
 
@@ -65,16 +68,20 @@ function stripScheme(s: string): string {
   return s.trim().replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
 }
 
-// Always HTTPS — WebCrypto/OPAQUE require a secure context and the relay
-// serves TLS by default. The self-signed-trust checkbox is orthogonal to the
-// scheme (it only relaxes certificate verification on the desktop side).
-const urlScheme = computed(() => "https://");
+function schemeFromURL(value: string): RelayScheme {
+  return /^(?:http|ws):\/\//i.test(value.trim()) ? "http" : "https";
+}
+
+const urlScheme = computed(() => `${relayScheme.value}://`);
 
 // If a full URL is pasted into the host field, drop the scheme so the bare
 // host doesn't render doubled against the fixed prefix. Only fires when a
 // `scheme://` is actually present, so normal host typing is untouched.
 watch(host, (value) => {
-  if (/:\/\//.test(value)) host.value = stripScheme(value);
+  if (/:\/\//.test(value)) {
+    relayScheme.value = schemeFromURL(value);
+    host.value = stripScheme(value);
+  }
 });
 
 // Full URL handed to the backend (probe / login / setRelayConfig). Empty when
@@ -83,10 +90,16 @@ const fullUrl = computed(() => {
   const h = stripScheme(host.value);
   return h ? urlScheme.value + h : "";
 });
+const relayConfigUrl = computed(() => {
+  const h = stripScheme(host.value);
+  if (!h) return "";
+  return `${relayScheme.value === "http" ? "ws" : "wss"}://${h}`;
+});
 
 const dirty = computed(
   () =>
     stripScheme(host.value) !== persistedHost.value ||
+    relayScheme.value !== persistedScheme.value ||
     token.value !== persistedToken.value ||
     allowInsecureRelay.value !== persistedAllowInsecure.value,
 );
@@ -136,6 +149,7 @@ async function reload() {
   try {
     const cfg = await getRelayConfig();
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    relayScheme.value = schemeFromURL(cfg.url);
     host.value = stripScheme(cfg.url);
     token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
@@ -226,6 +240,7 @@ async function onDisableE2EEChange(e: Event) {
 
 function snapshotPersisted() {
   persistedHost.value = stripScheme(host.value);
+  persistedScheme.value = relayScheme.value;
   persistedToken.value = token.value;
   persistedAllowInsecure.value = allowInsecureRelay.value;
 }
@@ -237,7 +252,7 @@ function snapshotPersisted() {
 async function rememberInputs() {
   try {
     await setRelayConfig({
-      url: fullUrl.value,
+      url: relayConfigUrl.value,
       token: token.value,
       session_expires_at: 0,
       allow_insecure_relay: allowInsecureRelay.value,
@@ -273,8 +288,8 @@ async function save() {
   saving.value = true;
   error.value = "";
 
-  // 1. URL format check (cheap, local). fullUrl already carries the scheme
-  // derived from insecure mode, so we validate the reconstructed value.
+  // 1. URL format check (cheap, local). fullUrl carries the protocol selected
+  // next to the host field, so validate the reconstructed value.
   if (!isValidRelayUrl(fullUrl.value)) {
     error.value = t("settings.relay.relayInvalid");
     saving.value = false;
@@ -312,7 +327,7 @@ async function save() {
   } else if (hasExistingToken) {
     try {
       await setRelayConfig({
-        url: fullUrl.value,
+        url: relayConfigUrl.value,
         token: token.value,
         session_expires_at: 0,
         allow_insecure_relay: allowInsecureRelay.value,
@@ -338,6 +353,7 @@ async function save() {
   try {
     const cfg = await getRelayConfig();
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    relayScheme.value = schemeFromURL(cfg.url);
     host.value = stripScheme(cfg.url);
     token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
@@ -443,11 +459,20 @@ defineExpose({
             type="checkbox"
             :disabled="saving"
           />
-          {{ t("settings.relay.insecureMode") }}
+          {{ t(relayScheme === "http" ? "settings.relay.allowCleartext" : "settings.relay.insecureMode") }}
         </label>
       </div>
       <div class="url-input" :class="{ insecure: allowInsecureRelay }">
-        <span class="url-scheme" aria-hidden="true">{{ urlScheme }}</span>
+        <select
+          id="relay-scheme"
+          v-model="relayScheme"
+          class="url-scheme"
+          :aria-label="t('settings.relay.scheme')"
+          :disabled="saving"
+        >
+          <option value="https">https://</option>
+          <option value="http">http://</option>
+        </select>
         <input
           id="relay-host"
           v-model="host"
@@ -459,7 +484,10 @@ defineExpose({
           @keyup.enter="save"
         />
       </div>
-      <p v-if="allowInsecureRelay" class="warning">
+      <p v-if="relayScheme === 'http'" class="warning">
+        {{ t("settings.relay.cleartextWarning") }}
+      </p>
+      <p v-else-if="allowInsecureRelay" class="warning">
         {{ t("settings.relay.insecureWarning") }}
       </p>
 
@@ -613,7 +641,7 @@ defineExpose({
   margin: 0;
 }
 
-/* url input with a fixed, non-editable scheme prefix glued to its left */
+/* URL input with a protocol menu glued to its left. */
 .url-input {
   display: flex;
   align-items: stretch;
@@ -635,6 +663,12 @@ defineExpose({
   border-right: 1px solid var(--border);
   user-select: none;
   white-space: nowrap;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 .url-input.insecure .url-scheme {
   color: var(--warn, #d97706);

@@ -68,3 +68,11 @@ func TestProbeRelayVersion_EmptyURL(t *testing.T) {
 		t.Fatalf("expected empty-url error; got %v", err)
 	}
 }
+
+func TestProbeRelayVersion_RejectsPublicCleartextWithoutOptIn(t *testing.T) {
+	app := &App{ctx: context.Background()}
+	err := app.ProbeRelayVersion("http://relay.example.com", false)
+	if err == nil || !strings.Contains(err.Error(), "insecure relay url") {
+		t.Fatalf("expected insecure relay rejection before dialing; got %v", err)
+	}
+}

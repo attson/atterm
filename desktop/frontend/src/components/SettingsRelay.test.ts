@@ -43,17 +43,14 @@ describe("SettingsRelay", () => {
     expect(source).toContain('remote_permission: "full"');
   });
 
-  test("relay scheme is always https; the insecure toggle only relaxes cert verification", () => {
-    // Bare host is stored; the scheme prefix is a fixed https:// (no longer
-    // derived from the insecure toggle — connections stay HTTPS/WSS).
+  test("relay scheme explicitly supports HTTPS and loopback HTTP", () => {
     expect(source).toContain("const host = ref");
     expect(source).toContain("function stripScheme");
-    expect(source).toContain('const urlScheme = computed(() => "https://")');
-    expect(source).not.toContain('? "http://" : "https://"');
-    // A non-editable prefix renders the scheme next to the input.
+    expect(source).toContain('id="relay-scheme"');
+    expect(source).toContain('<option value="https">https://</option>');
+    expect(source).toContain('<option value="http">http://</option>');
     expect(source).toContain('class="url-scheme"');
-    expect(source).toContain("{{ urlScheme }}");
-    // The reconstructed URL + the self-signed-trust flag reach the probe.
+    expect(source).toContain('relayScheme.value === "http" ? "ws" : "wss"');
     expect(source).toContain("probeRelayVersion(fullUrl.value, allowInsecureRelay.value)");
   });
 

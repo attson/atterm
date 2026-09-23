@@ -102,6 +102,41 @@ describe('SettingsRelay post-login password retention', () => {
   })
 })
 
+describe('SettingsRelay relay protocol', () => {
+  it('restores a persisted ws endpoint as HTTP in the protocol menu', async () => {
+    vi.spyOn(api, 'getRelayConfig').mockResolvedValue({
+      ...baseRelayConfig(),
+      url: 'ws://127.0.0.1:8080',
+    } as never)
+    vi.spyOn(api, 'loadSavedRelayPassword').mockResolvedValue('')
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+
+    expect((w.get('#relay-scheme').element as HTMLSelectElement).value).toBe('http')
+    expect((w.get('#relay-host').element as HTMLInputElement).value).toBe('127.0.0.1:8080')
+  })
+
+  it('uses HTTP for the probe and ws:// for persisted loopback config', async () => {
+    vi.spyOn(api, 'loadSavedRelayPassword').mockResolvedValue('')
+    const probe = vi.spyOn(api, 'probeRelayVersion').mockRejectedValue(new Error('stop after probe'))
+    const persist = vi.spyOn(api, 'setRelayConfig').mockResolvedValue(undefined as never)
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    await w.get('#relay-scheme').setValue('http')
+    await w.get('#relay-host').setValue('127.0.0.1:8080')
+    await (w.vm as unknown as { save: () => Promise<void> }).save()
+    await flushPromises()
+
+    expect(probe).toHaveBeenCalledWith('http://127.0.0.1:8080', false)
+    expect(persist).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'ws://127.0.0.1:8080',
+      allow_insecure_relay: false,
+    }))
+  })
+})
+
 describe('SettingsRelay clear relay info', () => {
   // Pin MockInstance to the confirm() signature — the bare `ReturnType<typeof vi.spyOn>`
   // form drops the specific overload and trips vue-tsc (see PasteImagePreviewHost.test.ts).

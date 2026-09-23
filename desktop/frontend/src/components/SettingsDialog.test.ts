@@ -60,20 +60,17 @@ describe("SettingsDialog shell", () => {
     expect(source).toMatch(/showDiscardConfirm\s*=/);
   });
 
-  test("dialog uses fixed wider size and pinned column layout", () => {
+  test("all tabs use the relay-sized dialog and pinned column layout", () => {
     const dialogStyle = styleBlockFor(".settings-dialog");
-    expect(dialogStyle).toMatch(/width\s*:\s*720px/);
-    expect(dialogStyle).toMatch(/height\s*:\s*540px/);
+    expect(dialogStyle).toMatch(/width\s*:\s*1040px/);
+    expect(dialogStyle).toMatch(/height\s*:\s*720px/);
     const navStyle = styleBlockFor(".settings-nav");
     expect(navStyle).toMatch(/width\s*:\s*160px/);
   });
 
-  test("gives traffic-bearing account and relay tabs an analytics-sized dialog", () => {
-    expect(source).toContain("activeTab === 'account' || activeTab === 'relay'");
-    const analyticsStyle = styleBlockFor(".settings-dialog--analytics");
-    expect(analyticsStyle).toMatch(/width\s*:\s*1040px/);
-    expect(analyticsStyle).toMatch(/height\s*:\s*720px/);
-    expect(source).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.settings-dialog\.settings-dialog--analytics\s*\{[\s\S]*?width:\s*100vw/);
+  test("does not resize the dialog when switching to analytics tabs", () => {
+    expect(source).not.toContain("settings-dialog--analytics");
+    expect(source).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.settings-dialog\s*\{[\s\S]*?width:\s*100vw/);
   });
 
   test("imports the SettingsShortcuts subcomponent", () => {

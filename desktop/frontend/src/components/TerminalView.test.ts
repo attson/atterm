@@ -66,14 +66,17 @@ describe("TerminalView async mount lifecycle", () => {
 });
 
 describe("TerminalView overlay placement", () => {
-  test("remote panes stack route diagnostics below the host badge and attach progress below both", () => {
+  test("merges route diagnostics into the host badge and keeps attach progress below it", () => {
     expect(source).toContain("avoidTopRightBadge?: boolean");
     expect(source).toContain("avoidTopRightBadge");
     expect(paneSource).toContain(":avoid-top-right-badge=\"pane.remote ||");
 
     const offsetStyle = styleBlockFor(".overlay.avoid-top-right-badge");
-    expect(offsetStyle).toMatch(/top\s*:\s*60px/);
-    expect(styleBlockFor(".route-badge")).toMatch(/top\s*:\s*34px/);
+    expect(offsetStyle).toMatch(/top\s*:\s*34px/);
+    expect(source).toContain('<Teleport v-if="!isLocalSession" defer :to="routeIndicatorTarget">');
+    expect(source).toContain("const routeIndicatorTarget = computed(() => `#session-route-indicator-${props.sessionId}`)");
+    expect(paneSource).toContain('class="route-indicator-slot"');
+    expect(paneSource).toContain('`session-route-indicator-${pane.sessionId}`');
     expect(source).toContain('data-testid="session-route-indicator"');
   });
 });

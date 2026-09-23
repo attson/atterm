@@ -259,6 +259,7 @@ const previewTargetHostOptions: SelectOption[] = [
 ];
 const previewPortInput = ref<HTMLInputElement | null>(null);
 const previewTarget = computed(() => `#service-preview-controls-${props.sessionId}`);
+const routeIndicatorTarget = computed(() => `#session-route-indicator-${props.sessionId}`);
 const previewDraftKey = computed(() => `atterm.service-preview.${props.sessionId}`);
 
 function loadPreviewDraft(): void {
@@ -2795,13 +2796,14 @@ watch(
       <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
       <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
     </div>
-    <div
-      v-if="!isLocalSession && !previewViewActive"
-      class="route-badge"
-      :class="`route-${routeDiagnostics.route}`"
-      :title="routeDiagnosticsTitle"
-      data-testid="session-route-indicator"
-    >{{ routeLabel }}</div>
+    <Teleport v-if="!isLocalSession" defer :to="routeIndicatorTarget">
+      <span
+        class="session-route-indicator"
+        :class="`route-${routeDiagnostics.route}`"
+        :title="routeDiagnosticsTitle"
+        data-testid="session-route-indicator"
+      >{{ routeLabel }}</span>
+    </Teleport>
     <TerminalSearchBar
       :open="searchOpen"
       :focus-seq="searchFocusSeq"
@@ -3420,27 +3422,23 @@ watch(
   pointer-events: none;
 }
 .overlay.avoid-top-right-badge {
-  top: 60px;
-}
-.route-badge {
-  position: absolute;
   top: 34px;
-  right: 12px;
-  z-index: 6;
-  padding: 2px 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--terminal-overlay);
-  color: var(--fg-dim);
-  font: 11px var(--font-mono);
-  line-height: 1.5;
-  pointer-events: auto;
-  user-select: none;
 }
-.route-badge.route-connecting-direct {
+:global(.session-route-indicator) {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-dim);
+  pointer-events: auto;
+}
+:global(.session-route-indicator)::before {
+  content: "\00b7";
+  margin-right: 6px;
+  color: var(--fg-dim);
+}
+:global(.session-route-indicator.route-connecting-direct) {
   color: #d29922;
 }
-.route-badge.route-direct {
+:global(.session-route-indicator.route-direct) {
   color: #3fb950;
 }
 .viewer-overlay {

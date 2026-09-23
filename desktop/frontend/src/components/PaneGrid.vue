@@ -299,6 +299,11 @@ function requestServicePreview(pane: Pane): void {
           </span>
           <span v-else class="who dim">{{ t("terminal.remote") }}</span>
           <span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>
+          <span
+            class="route-indicator-slot"
+            :id="`session-route-indicator-${pane.sessionId}`"
+            aria-live="polite"
+          ></span>
         </div>
 
         <!-- Drag handle. The terminal itself cannot be draggable — xterm needs
@@ -469,6 +474,9 @@ function requestServicePreview(pane: Pane): void {
 .remote-badge .sid::before {
   content: "·";
   margin-right: 4px;
+}
+.route-indicator-slot {
+  display: contents;
 }
 .close-pane {
   border: none;

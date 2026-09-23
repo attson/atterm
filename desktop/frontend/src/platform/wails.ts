@@ -21,6 +21,9 @@ import {
   StartServicePreview,
   StopServicePreview,
   RebindServicePreview,
+  StartNativeDirect,
+  SendNativeDirectFrame,
+  StopNativeDirect,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -39,6 +42,7 @@ import {
 import type { Platform, EnvironmentInfo, RemoteSession } from './types'
 import { main as WailsModels } from '../../wailsjs/go/models'
 import { setAccountKeyProvider } from '../lib/account-key'
+import { NativeDirectClientTransport } from '../lib/nativeDirectClient'
 
 // In-memory cache of the unlocked account_key. Mirrors the Capacitor
 // platform's cache but reads from the Go App.GetAccountKey binding
@@ -246,6 +250,12 @@ export function createWailsPlatform(): Platform {
     directConnection: {
       load: () => api.getDirectP2PEnabled(),
       save: (enabled) => api.setDirectP2PEnabled(enabled),
+      createTransport: (options) => new NativeDirectClientTransport(options, {
+        on: (event, handler) => EventsOn(event, handler as (...data: unknown[]) => void),
+        start: (req) => StartNativeDirect(req),
+        send: (id, frame) => SendNativeDirectFrame(id, frame),
+        stop: (id) => StopNativeDirect(id),
+      }),
     },
     updater: {
       getState: api.getUpdateState,

@@ -35,6 +35,7 @@ describe("TerminalView direct transport plumbing", () => {
     expect(paneSource).toContain(':direct-endpoint="pane.remote ? directEndpoint : null"');
     expect(paneSource).toContain(':prefer-direct="pane.remote && preferDirect"');
     expect(source).toContain("directEndpoint: props.directEndpoint");
+    expect(source).toContain("directTransportFactory: platform.directConnection.createTransport");
     expect(source).toContain("preferDirect: props.preferDirect");
   });
 });

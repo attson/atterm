@@ -37,16 +37,18 @@ Create reusable transport primitives under `internal/peertransport/` and keep or
 
 The future Peer membership authenticator must plug in without changing frame transport.
 
-## PR 1.3 - Shared browser client transport
+## PR 1.3 - Shared client transport
 
 Refactor `desktop/frontend/src/lib/connection.ts` around `BinaryFrameTransport`:
 
 - Existing Relay WebSocket adapter remains default and behavior-compatible。
-- RTCDataChannel adapter carries existing `proto.Marshal(Frame)` bytes inside direct records。
+- Browser RTCDataChannel and desktop Go/Pion adapters both carry existing `proto.Marshal(Frame)` bytes inside direct records。
 - `SessionConnection` keeps one OUT seq cursor across route changes。
 - `new RTCPeerConnection` and signaling WS synchronous failures enter normal retry/fallback state。
 
-Wails/Web/Capacitor use native browser WebRTC; no second terminal UI is introduced.
+Web/Capacitor use native browser WebRTC. Wails desktop injects a Go/Pion client
+through the platform bridge, so Linux does not depend on WebKitGTK exposing
+`RTCPeerConnection`; no second terminal UI or route state machine is introduced.
 
 ## PR 1.4 - Direct upgrade and Relay fallback state machine
 
@@ -86,11 +88,12 @@ Rules:
 
 Implementation status (2026-09-23): PR 1.1-1.6 are implemented on
 `design/accountless-p2p`. The per-device toggle lives in Relay settings and
-gates both client upgrades and the direct host listener. A client runtime that
-does not expose `RTCPeerConnection` skips signaling and stays on Relay with an
-explicit `webrtc_unavailable` diagnostic; Linux Wails/WebKitGTK therefore
-remains part of the packaged-browser exit gate rather than being assumed to
-support browser WebRTC. Beta remains default-off, and the Relay-side
+gates both client upgrades and the direct host listener. A browser/mobile
+runtime that does not expose `RTCPeerConnection` skips signaling and stays on
+Relay with an explicit `webrtc_unavailable` diagnostic. Wails desktop now uses
+a native Go/Pion client and keeps `account_key` lookup in Go; the frontend
+bridge carries only lifecycle events and existing protocol frames. Beta
+remains default-off, and the Relay-side
 `--direct-signal` / `ATTERM_DIRECT_SIGNAL_ENABLED` kill switch remains
 independent. Automated package, frontend, build, and protocol contract checks
 pass. The real-network exit gates below remain intentionally unchecked until

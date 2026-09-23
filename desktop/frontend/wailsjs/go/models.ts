@@ -721,6 +721,24 @@ export namespace main {
 	        this.level = source["level"];
 	    }
 	}
+	export class NativeDirectStartRequest {
+	    id: string;
+	    session_id: string;
+	    since_seq: number;
+	    client_instance_id: string;
+
+	    static createFrom(source: any = {}) {
+	        return new NativeDirectStartRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.session_id = source["session_id"];
+	        this.since_seq = source["since_seq"];
+	        this.client_instance_id = source["client_instance_id"];
+	    }
+	}
 	export class NewSessionReq {
 	    command: string;
 	    args?: string[];

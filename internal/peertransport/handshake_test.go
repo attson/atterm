@@ -65,6 +65,52 @@ func TestHostHandshakeAuthenticatesClientAndDerivesMatchingKeys(t *testing.T) {
 	}
 }
 
+func TestClientAndHostHandshakeRoundTrip(t *testing.T) {
+	accountKey := bytes.Repeat([]byte{0x27}, accountKeySize)
+	auth, err := NewAccountKeyAuthenticator(accountKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := testAuthorization(time.Now().Add(time.Minute))
+	client, err := NewClientHandshake(auth, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := NewHostHandshake(auth, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello, err := client.ClientHello()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostHello, err := host.Handle(hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientFinish, err := client.Handle(hostHello.Response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostResult, err := host.Handle(clientFinish.Response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientResult, err := client.Handle(hostResult.Response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hostResult.Authenticated || !clientResult.Authenticated {
+		t.Fatal("both handshake roles must authenticate")
+	}
+	if hostResult.TrafficKeys != clientResult.TrafficKeys || hostResult.TranscriptHash != clientResult.TranscriptHash {
+		t.Fatal("client and host derived different record keys")
+	}
+	if _, err := client.Handle(hostResult.Response); !errors.Is(err, ErrInvalidHandshake) {
+		t.Fatalf("repeated auth ok err=%v", err)
+	}
+}
+
 func TestHostHandshakeRejectsExpiredTicketAndMutatedProofs(t *testing.T) {
 	accountKey := bytes.Repeat([]byte{0x51}, accountKeySize)
 	auth, _ := NewAccountKeyAuthenticator(accountKey)

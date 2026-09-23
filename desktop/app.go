@@ -372,6 +372,11 @@ type App struct {
 	accountKeyMu sync.Mutex
 	accountKey   []byte
 
+	// nativeDirect owns Wails-side Pion client attempts. The browser transport
+	// remains in use on Web/Capacitor; desktop attempts never depend on WebKit.
+	nativeDirectMu sync.Mutex
+	nativeDirect   map[string]*nativeDirectClient
+
 	startupFatalMu sync.RWMutex
 	startupFatal   StartupError
 
@@ -596,6 +601,7 @@ func (a *App) startup(ctx context.Context) {
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
 func (a *App) shutdown(ctx context.Context) {
 	a.servicePreviews.stopAll()
+	a.stopNativeDirectClients()
 	a.mu.Lock()
 	if a.uplinkCancel != nil {
 		a.uplinkCancel()
@@ -649,6 +655,7 @@ func (a *App) shutdown(ctx context.Context) {
 // the uplink and the Feishu integration mode. Caller need not hold a.mu.
 func (a *App) applyRelayConfig(cfg appConfig) {
 	a.servicePreviews.stopAll()
+	a.stopNativeDirectClients()
 	a.applyRelayUplink(cfg)
 	a.applyRelayPrefsWatch(cfg)
 	// Feishu mode follows the relay login state: relay when logged in, local

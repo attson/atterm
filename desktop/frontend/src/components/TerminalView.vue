@@ -2262,6 +2262,7 @@ function startConnection() {
       remote: !props.isLocalSession,
       preferDirect: props.preferDirect,
       directEndpoint: props.directEndpoint,
+      directTransportFactory: platform.directConnection.createTransport,
     }
   ));
   conn.attach();

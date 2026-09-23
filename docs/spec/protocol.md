@@ -720,6 +720,13 @@ ticket 有效期 30 秒且单次使用。Relay 内存只保留 ticket 的 SHA-25
 
 Stage 1 endpoint 默认用 `stun:stun.cloudflare.com:3478` 发现 server-reflexive ICE candidate，不提供 TURN。STUN 不承载 terminal data，但服务方可观察请求源 IP/时序；WebRTC 对端会获得建立直连所需的 candidate 地址。公共 STUN 或 P2P UDP 不可用时，client 必须回退已有 Relay data path。
 
+Client transport 按运行时分层：Web/Capacitor 使用浏览器
+`RTCPeerConnection`；Wails desktop 使用 Go/Pion client，并由 platform bridge
+把认证完成、诊断、DIRECT_READY 和现有 protocol frame 事件交给共享
+`SessionConnection` 状态机。桌面端的 `account_key` 直接从 Go 内存读取，不随
+bridge event 传输。两种实现使用完全相同的 signaling、handshake、record 与
+fallback 语义。
+
 错误以 `{"version":1,"kind":"error","request_id":"...","code":"...","message":"..."}` 返回。协议/边界错误只拒绝当前消息或 attempt；hello 非法才关闭 signaling 连接。稳定 fallback 类别及 direct handshake/record/handover 细节见 [Relay-assisted P2P Acceleration Design](../superpowers/specs/2026-09-22-relay-p2p-acceleration-design.md)。
 
 ## E2EE 信封

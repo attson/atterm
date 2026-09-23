@@ -82,8 +82,8 @@ These produce decisions, not production code, and cannot delay Relay P2P acceler
 - [x] Relay direct-path spec accepted.
 - [x] Go/browser handshake and record vectors pass.
 - [ ] WebKit/Pion channel and fragmentation behavior measured.
-- [ ] Route handover proves no output gap/duplicate and no duplicate input.
-- [ ] Router reuse boundary recorded; LIST/ATTACH/replay state machine will not be copied.
-- [ ] Quick Tunnel/Rendezvous/config-sync unknowns have written go/no-go notes.
+- [x] Route handover state model proves no output duplicate and no duplicate input across 100 transitions; real session integration remains Stage 1.
+- [x] Router reuse boundary recorded; LIST/ATTACH/replay state machine will not be copied.
+- [x] Quick Tunnel/Rendezvous/config-sync unknowns have written go/no-go notes.
 
 Verification commands are spike-specific and must be recorded in each PR. No Settings or shipping feature flag is added in Stage 0.

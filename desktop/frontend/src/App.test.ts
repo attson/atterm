@@ -1732,5 +1732,15 @@ describe("startup update gate", () => {
     expect(source).toContain("<StartupUpdateDialog");
     expect(source).toContain('v-if="startupUpdateOpen"');
     expect(source).toContain('@dismiss="onStartupUpdateDismiss"');
+    expect(source).toContain('@install="onStartupUpdateInstall"');
+  });
+
+  test("install restart preserves the boot-loaded recovery snapshot", () => {
+    const handler = source.match(/function handleBeforeClose\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const installIdx = handler.indexOf("startupUpdateInstallPending.value");
+    const flushIdx = handler.indexOf("recovery?.flushNow()");
+    expect(installIdx).toBeGreaterThanOrEqual(0);
+    expect(handler).toContain("void confirmQuit()");
+    expect(installIdx).toBeLessThan(flushIdx);
   });
 });

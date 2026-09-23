@@ -394,6 +394,14 @@ let relayAuthRestoredListenerOff: (() => void) | null = null;
 let relayAuthErrorListenerOff: (() => void) | null = null;
 
 function handleBeforeClose() {
+  if (startupUpdateInstallPending.value) {
+    // The startup update gate runs before recovery creates any tabs. Flushing
+    // here would replace the boot-loaded snapshot with an empty workspace.
+    // InstallUpdate already started the helper, so approve this close while
+    // leaving App.lastSnapshot intact for MarkCleanShutdown.
+    void confirmQuit();
+    return;
+  }
   // Best-effort final persist so a clean quit always lands the latest state.
   // (Sleep / force-quit are covered by the composable's periodic safety flush.)
   recovery?.flushNow();
@@ -506,6 +514,7 @@ const { recoveryDialogState, onRecoveryRestore, onRecoveryDiscard } = useRecover
 // The dialog opens EXACTLY ONCE from the boot auto-start block below — never from
 // the 5s update poll or the 24h background check (those only feed the ⚙ badge).
 const startupUpdateOpen = ref(false);
+const startupUpdateInstallPending = ref(false);
 const bootRecoverySnap = ref<RecoverySnapshot | null>(null);
 const bootRecoveryEnabled = ref(true);
 const BOOT_UPDATE_CHECK_TIMEOUT_MS = 3000;
@@ -526,6 +535,10 @@ function resumeBoot() {
 function onStartupUpdateDismiss() {
   startupUpdateOpen.value = false;
   resumeBoot();
+}
+
+function onStartupUpdateInstall() {
+  startupUpdateInstallPending.value = true;
 }
 
 // checkForUpdateBounded forces a check but never blocks boot longer than `ms`.
@@ -2030,6 +2043,7 @@ defineExpose({ me });
     <StartupUpdateDialog
       v-if="startupUpdateOpen"
       @dismiss="onStartupUpdateDismiss"
+      @install="onStartupUpdateInstall"
     />
     <ShortcutHints :bindings="shortcutBindings" />
   </div>

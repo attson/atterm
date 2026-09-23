@@ -21,6 +21,12 @@ describe("StartupUpdateDialog", () => {
     expect(source).toContain("installUpdate");
   });
 
+  test("notifies App only after the install helper starts successfully", () => {
+    expect(source).toMatch(/await installUpdate\(\);\s*[^}]*emit\("install"\)/);
+    const catchBody = source.match(/async function onInstall\(\)[\s\S]*?catch\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
+    expect(catchBody).not.toContain('emit("install")');
+  });
+
   test("shows install button only when ready, download button otherwise", () => {
     expect(source).toContain("startupUpdate.installRestart");
     expect(source).toContain("startupUpdate.downloadInstall");

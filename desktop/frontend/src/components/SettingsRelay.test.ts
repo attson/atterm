@@ -55,6 +55,13 @@ describe("SettingsRelay", () => {
     expect(source).toContain("probeRelayVersion(fullUrl.value, allowInsecureRelay.value)");
   });
 
+  test("owns the direct connection preference instead of the general pane", () => {
+    expect(source).toContain('data-testid="direct-connection-toggle"');
+    expect(source).toContain("platform.directConnection.load()");
+    expect(source).toContain("platform.directConnection.save(target.checked)");
+    expect(source).toContain('emit("direct-connection-changed", effective)');
+  });
+
   test("insecure-mode toggle sits on the relay url label row", () => {
     expect(source).toContain('class="url-label-row"');
     expect(source).toContain('class="insecure-inline"');

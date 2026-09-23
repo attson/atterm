@@ -54,6 +54,13 @@ describe("SettingsDialog shell", () => {
     expect(source).toContain("LogViewerDialog");
   });
 
+  test("forwards direct connection changes from the relay pane", () => {
+    const generalTag = source.match(/<SettingsGeneral[\s\S]*?\/>/)?.[0] ?? "";
+    const relayTag = source.match(/<SettingsRelay[\s\S]*?\/>/)?.[0] ?? "";
+    expect(relayTag).toContain("@direct-connection-changed=\"emit('direct-connection-changed', $event)\"");
+    expect(generalTag).not.toContain("@direct-connection-changed");
+  });
+
   test("confirms before discarding unsaved relay changes on tab switch", () => {
     expect(source).toContain("relayDirty");
     expect(source).toContain("pendingTab");

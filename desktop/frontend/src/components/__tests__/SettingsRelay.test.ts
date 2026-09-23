@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } fr
 const { fake } = vi.hoisted(() => ({
   fake: {
     events: { on: vi.fn().mockReturnValue(() => {}), off: vi.fn(), emit: vi.fn() },
+    directConnection: { load: vi.fn().mockResolvedValue(false), save: vi.fn().mockResolvedValue(undefined) },
   },
 }))
 
@@ -135,6 +136,25 @@ describe('SettingsRelay relay protocol', () => {
       url: 'ws://127.0.0.1:8080',
       allow_insecure_relay: false,
     }))
+  })
+})
+
+describe('SettingsRelay direct connection preference', () => {
+  it('loads, saves, and emits the effective value', async () => {
+    fake.directConnection.load
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    const toggle = w.get<HTMLInputElement>('[data-testid="direct-connection-toggle"]')
+    expect(toggle.element.checked).toBe(true)
+
+    await toggle.setValue(false)
+    await flushPromises()
+
+    expect(fake.directConnection.save).toHaveBeenCalledWith(false)
+    expect(w.emitted('direct-connection-changed')).toEqual([[false]])
   })
 })
 

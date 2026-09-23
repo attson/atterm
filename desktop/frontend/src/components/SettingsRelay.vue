@@ -12,6 +12,7 @@ import { useI18n } from "../i18n/useI18n";
 const emit = defineEmits<{
   (e: "relay-config-changed"): void;
   (e: "dirty", value: boolean): void;
+  (e: "direct-connection-changed", enabled: boolean): void;
 }>();
 
 type RelayScheme = "https" | "http";
@@ -43,6 +44,9 @@ const loading = ref(true);
 const saving = ref(false);
 const clearing = ref(false);
 const togglingPause = ref(false);
+const directConnectionEnabled = ref(false);
+const directConnectionLoading = ref(true);
+const directConnectionSaving = ref(false);
 const error = ref("");
 const { t } = useI18n();
 
@@ -191,7 +195,7 @@ async function reload() {
 }
 
 onMounted(async () => {
-  await reload();
+  await Promise.all([reload(), loadDirectConnectionPreference()]);
 
   platform.events.on('relay:auth-info', async (data) => {
     const { user_id } = data as { user_id: string };
@@ -217,6 +221,35 @@ onMounted(async () => {
     }
   });
 });
+
+async function loadDirectConnectionPreference() {
+  try {
+    directConnectionEnabled.value = await platform.directConnection.load();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    directConnectionLoading.value = false;
+  }
+}
+
+async function onDirectConnectionToggle(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previous = directConnectionEnabled.value;
+  directConnectionEnabled.value = target.checked;
+  directConnectionSaving.value = true;
+  error.value = "";
+  try {
+    await platform.directConnection.save(target.checked);
+    const effective = await platform.directConnection.load();
+    directConnectionEnabled.value = effective;
+    emit("direct-connection-changed", effective);
+  } catch (err: any) {
+    directConnectionEnabled.value = previous;
+    error.value = err?.message ?? String(err);
+  } finally {
+    directConnectionSaving.value = false;
+  }
+}
 
 onBeforeUnmount(() => {
   // platform.events handlers are cleaned up at the platform layer when
@@ -440,6 +473,26 @@ defineExpose({
             <span class="toggle-thumb" />
           </span>
           <span class="toggle-label">{{ paused ? t("settings.relay.off") : t("settings.relay.on") }}</span>
+        </label>
+      </div>
+
+      <div v-if="!directConnectionLoading" class="direct-connection-row">
+        <div class="direct-connection-copy">
+          <span class="field-label">{{ t("settings.relay.preferDirectConnection") }}</span>
+          <span class="hint">{{ t("settings.relay.preferDirectConnectionHint") }}</span>
+        </div>
+        <label class="toggle-switch" :class="{ disabled: directConnectionSaving }">
+          <input
+            type="checkbox"
+            data-testid="direct-connection-toggle"
+            :checked="directConnectionEnabled"
+            :disabled="directConnectionSaving"
+            @change="onDirectConnectionToggle"
+          />
+          <span class="toggle-track">
+            <span class="toggle-thumb" />
+          </span>
+          <span class="toggle-label">{{ directConnectionEnabled ? t("settings.relay.on") : t("settings.relay.off") }}</span>
         </label>
       </div>
 
@@ -727,6 +780,24 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.direct-connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.direct-connection-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.direct-connection-copy .hint {
+  margin: 0;
 }
 .toggle-switch {
   display: inline-flex;

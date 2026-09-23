@@ -464,7 +464,6 @@ function onSaveClick() {
             @terminal-theme-changed="onTerminalThemeChanged"
             @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
             @appearance-changed="onAppearanceChanged"
-            @direct-connection-changed="emit('direct-connection-changed', $event)"
           />
           <SettingsAccount v-if="!caps.wailsBindings && activeTab === 'account'" />
           <SettingsTasks v-show="activeTab === 'tasks'" />
@@ -474,6 +473,7 @@ function onSaveClick() {
             ref="relayRef"
             @dirty="onRelayDirty"
             @relay-config-changed="onRelayConfigChanged"
+            @direct-connection-changed="emit('direct-connection-changed', $event)"
           />
           <SettingsUpdates
             v-if="caps.autoUpdate"

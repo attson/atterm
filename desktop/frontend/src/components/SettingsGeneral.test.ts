@@ -69,6 +69,11 @@ describe("SettingsGeneral", () => {
     expect(source).toContain('(e: "terminal-theme-changed", themeID: string): void');
   });
 
+  test("keeps relay transport preferences out of the general pane", () => {
+    expect(source).not.toContain("direct-connection-toggle");
+    expect(source).not.toContain("preferDirectConnection");
+  });
+
   test("uses terminal theme registry and saves changes via setTerminalThemePreference", () => {
     expect(source).toContain("TERMINAL_THEMES");
     expect(source).toContain("setTerminalThemePreference");
@@ -189,29 +194,6 @@ describe("SettingsGeneral WebGL renderer toggle", () => {
 
   test("loads WebGL preference on mount", () => {
     expect(source).toMatch(/getWebglRendererEnabled\(\)/);
-  });
-});
-
-describe("SettingsGeneral direct connection preference", () => {
-  afterEach(() => __setPlatformForTests(null));
-
-  test("loads and saves the shared per-device preference", async () => {
-    const platform = createFakePlatform();
-    platform.caps.wailsBindings = false;
-    vi.mocked(platform.directConnection.load)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
-    __setPlatformForTests(platform);
-
-    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
-    await flushPromises();
-    const toggle = w.get<HTMLInputElement>('[data-testid="direct-connection-toggle"]');
-    expect(toggle.element.checked).toBe(true);
-
-    await toggle.setValue(false);
-    await flushPromises();
-    expect(platform.directConnection.save).toHaveBeenCalledWith(false);
-    expect(w.emitted("direct-connection-changed")).toEqual([[false]]);
   });
 });
 

@@ -34,7 +34,6 @@ const emit = defineEmits<{
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", state: TerminalAppearanceState): void;
-  (e: "direct-connection-changed", enabled: boolean): void;
 }>();
 
 const selected = ref(getTerminalTheme(props.terminalThemeId).id);
@@ -85,8 +84,6 @@ const webglRendererEnabled = ref(true);
 const webglRendererLoading = ref(true);
 const commandNotifyThresholdSec = ref(10);
 const commandNotifyThresholdLoading = ref(true);
-const directConnectionEnabled = ref(false);
-const directConnectionLoading = ref(true);
 
 // Wails also sets caps.notifications=true (system notifications), but has
 // no Service Worker at all, so browser Push only ever makes sense when
@@ -187,13 +184,6 @@ onBeforeUnmount(() => {
 });
 
 onMounted(async () => {
-  try {
-    directConnectionEnabled.value = await platform.directConnection.load();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    directConnectionLoading.value = false;
-  }
   if (caps.wailsBindings) {
     try {
       const preference = await getLocalePreference();
@@ -243,22 +233,6 @@ onMounted(async () => {
   }
   await refreshPushState();
 });
-
-async function onDirectConnectionToggle(e: Event) {
-  const target = e.target as HTMLInputElement;
-  const previous = directConnectionEnabled.value;
-  directConnectionEnabled.value = target.checked;
-  error.value = "";
-  try {
-    await platform.directConnection.save(target.checked);
-    const effective = await platform.directConnection.load();
-    directConnectionEnabled.value = effective;
-    emit("direct-connection-changed", effective);
-  } catch (err: any) {
-    directConnectionEnabled.value = previous;
-    error.value = err?.message ?? String(err);
-  }
-}
 
 async function refreshPushState() {
   if (!pushSupported.value) {
@@ -521,22 +495,6 @@ async function onChange() {
 
     <SettingsTerminalAppearance @appearance-changed="onAppearanceChanged" />
 
-    <section class="connection-section">
-      <h3 class="section-title">{{ t("settings.general.connectionTitle") }}</h3>
-      <label class="checkbox" v-if="!directConnectionLoading">
-        <input
-          type="checkbox"
-          data-testid="direct-connection-toggle"
-          :checked="directConnectionEnabled"
-          @change="onDirectConnectionToggle"
-        />
-        {{ t("settings.general.preferDirectConnection") }}
-      </label>
-      <p class="hint" v-if="!directConnectionLoading">
-        {{ t("settings.general.preferDirectConnectionHint") }}
-      </p>
-    </section>
-
     <label class="checkbox" v-if="caps.wailsBindings && !notificationsLoading">
       <input
         type="checkbox"
@@ -715,8 +673,7 @@ async function onChange() {
   color: var(--fg);
   font: inherit;
 }
-.push-section,
-.connection-section {
+.push-section {
   display: flex;
   flex-direction: column;
   gap: 8px;

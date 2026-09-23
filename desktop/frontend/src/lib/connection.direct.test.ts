@@ -130,6 +130,7 @@ describe("SessionConnection direct route handover", () => {
 
   afterEach(() => {
     setAccountKeyProvider(null);
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -146,6 +147,50 @@ describe("SessionConnection direct route handover", () => {
 
     expect(directInstances).toHaveLength(0);
     expect(relay.readyState).toBe(FakeWebSocket.OPEN);
+  });
+
+  test("keeps takeover on Relay when the runtime has no WebRTC", () => {
+    const routes: string[] = [];
+    const conn = new SessionConnection(relayEndpoint, sessionId, {
+      onRouteChange: (diagnostics) => routes.push(`${diagnostics.route}:${diagnostics.fallbackReason ?? ""}`),
+    }, {
+      clientName: "viewer-device",
+      remote: true,
+      preferDirect: true,
+      directEndpoint,
+    });
+
+    conn.attach();
+    const relay = FakeWebSocket.instances[0];
+    relay.open();
+    relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(routes.at(-1)).toBe("relay:webrtc_unavailable");
+    expect(conn.claimDriver()).toBe(true);
+    expect(decodeFrame(relay.sent.at(-1)!).type).toBe(TYPE.CLAIM_DRIVER);
+  });
+
+  test("queues a takeover while Relay reconnects and sends it before input", () => {
+    vi.useFakeTimers();
+    const conn = new SessionConnection(relayEndpoint, sessionId, {}, { remote: true });
+    conn.attach();
+    const firstRelay = FakeWebSocket.instances[0];
+    firstRelay.open();
+    firstRelay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
+    firstRelay.close();
+
+    expect(conn.claimDriver()).toBe(false);
+    vi.runAllTimers();
+    const reconnectedRelay = FakeWebSocket.instances[1];
+    conn.sendInput("after-takeover");
+    reconnectedRelay.open();
+
+    expect(reconnectedRelay.sent.map((frame) => decodeFrame(frame).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
+      TYPE.IN,
+    ]);
   });
 
   test("deduplicates overlap, transfers driver, and resumes Relay after direct loss", () => {

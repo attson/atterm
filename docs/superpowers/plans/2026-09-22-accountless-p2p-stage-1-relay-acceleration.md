@@ -85,13 +85,16 @@ Rules:
 - Rollout can be enabled per build/config without changing account or E2EE defaults。
 
 Implementation status (2026-09-23): PR 1.1-1.6 are implemented on
-`design/accountless-p2p`. The per-device toggle lives in the shared General
-settings surface because the Relay tab is desktop-only; on desktop it gates
-both client upgrades and the direct host listener. Beta remains default-off,
-and the Relay-side `--direct-signal` / `ATTERM_DIRECT_SIGNAL_ENABLED` kill
-switch remains independent. Automated package, frontend, build, and protocol
-contract checks pass. The real-network exit gates below remain intentionally
-unchecked until Desktop/Web/iOS and constrained-NAT test runs are recorded.
+`design/accountless-p2p`. The per-device toggle lives in Relay settings and
+gates both client upgrades and the direct host listener. A client runtime that
+does not expose `RTCPeerConnection` skips signaling and stays on Relay with an
+explicit `webrtc_unavailable` diagnostic; Linux Wails/WebKitGTK therefore
+remains part of the packaged-browser exit gate rather than being assumed to
+support browser WebRTC. Beta remains default-off, and the Relay-side
+`--direct-signal` / `ATTERM_DIRECT_SIGNAL_ENABLED` kill switch remains
+independent. Automated package, frontend, build, and protocol contract checks
+pass. The real-network exit gates below remain intentionally unchecked until
+Desktop/Web/iOS and constrained-NAT test runs are recorded.
 
 ## Stage Exit Gate
 

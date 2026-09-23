@@ -72,6 +72,7 @@ export const en = {
       fallback: {
         accountKeyUnavailable: "E2EE key is locked",
         signalEndpointUnavailable: "direct signaling is unavailable",
+        webrtcUnavailable: "WebRTC is unavailable in this runtime",
         timeout: "direct setup timed out",
         signalingRejected: "signaling was rejected",
         hostUnavailable: "host direct endpoint is unavailable",
@@ -93,6 +94,7 @@ export const en = {
     byHost: "by {host}",
     pressSpaceToTakeBack: "press space to take back",
     takeControl: "Take control",
+    takeControlQueued: "Relay is reconnecting; takeover is queued",
     clearBuffer: "clear buffer",
     search: {
       placeholder: "Find",

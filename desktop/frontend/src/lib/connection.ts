@@ -151,6 +151,7 @@ export type SessionRoute = "relay" | "connecting-direct" | "direct";
 export type DirectFallbackReason =
   | "account_key_unavailable"
   | "signal_endpoint_unavailable"
+  | "webrtc_unavailable"
   | "timeout"
   | "signaling_rejected"
   | "host_unavailable"
@@ -172,6 +173,7 @@ export interface SessionRouteDiagnostics {
 
 export function directFallbackReason(error: unknown, wasActive = false): DirectFallbackReason {
   const message = errText(error).toLowerCase();
+  if (message.includes("rtcpeerconnection") || message.includes("webrtc is unavailable")) return "webrtc_unavailable";
   if (message.includes("timed out") || message.includes("ticket_expired")) return "timeout";
   if (message.includes("host_offline") || message.includes("peer_disconnected")) return "host_unavailable";
   if (message.includes("signaling rejected") || message.includes("signaling disconnected")) return "signaling_rejected";
@@ -559,6 +561,8 @@ export class SessionConnection {
   private preferDirect: boolean;
   private directEndpoint: Endpoint | null;
   private directTransportFactory: (options: DirectClientOptions) => DirectTransport;
+  private directTransportSupported: () => boolean;
+  private pendingDriverClaim = false;
   private relayReplayComplete = false;
   private directStartedAt = 0;
   private directDiagnostics: DirectTransportDiagnostics | null = null;
@@ -609,7 +613,14 @@ export class SessionConnection {
     this.remote = options.remote ?? false;
     this.preferDirect = options.preferDirect ?? false;
     this.directEndpoint = options.directEndpoint ?? null;
-    this.directTransportFactory = options.directTransportFactory ?? ((directOptions) => new DirectClientTransport(directOptions));
+    const injectedDirectTransport = options.directTransportFactory;
+    this.directTransportFactory = injectedDirectTransport ?? ((directOptions) => new DirectClientTransport(directOptions));
+    // Test/native adapters own their capability checks. The browser adapter
+    // requires WebRTC to exist before opening signaling, otherwise a host-side
+    // attempt is allocated only to fail later at `new RTCPeerConnection()`.
+    this.directTransportSupported = injectedDirectTransport
+      ? () => true
+      : () => typeof globalThis.RTCPeerConnection === "function";
   }
 
   // decryptOut unseals a remote session's E2EE TypeOut envelope (the relay only
@@ -670,6 +681,7 @@ export class SessionConnection {
     this.retiredFSRequestIDs.clear();
     this.direct?.close();
     this.direct = null;
+    this.pendingDriverClaim = false;
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -692,6 +704,7 @@ export class SessionConnection {
     this.retiredFSRequestIDs.clear();
     this.direct?.close();
     this.direct = null;
+    this.pendingDriverClaim = false;
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -834,16 +847,28 @@ export class SessionConnection {
 
   // claimDriver sends a CLAIM_DRIVER frame so the relay promotes this
   // subscription to driver. Idempotent — safe to call when already driver.
-  claimDriver(): void {
+  claimDriver(): boolean {
+    if (this.detached || this.suspended) return false;
     const payload = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }));
+    const frame = encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload);
     const route = this.route.inputRoute();
     if (route === DirectRoute.Direct) {
-      this.direct?.sendFrame(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
-      return;
+      if (this.direct?.sendFrame(frame)) {
+        this.pendingDriverClaim = false;
+        return true;
+      }
+      this.pendingDriverClaim = true;
+      return false;
     }
-    if (route !== DirectRoute.Relay) return;
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
+    if (route === DirectRoute.Relay && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(frame);
+      this.pendingDriverClaim = false;
+      return true;
+    }
+    // A user click during Relay reconnect must not disappear. The claim is
+    // flushed immediately after the next ATTACH, before queued input/resize.
+    this.pendingDriverClaim = true;
+    return false;
   }
 
   async sendPasteImage(blob: Blob, filename = "clipboard-image"): Promise<boolean> {
@@ -1141,6 +1166,11 @@ export class SessionConnection {
       this.emitRoute("relay", "signal_endpoint_unavailable");
       return;
     }
+    if (!this.directTransportSupported()) {
+      this.directAttempted = true;
+      this.emitRoute("relay", "webrtc_unavailable");
+      return;
+    }
     const accountKey = getCurrentAccountKey();
     if (!accountKey || accountKey.length !== 32) {
       this.directAttempted = true;
@@ -1257,6 +1287,11 @@ export class SessionConnection {
   }
 
   private flushPendingRelayWrites(ws: WebSocket): void {
+    if (this.pendingDriverClaim) {
+      const payload = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }));
+      ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
+      this.pendingDriverClaim = false;
+    }
     if (this.pendingResize) {
       const { cols, rows } = this.pendingResize;
       ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
@@ -1270,6 +1305,11 @@ export class SessionConnection {
   }
 
   private flushPendingDirectWrites(transport: DirectTransport): void {
+    if (this.pendingDriverClaim) {
+      const payload = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }));
+      if (!transport.sendFrame(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload))) return;
+      this.pendingDriverClaim = false;
+    }
     if (this.pendingResize) {
       const { cols, rows } = this.pendingResize;
       if (!transport.sendFrame(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))) return;

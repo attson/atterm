@@ -145,6 +145,7 @@ function fallbackReasonLabel(reason: DirectFallbackReason): string {
   switch (reason) {
     case "account_key_unavailable": return t("terminal.route.fallback.accountKeyUnavailable");
     case "signal_endpoint_unavailable": return t("terminal.route.fallback.signalEndpointUnavailable");
+    case "webrtc_unavailable": return t("terminal.route.fallback.webrtcUnavailable");
     case "timeout": return t("terminal.route.fallback.timeout");
     case "signaling_rejected": return t("terminal.route.fallback.signalingRejected");
     case "host_unavailable": return t("terminal.route.fallback.hostUnavailable");
@@ -1029,12 +1030,12 @@ function handleViewerKeydown(event: KeyboardEvent) {
   if (event.key === " " && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
     event.preventDefault();
     event.stopPropagation();
-    conn?.claimDriver();
+    takeControl();
   }
 }
 
 function takeControl() {
-  conn?.claimDriver();
+  if (!conn?.claimDriver()) emit("toast", t("terminal.takeControlQueued"));
 }
 
 async function handleCopyShortcut(e: KeyboardEvent) {

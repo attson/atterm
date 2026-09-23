@@ -74,6 +74,7 @@ export const zhCN = {
       fallback: {
         accountKeyUnavailable: "E2EE 密钥未解锁",
         signalEndpointUnavailable: "直连信令不可用",
+        webrtcUnavailable: "当前运行环境不支持 WebRTC",
         timeout: "直连建立超时",
         signalingRejected: "信令被拒绝",
         hostUnavailable: "主机直连端点不可用",
@@ -95,6 +96,7 @@ export const zhCN = {
     byHost: "来自 {host}",
     pressSpaceToTakeBack: "按空格取回控制",
     takeControl: "接管控制",
+    takeControlQueued: "Relay 正在重连，接管请求已排队",
     clearBuffer: "清空缓冲区",
     search: {
       placeholder: "查找",

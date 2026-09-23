@@ -1,12 +1,18 @@
 import { apiFetch } from './client'
 import { requestStepUpToken } from './stepup'
-import type { MeResponse } from './types'
+import type { MeResponse, MeTrafficResponse } from './types'
 
 // getMe fetches the current user. The relay no longer issues CSRF
 // tokens (session_token in Authorization: Bearer is sufficient
 // proof-of-intent), so the historical csrf_token round-trip is gone.
 export async function getMe(): Promise<MeResponse> {
   const { data } = await apiFetch<MeResponse>('/api/me')
+  return data
+}
+
+export async function getMeTraffic(from: string, to: string): Promise<MeTrafficResponse> {
+  const query = new URLSearchParams({ from, to })
+  const { data } = await apiFetch<MeTrafficResponse>(`/api/me/traffic?${query}`)
   return data
 }
 

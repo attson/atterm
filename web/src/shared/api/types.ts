@@ -5,6 +5,30 @@ export interface MeResponse {
   csrf_token?: string
 }
 
+export interface MeRelayTrafficDay {
+  day: string
+  bytes_in: number
+  bytes_out: number
+  frames_in: number
+  frames_out: number
+}
+
+export interface MeDirectTrafficDay {
+  day: string
+  attempts: number
+  successes: number
+  fallbacks: number
+  bytes_sent: number
+  bytes_received: number
+}
+
+export interface MeTrafficResponse {
+  from: string
+  to: string
+  relay: MeRelayTrafficDay[]
+  direct: MeDirectTrafficDay[]
+}
+
 export interface AuthSuccess {
   user_id: string
   email: string

@@ -60,8 +60,9 @@ type directHostAttempt struct {
 	consumed          bool
 	closed            bool
 	closeOnce         sync.Once
-	reportBytes       func(uint64) error
-	pendingBytes      uint64
+	reportBytes       func(uint64, uint64) error
+	pendingBytesSent  uint64
+	pendingBytesRecv  uint64
 }
 
 func newDirectSignalHost(relayURL, token, permission string, host *relayHost, accountKey func() []byte, allowInsecure bool) *directSignalHost {
@@ -282,8 +283,13 @@ func (h *directSignalHost) startAttempt(ctx context.Context, message directsigna
 		permission:       message.Permission,
 		clientInstanceID: message.ClientInstanceID,
 		host:             h,
-		reportBytes: func(bytes uint64) error {
-			return send(directsignal.Message{Kind: "direct_stats", BytesAvoided: bytes})
+		reportBytes: func(sent, received uint64) error {
+			return send(directsignal.Message{
+				Kind:          "direct_stats",
+				BytesAvoided:  sent + received,
+				BytesSent:     sent,
+				BytesReceived: received,
+			})
 		},
 	}
 	h.mu.Lock()
@@ -429,7 +435,7 @@ func (a *directHostAttempt) startStream(parent context.Context, channel *peertra
 					a.host.removeAttempt(a.id)
 					return
 				}
-				a.addAvoidedBytes(uint64(len(wire)), false)
+				a.addDirectBytes(uint64(len(wire)), 0, false)
 			}
 		}
 	}()
@@ -479,7 +485,11 @@ func (a *directHostAttempt) handleRecord(ctx context.Context, kind peertransport
 			if opened, ok := openInboundFrame(frame, func() []byte { return accountKey }); ok {
 				frame = opened
 			}
-			return a.host.host.SendLocalInbound(a.sessionID, frame)
+			if err := a.host.host.SendLocalInbound(a.sessionID, frame); err != nil {
+				return err
+			}
+			a.addDirectBytes(0, uint64(len(payload)), false)
+			return nil
 		case proto.TypeClaimDriver:
 			if a.permission == proto.RemotePermissionView {
 				return errors.New("driver claim exceeds permission")
@@ -499,6 +509,7 @@ func (a *directHostAttempt) handleRecord(ctx context.Context, kind peertransport
 				return errors.New("session unavailable")
 			}
 			sess.ClaimDriver(sub, claim.ClientID, claim.ClientName)
+			a.addDirectBytes(0, uint64(len(payload)), false)
 			return nil
 		default:
 			return fmt.Errorf("direct frame type 0x%02x is not allowed", frame.Type)
@@ -620,23 +631,26 @@ func (a *directHostAttempt) close() {
 		if transport != nil {
 			_ = transport.Close()
 		}
-		a.addAvoidedBytes(0, true)
+		a.addDirectBytes(0, 0, true)
 	})
 }
 
-func (a *directHostAttempt) addAvoidedBytes(delta uint64, force bool) {
+func (a *directHostAttempt) addDirectBytes(sent, received uint64, force bool) {
 	a.mu.Lock()
-	a.pendingBytes += delta
-	if !force && a.pendingBytes < directStatsReportThreshold {
+	a.pendingBytesSent += sent
+	a.pendingBytesRecv += received
+	if !force && a.pendingBytesSent+a.pendingBytesRecv < directStatsReportThreshold {
 		a.mu.Unlock()
 		return
 	}
-	pending := a.pendingBytes
-	a.pendingBytes = 0
+	pendingSent := a.pendingBytesSent
+	pendingReceived := a.pendingBytesRecv
+	a.pendingBytesSent = 0
+	a.pendingBytesRecv = 0
 	report := a.reportBytes
 	a.mu.Unlock()
-	if pending > 0 && report != nil {
-		_ = report(pending)
+	if pendingSent+pendingReceived > 0 && report != nil {
+		_ = report(pendingSent, pendingReceived)
 	}
 }
 

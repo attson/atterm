@@ -233,6 +233,9 @@ type Store interface {
 	// caller to aggregate into detail/group/summary views.
 	AddTrafficDeltas(ctx context.Context, day string, deltas []TrafficDelta) error
 	QueryTraffic(ctx context.Context, from, to string) ([]TrafficRow, error)
+	QueryTrafficForUser(ctx context.Context, userID, from, to string) ([]TrafficRow, error)
+	AddDirectTrafficDeltas(ctx context.Context, day string, deltas []DirectTrafficDelta) error
+	QueryDirectTraffic(ctx context.Context, userID, from, to string) ([]DirectTrafficRow, error)
 
 	Close() error
 }

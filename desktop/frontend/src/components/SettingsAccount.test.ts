@@ -46,18 +46,22 @@ vi.mock('../platform/qrScanner', () => ({
 vi.mock('@shared/api/me', () => ({
   changePassword: vi.fn(),
   deleteMe: vi.fn(),
+  getMeTraffic: vi.fn().mockResolvedValue({ from: '', to: '', relay: [], direct: [] }),
 }))
 
 import SettingsAccount from './SettingsAccount.vue'
-import { changePassword, deleteMe } from '@shared/api/me'
+import { changePassword, deleteMe, getMeTraffic } from '@shared/api/me'
 import { ApiError } from '@shared/api/client'
 
 const changePasswordMock = changePassword as unknown as ReturnType<typeof vi.fn>
 const deleteMeMock = deleteMe as unknown as ReturnType<typeof vi.fn>
+const getMeTrafficMock = getMeTraffic as unknown as ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   changePasswordMock.mockReset()
   deleteMeMock.mockReset()
+  getMeTrafficMock.mockReset()
+  getMeTrafficMock.mockResolvedValue({ from: '', to: '', relay: [], direct: [] })
   fakePlatform.relay.load = vi.fn().mockResolvedValue(null)
   fakePlatform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: 'u1', email: 'me@example.com' })
   fakePlatform.relay.logout = vi.fn().mockResolvedValue(undefined)
@@ -134,6 +138,7 @@ describe('SettingsAccount', () => {
 
     expect(grid.find('[data-testid="account-login-email"]').exists()).toBe(true)
     expect(grid.find('[data-testid="account-login-password"]').exists()).toBe(true)
+    expect(getMeTrafficMock).not.toHaveBeenCalled()
   })
 
   it('offers logout, clears the relay session, and redirects to login', async () => {

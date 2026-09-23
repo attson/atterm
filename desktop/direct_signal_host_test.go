@@ -274,6 +274,27 @@ func TestDirectSignalDisconnectClosesOnlyPendingAttempts(t *testing.T) {
 	}
 }
 
+func TestDirectHostAttemptReportsDirectionalBytes(t *testing.T) {
+	var gotSent, gotReceived uint64
+	attempt := &directHostAttempt{reportBytes: func(sent, received uint64) error {
+		gotSent += sent
+		gotReceived += received
+		return nil
+	}}
+	attempt.addDirectBytes(200, 30, false)
+	if gotSent != 0 || gotReceived != 0 {
+		t.Fatal("reported before threshold")
+	}
+	attempt.addDirectBytes(directStatsReportThreshold-230, 0, false)
+	if gotSent != directStatsReportThreshold-30 || gotReceived != 30 {
+		t.Fatalf("threshold report = sent %d received %d", gotSent, gotReceived)
+	}
+	attempt.addDirectBytes(5, 7, true)
+	if gotSent != directStatsReportThreshold-25 || gotReceived != 37 {
+		t.Fatalf("forced report = sent %d received %d", gotSent, gotReceived)
+	}
+}
+
 func TestDirectHostAttemptCarriesSealedOutputAndInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

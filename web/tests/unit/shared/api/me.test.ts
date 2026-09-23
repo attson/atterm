@@ -8,7 +8,7 @@ vi.mock('@shared/lib/opaqueWasm', () => ({
   opaqueLoginFinish: vi.fn(async () => ({ ke3: 'a2Uz', exportKey: '', sessionKey: '' })),
 }))
 
-import { getMe, changePassword, deleteMe } from '@shared/api/me'
+import { getMe, getMeTraffic, changePassword, deleteMe } from '@shared/api/me'
 import { clearRelayConfig, saveRelayConfig } from '@shared/api/relay-config'
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -102,5 +102,14 @@ describe('me.ts /api/me get', () => {
 
     expect(result).toEqual({ user_id: 'u1', email: 'a@b' })
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/me')
+  })
+
+  it('getMeTraffic scopes the requested date range to the current-user endpoint', async () => {
+    const body = { from: '2026-09-17', to: '2026-09-23', relay: [], direct: [] }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, body))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getMeTraffic(body.from, body.to)).resolves.toEqual(body)
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/me/traffic?from=2026-09-17&to=2026-09-23')
   })
 })

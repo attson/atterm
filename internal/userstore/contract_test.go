@@ -409,5 +409,37 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		if err := st.AddTrafficDeltas(ctx, day, nil); err != nil {
 			t.Errorf("AddTrafficDeltas(nil): %v", err)
 		}
+		filtered, err := st.QueryTrafficForUser(ctx, "u1", "2026-09-01", "2026-09-30")
+		if err != nil || len(filtered) != 2 {
+			t.Errorf("QueryTrafficForUser: len=%d err=%v", len(filtered), err)
+		}
+		if other, err := st.QueryTrafficForUser(ctx, "u2", "2026-09-01", "2026-09-30"); err != nil || len(other) != 0 {
+			t.Errorf("QueryTrafficForUser(u2): len=%d err=%v", len(other), err)
+		}
+	})
+
+	t.Run("direct traffic rollup", func(t *testing.T) {
+		st := open(t)
+		day := "2026-09-15"
+		for _, delta := range []DirectTrafficDelta{
+			{UserID: "u1", Attempts: 2, Successes: 1, Fallbacks: 1, BytesSent: 100, BytesReceived: 20},
+			{UserID: "u1", Attempts: 1, Successes: 1, BytesSent: 50, BytesReceived: 10},
+			{UserID: "u2", Attempts: 9, Successes: 9, BytesSent: 999},
+		} {
+			if err := st.AddDirectTrafficDeltas(ctx, day, []DirectTrafficDelta{delta}); err != nil {
+				t.Fatalf("AddDirectTrafficDeltas: %v", err)
+			}
+		}
+		rows, err := st.QueryDirectTraffic(ctx, "u1", "2026-09-01", "2026-09-30")
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("QueryDirectTraffic: rows=%+v err=%v", rows, err)
+		}
+		got := rows[0]
+		if got.Attempts != 3 || got.Successes != 2 || got.Fallbacks != 1 || got.BytesSent != 150 || got.BytesReceived != 30 {
+			t.Errorf("direct rollup = %+v", got)
+		}
+		if err := st.AddDirectTrafficDeltas(ctx, day, nil); err != nil {
+			t.Errorf("AddDirectTrafficDeltas(nil): %v", err)
+		}
 	})
 }

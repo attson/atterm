@@ -81,6 +81,9 @@ func TestServerFlushTrafficPersists(t *testing.T) {
 	defer srv.Close()
 
 	srv.recordTraffic("u1", proto.TypeOut, trafficOut, 120)
+	srv.directStats.recordAttempt("u1")
+	srv.directStats.recordSuccess("u1")
+	srv.directStats.recordBytes("u1", 400, 25)
 	srv.flushTraffic(store) // force a flush without waiting for the ticker
 
 	day := time.Now().UTC().Format("2006-01-02")
@@ -96,5 +99,12 @@ func TestServerFlushTrafficPersists(t *testing.T) {
 	}
 	if total != 120 {
 		t.Errorf("persisted bytes = %d, want 120", total)
+	}
+	direct, err := store.QueryDirectTraffic(context.Background(), "u1", day, day)
+	if err != nil {
+		t.Fatalf("QueryDirectTraffic: %v", err)
+	}
+	if len(direct) != 1 || direct[0].Attempts != 1 || direct[0].Successes != 1 || direct[0].BytesSent != 400 || direct[0].BytesReceived != 25 {
+		t.Errorf("persisted direct traffic = %+v", direct)
 	}
 }

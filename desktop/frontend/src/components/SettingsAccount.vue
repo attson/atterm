@@ -7,6 +7,7 @@ import { usePlatform } from "../platform";
 import { validateRelayBase } from "../lib/relayUrl";
 import { QRScanner } from "../platform/qrScanner";
 import SettingsPairingConsume from "./SettingsPairingConsume.vue";
+import AccountTrafficDashboard from "./AccountTrafficDashboard.vue";
 
 const { t } = useI18n();
 const platform = usePlatform();
@@ -412,6 +413,10 @@ async function onDeleteClick() {
             : t("settings.account.logout.button")
         }}
       </button>
+    </section>
+
+    <section v-if="authenticated" class="account-section">
+      <AccountTrafficDashboard />
     </section>
 
     <section class="account-section">

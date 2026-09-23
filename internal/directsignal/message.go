@@ -31,6 +31,10 @@ type Message struct {
 	Message string `json:"message,omitempty"`
 
 	// BytesAvoided is a bounded aggregate delta reported by an authenticated
-	// direct host. It contains no session identifier, address, or payload.
+	// direct host. It is retained for compatibility with older relays.
 	BytesAvoided uint64 `json:"bytes_avoided,omitempty"`
+	// BytesSent and BytesReceived are aggregate host-relative P2P byte deltas.
+	// They contain no session identifier, address, or terminal payload.
+	BytesSent     uint64 `json:"bytes_sent,omitempty"`
+	BytesReceived uint64 `json:"bytes_received,omitempty"`
 }

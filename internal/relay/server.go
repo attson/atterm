@@ -134,7 +134,7 @@ func NewServer(cfg Config) *Server {
 	if connLimit == 0 {
 		connLimit = defaultMaxConnections
 	}
-	directStats := &directMetrics{}
+	directStats := newDirectMetrics()
 	s := &Server{
 		cfg:         cfg,
 		registry:    session.NewRegistry(),
@@ -222,6 +222,7 @@ func NewServer(cfg Config) *Server {
 		s.mux.HandleFunc("POST /api/sessions/seen", s.requireSession(s.handleSessionsSeenHTTP))
 		s.mux.HandleFunc("GET /api/nodes", s.requireSession(s.handleNodesHTTP))
 		s.mux.HandleFunc("PUT /api/me/home", s.requireSession(s.handleSetHomeHTTP))
+		s.mux.HandleFunc("GET /api/me/traffic", s.requireSession(s.handleMeTrafficHTTP))
 
 		// OPAQUE auth: wire only when both the singleton was built
 		// upstream and the store is the concrete SQLite one the handler

@@ -30,6 +30,11 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.connecting");
   });
 
+  test("mounts the personal traffic dashboard only for an authenticated relay account", () => {
+    expect(source).toContain('v-if="connectedUserID"');
+    expect(source).toContain("<AccountTrafficDashboard />");
+  });
+
   test("remote-session-permission selector is gone (single-user tool, no sharing)", () => {
     expect(source).not.toContain("settings.relay.remotePermissions");
     expect(source).not.toContain("SelectDropdown");

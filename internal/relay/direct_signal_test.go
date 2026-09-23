@@ -183,10 +183,28 @@ func TestDirectSignalIssuesAndRoutesSingleUseAttempt(t *testing.T) {
 	if metrics.Attempts != 1 || metrics.Successes != 1 || metrics.Fallbacks != 0 {
 		t.Fatalf("direct metrics after success = %+v", metrics)
 	}
+	writeDirectSignal(t, ctx, client, directSignalMessage{
+		Version:   directSignalVersion,
+		Kind:      "direct_stats",
+		BytesSent: 1,
+	})
+	if got := readDirectSignalTest(t, ctx, client); got.Kind != "error" || got.Code != "invalid_stats" {
+		t.Fatalf("client stats response = %+v", got)
+	}
 	writeDirectSignal(t, ctx, host, directSignalMessage{
-		Version:      directSignalVersion,
-		Kind:         "direct_stats",
-		BytesAvoided: 512 * 1024,
+		Version:   directSignalVersion,
+		Kind:      "direct_stats",
+		BytesSent: directMaxStatsDelta + 1,
+	})
+	if got := readDirectSignalTest(t, ctx, host); got.Kind != "error" || got.Code != "invalid_stats" {
+		t.Fatalf("oversized stats response = %+v", got)
+	}
+	writeDirectSignal(t, ctx, host, directSignalMessage{
+		Version:       directSignalVersion,
+		Kind:          "direct_stats",
+		BytesAvoided:  512 * 1024,
+		BytesSent:     500 * 1024,
+		BytesReceived: 12 * 1024,
 	})
 	writeDirectSignal(t, ctx, client, directSignalMessage{
 		Version: directSignalVersion,
@@ -203,6 +221,11 @@ func TestDirectSignalIssuesAndRoutesSingleUseAttempt(t *testing.T) {
 			t.Fatalf("direct metrics after reports = %+v", metrics)
 		}
 		time.Sleep(time.Millisecond)
+	}
+	pending := srv.directStats.drain()
+	if len(pending) != 1 || pending[0].UserID != userID || pending[0].Attempts != 1 || pending[0].Successes != 1 ||
+		pending[0].Fallbacks != 1 || pending[0].BytesSent != 500*1024 || pending[0].BytesReceived != 12*1024 {
+		t.Fatalf("per-user direct metrics = %+v", pending)
 	}
 
 	writeDirectSignal(t, ctx, host, directSignalMessage{

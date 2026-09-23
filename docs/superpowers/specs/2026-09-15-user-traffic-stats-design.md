@@ -1,8 +1,9 @@
 # 用户网络流量统计监控 — 设计
 
 - 日期：2026-09-15
+- 修订：2026-09-23（增加个人看板与 P2P 流量）
 - 状态：已批准（brainstorming 分节确认 + 关键决策拍板）
-- 范围：relay 服务端埋点 + 聚合 + 日汇总落库 + admin API + admin 前端面板
+- 范围：Relay/P2P 埋点 + 聚合 + 日汇总落库 + admin API + 当前账号个人看板
 
 ## 目标
 
@@ -21,7 +22,9 @@
 | flush 策略 | 定时 flush（60s）+ graceful shutdown 再 flush 一次 |
 | 多实例 | 共享表，各实例对同一行 UPSERT 累加（bytes += delta） |
 | 埋点方式 | 新增独立计量钩子，入站在 readFrame、出站包 writeFrame helper；不复用 debugFrame |
-| 可见范围 | 纯 admin，先落地；普通用户自查入口不做 |
+| 可见范围 | admin 可看全局 Relay 明细；普通用户只能看自己的 Relay/P2P 日汇总 |
+| P2P 口径 | host 视角的 terminal frame wire bytes，发送/接收分开；不含 ICE/SDP/DataChannel 开销 |
+| 隐私边界 | 个人 API 不返回 user id/email；P2P 统计不含 session id、candidate、token 或 terminal 内容 |
 
 ## 架构总览
 
@@ -40,6 +43,11 @@
     ▼
 [前端层] AdminPanel "traffic" tab → admin/Traffic.vue
 ```
+
+P2P 数据旁路：已认证 host 按阈值或连接关闭发送 `direct_stats` 聚合增量，Relay 按
+认证上下文中的 user id 累加到 `directMetrics`，随同一 60s flush 写入
+`direct_traffic_daily`。该上报由账号自己的 host 产生，可用于个人可观测性和平台容量趋势，
+但不能作为计费或配额的可信依据。
 
 数据流关键点：
 - 埋点只在**真正过网**时计数：出站在 `c.Write` 返回 nil 后计，入站在 `readFrame` 成功
@@ -176,6 +184,19 @@ QueryTraffic(ctx context.Context, from, to string) ([]TrafficRow, error)
 - i18n：`desktop/frontend/src/i18n/messages/{en,zh-CN}.ts` 加 `admin.trafficTab` 及表头
   label（中英两套）。
 
+### 7. 个人 Relay/P2P 看板（2026-09-23 修订）
+
+- `GET /api/me/traffic?from=&to=` 由 `requireSession` 保护，user id 只取请求上下文；日期
+  最多 90 天。响应不带 user id/email，Relay 按日折叠为 in/out，P2P 按日返回
+  attempts/successes/fallbacks/bytes_sent/bytes_received。
+- `direct_traffic_daily` 主键为 `(user_id, day)`，使用 additive UPSERT，支持多 Relay
+  实例共享 Postgres 后自然汇总。
+- host 的 `direct_stats` 同时携带 `bytes_sent` / `bytes_received`；`bytes_avoided` 仅为旧
+  Relay 兼容字段。每个非零方向的单条增量最大 64 MiB，只有 host role 可以上报。
+- Web/Capacitor 的 `SettingsAccount.vue` 与桌面端 `SettingsRelay.vue` 都只在认证成功后挂载
+  同一个紧凑看板，支持 7/30/90 天范围，展示 Relay、P2P 总量、直连成功率和每日双序列
+  趋势。未登录时不发起统计请求。
+
 ## 错误处理
 
 - 埋点：`recordTraffic` 永不返回 error、永不 panic、永不阻塞收发路径（加锁累加是唯一开销）。
@@ -197,8 +218,8 @@ QueryTraffic(ctx context.Context, from, to string) ([]TrafficRow, error)
 ## 明确不做（out of scope / YAGNI）
 
 - 分钟级时间序列、实时流量曲线
-- 普通用户自查入口（`/api/me/traffic`）
 - 限流 / 配额 / 告警
+- 将 P2P 客户端上报用于计费或安全审计
 - 图表库依赖
 - 历史数据保留期自动清理（可后续加 cron）
 
@@ -212,6 +233,9 @@ QueryTraffic(ctx context.Context, from, to string) ([]TrafficRow, error)
 - `internal/userstore/migrations/postgres/0012_relay_traffic.sql`
 - `internal/userstore/traffic.go`（Store 方法实现，或并入现有文件）
 - `desktop/frontend/src/components/admin/Traffic.vue`
+- `internal/relay/me_traffic.go`
+- `internal/userstore/migrations/{sqlite,postgres}/0013_direct_traffic.sql`
+- `desktop/frontend/src/components/AccountTrafficDashboard.vue`
 
 修改：
 - `internal/relay/server.go`（trafficMeter 字段 + ticker + shutdown flush + readFrame 计量 + writeFrame 收敛）

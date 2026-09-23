@@ -5,6 +5,7 @@ import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, f
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import PairingPanel from "./PairingPanel.vue";
+import AccountTrafficDashboard from "./AccountTrafficDashboard.vue";
 import { useI18n } from "../i18n/useI18n";
 
 const emit = defineEmits<{
@@ -430,6 +431,10 @@ defineExpose({
         {{ t("settings.relay.hint") }}
       </p>
 
+      <section v-if="connectedUserID" class="traffic-section">
+        <AccountTrafficDashboard />
+      </section>
+
       <div class="url-label-row">
         <label class="field-label" for="relay-host">{{ t("settings.relay.relayUrl") }}</label>
         <label class="insecure-inline">
@@ -675,6 +680,11 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.traffic-section {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 .dim {
   color: var(--fg-dim);

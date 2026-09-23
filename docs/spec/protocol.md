@@ -612,7 +612,7 @@ Payload (UTF-8 JSON):
 | `/service-client` | GET (Upgrade: websocket) | Preview 客户端 E2EE multiplex 数据通道 |
 | `/service-host` | GET (Upgrade: websocket) | owner desktop E2EE multiplex 数据通道 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
-| `/api/me/traffic` | GET | 当前账号最近 1–90 天的 Relay / P2P 日流量汇总；只从认证上下文取 user id |
+| `/api/me/traffic` | GET | 当前账号最多 180 天的 Relay 帧级/日级与 P2P 日级流量；只从认证上下文取 user id |
 | `/api/version` | GET | JSON 版本信息 |
 | `/api/pair/create` | POST | 桌面端 owner 签发一次性 pairing token（详见 [auth.md](./auth.md)） |
 | `/api/pair/consume` | POST | 移动端用 pairing token 换 relay URL + session token（详见 [auth.md](./auth.md)） |

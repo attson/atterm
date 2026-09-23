@@ -272,6 +272,9 @@ export const zhCN = {
       categories: {
         terminal: '终端转发',
         state: '状态同步',
+        config: '配置同步',
+        fs: '文件浏览',
+        preview: '远程预览',
         filesystem: '文件浏览',
         service: '远程预览',
         control: '控制信令',

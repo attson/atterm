@@ -22,10 +22,21 @@ export interface MeDirectTrafficDay {
   bytes_received: number
 }
 
+export interface MeRelayTrafficDetail {
+  day: string
+  frame_type: number
+  frame_type_name: string
+  category: string
+  direction: number
+  bytes: number
+  frames: number
+}
+
 export interface MeTrafficResponse {
   from: string
   to: string
   relay: MeRelayTrafficDay[]
+  relay_detail: MeRelayTrafficDetail[]
   direct: MeDirectTrafficDay[]
 }
 

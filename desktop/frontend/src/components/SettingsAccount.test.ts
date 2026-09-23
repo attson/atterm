@@ -46,7 +46,7 @@ vi.mock('../platform/qrScanner', () => ({
 vi.mock('@shared/api/me', () => ({
   changePassword: vi.fn(),
   deleteMe: vi.fn(),
-  getMeTraffic: vi.fn().mockResolvedValue({ from: '', to: '', relay: [], direct: [] }),
+  getMeTraffic: vi.fn().mockResolvedValue({ from: '', to: '', relay: [], relay_detail: [], direct: [] }),
 }))
 
 import SettingsAccount from './SettingsAccount.vue'
@@ -61,7 +61,7 @@ beforeEach(() => {
   changePasswordMock.mockReset()
   deleteMeMock.mockReset()
   getMeTrafficMock.mockReset()
-  getMeTrafficMock.mockResolvedValue({ from: '', to: '', relay: [], direct: [] })
+  getMeTrafficMock.mockResolvedValue({ from: '', to: '', relay: [], relay_detail: [], direct: [] })
   fakePlatform.relay.load = vi.fn().mockResolvedValue(null)
   fakePlatform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: 'u1', email: 'me@example.com' })
   fakePlatform.relay.logout = vi.fn().mockResolvedValue(undefined)

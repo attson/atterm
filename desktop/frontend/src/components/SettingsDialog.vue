@@ -306,7 +306,10 @@ function onSaveClick() {
 
 <template>
   <div class="backdrop" @click.self="close">
-    <div class="settings-dialog">
+    <div
+      class="settings-dialog"
+      :class="{ 'settings-dialog--analytics': activeTab === 'account' || activeTab === 'relay' }"
+    >
       <header class="settings-header">
         <h2>{{ t("settings.title") }}</h2>
         <!-- Desktop-only (design doc §6 "No mobile indicator"): SyncNow /
@@ -584,6 +587,10 @@ function onSaveClick() {
   flex-direction: column;
   overflow: hidden;
 }
+.settings-dialog--analytics {
+  width: 1040px;
+  height: 720px;
+}
 .settings-header {
   display: flex;
   align-items: center;
@@ -835,6 +842,10 @@ function onSaveClick() {
     border-left: none;
     border-right: none;
     border-radius: 0;
+  }
+  .settings-dialog.settings-dialog--analytics {
+    width: 100vw;
+    height: auto;
   }
   .settings-header {
     padding: 10px 12px;

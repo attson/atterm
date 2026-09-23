@@ -105,7 +105,7 @@ describe('me.ts /api/me get', () => {
   })
 
   it('getMeTraffic scopes the requested date range to the current-user endpoint', async () => {
-    const body = { from: '2026-09-17', to: '2026-09-23', relay: [], direct: [] }
+    const body = { from: '2026-09-17', to: '2026-09-23', relay: [], relay_detail: [], direct: [] }
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, body))
     vi.stubGlobal('fetch', fetchMock)
 

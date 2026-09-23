@@ -68,6 +68,14 @@ describe("SettingsDialog shell", () => {
     expect(navStyle).toMatch(/width\s*:\s*160px/);
   });
 
+  test("gives traffic-bearing account and relay tabs an analytics-sized dialog", () => {
+    expect(source).toContain("activeTab === 'account' || activeTab === 'relay'");
+    const analyticsStyle = styleBlockFor(".settings-dialog--analytics");
+    expect(analyticsStyle).toMatch(/width\s*:\s*1040px/);
+    expect(analyticsStyle).toMatch(/height\s*:\s*720px/);
+    expect(source).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.settings-dialog\.settings-dialog--analytics\s*\{[\s\S]*?width:\s*100vw/);
+  });
+
   test("imports the SettingsShortcuts subcomponent", () => {
     expect(source).toContain('import SettingsShortcuts from "./SettingsShortcuts.vue"');
   });

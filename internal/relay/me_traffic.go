@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/attson/atterm/internal/proto"
 )
 
-const meTrafficMaxDays = 90
+const meTrafficMaxDays = 180
 
 type meRelayTrafficDay struct {
 	Day       string `json:"day"`
@@ -25,11 +27,22 @@ type meDirectTrafficDay struct {
 	BytesReceived int64  `json:"bytes_received"`
 }
 
+type meRelayTrafficDetail struct {
+	Day           string `json:"day"`
+	FrameType     int    `json:"frame_type"`
+	FrameTypeName string `json:"frame_type_name"`
+	Category      string `json:"category"`
+	Direction     int    `json:"direction"`
+	Bytes         int64  `json:"bytes"`
+	Frames        int64  `json:"frames"`
+}
+
 type meTrafficResponse struct {
-	From   string               `json:"from"`
-	To     string               `json:"to"`
-	Relay  []meRelayTrafficDay  `json:"relay"`
-	Direct []meDirectTrafficDay `json:"direct"`
+	From        string                 `json:"from"`
+	To          string                 `json:"to"`
+	Relay       []meRelayTrafficDay    `json:"relay"`
+	RelayDetail []meRelayTrafficDetail `json:"relay_detail"`
+	Direct      []meDirectTrafficDay   `json:"direct"`
 }
 
 // handleMeTrafficHTTP returns the authenticated account's own daily usage.
@@ -75,7 +88,17 @@ func (s *Server) handleMeTrafficHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relayByDay := make(map[string]*meRelayTrafficDay)
+	relayDetail := make([]meRelayTrafficDetail, 0, len(relayRows))
 	for _, row := range relayRows {
+		relayDetail = append(relayDetail, meRelayTrafficDetail{
+			Day:           row.Day,
+			FrameType:     row.FrameType,
+			FrameTypeName: frameTypeName(proto.Type(row.FrameType)),
+			Category:      frameCategory(proto.Type(row.FrameType)),
+			Direction:     row.Direction,
+			Bytes:         row.Bytes,
+			Frames:        row.Frames,
+		})
 		cell := relayByDay[row.Day]
 		if cell == nil {
 			cell = &meRelayTrafficDay{Day: row.Day}
@@ -108,6 +131,6 @@ func (s *Server) handleMeTrafficHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONStatus(w, http.StatusOK, meTrafficResponse{
-		From: from, To: to, Relay: relayDays, Direct: directDays,
+		From: from, To: to, Relay: relayDays, RelayDetail: relayDetail, Direct: directDays,
 	})
 }

@@ -187,8 +187,9 @@ QueryTraffic(ctx context.Context, from, to string) ([]TrafficRow, error)
 ### 7. 个人 Relay/P2P 看板（2026-09-23 修订）
 
 - `GET /api/me/traffic?from=&to=` 由 `requireSession` 保护，user id 只取请求上下文；日期
-  最多 90 天。响应不带 user id/email，Relay 按日折叠为 in/out，P2P 按日返回
-  attempts/successes/fallbacks/bytes_sent/bytes_received。
+  最多 180 天，允许一次取当前 90 天和前一周期。响应不带 user id/email，Relay 同时返回
+  帧级明细与兼容的按日 in/out 汇总，P2P 按日返回 attempts/successes/fallbacks/
+  bytes_sent/bytes_received。
 - `direct_traffic_daily` 主键为 `(user_id, day)`，使用 additive UPSERT，支持多 Relay
   实例共享 Postgres 后自然汇总。
 - host 的 `direct_stats` 同时携带 `bytes_sent` / `bytes_received`；`bytes_avoided` 仅为旧

@@ -44,6 +44,9 @@ func TestMeTraffic_OnlyReturnsAuthenticatedUser(t *testing.T) {
 	if len(got.Relay) != 1 || got.Relay[0].BytesOut != 1200 || got.Relay[0].BytesIn != 300 {
 		t.Fatalf("relay = %#v", got.Relay)
 	}
+	if len(got.RelayDetail) != 2 || got.RelayDetail[0].FrameTypeName == "" || got.RelayDetail[0].Category == "" {
+		t.Fatalf("relay detail = %#v", got.RelayDetail)
+	}
 	if len(got.Direct) != 1 || got.Direct[0].BytesSent != 800 || got.Direct[0].BytesReceived != 200 || got.Direct[0].Successes != 3 {
 		t.Fatalf("direct = %#v", got.Direct)
 	}

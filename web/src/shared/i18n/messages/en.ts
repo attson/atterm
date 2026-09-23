@@ -270,6 +270,9 @@ export const en = {
       categories: {
         terminal: 'Terminal relay',
         state: 'State sync',
+        config: 'Configuration',
+        fs: 'File browser',
+        preview: 'Remote preview',
         filesystem: 'File browser',
         service: 'Remote preview',
         control: 'Control',

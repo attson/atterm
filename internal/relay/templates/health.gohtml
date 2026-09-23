@@ -32,6 +32,11 @@
   <dl class="row"><dt>Rate limit / min</dt><dd>{{ .RateLimitPerMinute }}</dd></dl>
   <dl class="row"><dt>Max conn / key</dt><dd>{{ .MaxConnectionsPerKey }}</dd></dl>
   <dl class="row"><dt>Active uplinks</dt><dd>{{ .ActiveUplinks }}</dd></dl>
+  <dl class="row"><dt>Direct attempts</dt><dd>{{ .DirectAttempts }}</dd></dl>
+  <dl class="row"><dt>Direct signaling</dt><dd>{{ if .DirectSignalEnabled }}enabled{{ else }}disabled{{ end }}</dd></dl>
+  <dl class="row"><dt>Direct successes</dt><dd>{{ .DirectSuccesses }}</dd></dl>
+  <dl class="row"><dt>Direct fallbacks</dt><dd>{{ .DirectFallbacks }}</dd></dl>
+  <dl class="row"><dt>Direct bytes avoided</dt><dd>{{ .DirectBytesAvoided }}</dd></dl>
   <dl class="row{{ if not .MobileOriginCompatible }} warn{{ end }}"{{ if not .MobileOriginCompatible }} data-state="warn"{{ end }}>
     <dt>Mobile compat</dt><dd>{{ if .MobileOriginCompatible }}yes{{ else }}no (add a capacitor:// origin){{ end }}</dd>
   </dl>
@@ -61,6 +66,11 @@
           pad('Rate limit / min:') + h.rate_limit_per_minute,
           pad('Max conn / key:') + h.max_connections_per_key,
           pad('Active uplinks:') + h.active_uplinks,
+          pad('Direct attempts:') + h.direct_attempts,
+          pad('Direct signaling:') + (h.direct_signal_enabled ? 'enabled' : 'disabled'),
+          pad('Direct successes:') + h.direct_successes,
+          pad('Direct fallbacks:') + h.direct_fallbacks,
+          pad('Direct bytes avoided:') + h.direct_bytes_avoided,
           pad('Mobile compat:') + (h.mobile_origin_compatible ? 'yes' : 'no')
         ];
         return lines.join('\n');

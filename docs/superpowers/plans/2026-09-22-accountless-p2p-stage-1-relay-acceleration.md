@@ -84,6 +84,15 @@ Rules:
 - Relay metrics: direct attempts/success/fallback and estimated relay bytes avoided。
 - Rollout can be enabled per build/config without changing account or E2EE defaults。
 
+Implementation status (2026-09-23): PR 1.1-1.6 are implemented on
+`design/accountless-p2p`. The per-device toggle lives in the shared General
+settings surface because the Relay tab is desktop-only; on desktop it gates
+both client upgrades and the direct host listener. Beta remains default-off,
+and the Relay-side `--direct-signal` / `ATTERM_DIRECT_SIGNAL_ENABLED` kill
+switch remains independent. Automated package, frontend, build, and protocol
+contract checks pass. The real-network exit gates below remain intentionally
+unchecked until Desktop/Web/iOS and constrained-NAT test runs are recorded.
+
 ## Stage Exit Gate
 
 - [ ] Same-account Desktop↔Desktop/Web/iOS sessions upgrade to direct when ICE succeeds.

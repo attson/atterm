@@ -100,6 +100,7 @@ type Server struct {
 	conns       *connectionLimiter
 	services    *serviceHub
 	direct      *directSignalHub
+	directStats *directMetrics
 	startTime   time.Time
 	uplinkCount int64 // atomic; read via UplinkCount()
 	// feishu holds the runtime Feishu handler; nil = integration disabled.
@@ -133,6 +134,7 @@ func NewServer(cfg Config) *Server {
 	if connLimit == 0 {
 		connLimit = defaultMaxConnections
 	}
+	directStats := &directMetrics{}
 	s := &Server{
 		cfg:         cfg,
 		registry:    session.NewRegistry(),
@@ -141,7 +143,8 @@ func NewServer(cfg Config) *Server {
 		rate:        newFixedWindowLimiter(rateLimit, time.Minute),
 		conns:       newConnectionLimiter(connLimit),
 		services:    newServiceHub(),
-		direct:      newDirectSignalHub(),
+		direct:      newDirectSignalHub(directStats),
+		directStats: directStats,
 		startTime:   time.Now(),
 	}
 	originsInit := append([]string(nil), cfg.AllowedOrigins...)

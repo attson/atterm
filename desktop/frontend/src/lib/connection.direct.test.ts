@@ -151,9 +151,11 @@ describe("SessionConnection direct route handover", () => {
   test("deduplicates overlap, transfers driver, and resumes Relay after direct loss", () => {
     const output: string[] = [];
     const statuses: string[] = [];
+    const routes: string[] = [];
     const conn = new SessionConnection(relayEndpoint, sessionId, {
       onOutput: (bytes) => output.push(decodeText(bytes)),
       onStatus: (status) => statuses.push(status),
+      onRouteChange: (diagnostics) => routes.push(`${diagnostics.route}:${diagnostics.fallbackReason ?? ""}`),
     }, {
       clientName: "viewer-device",
       remote: true,
@@ -176,6 +178,7 @@ describe("SessionConnection direct route handover", () => {
     expect(direct.options.signalURL).toBe("wss://relay.example/direct-signal");
     expect(direct.options.sinceSeq).toBe(10);
     expect(direct.options.clientInstanceId).toBe(attach.client_id);
+    expect(routes.at(-1)).toBe("connecting-direct:");
 
     direct.authenticate();
     relay.emit(TYPE.OUT, encodeOutPayload(11, "eleven"));
@@ -190,6 +193,7 @@ describe("SessionConnection direct route handover", () => {
     expect(output).toEqual(["ten", "eleven", "twelve"]);
     expect(relay.readyState).toBe(FakeWebSocket.CLOSED);
     expect(decodeFrame(direct.sent[0]).type).toBe(TYPE.CLAIM_DRIVER);
+    expect(routes.at(-1)).toBe("direct:");
     expect(JSON.parse(decodeText(decodeFrame(direct.sent[0]).payload))).toEqual({
       client_id: attach.client_id,
       client_name: "viewer-device",
@@ -200,6 +204,7 @@ describe("SessionConnection direct route handover", () => {
     expect(decodeText(decodeFrame(direct.sent[1]).payload)).toBe("direct-input");
 
     direct.fail();
+    expect(routes.at(-1)).toBe("relay:direct_disconnected");
     expect(FakeWebSocket.instances).toHaveLength(2);
     const fallback = FakeWebSocket.instances[1];
     conn.sendInput("queued-during-fallback");
@@ -240,5 +245,31 @@ describe("SessionConnection direct route handover", () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(decodeFrame(relay.sent.at(-1)!).type).toBe(TYPE.IN);
     expect(decodeText(decodeFrame(relay.sent.at(-1)!).payload)).toBe("relay-input");
+  });
+
+  test("can enable after Relay replay and disable an active direct route", () => {
+    const routes: string[] = [];
+    const conn = new SessionConnection(relayEndpoint, sessionId, {
+      onRouteChange: (diagnostics) => routes.push(`${diagnostics.route}:${diagnostics.fallbackReason ?? ""}`),
+    }, {
+      remote: true,
+      directEndpoint,
+      directTransportFactory: directFactory,
+    });
+    conn.attach();
+    const relay = FakeWebSocket.instances[0];
+    relay.open();
+    relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
+
+    conn.setPreferDirect(true);
+    expect(directInstances).toHaveLength(1);
+    directInstances[0].authenticate();
+    directInstances[0].ready(0);
+    expect(routes.at(-1)).toBe("direct:");
+
+    conn.setPreferDirect(false);
+    expect(directInstances[0].closed).toBe(true);
+    expect(routes.at(-1)).toBe("relay:preference_disabled");
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 });

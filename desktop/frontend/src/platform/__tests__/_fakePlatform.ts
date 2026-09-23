@@ -115,6 +115,10 @@ export function createFakePlatform(): Platform {
       save: vi.fn().mockResolvedValue(undefined),
       clear: vi.fn().mockResolvedValue(undefined),
     },
+    directConnection: {
+      load: vi.fn().mockResolvedValue(false),
+      save: vi.fn().mockResolvedValue(undefined),
+    },
     updater: {
       getState: vi.fn().mockResolvedValue(fakeUpdateState),
       checkUpdate: vi.fn().mockResolvedValue(undefined),

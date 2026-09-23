@@ -66,13 +66,15 @@ describe("TerminalView async mount lifecycle", () => {
 });
 
 describe("TerminalView overlay placement", () => {
-  test("remote panes move attach progress below the remote badge", () => {
+  test("remote panes stack route diagnostics below the host badge and attach progress below both", () => {
     expect(source).toContain("avoidTopRightBadge?: boolean");
     expect(source).toContain("avoidTopRightBadge");
     expect(paneSource).toContain(":avoid-top-right-badge=\"pane.remote ||");
 
     const offsetStyle = styleBlockFor(".overlay.avoid-top-right-badge");
-    expect(offsetStyle).toMatch(/top\s*:\s*34px/);
+    expect(offsetStyle).toMatch(/top\s*:\s*60px/);
+    expect(styleBlockFor(".route-badge")).toMatch(/top\s*:\s*34px/);
+    expect(source).toContain('data-testid="session-route-indicator"');
   });
 });
 

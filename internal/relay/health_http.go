@@ -35,6 +35,11 @@ type HealthPayload struct {
 	ActiveSessions           int      `json:"active_sessions"`
 	RelayInstances           int      `json:"relay_instances"`
 	TrafficFlushIntervalSec  int      `json:"traffic_flush_interval_seconds"`
+	DirectAttempts           uint64   `json:"direct_attempts"`
+	DirectSignalEnabled      bool     `json:"direct_signal_enabled"`
+	DirectSuccesses          uint64   `json:"direct_successes"`
+	DirectFallbacks          uint64   `json:"direct_fallbacks"`
+	DirectBytesAvoided       uint64   `json:"direct_bytes_avoided"`
 	MobileOriginCompatible   bool     `json:"mobile_origin_compatible"`
 	GeneratedAt              string   `json:"generated_at"`
 	Warnings                 []string `json:"health_check_warnings,omitempty"`
@@ -91,6 +96,7 @@ func collectHealth(ctx context.Context, s *Server, r *http.Request) HealthPayloa
 	}
 
 	originsCopy := append([]string(nil), s.currentAllowedOrigins()...)
+	direct := s.directStats.snapshot()
 
 	payload := HealthPayload{
 		Version:                 cfg.Version,
@@ -104,6 +110,11 @@ func collectHealth(ctx context.Context, s *Server, r *http.Request) HealthPayloa
 		ActiveSessions:          len(s.registry.List()),
 		RelayInstances:          1,
 		TrafficFlushIntervalSec: int(trafficFlushInterval / time.Second),
+		DirectAttempts:          direct.Attempts,
+		DirectSignalEnabled:     cfg.DirectSignalEnabled,
+		DirectSuccesses:         direct.Successes,
+		DirectFallbacks:         direct.Fallbacks,
+		DirectBytesAvoided:      direct.BytesAvoided,
 		MobileOriginCompatible:  isMobileOriginCompatible(originsCopy),
 		GeneratedAt:             time.Now().UTC().Format(time.RFC3339),
 	}

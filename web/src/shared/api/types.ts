@@ -177,6 +177,11 @@ export interface AdminHealthResponse {
   active_sessions: number
   relay_instances: number
   traffic_flush_interval_seconds: number
+  direct_attempts: number
+  direct_signal_enabled: boolean
+  direct_successes: number
+  direct_fallbacks: number
+  direct_bytes_avoided: number
   generated_at: string
   health_check_warnings?: string[]
 }

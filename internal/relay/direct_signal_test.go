@@ -179,6 +179,31 @@ func TestDirectSignalIssuesAndRoutesSingleUseAttempt(t *testing.T) {
 	if stillPresent {
 		t.Fatal("consumed attempt remains registered")
 	}
+	metrics := srv.directStats.snapshot()
+	if metrics.Attempts != 1 || metrics.Successes != 1 || metrics.Fallbacks != 0 {
+		t.Fatalf("direct metrics after success = %+v", metrics)
+	}
+	writeDirectSignal(t, ctx, host, directSignalMessage{
+		Version:      directSignalVersion,
+		Kind:         "direct_stats",
+		BytesAvoided: 512 * 1024,
+	})
+	writeDirectSignal(t, ctx, client, directSignalMessage{
+		Version: directSignalVersion,
+		Kind:    "direct_result",
+		Code:    "route_lost",
+	})
+	deadline := time.Now().Add(time.Second)
+	for {
+		metrics = srv.directStats.snapshot()
+		if metrics.BytesAvoided == 512*1024 && metrics.Fallbacks == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("direct metrics after reports = %+v", metrics)
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	writeDirectSignal(t, ctx, host, directSignalMessage{
 		Version:   directSignalVersion,

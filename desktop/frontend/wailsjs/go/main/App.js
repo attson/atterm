@@ -126,6 +126,10 @@ export function GetDefaultShell() {
   return window['go']['main']['App']['GetDefaultShell']();
 }
 
+export function GetDirectP2PEnabled() {
+  return window['go']['main']['App']['GetDirectP2PEnabled']();
+}
+
 export function GetDiagnostics(arg1) {
   return window['go']['main']['App']['GetDiagnostics'](arg1);
 }
@@ -492,6 +496,10 @@ export function SetDefaultProfileID(arg1) {
 
 export function SetDefaultShell(arg1) {
   return window['go']['main']['App']['SetDefaultShell'](arg1);
+}
+
+export function SetDirectP2PEnabled(arg1) {
+  return window['go']['main']['App']['SetDirectP2PEnabled'](arg1);
 }
 
 export function SetFeishuCredentials(arg1) {

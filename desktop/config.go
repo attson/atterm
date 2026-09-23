@@ -183,6 +183,11 @@ type appConfig struct {
 	// on macOS/Windows so the #33 light-theme ghosting fix stays active.
 	WebglRendererEnabled *bool `json:"webgl_renderer_enabled,omitempty"`
 
+	// DirectP2PEnabled opts this device into the beta Relay-assisted direct
+	// terminal route. It gates both client upgrade attempts and this desktop's
+	// direct host listener; false keeps the established Relay-only behavior.
+	DirectP2PEnabled bool `json:"direct_p2p_enabled,omitempty"`
+
 	// Plugins is the plugin-system block. Defaults filled in on first run.
 	Plugins PluginConfig `json:"plugins"`
 

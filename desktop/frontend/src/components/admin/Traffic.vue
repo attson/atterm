@@ -306,6 +306,28 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
             <small>{{ t('admin.traffic.flushEvery', { seconds: health?.traffic_flush_interval_seconds ?? 60 }) }}</small>
           </div>
         </div>
+        <div class="platform-strip" data-test="direct-metrics">
+          <div class="platform-cell">
+            <span><Network />{{ t('admin.traffic.directAttempts') }}</span>
+            <strong>{{ health ? compactNumber(health.direct_attempts) : '-' }}</strong>
+            <small>{{ health?.direct_signal_enabled ? t('admin.traffic.directEnabled') : t('admin.traffic.directDisabled') }}</small>
+          </div>
+          <div class="platform-cell">
+            <span><Activity />{{ t('admin.traffic.directSuccesses') }}</span>
+            <strong>{{ health ? compactNumber(health.direct_successes) : '-' }}</strong>
+            <small>{{ t('admin.traffic.directSuccessesHint') }}</small>
+          </div>
+          <div class="platform-cell">
+            <span><ArrowDownRight />{{ t('admin.traffic.directFallbacks') }}</span>
+            <strong>{{ health ? compactNumber(health.direct_fallbacks) : '-' }}</strong>
+            <small>{{ t('admin.traffic.directFallbacksHint') }}</small>
+          </div>
+          <div class="platform-cell">
+            <span><Gauge />{{ t('admin.traffic.directBytesAvoided') }}</span>
+            <strong>{{ health ? humanBytes(health.direct_bytes_avoided) : '-' }}</strong>
+            <small>{{ t('admin.traffic.directBytesAvoidedHint') }}</small>
+          </div>
+        </div>
       </section>
 
       <section class="scope-section user-section">
@@ -513,6 +535,7 @@ button { color: inherit; }
 .scope-heading > small { margin-left: auto; color: var(--good); display: flex; align-items: center; gap: 5px; font: 10px ui-monospace, Menlo, monospace; }
 .scope-heading > small svg { width: 13px; }
 .platform-strip, .kpi-strip { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+.platform-strip + .platform-strip { margin-top: 8px; }
 .platform-cell, .kpi-cell { min-width: 0; min-height: 78px; padding: 12px 15px; border-left: 1px solid var(--border); display: flex; flex-direction: column; justify-content: space-between; }
 .platform-cell:first-child, .kpi-cell:first-child { border-left: 0; }
 .platform-cell > span, .kpi-cell > span { color: var(--fg-dim); display: flex; align-items: center; gap: 6px; font-size: 10px; }

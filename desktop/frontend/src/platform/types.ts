@@ -275,6 +275,11 @@ export interface AuxKeyBridge {
   clear(): Promise<void>
 }
 
+export interface DirectConnectionBridge {
+  load(): Promise<boolean>
+  save(enabled: boolean): Promise<void>
+}
+
 // WidgetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the
 // same executable that owns a frameless always-on-top window. Only the Wails
 // platform implements it — web and Capacitor leave it undefined.
@@ -340,6 +345,7 @@ export interface Platform {
   events: EventBus
   templates: TemplateBridge
   auxKeys: AuxKeyBridge
+  directConnection: DirectConnectionBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
   deskWidget?: WidgetBridge

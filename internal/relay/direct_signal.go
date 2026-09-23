@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/attson/atterm/internal/directsignal"
@@ -34,6 +35,7 @@ const (
 	directMaxSDPBytes        = 32 * 1024
 	directMaxICEBytes        = 8 * 1024
 	directMaxICEPerSide      = 64
+	directMaxStatsDelta      = 64 << 20
 )
 
 type directSignalMessage = directsignal.Message
@@ -45,6 +47,7 @@ type directSignalPeer struct {
 	clientInstanceID string
 	out              chan directSignalMessage
 	cancel           context.CancelFunc
+	activeRoutes     atomic.Uint64
 }
 
 func (p *directSignalPeer) send(message directSignalMessage) bool {
@@ -82,13 +85,19 @@ type directSignalHub struct {
 	hosts    map[uuid.UUID]*directSignalPeer
 	attempts map[uuid.UUID]*directSignalAttempt
 	now      func() time.Time
+	metrics  *directMetrics
 }
 
-func newDirectSignalHub() *directSignalHub {
+func newDirectSignalHub(metrics ...*directMetrics) *directSignalHub {
+	stats := &directMetrics{}
+	if len(metrics) > 0 && metrics[0] != nil {
+		stats = metrics[0]
+	}
 	return &directSignalHub{
 		hosts:    make(map[uuid.UUID]*directSignalPeer),
 		attempts: make(map[uuid.UUID]*directSignalAttempt),
 		now:      time.Now,
+		metrics:  stats,
 	}
 }
 
@@ -228,6 +237,18 @@ func (s *Server) handleDirectSignal(ctx context.Context, conn *websocket.Conn, o
 			if err := s.direct.route(peer, message); err != nil {
 				peer.send(directSignalError(message.RequestID, directSignalErrorCode(err), err.Error()))
 			}
+		case "direct_stats":
+			if peer.role != "host" || message.BytesAvoided == 0 || message.BytesAvoided > directMaxStatsDelta {
+				peer.send(directSignalError(message.RequestID, "invalid_stats", "invalid direct byte estimate"))
+				continue
+			}
+			s.directStats.bytesAvoided.Add(message.BytesAvoided)
+		case "direct_result":
+			if peer.role != "client" || message.Code != "route_lost" || !consumeDirectActiveRoute(peer) {
+				peer.send(directSignalError(message.RequestID, "invalid_result", "invalid direct result"))
+				continue
+			}
+			s.directStats.fallbacks.Add(1)
 		default:
 			peer.send(directSignalError(message.RequestID, "unknown_kind", "unknown signaling message"))
 		}
@@ -291,16 +312,23 @@ func (s *Server) beginDirectAttempt(client *directSignalPeer, request directSign
 	if !ok || sess.OwnerUserID != client.ownerUserID {
 		return directSignalCodeError{"direct_unauthorized", "session unavailable"}
 	}
+	s.directStats.attempts.Add(1)
 	info := sess.Info()
 	if _, ok := s.sessionCreateRoutes().lookupHost(info.HostID, client.ownerUserID); !ok {
+		s.directStats.fallbacks.Add(1)
 		return directSignalCodeError{"host_offline", "host uplink is not active"}
 	}
 	ticket := make([]byte, directTicketBytes)
 	if _, err := rand.Read(ticket); err != nil {
+		s.directStats.fallbacks.Add(1)
 		return directSignalCodeError{"internal_error", "ticket generation failed"}
 	}
 	permission := directPermissionString(parseRemotePermission(info.RemotePermission))
-	return s.direct.begin(client, sessionID, info.HostID, permission, request.RequestID, request.SinceSeq, ticket)
+	if err := s.direct.begin(client, sessionID, info.HostID, permission, request.RequestID, request.SinceSeq, ticket); err != nil {
+		s.directStats.fallbacks.Add(1)
+		return err
+	}
+	return nil
 }
 
 func (h *directSignalHub) registerHost(peer *directSignalPeer, hostID string, sessionIDs []uuid.UUID) {
@@ -333,6 +361,7 @@ func (h *directSignalHub) unregister(peer *directSignalPeer) {
 			}
 			other.send(directSignalMessage{Version: directSignalVersion, Kind: "cancel", AttemptID: id.String(), Code: "peer_disconnected"})
 			delete(h.attempts, id)
+			h.metrics.fallbacks.Add(1)
 		}
 	}
 }
@@ -417,6 +446,7 @@ func (h *directSignalHub) route(sender *directSignalPeer, message directSignalMe
 		}
 		receiver.send(directSignalMessage{Version: directSignalVersion, Kind: "cancel", AttemptID: id.String(), Code: code})
 		delete(h.attempts, id)
+		h.metrics.fallbacks.Add(1)
 		return nil
 	case "consumed":
 		if isClient {
@@ -424,6 +454,8 @@ func (h *directSignalHub) route(sender *directSignalPeer, message directSignalMe
 		}
 		receiver.send(directSignalMessage{Version: directSignalVersion, Kind: "consumed", AttemptID: id.String()})
 		delete(h.attempts, id)
+		attempt.client.activeRoutes.Add(1)
+		h.metrics.successes.Add(1)
 		return nil
 	case "signal":
 		if err := validateDirectSignalMessage(attempt, isClient, message); err != nil {
@@ -438,11 +470,24 @@ func (h *directSignalHub) route(sender *directSignalPeer, message directSignalMe
 		}
 		if !receiver.send(routed) {
 			delete(h.attempts, id)
+			h.metrics.fallbacks.Add(1)
 			return directSignalCodeError{"peer_disconnected", "signaling peer unavailable"}
 		}
 		return nil
 	default:
 		return directSignalCodeError{"unknown_kind", "unknown attempt message"}
+	}
+}
+
+func consumeDirectActiveRoute(peer *directSignalPeer) bool {
+	for {
+		active := peer.activeRoutes.Load()
+		if active == 0 {
+			return false
+		}
+		if peer.activeRoutes.CompareAndSwap(active, active-1) {
+			return true
+		}
 	}
 }
 
@@ -511,6 +556,7 @@ func (h *directSignalHub) reapExpiredLocked() {
 			attempt.client.send(directSignalMessage{Version: directSignalVersion, Kind: "cancel", AttemptID: id.String(), Code: "ticket_expired"})
 			attempt.host.send(directSignalMessage{Version: directSignalVersion, Kind: "cancel", AttemptID: id.String(), Code: "ticket_expired"})
 			delete(h.attempts, id)
+			h.metrics.fallbacks.Add(1)
 		}
 	}
 }

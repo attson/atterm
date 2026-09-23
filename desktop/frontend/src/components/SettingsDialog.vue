@@ -104,6 +104,7 @@ const emit = defineEmits<{
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", appearance: TerminalAppearance): void;
+  (e: "direct-connection-changed", enabled: boolean): void;
   (e: "bindings-changed", bindings: Record<string, string>): void;
   (e: "profiles-changed"): void;
   (e: "session-created", sessionId: string): void;
@@ -463,6 +464,7 @@ function onSaveClick() {
             @terminal-theme-changed="onTerminalThemeChanged"
             @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
             @appearance-changed="onAppearanceChanged"
+            @direct-connection-changed="emit('direct-connection-changed', $event)"
           />
           <SettingsAccount v-if="!caps.wailsBindings && activeTab === 'account'" />
           <SettingsTasks v-show="activeTab === 'tasks'" />

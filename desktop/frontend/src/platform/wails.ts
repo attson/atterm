@@ -243,6 +243,10 @@ export function createWailsPlatform(): Platform {
       save: async () => {},
       clear: async () => {},
     },
+    directConnection: {
+      load: () => api.getDirectP2PEnabled(),
+      save: (enabled) => api.setDirectP2PEnabled(enabled),
+    },
     updater: {
       getState: api.getUpdateState,
       checkUpdate: api.checkUpdate,

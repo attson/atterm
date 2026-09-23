@@ -706,11 +706,14 @@ ticket 有效期 30 秒且单次使用。Relay 内存只保留 ticket 的 SHA-25
 {"version":1,"kind":"signal","attempt_id":"uuid","signal_type":"offer|answer|ice_candidate|ice_end","payload":"opaque string"}
 {"version":1,"kind":"cancel","attempt_id":"uuid","code":"ice_failed"}
 {"version":1,"kind":"consumed","attempt_id":"uuid"}
+{"version":1,"kind":"direct_result","code":"route_lost"}
+{"version":1,"kind":"direct_stats","bytes_avoided":262144}
 ```
 
 - client 只能发送一次 offer，host 只能在 offer 后发送一次 answer；两者各最多发送 64 个 ICE candidate 和一次 `ice_end`。
 - offer/answer payload 最大 32 KiB，单个 ICE candidate 最大 8 KiB；`ice_end` payload 必须为空。
 - `cancel` 终止并移除 attempt；`consumed` 只能由 host 发送，表示 ticket 已由 host 原子消费，同样移除 attempt。
+- 已认证 client 在活跃直连异常断开时可发送一次 `direct_result/route_lost`；已认证 host 可发送 `direct_stats` 的累计字节增量（单条 `1..64 MiB`）。两者只更新 Relay 的低基数聚合指标，不携带 session id、candidate 地址或 terminal 内容，也不参与路由/授权决策。
 - signaling peer 断开会取消与它相关的全部 attempt；过期 attempt 在下一次相关操作时清理，并向仍在线的两端发送 `cancel` / `ticket_expired`。
 - Relay 不解析 SDP/ICE 做授权决策，也不得记录 ticket、SDP、ICE、proof、key 或 DataChannel payload。
 

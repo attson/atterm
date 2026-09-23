@@ -19,7 +19,7 @@ import { getCurrentAccountKey } from "./account-key";
 import { deriveServiceKeys, openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame, b64ToBytes } from "./opaque";
 import { encodeSegments, decodeSegments } from "./fsSegments";
 import { errText, logDebug, logError, logWarn } from "./log";
-import { DirectClientTransport, type DirectClientOptions } from "./directClient";
+import { DirectClientTransport, type DirectClientOptions, type DirectTransportDiagnostics } from "./directClient";
 import { DirectRoute, DirectRouteState, DirectRouteTracker } from "./directRoute";
 
 export interface ClosePayload {
@@ -138,12 +138,51 @@ export interface ConnectionHandlers {
   }) => void;
   onStatus?: (s: Status) => void;
   onReplayProgress?: (progress: ReplayProgress) => void;
+  onRouteChange?: (diagnostics: SessionRouteDiagnostics) => void;
   // onDriverChange fires whenever this connection's driver-or-viewer role
   // changes. isMe is true when the broadcast driver_client_id matches our
   // locally-generated clientID; false otherwise (including empty/no-driver).
   // driverClientName is the human-readable hostname of the new driver (may
   // be empty when no driver or driver didn't report a name).
   onDriverChange?: (driverClientID: string, isMe: boolean, driverClientName: string) => void;
+}
+
+export type SessionRoute = "relay" | "connecting-direct" | "direct";
+export type DirectFallbackReason =
+  | "account_key_unavailable"
+  | "signal_endpoint_unavailable"
+  | "timeout"
+  | "signaling_rejected"
+  | "host_unavailable"
+  | "ice_failed"
+  | "authentication_failed"
+  | "backpressure"
+  | "protocol_error"
+  | "direct_disconnected"
+  | "preference_disabled"
+  | "transport_error";
+
+export interface SessionRouteDiagnostics {
+  route: SessionRoute;
+  iceState?: RTCIceConnectionState;
+  candidateType?: "host" | "srflx" | "prflx" | "relay";
+  setupTimeMs?: number;
+  fallbackReason?: DirectFallbackReason;
+}
+
+export function directFallbackReason(error: unknown, wasActive = false): DirectFallbackReason {
+  const message = errText(error).toLowerCase();
+  if (message.includes("timed out") || message.includes("ticket_expired")) return "timeout";
+  if (message.includes("host_offline") || message.includes("peer_disconnected")) return "host_unavailable";
+  if (message.includes("signaling rejected") || message.includes("signaling disconnected")) return "signaling_rejected";
+  if (message.includes("peer connection failed") || message.includes("ice")) return "ice_failed";
+  if (message.includes("handshake") || message.includes("proof") || message.includes("auth")) return "authentication_failed";
+  if (message.includes("backpressure")) return "backpressure";
+  if (message.includes("unsupported") || message.includes("invalid direct") || message.includes("record")) return "protocol_error";
+  if (wasActive || message.includes("disconnected") || message.includes("channel closed") || message.includes("peer closed")) {
+    return "direct_disconnected";
+  }
+  return "transport_error";
 }
 
 export interface SessionConnectionOptions {
@@ -373,11 +412,7 @@ export class SessionListConnection {
     }
     ws.binaryType = "arraybuffer";
     this.ws = ws;
-    this.handlers.onStatus?.(
-      this.route.state === DirectRouteState.RelayReattaching || this.reconnectAttempts > 0
-        ? "reconnecting"
-        : "connecting",
-    );
+    this.handlers.onStatus?.(this.reconnectAttempts > 0 ? "reconnecting" : "connecting");
 
     ws.onopen = () => {
       this.handlers.onStatus?.("attached");
@@ -524,6 +559,10 @@ export class SessionConnection {
   private preferDirect: boolean;
   private directEndpoint: Endpoint | null;
   private directTransportFactory: (options: DirectClientOptions) => DirectTransport;
+  private relayReplayComplete = false;
+  private directStartedAt = 0;
+  private directDiagnostics: DirectTransportDiagnostics | null = null;
+  private lastFallbackReason: DirectFallbackReason | undefined;
   // currentDriverClientID is the last driver_client_id we observed in a META
   // frame. Used to detect transitions and decide whether to fire onDriverChange.
   private currentDriverClientID = "";
@@ -592,10 +631,35 @@ export class SessionConnection {
     if (this.suspended) {
       this.route = new DirectRouteTracker(this.lastSeq);
       this.directAttempted = false;
+      this.relayReplayComplete = false;
     }
     this.suspended = false;
     if (this.ws || this.reconnectTimer !== null) return;
     this.openWS(this.route.generation);
+  }
+
+  setPreferDirect(enabled: boolean): void {
+    if (this.preferDirect === enabled) return;
+    this.preferDirect = enabled;
+    if (enabled) {
+      this.directAttempted = false;
+      if (this.relayReplayComplete) this.maybeStartDirect();
+      return;
+    }
+    const direct = this.direct;
+    this.direct = null;
+    direct?.close();
+    if (this.route.state === DirectRouteState.DirectConnecting || this.route.state === DirectRouteState.DirectReplay) {
+      try { this.route.abortDirect(this.route.generation); } catch { /* route already moved */ }
+      this.emitRoute("relay", "preference_disabled");
+      return;
+    }
+    if (this.route.state === DirectRouteState.DirectActive) {
+      const generation = this.route.directLost(this.route.generation);
+      this.emitRoute("relay", "preference_disabled");
+      this.handlers.onStatus?.("reconnecting");
+      this.openWS(generation);
+    }
   }
 
   suspend(): void {
@@ -996,9 +1060,11 @@ export class SessionConnection {
       }
       this.handlers.onReplayProgress?.(progress);
       if (route === DirectRoute.Relay && progress.phase === "end") {
+        this.relayReplayComplete = true;
         if (this.route.state === DirectRouteState.RelayReattaching) {
           this.route.relayAttached(generation);
           this.handlers.onStatus?.("attached");
+          this.emitRoute("relay", this.lastFallbackReason);
           if (this.recoverDriverIfVacant && this.recoverDriverVacant) {
             this.recoverDriverIfVacant = false;
             this.recoverDriverVacant = false;
@@ -1068,13 +1134,26 @@ export class SessionConnection {
   }
 
   private maybeStartDirect(): void {
-    if (!this.preferDirect || !this.remote || !this.directEndpoint || this.directAttempted ||
+    if (!this.preferDirect || !this.remote || this.directAttempted ||
         this.route.state !== DirectRouteState.RelayAttached || this.detached || this.suspended) return;
+    if (!this.directEndpoint) {
+      this.directAttempted = true;
+      this.emitRoute("relay", "signal_endpoint_unavailable");
+      return;
+    }
     const accountKey = getCurrentAccountKey();
-    if (!accountKey || accountKey.length !== 32) return;
+    if (!accountKey || accountKey.length !== 32) {
+      this.directAttempted = true;
+      this.emitRoute("relay", "account_key_unavailable");
+      return;
+    }
 
     this.directAttempted = true;
+    this.directStartedAt = performance.now();
+    this.directDiagnostics = null;
+    this.lastFallbackReason = undefined;
     const generation = this.route.beginDirect();
+    this.emitRoute("connecting-direct");
     const auth = webSocketAuth(this.directEndpoint, "/direct-signal");
     let transport: DirectTransport;
     try {
@@ -1099,6 +1178,11 @@ export class SessionConnection {
             this.route.noteDirectReady(generation, replayedSeq);
             this.maybeActivateDirect(generation);
           },
+          onDiagnostics: (diagnostics) => {
+            if (this.direct !== transport || generation !== this.route.generation) return;
+            this.directDiagnostics = diagnostics;
+            this.emitRoute(this.route.state === DirectRouteState.DirectActive ? "direct" : "connecting-direct");
+          },
           onFailure: (error) => this.handleDirectFailure(generation, transport, error),
         },
       });
@@ -1109,6 +1193,8 @@ export class SessionConnection {
         try { this.route.abortDirect(generation); } catch { /* route already moved */ }
       }
       this.direct = null;
+      this.lastFallbackReason = directFallbackReason(error);
+      this.emitRoute("relay", this.lastFallbackReason);
       logWarn("direct", "direct attempt setup failed", { sessionId: this.sessionId, error: errText(error) });
     }
   }
@@ -1121,6 +1207,7 @@ export class SessionConnection {
       if (!transport.sendFrame(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, claim))) return;
     }
     this.route.activateDirect(generation);
+    this.emitRoute("direct");
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -1137,15 +1224,36 @@ export class SessionConnection {
   private handleDirectFailure(generation: number, transport: DirectTransport, error: Error): void {
     if (this.direct !== transport || generation !== this.route.generation) return;
     this.direct = null;
+    const wasActive = this.route.state === DirectRouteState.DirectActive;
+    this.lastFallbackReason = directFallbackReason(error, wasActive);
     logWarn("direct", "direct route failed", { sessionId: this.sessionId, error: errText(error) });
     if (this.route.state === DirectRouteState.DirectConnecting || this.route.state === DirectRouteState.DirectReplay) {
       this.route.abortDirect(generation);
+      this.emitRoute("relay", this.lastFallbackReason);
       return;
     }
     if (this.route.state !== DirectRouteState.DirectActive || this.detached || this.suspended) return;
     const fallbackGeneration = this.route.directLost(generation);
+    this.emitRoute("relay", this.lastFallbackReason);
     this.handlers.onStatus?.("reconnecting");
     this.openWS(fallbackGeneration);
+  }
+
+  private emitRoute(route: SessionRoute, fallbackReason?: DirectFallbackReason): void {
+    const elapsed = this.directStartedAt > 0 && route !== "relay"
+      ? Math.max(0, Math.round(performance.now() - this.directStartedAt))
+      : undefined;
+    try {
+      this.handlers.onRouteChange?.({
+        route,
+        ...(this.directDiagnostics?.iceState ? { iceState: this.directDiagnostics.iceState } : {}),
+        ...(this.directDiagnostics?.candidateType ? { candidateType: this.directDiagnostics.candidateType } : {}),
+        ...(elapsed !== undefined ? { setupTimeMs: elapsed } : {}),
+        ...(fallbackReason ? { fallbackReason } : {}),
+      });
+    } catch {
+      /* isolate UI diagnostics from transport routing */
+    }
   }
 
   private flushPendingRelayWrites(ws: WebSocket): void {

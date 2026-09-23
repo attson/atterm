@@ -811,6 +811,8 @@ export interface AppBindings {
   SetRecoveryDialogEnabled(enabled: boolean): Promise<void>;
   GetWebglRendererEnabled(): Promise<boolean>;
   SetWebglRendererEnabled(enabled: boolean): Promise<void>;
+  GetDirectP2PEnabled(): Promise<boolean>;
+  SetDirectP2PEnabled(enabled: boolean): Promise<void>;
   GetCommandNotifyThresholdSeconds(): Promise<number>;
   SetCommandNotifyThresholdSeconds(seconds: number): Promise<void>;
   BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;

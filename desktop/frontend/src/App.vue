@@ -139,6 +139,7 @@ const settingsInitialTab = ref<"general" | "account" | "relay" | "logging" | "up
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
 const directSignalEndpoint = ref<Endpoint | null>(null);
+const preferDirectConnection = ref(false);
 const localHostID = ref<string>("");
 const localHost = ref<string>("");
 
@@ -1024,6 +1025,10 @@ function onAppearanceChanged(appearance: TerminalAppearance) {
   terminalAppearance.value = appearance;
 }
 
+function onDirectConnectionChanged(enabled: boolean) {
+  preferDirectConnection.value = enabled;
+}
+
 function onCommandNotifyThresholdChanged(seconds: number) {
   commandNotifyThresholdSec.value = seconds;
 }
@@ -1699,6 +1704,12 @@ onMounted(async () => {
   // Set up the size-prediction probe before anything spawns a PTY — the
   // probe must be ready by the time auto-startNewTab fires.
   await setupMeasureProbe();
+  try {
+    preferDirectConnection.value = await $platform.directConnection.load();
+  } catch (e) {
+    preferDirectConnection.value = false;
+    logWarn("direct", "failed to load direct connection preference", { error: errText(e) });
+  }
   if (caps.wailsBindings) {
     try {
       commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
@@ -1952,6 +1963,7 @@ defineExpose({ me });
             :tab="t"
             :endpoint-for="endpointFor"
             :direct-endpoint="directSignalEndpoint"
+            :prefer-direct="preferDirectConnection"
             :session-info-for="paneSessionInfo"
             :viewer-count-for="viewerCountFor"
             :active="t.id === currentTabId"
@@ -2002,6 +2014,7 @@ defineExpose({ me });
       @terminal-theme-changed="onTerminalThemeChanged"
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @appearance-changed="onAppearanceChanged"
+      @direct-connection-changed="onDirectConnectionChanged"
       @bindings-changed="onBindingsChanged"
       @profiles-changed="onProfilesChanged"
       @relay-config-changed="onRelayConfigChanged"

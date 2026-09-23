@@ -29,4 +29,8 @@ type Message struct {
 
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+
+	// BytesAvoided is a bounded aggregate delta reported by an authenticated
+	// direct host. It contains no session identifier, address, or payload.
+	BytesAvoided uint64 `json:"bytes_avoided,omitempty"`
 }

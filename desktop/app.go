@@ -700,7 +700,7 @@ func (a *App) applyRelayUplink(cfg appConfig) {
 	a.uplinkCancel = cancel
 	dialURL := uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
 	a.uplink = newUplink(dialURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey, cfg.AllowInsecureRelay)
-	a.uplink.directEnabled = envEnabled("ATTERM_DIRECT_P2P")
+	a.uplink.directEnabled = cfg.DirectP2PEnabled || envEnabled("ATTERM_DIRECT_P2P")
 	go a.uplink.Run(uplinkCtx)
 	logInfo("uplink", "configured for %s", dialURL)
 }
@@ -1763,6 +1763,35 @@ func (a *App) SetWebglRendererEnabled(enabled bool) error {
 	cfg := a.cfgStore.Get()
 	cfg.WebglRendererEnabled = &enabled
 	return a.cfgStore.Set(cfg)
+}
+
+// GetDirectP2PEnabled reports whether this device should attempt and accept
+// Relay-assisted direct terminal routes. The environment switch remains a
+// deployment-level force-on override for staged builds.
+func (a *App) GetDirectP2PEnabled() bool {
+	if envEnabled("ATTERM_DIRECT_P2P") {
+		return true
+	}
+	return a.cfgStore != nil && a.cfgStore.Get().DirectP2PEnabled
+}
+
+// SetDirectP2PEnabled persists the per-device beta preference. Re-applying the
+// Relay config restarts the uplink so its direct host listener follows the new
+// value immediately; local PTYs remain independent and keep running.
+func (a *App) SetDirectP2PEnabled(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.DirectP2PEnabled == enabled {
+		return nil
+	}
+	cfg.DirectP2PEnabled = enabled
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.applyRelayConfig(cfg)
+	return nil
 }
 
 // GetNotificationsEnabled returns the current persisted preference.

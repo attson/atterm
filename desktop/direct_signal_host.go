@@ -28,6 +28,7 @@ const (
 	directHostDialTimeout      = 10 * time.Second
 	directHostWriteTimeout     = 10 * time.Second
 	directHostHelloTimeout     = 10 * time.Second
+	directStatsReportThreshold = 256 << 10
 )
 
 type directSignalHost struct {
@@ -59,6 +60,8 @@ type directHostAttempt struct {
 	consumed          bool
 	closed            bool
 	closeOnce         sync.Once
+	reportBytes       func(uint64) error
+	pendingBytes      uint64
 }
 
 func newDirectSignalHost(relayURL, token, permission string, host *relayHost, accountKey func() []byte, allowInsecure bool) *directSignalHost {
@@ -279,6 +282,9 @@ func (h *directSignalHost) startAttempt(ctx context.Context, message directsigna
 		permission:       message.Permission,
 		clientInstanceID: message.ClientInstanceID,
 		host:             h,
+		reportBytes: func(bytes uint64) error {
+			return send(directsignal.Message{Kind: "direct_stats", BytesAvoided: bytes})
+		},
 	}
 	h.mu.Lock()
 	if _, exists := h.attempts[attemptID]; exists || len(h.attempts) >= 8 {
@@ -418,10 +424,12 @@ func (a *directHostAttempt) startStream(parent context.Context, channel *peertra
 				if !forward {
 					continue
 				}
-				if err := channel.SendFrame(streamCtx, proto.Marshal(prepared)); err != nil {
+				wire := proto.Marshal(prepared)
+				if err := channel.SendFrame(streamCtx, wire); err != nil {
 					a.host.removeAttempt(a.id)
 					return
 				}
+				a.addAvoidedBytes(uint64(len(wire)), false)
 			}
 		}
 	}()
@@ -612,7 +620,24 @@ func (a *directHostAttempt) close() {
 		if transport != nil {
 			_ = transport.Close()
 		}
+		a.addAvoidedBytes(0, true)
 	})
+}
+
+func (a *directHostAttempt) addAvoidedBytes(delta uint64, force bool) {
+	a.mu.Lock()
+	a.pendingBytes += delta
+	if !force && a.pendingBytes < directStatsReportThreshold {
+		a.mu.Unlock()
+		return
+	}
+	pending := a.pendingBytes
+	a.pendingBytes = 0
+	report := a.reportBytes
+	a.mu.Unlock()
+	if pending > 0 && report != nil {
+		_ = report(pending)
+	}
 }
 
 func directTransportPermission(value string) (peertransport.Permission, bool) {

@@ -32,13 +32,20 @@ export interface DirectSignalMessage {
   payload?: string
   code?: string
   message?: string
+  bytes_avoided?: number
 }
 
 export interface DirectClientCallbacks {
   onAuthenticated?: () => void
   onFrame: (frame: Uint8Array) => void
   onReady: (lastReplayedSeq: number) => void
+  onDiagnostics?: (diagnostics: DirectTransportDiagnostics) => void
   onFailure: (error: Error) => void
+}
+
+export interface DirectTransportDiagnostics {
+  iceState: RTCIceConnectionState
+  candidateType?: 'host' | 'srflx' | 'prflx' | 'relay'
 }
 
 export interface DirectClientOptions {
@@ -165,6 +172,10 @@ export class DirectClientTransport {
     }
   }
 
+  private notifyDiagnostics(diagnostics: DirectTransportDiagnostics): void {
+    try { this.options.callbacks.onDiagnostics?.(diagnostics) } catch { /* diagnostics must not affect routing */ }
+  }
+
   sendFrame(frame: Uint8Array): boolean {
     if (this.closed || !this.authenticated || !this.codec || !this.dc || this.dc.readyState !== 'open') return false
     if (this.dc.bufferedAmount > DIRECT_BUFFERED_HIGH_WATER) {
@@ -251,11 +262,19 @@ export class DirectClientTransport {
       iceServers: this.options.iceServers ?? [{ urls: ['stun:stun.cloudflare.com:3478'] }],
     })
     this.pc = pc
+    const reportDiagnostics = () => {
+      this.notifyDiagnostics({ iceState: pc.iceConnectionState })
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        void this.reportSelectedCandidateType(pc)
+      }
+    }
+    pc.oniceconnectionstatechange = reportDiagnostics
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
         this.fail(new Error(`direct peer connection ${pc.connectionState}`))
       }
     }
+    reportDiagnostics()
     const dc = pc.createDataChannel('atterm-terminal-v1', { ordered: true })
     if (!dc.ordered || dc.maxPacketLifeTime !== null || dc.maxRetransmits !== null) {
       throw new Error('direct data channel is not ordered and reliable')
@@ -294,6 +313,38 @@ export class DirectClientTransport {
       payload: JSON.stringify(pc.localDescription),
     })
     this.sendSignal({kind: 'signal', attempt_id: this.attemptId, signal_type: 'ice_end', payload: ''})
+  }
+
+  private async reportSelectedCandidateType(pc: RTCPeerConnection): Promise<void> {
+    if (typeof pc.getStats !== 'function') return
+    try {
+      const stats = await pc.getStats()
+      if (this.closed || this.pc !== pc) return
+      let selectedPairId = ''
+      const byId = new Map<string, RTCStats>()
+      stats.forEach((raw) => {
+        const row = raw as RTCStats & {
+          selectedCandidatePairId?: string
+          selected?: boolean
+          nominated?: boolean
+          state?: string
+        }
+        byId.set(row.id, row)
+        if (row.type === 'transport' && row.selectedCandidatePairId) selectedPairId = row.selectedCandidatePairId
+        if (!selectedPairId && row.type === 'candidate-pair' && row.state === 'succeeded' && (row.selected || row.nominated)) {
+          selectedPairId = row.id
+        }
+      })
+      if (!selectedPairId) return
+      const pair = byId.get(selectedPairId) as (RTCStats & { localCandidateId?: string }) | undefined
+      if (!pair?.localCandidateId) return
+      const local = byId.get(pair.localCandidateId) as (RTCStats & { candidateType?: string }) | undefined
+      const candidateType = local?.candidateType
+      if (candidateType !== 'host' && candidateType !== 'srflx' && candidateType !== 'prflx' && candidateType !== 'relay') return
+      this.notifyDiagnostics({ iceState: pc.iceConnectionState, candidateType })
+    } catch {
+      // Stats availability differs across WebKit versions; routing must not.
+    }
   }
 
   private async applyRemoteSignal(message: DirectSignalMessage): Promise<void> {
@@ -386,6 +437,9 @@ export class DirectClientTransport {
   private fail(value: unknown): void {
     if (this.closed) return
     const error = asError(value)
+    if (this.authenticated) {
+      try { this.sendSignal({ kind: 'direct_result', code: 'route_lost' }) } catch { /* metrics are best-effort */ }
+    }
     this.finish()
     try { this.options.callbacks.onFailure(error) } catch { /* fallback callbacks must not escape network handlers */ }
   }

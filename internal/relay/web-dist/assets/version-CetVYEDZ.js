@@ -1,0 +1,1 @@
+import{a as t,A as e}from"./client-BaO6etL8.js";import{b$ as n}from"./useI18n-CQ_oL-eU.js";function s(r,o=n){return o("common.versionLabel",{version:r||"dev"})}async function c(){try{const{data:r}=await t("/api/version");return r.version}catch(r){if(!(r instanceof e))throw r;return"dev"}}export{c as fetchVersion,s as formatVersionLabel};

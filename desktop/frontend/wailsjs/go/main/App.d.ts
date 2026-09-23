@@ -67,6 +67,8 @@ export function GetDefaultProfileID():Promise<string>;
 
 export function GetDefaultShell():Promise<string>;
 
+export function GetDirectP2PEnabled():Promise<boolean>;
+
 export function GetDiagnostics(arg1:string):Promise<main.DiagnosticsPayload>;
 
 export function GetEndpoint():Promise<main.Endpoint>;
@@ -250,6 +252,8 @@ export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
 export function SetDefaultProfileID(arg1:string):Promise<void>;
 
 export function SetDefaultShell(arg1:string):Promise<void>;
+
+export function SetDirectP2PEnabled(arg1:boolean):Promise<void>;
 
 export function SetFeishuCredentials(arg1:feishu.Credentials):Promise<void>;
 

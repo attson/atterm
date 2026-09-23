@@ -352,6 +352,11 @@ func TestHealthPayload_JSONFieldsStable(t *testing.T) {
 		"active_sessions",
 		"relay_instances",
 		"traffic_flush_interval_seconds",
+		"direct_attempts",
+		"direct_signal_enabled",
+		"direct_successes",
+		"direct_fallbacks",
+		"direct_bytes_avoided",
 		"mobile_origin_compatible",
 		"generated_at",
 	}

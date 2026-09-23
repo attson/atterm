@@ -192,6 +192,29 @@ describe("SettingsGeneral WebGL renderer toggle", () => {
   });
 });
 
+describe("SettingsGeneral direct connection preference", () => {
+  afterEach(() => __setPlatformForTests(null));
+
+  test("loads and saves the shared per-device preference", async () => {
+    const platform = createFakePlatform();
+    platform.caps.wailsBindings = false;
+    vi.mocked(platform.directConnection.load)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    __setPlatformForTests(platform);
+
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    const toggle = w.get<HTMLInputElement>('[data-testid="direct-connection-toggle"]');
+    expect(toggle.element.checked).toBe(true);
+
+    await toggle.setValue(false);
+    await flushPromises();
+    expect(platform.directConnection.save).toHaveBeenCalledWith(false);
+    expect(w.emitted("direct-connection-changed")).toEqual([[false]]);
+  });
+});
+
 describe("SettingsGeneral language preference", () => {
   test("imports i18n and locale preference bindings", () => {
     expect(source).toContain("useI18n");

@@ -144,13 +144,24 @@ The transcript is authenticated before either endpoint accepts application recor
 The ordered reliable DataChannel label is `atterm-terminal-v1`, negotiated in-band, binary only.
 
 ```text
-client -> host  CLIENT_HELLO(attempt_id, client_pub, client_proof)
+client -> host  CLIENT_HELLO(attempt_id, ticket, client_pub)
 host   -> client HOST_HELLO(host_pub, host_proof)
-client -> host  CLIENT_FINISH(HMAC(proof_key, "atterm-direct-finish-v1" || transcript_hash))
+client -> host  CLIENT_FINISH(client_proof, HMAC(proof_key, "atterm-direct-finish-v1" || transcript_hash))
 host   -> client AUTH_OK(initial host record counter = 0)
 ```
 
-The host does not send terminal data before `CLIENT_FINISH`. Any parse, expiry, claim, proof or state mismatch closes the DataChannel and consumes the attempt. Handshake timeout is 10 seconds after DataChannel open.
+`client_proof` 不能放进 `CLIENT_HELLO`：canonical transcript 包含 `host_pub`，client 在收到 `HOST_HELLO` 前无法构造该 proof。Host 先用已鉴权 signaling 下发的 pending authorization 校验 `attempt_id + ticket`，收到 `client_pub` 后才能构造完整 transcript 并证明 host role；client 验证 host proof 后在 `CLIENT_FINISH` 同时证明 client role和确认完整 transcript。Host 不在 `CLIENT_FINISH` 验证通过前发送 terminal data。任何 parse、expiry、claim、proof 或 state mismatch 都关闭 DataChannel 并消费 attempt。Handshake timeout 是 DataChannel open 后 10 秒。
+
+握手消息全部是 binary DataChannel message，固定布局如下；`version=1`，kind 分别为 `1..4`，不允许 trailing bytes：
+
+```text
+CLIENT_HELLO  = version(1B) || kind=1(1B) || attempt_id(16B) || ticket(32B) || client_pub(65B)
+HOST_HELLO    = version(1B) || kind=2(1B) || host_pub(65B) || host_proof(32B)
+CLIENT_FINISH = version(1B) || kind=3(1B) || client_proof(32B) || finish_proof(32B)
+AUTH_OK       = version(1B) || kind=4(1B)
+```
+
+P-256 public key 使用 SEC1 uncompressed point（`0x04 || X(32B) || Y(32B)`）。任一 text message、长度错误、曲线点错误、顺序错误或重复握手消息都关闭当前 direct attempt。
 
 ## 6. Encrypted Record Layer
 

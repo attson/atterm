@@ -12,13 +12,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/directsignal"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
 
 const (
-	directSignalVersion      = 1
+	directSignalVersion      = directsignal.Version
 	directSignalReadLimit    = 64 * 1024
 	directSignalWriteWait    = 10 * time.Second
 	directSignalPingPeriod   = 25 * time.Second
@@ -35,31 +36,7 @@ const (
 	directMaxICEPerSide      = 64
 )
 
-type directSignalMessage struct {
-	Version int    `json:"version"`
-	Kind    string `json:"kind"`
-
-	Role             string   `json:"role,omitempty"`
-	HostID           string   `json:"host_id,omitempty"`
-	SessionIDs       []string `json:"session_ids,omitempty"`
-	ClientInstanceID string   `json:"client_instance_id,omitempty"`
-
-	RequestID string `json:"request_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	SinceSeq  uint64 `json:"since_seq,omitempty"`
-
-	AttemptID      string `json:"attempt_id,omitempty"`
-	Ticket         string `json:"ticket,omitempty"`
-	UserID         string `json:"user_id,omitempty"`
-	Permission     string `json:"permission,omitempty"`
-	ExpiresAtUnixM int64  `json:"expires_at_unix_ms,omitempty"`
-
-	SignalType string `json:"signal_type,omitempty"`
-	Payload    string `json:"payload,omitempty"`
-
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
-}
+type directSignalMessage = directsignal.Message
 
 type directSignalPeer struct {
 	ownerUserID      string

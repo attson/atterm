@@ -696,6 +696,7 @@ func (a *App) applyRelayUplink(cfg appConfig) {
 	a.uplinkCancel = cancel
 	dialURL := uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
 	a.uplink = newUplink(dialURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey, cfg.AllowInsecureRelay)
+	a.uplink.directEnabled = envEnabled("ATTERM_DIRECT_P2P")
 	go a.uplink.Run(uplinkCtx)
 	logInfo("uplink", "configured for %s", dialURL)
 }

@@ -71,6 +71,10 @@ After `direct_offer`, Relay only routes bounded opaque signaling payloads associ
 
 Relay never parses SDP to make authorization decisions and never logs SDP, ICE candidates, ticket bytes, proof bytes or DataChannel payloads. Diagnostics may retain attempt duration, coarse candidate type, terminal result and a random attempt id for at most the normal metrics retention period.
 
+### 3.4 ICE discovery and privacy
+
+Stage 1 uses `stun:stun.cloudflare.com:3478` for server-reflexive ICE candidate discovery and does not provide TURN. STUN is not a tunnel or terminal-data relay: it observes the connecting endpoint's source IP and request timing, while terminal records flow directly between the two WebRTC peers. Direct peers necessarily learn the candidate addresses needed to connect, and the authenticated atterm Relay routes those candidate strings in memory without logging them. If public STUN or peer-to-peer UDP is unavailable, the attempt fails into the existing Relay path; terminal availability does not depend on STUN.
+
 ## 4. Pluggable Handshake Authentication
 
 Transport depends on this narrow contract:
@@ -219,7 +223,7 @@ relay_attached -> direct_connecting -> direct_replay -> direct_active
 2. Direct authentication succeeds. Host subscribes to the same local `session.Session` with `since_seq = committed_seq`.
 3. During direct replay, Relay remains subscribed. Frames from both routes are accepted only for the current generation and deduplicated by OUT seq before delivery.
 4. Host sends `DIRECT_READY(last_replayed_out_seq)` only after replay catch-up and live handoff are ordered on the direct subscriber.
-5. Client acknowledges readiness over signaling; Relay then removes that client's terminal subscriber. Account/signaling/list connections remain.
+5. Client validates `DIRECT_READY`, switches the route generation, then closes its old `/client` terminal socket so Relay removes that subscriber. The account, signaling, and session-list connections remain. The signaling attempt itself was already atomically removed when host sent `consumed` after account-key authentication, so readiness is not acknowledged against that expired attempt.
 6. Direct failure freezes IN/RESIZE/CLAIM_DRIVER, increments route generation, and reattaches Relay using the last `committed_seq`. Input resumes only after Relay attach/replay completes.
 
 Late frames from an older route generation are dropped. OUT may arrive twice at the transport boundary during overlap but is delivered to xterm once. IN, RESIZE, paste and driver claim have exactly one active writer route and are never mirrored during transition.

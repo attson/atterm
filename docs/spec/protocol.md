@@ -714,6 +714,8 @@ ticket 有效期 30 秒且单次使用。Relay 内存只保留 ticket 的 SHA-25
 - signaling peer 断开会取消与它相关的全部 attempt；过期 attempt 在下一次相关操作时清理，并向仍在线的两端发送 `cancel` / `ticket_expired`。
 - Relay 不解析 SDP/ICE 做授权决策，也不得记录 ticket、SDP、ICE、proof、key 或 DataChannel payload。
 
+Stage 1 endpoint 默认用 `stun:stun.cloudflare.com:3478` 发现 server-reflexive ICE candidate，不提供 TURN。STUN 不承载 terminal data，但服务方可观察请求源 IP/时序；WebRTC 对端会获得建立直连所需的 candidate 地址。公共 STUN 或 P2P UDP 不可用时，client 必须回退已有 Relay data path。
+
 错误以 `{"version":1,"kind":"error","request_id":"...","code":"...","message":"..."}` 返回。协议/边界错误只拒绝当前消息或 attempt；hello 非法才关闭 signaling 连接。稳定 fallback 类别及 direct handshake/record/handover 细节见 [Relay-assisted P2P Acceleration Design](../superpowers/specs/2026-09-22-relay-p2p-acceleration-design.md)。
 
 ## E2EE 信封

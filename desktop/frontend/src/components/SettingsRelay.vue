@@ -658,8 +658,9 @@ defineExpose({
   align-items: center;
   padding: 0 8px;
   font-size: 13px;
-  color: var(--fg-dim);
-  background: color-mix(in srgb, var(--fg-dim) 12%, transparent 88%);
+  color: var(--fg);
+  background: var(--panel);
+  color-scheme: dark;
   border-right: 1px solid var(--border);
   user-select: none;
   white-space: nowrap;
@@ -669,6 +670,10 @@ defineExpose({
   border-radius: 0;
   cursor: pointer;
   font-family: inherit;
+}
+.url-scheme option {
+  color: var(--fg);
+  background: var(--panel);
 }
 .url-input.insecure .url-scheme {
   color: var(--warn, #d97706);

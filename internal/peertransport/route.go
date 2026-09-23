@@ -31,9 +31,12 @@ const (
 // overlap. Network adapters attach the returned generation to their callbacks
 // so late frames from closed routes cannot mutate current state.
 type RouteTracker struct {
-	state        RouteState
-	generation   uint64
-	committedSeq uint64
+	state             RouteState
+	generation        uint64
+	committedSeq      uint64
+	directStartSeq    uint64
+	directObservedSeq uint64
+	directReady       bool
 }
 
 // NewRouteTracker starts from an attached Relay path and its committed cursor.
@@ -53,6 +56,9 @@ func (r *RouteTracker) BeginDirect() (uint64, error) {
 		return r.generation, fmt.Errorf("%w: begin direct from %d", ErrInvalidRouteTransition, r.state)
 	}
 	r.state = RouteDirectConnecting
+	r.directStartSeq = r.committedSeq
+	r.directObservedSeq = r.committedSeq
+	r.directReady = false
 	return r.generation, nil
 }
 
@@ -65,11 +71,32 @@ func (r *RouteTracker) BeginDirectReplay(generation uint64) error {
 	return nil
 }
 
+// NoteDirectReady records the end of the direct subscriber's initial replay.
+// Relay may already have advanced committedSeq, so activation can still wait
+// for ordered live direct frames to catch that cursor.
+func (r *RouteTracker) NoteDirectReady(generation, replayedSeq uint64) error {
+	if generation != r.generation || r.state != RouteDirectReplay || replayedSeq < r.directStartSeq {
+		return fmt.Errorf("%w: ready generation=%d replayed=%d start=%d state=%d",
+			ErrInvalidRouteTransition, generation, replayedSeq, r.directStartSeq, r.state)
+	}
+	if replayedSeq > r.directObservedSeq {
+		r.directObservedSeq = replayedSeq
+	}
+	r.directReady = true
+	return nil
+}
+
+// CanActivateDirect reports whether direct has observed every OUT sequence
+// already committed from Relay after DIRECT_READY.
+func (r *RouteTracker) CanActivateDirect(generation uint64) bool {
+	return generation == r.generation && r.state == RouteDirectReplay && r.directReady && r.directObservedSeq >= r.committedSeq
+}
+
 // ActivateDirect switches the sole input writer after direct catch-up.
-func (r *RouteTracker) ActivateDirect(generation, replayedSeq uint64) error {
-	if generation != r.generation || r.state != RouteDirectReplay || replayedSeq != r.committedSeq {
-		return fmt.Errorf("%w: activate generation=%d replayed=%d committed=%d state=%d",
-			ErrInvalidRouteTransition, generation, replayedSeq, r.committedSeq, r.state)
+func (r *RouteTracker) ActivateDirect(generation uint64) error {
+	if !r.CanActivateDirect(generation) {
+		return fmt.Errorf("%w: activate generation=%d direct_observed=%d committed=%d ready=%t state=%d",
+			ErrInvalidRouteTransition, generation, r.directObservedSeq, r.committedSeq, r.directReady, r.state)
 	}
 	r.state = RouteDirectActive
 	return nil
@@ -121,7 +148,7 @@ func (r *RouteTracker) InputRoute() Route {
 // AcceptOutput commits a new OUT sequence exactly once. false means a stale
 // route, inactive route, or already committed duplicate and is safe to drop.
 func (r *RouteTracker) AcceptOutput(generation uint64, route Route, seq uint64) bool {
-	if generation != r.generation || seq == 0 || seq <= r.committedSeq {
+	if generation != r.generation || seq == 0 {
 		return false
 	}
 	allowed := false
@@ -134,6 +161,12 @@ func (r *RouteTracker) AcceptOutput(generation uint64, route Route, seq uint64) 
 		allowed = route == RouteDirect
 	}
 	if !allowed {
+		return false
+	}
+	if route == RouteDirect && r.state == RouteDirectReplay && seq > r.directObservedSeq {
+		r.directObservedSeq = seq
+	}
+	if seq <= r.committedSeq {
 		return false
 	}
 	r.committedSeq = seq

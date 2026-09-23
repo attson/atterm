@@ -53,7 +53,8 @@ describe('direct route handover', () => {
       tracker.beginDirectReplay(generation)
       commit(generation, DirectRoute.Direct, nextSeq)
       commit(generation, DirectRoute.Relay, nextSeq++)
-      tracker.activateDirect(generation, tracker.committedSeq)
+      tracker.noteDirectReady(generation, tracker.committedSeq)
+      tracker.activateDirect(generation)
       expect(tracker.inputRoute()).toBe(DirectRoute.Direct)
       commit(generation, DirectRoute.Relay, nextSeq)
       commit(generation, DirectRoute.Direct, nextSeq++)
@@ -67,5 +68,25 @@ describe('direct route handover', () => {
     }
 
     for (let seq = 1; seq < nextSeq; seq++) expect(delivered.get(seq)).toBe(1)
+  })
+
+  it('waits for direct to catch a Relay cursor that advanced past DIRECT_READY', () => {
+    const tracker = new DirectRouteTracker(10)
+    const generation = tracker.beginDirect()
+    tracker.beginDirectReplay(generation)
+
+    expect(tracker.acceptOutput(generation, DirectRoute.Relay, 12)).toBe(true)
+    tracker.noteDirectReady(generation, 10)
+    expect(tracker.canActivateDirect(generation)).toBe(false)
+    expect(() => tracker.activateDirect(generation)).toThrow('invalid direct route transition')
+
+    // Direct duplicates still advance its observed cursor even though Relay
+    // already committed those OUT frames to xterm.
+    expect(tracker.acceptOutput(generation, DirectRoute.Direct, 11)).toBe(false)
+    expect(tracker.canActivateDirect(generation)).toBe(false)
+    expect(tracker.acceptOutput(generation, DirectRoute.Direct, 12)).toBe(false)
+    expect(tracker.canActivateDirect(generation)).toBe(true)
+    tracker.activateDirect(generation)
+    expect(tracker.inputRoute()).toBe(DirectRoute.Direct)
   })
 })

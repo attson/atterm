@@ -1116,6 +1116,7 @@ export namespace main {
 	    connected: boolean;
 	    remote_proxy_url: string;
 	    remote_http_proxy_url: string;
+	    home_instance_url: string;
 	    paused: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -1134,6 +1135,7 @@ export namespace main {
 	        this.connected = source["connected"];
 	        this.remote_proxy_url = source["remote_proxy_url"];
 	        this.remote_http_proxy_url = source["remote_http_proxy_url"];
+	        this.home_instance_url = source["home_instance_url"];
 	        this.paused = source["paused"];
 	    }
 	}
@@ -1677,4 +1679,3 @@ export namespace main {
 	}
 
 }
-

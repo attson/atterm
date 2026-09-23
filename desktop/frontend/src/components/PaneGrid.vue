@@ -21,6 +21,8 @@ import {
 const props = defineProps<{
   tab: Tab;
   endpointFor: (pane: Pane) => Endpoint | null;
+  directEndpoint?: Endpoint | null;
+  preferDirect?: boolean;
   sessionInfoFor: (pane: Pane) => SessionInfo | null;
   viewerCountFor?: (sessionId: string) => number;
   active: boolean;
@@ -220,6 +222,8 @@ function requestServicePreview(pane: Pane): void {
         <TerminalView
           v-if="pane.sessionId && endpointFor(pane)"
           :endpoint="endpointFor(pane)!"
+          :direct-endpoint="pane.remote ? directEndpoint : null"
+          :prefer-direct="pane.remote && preferDirect"
           :session-id="pane.sessionId"
           :active="active"
           :focused="active && idx === tab.activePaneIdx"

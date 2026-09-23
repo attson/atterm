@@ -218,7 +218,11 @@ type RelayConfig struct {
 	// desktop build has no relay baseURL in localStorage at all. Read-only;
 	// empty if the proxy is unavailable. The frontend appends "/relay-http".
 	RemoteHTTPProxyURL string `json:"remote_http_proxy_url"`
-	Paused             bool   `json:"paused"`
+	// HomeInstanceURL is the public Relay node selected for this user. The
+	// frontend uses it only for direct signaling; terminal /client traffic
+	// continues through RemoteProxyURL in the Wails build.
+	HomeInstanceURL string `json:"home_instance_url"`
+	Paused          bool   `json:"paused"`
 }
 
 type LoggingConfig struct {
@@ -784,6 +788,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 		Paused:             cfg.RelayPaused,
 		RemoteProxyURL:     a.remoteProxy.wsURL(),
 		RemoteHTTPProxyURL: a.remoteProxy.httpURL(),
+		HomeInstanceURL:    cfg.RelayHomeInstanceURL,
 	}
 }
 

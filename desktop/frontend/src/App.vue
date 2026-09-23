@@ -73,6 +73,7 @@ import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState, Session
 import { saveRelayConfig, clearRelayConfig } from "@webshared/api/relay-config";
 import type { RemoteSession } from "./platform/types";
 import { type SessionConnection, type SessionInfo } from "./lib/connection";
+import { buildRelayWebSocketEndpoint } from "./lib/relayEndpoint";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir, type TerminalAppearance } from "./lib/types";
@@ -137,6 +138,7 @@ const settingsInitialTab = ref<"general" | "account" | "relay" | "logging" | "up
 
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
+const directSignalEndpoint = ref<Endpoint | null>(null);
 const localHostID = ref<string>("");
 const localHost = ref<string>("");
 
@@ -847,6 +849,7 @@ async function refreshPlatformRelayState(): Promise<boolean> {
   const relayCfg = await $platform.relay.load();
   const endpoint = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null;
   remoteEndpoint.value = endpoint;
+  directSignalEndpoint.value = endpoint;
   if (!endpoint) {
     sessionListStreams.stopRemote();
     remoteRawList.value = [];
@@ -863,17 +866,24 @@ function startPlatformRemotePoll(): void {
 }
 
 // connectRemoteSessionList (re)starts the remote-session list stream and sets the
-// attach endpoint. Two independent concerns:
+// attach and signaling endpoints. Three independent concerns:
 //   - The LIST is read through /client-sessions via the Go loopback proxy when
 //     available, with App.ListRemoteSessions polling as fallback.
 //   - The ATTACH endpoint is the Go loopback proxy (remoteProxy). When it's
 //     unavailable the list still shows; you just can't open a remote pane.
-function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpoint | null) {
+//   - The direct signaling endpoint is the public home Relay. It never points
+//     at remoteProxy because the broker must see both WebRTC peers.
+function connectRemoteSessionList(
+  relayConnected: boolean,
+  attachEndpoint: Endpoint | null,
+  signalEndpoint: Endpoint | null,
+) {
   sessionListStreams.stopRemote();
   remoteRawList.value = [];
   remoteList.value = [];
   remoteMissingSince.clear();
   remoteEndpoint.value = attachEndpoint;
+  directSignalEndpoint.value = signalEndpoint;
   if (!relayConnected) return;
   if (attachEndpoint) {
     connectRemoteSessionListWS(attachEndpoint);
@@ -884,7 +894,14 @@ function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpo
 }
 
 async function refreshRelayConfig() {
-  let cfg: { url: string; token: string; connected: boolean; remote_proxy_url?: string; remote_http_proxy_url?: string } = {
+  let cfg: {
+    url: string;
+    token: string;
+    connected: boolean;
+    remote_proxy_url?: string;
+    remote_http_proxy_url?: string;
+    home_instance_url?: string;
+  } = {
     url: "",
     token: "",
     connected: false,
@@ -921,10 +938,13 @@ async function refreshRelayConfig() {
   const attachEndpoint: Endpoint | null = relayConnected && proxyUrl
     ? { url: proxyUrl, session_token: cfg.token }
     : null;
-  const key = `${relayConnected}|${attachEndpoint?.url ?? ""}|${attachEndpoint?.session_token ?? ""}`;
+  const signalEndpoint = relayConnected
+    ? buildRelayWebSocketEndpoint(cfg.home_instance_url || cfg.url, cfg.token)
+    : null;
+  const key = `${relayConnected}|${attachEndpoint?.url ?? ""}|${attachEndpoint?.session_token ?? ""}|${signalEndpoint?.url ?? ""}|${signalEndpoint?.session_token ?? ""}`;
   if (key === lastRemoteKey) return;
   lastRemoteKey = key;
-  connectRemoteSessionList(relayConnected, attachEndpoint);
+  connectRemoteSessionList(relayConnected, attachEndpoint, signalEndpoint);
 }
 
 function refreshDesktopRelayConfig() {
@@ -963,13 +983,7 @@ function buildWebRemoteEndpoint(cfg: RelayConfig): Endpoint | null {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     return { url: `${proto}//${location.host}`, session_token: cfg.token };
   }
-  try {
-    const u = new URL(httpBase);
-    const proto = u.protocol === "https:" ? "wss:" : "ws:";
-    return { url: `${proto}//${u.host}`, session_token: cfg.token };
-  } catch {
-    return null;
-  }
+  return buildRelayWebSocketEndpoint(httpBase, cfg.token);
 }
 
 async function refreshTerminalTheme() {
@@ -1937,6 +1951,7 @@ defineExpose({ me });
             :key="t.id"
             :tab="t"
             :endpoint-for="endpointFor"
+            :direct-endpoint="directSignalEndpoint"
             :session-info-for="paneSessionInfo"
             :viewer-count-for="viewerCountFor"
             :active="t.id === currentTabId"

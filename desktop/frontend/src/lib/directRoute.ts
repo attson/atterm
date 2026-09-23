@@ -19,6 +19,9 @@ export class DirectRouteTracker {
   private routeState = DirectRouteState.RelayAttached
   private routeGeneration = 1
   private lastCommittedSeq: number
+  private directStartSeq = 0
+  private directObservedSeq = 0
+  private directReady = false
 
   constructor(committedSeq = 0) {
     this.lastCommittedSeq = committedSeq
@@ -31,6 +34,9 @@ export class DirectRouteTracker {
   beginDirect(): number {
     if (this.routeState !== DirectRouteState.RelayAttached) throw new Error('invalid direct route transition')
     this.routeState = DirectRouteState.DirectConnecting
+    this.directStartSeq = this.lastCommittedSeq
+    this.directObservedSeq = this.lastCommittedSeq
+    this.directReady = false
     return this.routeGeneration
   }
 
@@ -40,11 +46,25 @@ export class DirectRouteTracker {
     this.routeState = DirectRouteState.DirectReplay
   }
 
-  activateDirect(generation: number, replayedSeq: number): void {
+  noteDirectReady(generation: number, replayedSeq: number): void {
     this.requireGeneration(generation)
-    if (this.routeState !== DirectRouteState.DirectReplay || replayedSeq !== this.lastCommittedSeq) {
+    if (this.routeState !== DirectRouteState.DirectReplay || !Number.isSafeInteger(replayedSeq) || replayedSeq < this.directStartSeq) {
       throw new Error('invalid direct route transition')
     }
+    this.directObservedSeq = Math.max(this.directObservedSeq, replayedSeq)
+    this.directReady = true
+  }
+
+  canActivateDirect(generation: number): boolean {
+    return generation === this.routeGeneration &&
+      this.routeState === DirectRouteState.DirectReplay &&
+      this.directReady &&
+      this.directObservedSeq >= this.lastCommittedSeq
+  }
+
+  activateDirect(generation: number): void {
+    this.requireGeneration(generation)
+    if (!this.canActivateDirect(generation)) throw new Error('invalid direct route transition')
     this.routeState = DirectRouteState.DirectActive
   }
 
@@ -85,7 +105,7 @@ export class DirectRouteTracker {
   }
 
   acceptOutput(generation: number, route: DirectRoute, seq: number): boolean {
-    if (generation !== this.routeGeneration || seq <= 0 || seq <= this.lastCommittedSeq) return false
+    if (generation !== this.routeGeneration || seq <= 0) return false
     let allowed = false
     switch (this.routeState) {
       case DirectRouteState.RelayAttached:
@@ -101,8 +121,27 @@ export class DirectRouteTracker {
         break
     }
     if (!allowed) return false
+    if (route === DirectRoute.Direct && this.routeState === DirectRouteState.DirectReplay) {
+      this.directObservedSeq = Math.max(this.directObservedSeq, seq)
+    }
+    if (seq <= this.lastCommittedSeq) return false
     this.lastCommittedSeq = seq
     return true
+  }
+
+  acceptsRoute(generation: number, route: DirectRoute): boolean {
+    if (generation !== this.routeGeneration) return false
+    switch (this.routeState) {
+      case DirectRouteState.RelayAttached:
+      case DirectRouteState.DirectConnecting:
+      case DirectRouteState.RelayReattaching:
+        return route === DirectRoute.Relay
+      case DirectRouteState.DirectReplay:
+        return route === DirectRoute.Relay || route === DirectRoute.Direct
+      case DirectRouteState.DirectActive:
+        return route === DirectRoute.Direct
+    }
+    return false
   }
 
   private requireGeneration(generation: number): void {

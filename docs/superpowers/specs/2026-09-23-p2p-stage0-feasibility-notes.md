@@ -43,7 +43,7 @@ relay_attached -> direct_connecting -> direct_replay -> direct_active
 - Relay remains the sole input writer during connect/replay.
 - Input is frozen while Relay fallback attaches.
 - OUT is committed once by monotonic session sequence even during route overlap.
-- `DIRECT_READY.replayed_seq` must equal the client's committed cursor before switching input to direct.
+- `DIRECT_READY.replayed_seq` must not precede the cursor used to start the attempt. If Relay has advanced farther during overlap, input switches only after the ordered direct stream observes the current committed cursor.
 
 Both implementations pass 100 forced Direct/Relay transitions without duplicate committed OUT or a second input route. The Stage 1 integration still has to prove the same property with real `session.Subscribe`, `/client` attach and `SetSubscriberLifecycle` callbacks.
 

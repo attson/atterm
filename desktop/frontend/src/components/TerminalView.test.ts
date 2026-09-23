@@ -29,6 +29,16 @@ describe("TerminalView plugin connection registry", () => {
   });
 });
 
+describe("TerminalView direct transport plumbing", () => {
+  test("keeps the public signaling endpoint separate from the Relay attach endpoint", () => {
+    expect(appSource).toContain(':direct-endpoint="directSignalEndpoint"');
+    expect(paneSource).toContain(':direct-endpoint="pane.remote ? directEndpoint : null"');
+    expect(paneSource).toContain(':prefer-direct="pane.remote && preferDirect"');
+    expect(source).toContain("directEndpoint: props.directEndpoint");
+    expect(source).toContain("preferDirect: props.preferDirect");
+  });
+});
+
 describe("TerminalView async mount lifecycle", () => {
   test("does not attach after an async mount resumes on an unmounted view", () => {
     expect(source).toContain("let isAlive = true;");

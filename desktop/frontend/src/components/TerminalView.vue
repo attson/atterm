@@ -67,6 +67,8 @@ import TerminalSearchBar from "./TerminalSearchBar.vue";
 const props = withDefaults(
   defineProps<{
     endpoint: Endpoint;
+    directEndpoint?: Endpoint | null;
+    preferDirect?: boolean;
     sessionId: string;
     active?: boolean;
     focused?: boolean;
@@ -2217,7 +2219,12 @@ function startConnection() {
         }
       },
     },
-    { clientName: localHostname.value, remote: !props.isLocalSession }
+    {
+      clientName: localHostname.value,
+      remote: !props.isLocalSession,
+      preferDirect: props.preferDirect,
+      directEndpoint: props.directEndpoint,
+    }
   ));
   conn.attach();
   pluginSessionConnections?.set(props.sessionId, conn);

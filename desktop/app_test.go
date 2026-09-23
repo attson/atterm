@@ -27,6 +27,20 @@ func newRelayTestApp(t *testing.T) *App {
 	return a
 }
 
+func TestGetRelayConfigExposesDirectSignalHomeInstance(t *testing.T) {
+	a := newRelayTestApp(t)
+	if err := a.cfgStore.Set(appConfig{
+		RelayURL:             "wss://relay.example",
+		RelaySessionToken:    "atk_test",
+		RelayHomeInstanceURL: "https://home.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.GetRelayConfig().HomeInstanceURL; got != "https://home.example.com" {
+		t.Fatalf("HomeInstanceURL = %q; want https://home.example.com", got)
+	}
+}
+
 // TestSetUplinkPaused_TogglesWithoutWipingConfig verifies the
 // "disconnect erases config" fix: pausing/unpausing via SetUplinkPaused
 // must not touch the persisted URL/token, only the pause flag.

@@ -36,7 +36,10 @@ func TestRouteTrackerRepeatedHandoverHasOneOutputAndInputRoute(t *testing.T) {
 		commit(generation, RouteDirect, nextSeq)
 		commit(generation, RouteRelay, nextSeq)
 		nextSeq++
-		if err := tracker.ActivateDirect(generation, tracker.CommittedSeq()); err != nil {
+		if err := tracker.NoteDirectReady(generation, tracker.CommittedSeq()); err != nil {
+			t.Fatal(err)
+		}
+		if err := tracker.ActivateDirect(generation); err != nil {
 			t.Fatal(err)
 		}
 		if tracker.InputRoute() != RouteDirect {
@@ -83,7 +86,7 @@ func TestRouteTrackerRejectsStaleAndInvalidTransitions(t *testing.T) {
 	if err := tracker.BeginDirectReplay(generation); err != nil {
 		t.Fatal(err)
 	}
-	if err := tracker.ActivateDirect(generation, 9); !errors.Is(err, ErrInvalidRouteTransition) {
+	if err := tracker.NoteDirectReady(generation, 9); !errors.Is(err, ErrInvalidRouteTransition) {
 		t.Fatalf("activation behind committed cursor accepted: %v", err)
 	}
 	if err := tracker.AbortDirect(generation); err != nil {
@@ -91,5 +94,40 @@ func TestRouteTrackerRejectsStaleAndInvalidTransitions(t *testing.T) {
 	}
 	if tracker.AcceptOutput(generation, RouteRelay, 11) {
 		t.Fatal("stale generation output accepted")
+	}
+}
+
+func TestRouteTrackerWaitsForDirectAfterRelayAdvancesPastReady(t *testing.T) {
+	tracker := NewRouteTracker(10)
+	generation, err := tracker.BeginDirect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.BeginDirectReplay(generation); err != nil {
+		t.Fatal(err)
+	}
+	if !tracker.AcceptOutput(generation, RouteRelay, 12) {
+		t.Fatal("Relay output was not committed")
+	}
+	if err := tracker.NoteDirectReady(generation, 10); err != nil {
+		t.Fatal(err)
+	}
+	if tracker.CanActivateDirect(generation) {
+		t.Fatal("direct activated before catching Relay cursor")
+	}
+	if tracker.AcceptOutput(generation, RouteDirect, 11) {
+		t.Fatal("duplicate direct output was committed")
+	}
+	if tracker.CanActivateDirect(generation) {
+		t.Fatal("direct activated one sequence behind Relay")
+	}
+	if tracker.AcceptOutput(generation, RouteDirect, 12) {
+		t.Fatal("duplicate direct output was committed")
+	}
+	if !tracker.CanActivateDirect(generation) {
+		t.Fatal("direct did not become activatable after catching Relay cursor")
+	}
+	if err := tracker.ActivateDirect(generation); err != nil {
+		t.Fatal(err)
 	}
 }

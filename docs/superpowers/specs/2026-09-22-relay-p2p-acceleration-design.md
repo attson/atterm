@@ -223,7 +223,7 @@ relay_attached -> direct_connecting -> direct_replay -> direct_active
 2. Direct authentication succeeds. Host subscribes to the same local `session.Session` with `since_seq = committed_seq`.
 3. During direct replay, Relay remains subscribed. Frames from both routes are accepted only for the current generation and deduplicated by OUT seq before delivery.
 4. Host sends `DIRECT_READY(last_replayed_out_seq)` only after replay catch-up and live handoff are ordered on the direct subscriber.
-5. Client validates `DIRECT_READY`, switches the route generation, then closes its old `/client` terminal socket so Relay removes that subscriber. The account, signaling, and session-list connections remain. The signaling attempt itself was already atomically removed when host sent `consumed` after account-key authentication, so readiness is not acknowledged against that expired attempt.
+5. Client validates `DIRECT_READY`. If Relay advanced `committed_seq` beyond `last_replayed_out_seq` during overlap, the client keeps both routes until the ordered direct stream observes that newer cursor; duplicate direct OUT frames advance this route-local observation without being rendered twice. It then switches the route generation and closes its old `/client` terminal socket so Relay removes that subscriber. The account, signaling, and session-list connections remain. The signaling attempt itself was already atomically removed when host sent `consumed` after account-key authentication, so readiness is not acknowledged against that expired attempt.
 6. Direct failure freezes IN/RESIZE/CLAIM_DRIVER, increments route generation, and reattaches Relay using the last `committed_seq`. Input resumes only after Relay attach/replay completes.
 
 Late frames from an older route generation are dropped. OUT may arrive twice at the transport boundary during overlap but is delivered to xterm once. IN, RESIZE, paste and driver claim have exactly one active writer route and are never mirrored during transition.
@@ -232,7 +232,7 @@ Late frames from an older route generation are dropped. OUT may arrive twice at 
 
 - Relay checks effective permission before ticket issue; desktop host checks permission again before local PTY or filesystem access.
 - View permission permits OUT/META/replay only. Control permits IN/RESIZE/driver operations. `full` does not implicitly enable file, preview or future frame types on direct transport.
-- Direct route uses the same client principal and driver lease as the preceding Relay attach. Route change is not a new claim.
+- Direct route uses the same client principal as the preceding Relay attach. Because driver ownership is tied to a physical subscriber, a client that was already the Relay driver sends `CLAIM_DRIVER` first on the ordered direct channel before releasing the Relay subscriber; a viewer does not claim during route change.
 - The desktop treats Relay and direct overlap as one logical remote subscriber. Transition must never create a logical N→0→N edge.
 - The physical direct subscriber is registered before Relay subscription release. `SetSubscriberLifecycle` therefore preserves 0→1/N→0 lazy upload semantics.
 - Config sync and signaling are not terminal subscribers and cannot trigger `STREAM_REQUEST`.

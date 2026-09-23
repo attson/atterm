@@ -12,12 +12,15 @@ import {
   encodeResize,
   uuidParse,
 } from "./proto";
+import type { Frame } from "./proto";
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
 import { deriveServiceKeys, openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame, b64ToBytes } from "./opaque";
 import { encodeSegments, decodeSegments } from "./fsSegments";
 import { errText, logDebug, logError, logWarn } from "./log";
+import { DirectClientTransport, type DirectClientOptions } from "./directClient";
+import { DirectRoute, DirectRouteState, DirectRouteTracker } from "./directRoute";
 
 export interface ClosePayload {
   exit_code: number;
@@ -154,6 +157,20 @@ export interface SessionConnectionOptions {
   // must be decrypted before display; local sessions stream plaintext and are
   // left untouched.
   remote?: boolean;
+  // Direct transport is an opportunistic remote-session acceleration. It is
+  // disabled by default until the user-facing rollout preference enables it.
+  preferDirect?: boolean;
+  // Public Relay endpoint used only for /direct-signal. Wails remote terminal
+  // traffic uses a loopback proxy endpoint, which cannot broker WebRTC peers.
+  directEndpoint?: Endpoint | null;
+  /** Injection seam for deterministic transport lifecycle tests. */
+  directTransportFactory?: (options: DirectClientOptions) => DirectTransport;
+}
+
+export interface DirectTransport {
+  start(): void;
+  sendFrame(frame: Uint8Array): boolean;
+  close(): void;
 }
 
 export interface SessionListHandlers {
@@ -356,7 +373,11 @@ export class SessionListConnection {
     }
     ws.binaryType = "arraybuffer";
     this.ws = ws;
-    this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
+    this.handlers.onStatus?.(
+      this.route.state === DirectRouteState.RelayReattaching || this.reconnectAttempts > 0
+        ? "reconnecting"
+        : "connecting",
+    );
 
     ws.onopen = () => {
       this.handlers.onStatus?.("attached");
@@ -480,6 +501,9 @@ export class SessionConnection {
   private ws: WebSocket | null = null;
   private sidBytes: Uint8Array;
   private lastSeq = 0;
+  private route = new DirectRouteTracker();
+  private direct: DirectTransport | null = null;
+  private directAttempted = false;
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private detached = false;
@@ -497,6 +521,9 @@ export class SessionConnection {
   private clientName: string;
   // remote: see SessionConnectionOptions.remote. Gates OUT-frame decryption.
   private remote: boolean;
+  private preferDirect: boolean;
+  private directEndpoint: Endpoint | null;
+  private directTransportFactory: (options: DirectClientOptions) => DirectTransport;
   // currentDriverClientID is the last driver_client_id we observed in a META
   // frame. Used to detect transitions and decide whether to fire onDriverChange.
   private currentDriverClientID = "";
@@ -508,6 +535,7 @@ export class SessionConnection {
   // have taken control while this tab's socket was suspended. The first META is
   // authoritative and either consumes this intent or permits a vacant reclaim.
   private recoverDriverIfVacant = false;
+  private recoverDriverVacant = false;
   private pendingFSRequests = new Map<
     string,
     {
@@ -540,6 +568,9 @@ export class SessionConnection {
     this.clientID = crypto.randomUUID();
     this.clientName = (options.clientName ?? "").trim() || defaultClientName();
     this.remote = options.remote ?? false;
+    this.preferDirect = options.preferDirect ?? false;
+    this.directEndpoint = options.directEndpoint ?? null;
+    this.directTransportFactory = options.directTransportFactory ?? ((directOptions) => new DirectClientTransport(directOptions));
   }
 
   // decryptOut unseals a remote session's E2EE TypeOut envelope (the relay only
@@ -558,9 +589,13 @@ export class SessionConnection {
 
   attach(): void {
     if (this.detached) return;
+    if (this.suspended) {
+      this.route = new DirectRouteTracker(this.lastSeq);
+      this.directAttempted = false;
+    }
     this.suspended = false;
     if (this.ws || this.reconnectTimer !== null) return;
-    this.openWS();
+    this.openWS(this.route.generation);
   }
 
   suspend(): void {
@@ -569,6 +604,8 @@ export class SessionConnection {
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection suspended"));
     this.rejectPendingServiceOpens(new Error("service preview failed: connection suspended"));
     this.retiredFSRequestIDs.clear();
+    this.direct?.close();
+    this.direct = null;
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -589,6 +626,8 @@ export class SessionConnection {
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
     this.rejectPendingServiceOpens(new Error("service preview failed: connection detached"));
     this.retiredFSRequestIDs.clear();
+    this.direct?.close();
+    this.direct = null;
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -709,6 +748,17 @@ export class SessionConnection {
   }
 
   sendInput(s: string): void {
+    const route = this.route.inputRoute();
+    if (route === DirectRoute.Direct) {
+      if (!this.direct?.sendFrame(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)))) {
+        this.pendingInputs.push(s);
+      }
+      return;
+    }
+    if (route === DirectRoute.None) {
+      this.pendingInputs.push(s);
+      return;
+    }
     if (!this.ws || this.ws.readyState === WebSocket.CONNECTING) {
       // Queue while the socket is opening; ws.onopen flushes after ATTACH.
       this.pendingInputs.push(s);
@@ -721,8 +771,14 @@ export class SessionConnection {
   // claimDriver sends a CLAIM_DRIVER frame so the relay promotes this
   // subscription to driver. Idempotent — safe to call when already driver.
   claimDriver(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const payload = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }));
+    const route = this.route.inputRoute();
+    if (route === DirectRoute.Direct) {
+      this.direct?.sendFrame(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
+      return;
+    }
+    if (route !== DirectRoute.Relay) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
   }
 
@@ -774,6 +830,15 @@ export class SessionConnection {
   }
 
   sendResize(cols: number, rows: number): void {
+    const route = this.route.inputRoute();
+    if (route === DirectRoute.Direct) {
+      if (this.direct?.sendFrame(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))) {
+        this.pendingResize = null;
+      } else {
+        this.pendingResize = { cols, rows };
+      }
+      return;
+    }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
       this.pendingResize = null;
@@ -785,8 +850,8 @@ export class SessionConnection {
     this.pendingResize = { cols, rows };
   }
 
-  private openWS(): void {
-    if (this.detached) return;
+  private openWS(generation: number): void {
+    if (this.detached || this.suspended || !this.route.acceptsRoute(generation, DirectRoute.Relay)) return;
     const auth = webSocketAuth(this.endpoint, "/client");
     let ws: WebSocket;
     try {
@@ -794,7 +859,7 @@ export class SessionConnection {
     } catch (e) {
       // See SessionListConnection.openWS — sync constructor throws must not
       // unwind callers; reroute to error + backoff reconnect.
-      this.handleOpenFailure(e, auth);
+      this.handleOpenFailure(e, auth, generation);
       return;
     }
     ws.binaryType = "arraybuffer";
@@ -802,13 +867,20 @@ export class SessionConnection {
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
 
     ws.onopen = () => {
+      if (this.ws !== ws || !this.route.acceptsRoute(generation, DirectRoute.Relay)) {
+        try { ws.close(); } catch { /* ignore */ }
+        return;
+      }
       this.retiredFSRequestIDs.clear();
       this.recoverDriverIfVacant = this.isDriverRole;
-      this.handlers.onStatus?.("attached");
+      this.recoverDriverVacant = false;
+      if (this.route.state !== DirectRouteState.RelayReattaching) {
+        this.handlers.onStatus?.("attached");
+      }
       const attachPayload = encodeText(
         JSON.stringify({
           session_id: this.sessionId,
-          since_seq: this.lastSeq,
+          since_seq: this.route.committedSeq,
           client_id: this.clientID,
           client_name: this.clientName,
         })
@@ -817,21 +889,11 @@ export class SessionConnection {
       // Flush any resize that arrived while WS was still CONNECTING. Order
       // matters: ATTACH first, RESIZE after, so the relay applies the size
       // to the right session subscription.
-      if (this.pendingResize) {
-        const { cols, rows } = this.pendingResize;
-        this.pendingResize = null;
-        ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
-      }
-      if (this.pendingInputs.length > 0) {
-        const queued = this.pendingInputs;
-        this.pendingInputs = [];
-        for (const s of queued) {
-          ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
-        }
-      }
+      if (this.route.inputRoute() === DirectRoute.Relay) this.flushPendingRelayWrites(ws);
     };
 
     ws.onmessage = (ev: MessageEvent) => {
+      if (this.ws !== ws || !this.route.acceptsRoute(generation, DirectRoute.Relay)) return;
       let f;
       try {
         f = decodeFrame(new Uint8Array(ev.data as ArrayBuffer));
@@ -841,79 +903,7 @@ export class SessionConnection {
       // See SessionListConnection: a local proxy onopen does not prove its
       // upstream websocket was authenticated. A valid protocol frame does.
       this.reconnectAttempts = 0;
-      if (f.type === TYPE.OUT) {
-        const { seq, data } = decodeOutPayload(f.payload);
-        // A reconnect/replay race can deliver an OUT chunk that this client
-        // has already rendered. Never write it twice: prompt redraws and
-        // alternate-screen frames are not idempotent in xterm.
-        if (seq > 0 && seq <= this.lastSeq) {
-          logDebug("conn", "dropping duplicate OUT", {
-            sessionId: this.sessionId,
-            seq,
-            lastSeq: this.lastSeq,
-          });
-          return;
-        }
-        const out = this.remote ? this.decryptOut(data, seq) : data;
-        if (out) this.handlers.onOutput?.(out);
-        if (seq > this.lastSeq) this.lastSeq = seq;
-      } else if (f.type === TYPE.CLOSE) {
-        try {
-          const info = JSON.parse(decodeText(f.payload)) as ClosePayload;
-          this.handlers.onClose?.(info);
-        } catch {
-          this.handlers.onClose?.({ exit_code: 0 });
-        }
-        this.handlers.onStatus?.("ended");
-      } else if (f.type === TYPE.META) {
-        try {
-          const meta = JSON.parse(decodeText(f.payload)) as Record<string, unknown>;
-          // M5-meta-mobile: overlay MetaPayload.Sealed when an
-          // account_key is unlocked. The platform registers the key
-          // via setAccountKeyProvider in lib/account-key.ts.
-          const accountKey = getCurrentAccountKey();
-          if (accountKey && typeof meta.sealed === "string" && meta.sealed.length > 0) {
-            const env = b64ToBytes(meta.sealed);
-            const fields = openMetaFields(env, accountKey, this.sessionId);
-            if (fields) {
-              if (fields.cwd !== undefined) meta.cwd = fields.cwd;
-              if (fields.title !== undefined) meta.title = fields.title;
-              if (fields.current_command !== undefined) meta.current_command = fields.current_command;
-            }
-          }
-          this.handlers.onMeta?.(meta);
-          const newDriver = String(meta.driver_client_id ?? "");
-          const newDriverName = String(meta.driver_client_name ?? "");
-          const recoverIfVacant = this.recoverDriverIfVacant;
-          this.recoverDriverIfVacant = false;
-          if (recoverIfVacant && newDriver === "") {
-            // The old driver disappeared only because this connection was
-            // suspended/reconnected. Restore it after META proves nobody else
-            // took over. Keep the local role stable until the claim echo comes
-            // back, avoiding a false viewer overlay during an idle reconnect.
-            this.claimDriver();
-          } else if (newDriver !== this.currentDriverClientID) {
-            this.currentDriverClientID = newDriver;
-            const isMe = newDriver !== "" && newDriver === this.clientID;
-            this.isDriverRole = isMe;
-            this.handlers.onDriverChange?.(newDriver, isMe, newDriverName);
-          }
-        } catch {
-          /* ignore */
-        }
-      } else if (f.type === TYPE.REPLAY_PROGRESS) {
-        try {
-          this.handlers.onReplayProgress?.(JSON.parse(decodeText(f.payload)) as ReplayProgress);
-        } catch {
-          /* ignore */
-        }
-      } else if (f.type === TYPE.FS_RESPONSE) {
-        this.handleFSResponse(f.payload);
-      } else if (f.type === TYPE.FS_EVENT) {
-        this.handleFSEvent(f.payload);
-      } else if (f.type === TYPE.SERVICE_OPENED) {
-        this.handleServiceOpened(f.payload);
-      }
+      this.handleProtocolFrame(f, DirectRoute.Relay, generation);
     };
 
     // The event is optional only because test doubles call this bare; a log
@@ -937,7 +927,10 @@ export class SessionConnection {
       });
       this.handlers.onStatus?.("reconnecting");
       const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
-      this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
+      this.reconnectTimer = window.setTimeout(() => {
+        this.reconnectTimer = null;
+        this.openWS(this.route.generation);
+      }, delay);
     };
 
     ws.onerror = () => {
@@ -945,7 +938,253 @@ export class SessionConnection {
     };
   }
 
-  private handleOpenFailure(e: unknown, auth: { url: string; protocols?: string[] }): void {
+  private handleProtocolFrame(f: Frame, route: DirectRoute, generation: number): void {
+    if (!this.route.acceptsRoute(generation, route)) return;
+    if (!this.sameSessionID(f.sid)) {
+      if (route === DirectRoute.Direct) throw new Error("direct frame session mismatch");
+      return;
+    }
+
+    if (f.type === TYPE.OUT) {
+      const { seq, data } = decodeOutPayload(f.payload);
+      if (seq === 0) {
+        if (route === DirectRoute.Direct) throw new Error("direct OUT is missing sequence");
+        const out = this.remote ? this.decryptOut(data, seq) : data;
+        if (out) this.handlers.onOutput?.(out);
+        return;
+      }
+      if (!this.route.acceptOutput(generation, route, seq)) {
+        logDebug("conn", "dropping duplicate OUT", {
+          sessionId: this.sessionId,
+          seq,
+          lastSeq: this.route.committedSeq,
+          route: route === DirectRoute.Direct ? "direct" : "relay",
+        });
+        if (route === DirectRoute.Direct) this.maybeActivateDirect(generation);
+        return;
+      }
+      const out = this.remote ? this.decryptOut(data, seq) : data;
+      if (out) this.handlers.onOutput?.(out);
+      this.lastSeq = this.route.committedSeq;
+      if (route === DirectRoute.Direct) this.maybeActivateDirect(generation);
+      return;
+    }
+
+    if (f.type === TYPE.CLOSE) {
+      try {
+        this.handlers.onClose?.(JSON.parse(decodeText(f.payload)) as ClosePayload);
+      } catch {
+        this.handlers.onClose?.({ exit_code: 0 });
+      }
+      this.handlers.onStatus?.("ended");
+      this.direct?.close();
+      this.direct = null;
+      return;
+    }
+
+    if (f.type === TYPE.META) {
+      this.handleMeta(f.payload, route);
+      return;
+    }
+
+    if (f.type === TYPE.REPLAY_PROGRESS) {
+      let progress: ReplayProgress;
+      try {
+        progress = JSON.parse(decodeText(f.payload)) as ReplayProgress;
+      } catch {
+        return;
+      }
+      this.handlers.onReplayProgress?.(progress);
+      if (route === DirectRoute.Relay && progress.phase === "end") {
+        if (this.route.state === DirectRouteState.RelayReattaching) {
+          this.route.relayAttached(generation);
+          this.handlers.onStatus?.("attached");
+          if (this.recoverDriverIfVacant && this.recoverDriverVacant) {
+            this.recoverDriverIfVacant = false;
+            this.recoverDriverVacant = false;
+            this.claimDriver();
+          }
+          if (this.ws?.readyState === WebSocket.OPEN) this.flushPendingRelayWrites(this.ws);
+        } else {
+          this.maybeStartDirect();
+        }
+      }
+      return;
+    }
+
+    if (route === DirectRoute.Direct) {
+      throw new Error(`unsupported direct frame type 0x${f.type.toString(16).padStart(2, "0")}`);
+    }
+    if (f.type === TYPE.FS_RESPONSE) this.handleFSResponse(f.payload);
+    else if (f.type === TYPE.FS_EVENT) this.handleFSEvent(f.payload);
+    else if (f.type === TYPE.SERVICE_OPENED) this.handleServiceOpened(f.payload);
+  }
+
+  private handleMeta(payload: Uint8Array, route: DirectRoute): void {
+    let meta: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(decodeText(payload));
+      if (!isRecord(parsed)) throw new Error("META is not an object");
+      meta = parsed;
+      const accountKey = getCurrentAccountKey();
+      if (accountKey && typeof meta.sealed === "string" && meta.sealed.length > 0) {
+        const fields = openMetaFields(b64ToBytes(meta.sealed), accountKey, this.sessionId);
+        if (fields) {
+          if (fields.cwd !== undefined) meta.cwd = fields.cwd;
+          if (fields.title !== undefined) meta.title = fields.title;
+          if (fields.current_command !== undefined) meta.current_command = fields.current_command;
+        }
+      }
+    } catch (error) {
+      if (route === DirectRoute.Direct) throw new Error(`invalid direct META: ${errText(error)}`);
+      return;
+    }
+    try {
+      this.handlers.onMeta?.(meta);
+      const newDriver = String(meta.driver_client_id ?? "");
+      const newDriverName = String(meta.driver_client_name ?? "");
+      if (route === DirectRoute.Relay && this.recoverDriverIfVacant) {
+        if (newDriver === "") {
+          this.recoverDriverVacant = true;
+          if (this.route.state !== DirectRouteState.RelayReattaching) {
+            this.recoverDriverIfVacant = false;
+            this.recoverDriverVacant = false;
+            this.claimDriver();
+          }
+          return;
+        }
+        this.recoverDriverIfVacant = false;
+        this.recoverDriverVacant = false;
+      }
+      if (newDriver !== this.currentDriverClientID) {
+        this.currentDriverClientID = newDriver;
+        const isMe = newDriver !== "" && newDriver === this.clientID;
+        this.isDriverRole = isMe;
+        this.handlers.onDriverChange?.(newDriver, isMe, newDriverName);
+      }
+    } catch {
+      /* isolate UI callbacks and a reconnect-time claim send */
+    }
+  }
+
+  private maybeStartDirect(): void {
+    if (!this.preferDirect || !this.remote || !this.directEndpoint || this.directAttempted ||
+        this.route.state !== DirectRouteState.RelayAttached || this.detached || this.suspended) return;
+    const accountKey = getCurrentAccountKey();
+    if (!accountKey || accountKey.length !== 32) return;
+
+    this.directAttempted = true;
+    const generation = this.route.beginDirect();
+    const auth = webSocketAuth(this.directEndpoint, "/direct-signal");
+    let transport: DirectTransport;
+    try {
+      transport = this.directTransportFactory({
+        signalURL: auth.url,
+        signalProtocols: auth.protocols,
+        sessionId: this.sessionId,
+        sinceSeq: this.route.committedSeq,
+        clientInstanceId: this.clientID,
+        accountKey,
+        callbacks: {
+          onAuthenticated: () => {
+            if (this.direct !== transport || generation !== this.route.generation) return;
+            this.route.beginDirectReplay(generation);
+          },
+          onFrame: (bytes) => {
+            if (this.direct !== transport || generation !== this.route.generation) return;
+            this.handleProtocolFrame(decodeFrame(bytes), DirectRoute.Direct, generation);
+          },
+          onReady: (replayedSeq) => {
+            if (this.direct !== transport || generation !== this.route.generation) return;
+            this.route.noteDirectReady(generation, replayedSeq);
+            this.maybeActivateDirect(generation);
+          },
+          onFailure: (error) => this.handleDirectFailure(generation, transport, error),
+        },
+      });
+      this.direct = transport;
+      transport.start();
+    } catch (error) {
+      if (this.route.generation === generation) {
+        try { this.route.abortDirect(generation); } catch { /* route already moved */ }
+      }
+      this.direct = null;
+      logWarn("direct", "direct attempt setup failed", { sessionId: this.sessionId, error: errText(error) });
+    }
+  }
+
+  private maybeActivateDirect(generation: number): void {
+    const transport = this.direct;
+    if (!transport || !this.route.canActivateDirect(generation)) return;
+    if (this.isDriverRole) {
+      const claim = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }));
+      if (!transport.sendFrame(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, claim))) return;
+    }
+    this.route.activateDirect(generation);
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const relay = this.ws;
+    this.ws = null;
+    this.rejectPendingFSRequests(new Error("filesystem request failed: direct terminal route activated"));
+    this.rejectPendingServiceOpens(new Error("service preview failed: direct terminal route activated"));
+    this.retiredFSRequestIDs.clear();
+    try { relay?.close(); } catch { /* ignore */ }
+    this.flushPendingDirectWrites(transport);
+  }
+
+  private handleDirectFailure(generation: number, transport: DirectTransport, error: Error): void {
+    if (this.direct !== transport || generation !== this.route.generation) return;
+    this.direct = null;
+    logWarn("direct", "direct route failed", { sessionId: this.sessionId, error: errText(error) });
+    if (this.route.state === DirectRouteState.DirectConnecting || this.route.state === DirectRouteState.DirectReplay) {
+      this.route.abortDirect(generation);
+      return;
+    }
+    if (this.route.state !== DirectRouteState.DirectActive || this.detached || this.suspended) return;
+    const fallbackGeneration = this.route.directLost(generation);
+    this.handlers.onStatus?.("reconnecting");
+    this.openWS(fallbackGeneration);
+  }
+
+  private flushPendingRelayWrites(ws: WebSocket): void {
+    if (this.pendingResize) {
+      const { cols, rows } = this.pendingResize;
+      ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
+      this.pendingResize = null;
+    }
+    if (this.pendingInputs.length > 0) {
+      const queued = this.pendingInputs;
+      this.pendingInputs = [];
+      for (const s of queued) ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
+    }
+  }
+
+  private flushPendingDirectWrites(transport: DirectTransport): void {
+    if (this.pendingResize) {
+      const { cols, rows } = this.pendingResize;
+      if (!transport.sendFrame(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))) return;
+      this.pendingResize = null;
+    }
+    while (this.pendingInputs.length > 0) {
+      const value = this.pendingInputs[0];
+      if (!transport.sendFrame(encodeFrame(TYPE.IN, this.sidBytes, encodeText(value)))) return;
+      this.pendingInputs.shift();
+    }
+  }
+
+  private sameSessionID(other: Uint8Array): boolean {
+    if (other.length !== this.sidBytes.length) return false;
+    for (let i = 0; i < other.length; i++) if (other[i] !== this.sidBytes[i]) return false;
+    return true;
+  }
+
+  private handleOpenFailure(
+    e: unknown,
+    auth: { url: string; protocols?: string[] },
+    generation: number,
+  ): void {
     const err = e as { name?: string; message?: string } | null;
     logError("conn", "session: new WebSocket failed", {
       url: auth.url,
@@ -956,9 +1195,12 @@ export class SessionConnection {
     });
     this.ws = null;
     this.handlers.onStatus?.("error");
-    if (this.detached) return;
+    if (this.detached || this.suspended || !this.route.acceptsRoute(generation, DirectRoute.Relay)) return;
     const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
-    this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.openWS(this.route.generation);
+    }, delay);
   }
 
   private newFSRequestID(): string {

@@ -44,6 +44,7 @@ func main() {
 	maxConns := flag.Int("max-connections-per-key", envInt("ATTERM_MAX_CONNECTIONS_PER_KEY", 0), "active websocket limit per remote IP/token; 0=default, negative=disable")
 	debug := flag.Bool("debug", debugDefault, "enable verbose relay interaction logs (or ATTERM_RELAY_DEBUG=1)")
 	debugPayload := flag.Bool("debug-payload", debugPayloadDefault, "include IN/OUT byte contents in debug logs (or ATTERM_RELAY_DEBUG_PAYLOAD=1)")
+	directSignal := flag.Bool("direct-signal", envEnabled("ATTERM_DIRECT_SIGNAL_ENABLED"), "enable the beta WebRTC direct signaling broker (or ATTERM_DIRECT_SIGNAL_ENABLED=1)")
 	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (unbootstrapped admin); development/private networks only")
 	logLevel := flag.String("log-level", envOr("ATTERM_RELAY_LOG_LEVEL", "INFO"), "minimum log level written to stderr: DEBUG|INFO|WARN|ERROR (or ATTERM_RELAY_LOG_LEVEL)")
 	flag.Parse()
@@ -204,6 +205,7 @@ func main() {
 		BootstrapAdminEmail:  bootstrapEmail,
 		RealmID:              realmID,
 		InstancePublicURL:    instancePublicURL,
+		DirectSignalEnabled:  *directSignal,
 	}
 
 	// VAPID subject is consumed once here; changing it later needs a restart.

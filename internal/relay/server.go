@@ -84,6 +84,10 @@ type Config struct {
 	// instance_id in the relay_instances registry). Empty disables node
 	// registration / selection (single-instance/dev).
 	InstancePublicURL string
+	// DirectSignalEnabled mounts the v0.6 beta WebRTC signaling surface. It
+	// defaults off so upgrading a Relay cannot change terminal routing until an
+	// operator explicitly joins the beta.
+	DirectSignalEnabled bool
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -95,6 +99,7 @@ type Server struct {
 	rate        *fixedWindowLimiter
 	conns       *connectionLimiter
 	services    *serviceHub
+	direct      *directSignalHub
 	startTime   time.Time
 	uplinkCount int64 // atomic; read via UplinkCount()
 	// feishu holds the runtime Feishu handler; nil = integration disabled.
@@ -136,6 +141,7 @@ func NewServer(cfg Config) *Server {
 		rate:        newFixedWindowLimiter(rateLimit, time.Minute),
 		conns:       newConnectionLimiter(connLimit),
 		services:    newServiceHub(),
+		direct:      newDirectSignalHub(),
 		startTime:   time.Now(),
 	}
 	originsInit := append([]string(nil), cfg.AllowedOrigins...)
@@ -155,6 +161,7 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/client-sessions", s.requireSession(s.handleClientSessionsHTTP))
 	s.mux.HandleFunc("/service-client", s.requireSession(s.handleServiceClientHTTP))
 	s.mux.HandleFunc("/service-host", s.requireSession(s.handleServiceHostHTTP))
+	s.mux.HandleFunc("/direct-signal", s.requireSession(s.handleDirectSignalHTTP))
 	s.mux.HandleFunc("/api/sessions", s.requireSession(s.handleSessionsHTTP))
 	// Public — anonymous traffic allowed.
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)

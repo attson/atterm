@@ -1,11 +1,11 @@
 # Wire 协议规范 (v1)
 
 > **Audience**: 实现 WS 帧或 HTTP API 客户端的工程师
-> **Last updated**: 2026-07-29
+> **Last updated**: 2026-09-23
 > **Status**: stable
 > **See also**: [auth.md](./auth.md) · [architecture.md](./architecture.md)
 
-atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份协议被三类连接复用：`/agent`（CLI wrapper）、`/uplink`（桌面 lazy 控制连）、`/client`（attach 接管）。
+atterm 的 terminal data path 走单一二进制 WebSocket 帧协议。同一份协议被三类连接复用：`/agent`（CLI wrapper）、`/uplink`（桌面 lazy 控制连）、`/client`（attach 接管）。辅助通道（例如 `/direct-signal`）使用各自独立且有版本号的 schema，不占用 terminal `proto.Type`。
 
 ## 传输
 
@@ -608,6 +608,7 @@ Payload (UTF-8 JSON):
 | `/uplink` | GET (Upgrade: websocket) | 桌面 app 控制连 |
 | `/client` | GET (Upgrade: websocket) | client attach |
 | `/client-sessions` | GET (Upgrade: websocket) | session 列表推送 |
+| `/direct-signal` | GET (Upgrade: websocket) | 可选的 WebRTC direct signaling JSON 通道 |
 | `/service-client` | GET (Upgrade: websocket) | Preview 客户端 E2EE multiplex 数据通道 |
 | `/service-host` | GET (Upgrade: websocket) | owner desktop E2EE multiplex 数据通道 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
@@ -637,6 +638,83 @@ host pattern，这样桌面客户端和同源 web 客户端都能连接。
 不接受 `?token=` URL query。不接受 cookie。
 
 完整鉴权模型（Principal、生命周期、错误码、Bootstrap 流程、客户端实现要点）见 [auth.md](./auth.md)。
+
+## WebRTC direct signaling（独立 JSON 协议）
+
+`/direct-signal` 是 v0.6 Relay-assisted P2P 的控制面，不承载 terminal frame 或 PTY 字节。它使用 text WebSocket JSON，每条消息都有独立的 `version: 1`；因此 `internal/proto.Version` 仍为 `1`，现有 `/client`、`/uplink` 和 frame payload 均不改变。
+
+Relay 端默认关闭该端点，关闭时 upgrade 返回 `404`。操作员必须显式传 `--direct-signal` 或设置 `ATTERM_DIRECT_SIGNAL_ENABLED=1`。端点复用现有 session auth、Origin allow-list、HTTP/WS rate limit 与连接数限制；token 仍只允许放在 `Authorization: Bearer` 或 `Sec-WebSocket-Protocol`，不允许 query token。
+
+### 连接 hello 与 host 注册
+
+连接建立后 10 秒内必须发送第一条 `hello`，否则 Relay 关闭连接。单条 text message 上限 64 KiB；未知 JSON 字段忽略。
+
+Client hello：
+
+```json
+{"version":1,"kind":"hello","role":"client","client_instance_id":"install-or-boot-scoped-id"}
+```
+
+Host hello 同时注册当前可直连的 session：
+
+```json
+{"version":1,"kind":"hello","role":"host","host_id":"host-uuid","session_ids":["session-uuid"]}
+```
+
+Relay 返回 `{"version":1,"kind":"hello_ok"}`。host 可在会话集合变化后发送 `host_register`（同样携带 `host_id/session_ids`），成功时收到带原 `request_id` 的 `host_registered`。一次最多注册 256 个 session；每个 session 必须属于当前账户、其发布的 `host_id` 必须匹配，并且对应 `/uplink` 必须在线。注册表按 `session_id` 路由，不按 `host_id` 去重会话。
+
+### Direct attempt
+
+已通过 Relay attach 的 client 发送：
+
+```json
+{
+  "version": 1,
+  "kind": "direct_request",
+  "request_id": "client-request-id",
+  "session_id": "session-uuid",
+  "since_seq": 42
+}
+```
+
+Relay 再次校验 session owner 与 owning uplink，随后向 client 和已注册 host 各发送相同的 `direct_attempt`：
+
+```json
+{
+  "version": 1,
+  "kind": "direct_attempt",
+  "request_id": "client-request-id",
+  "attempt_id": "random-uuid",
+  "ticket": "32-byte-base64url-no-padding",
+  "session_id": "session-uuid",
+  "host_id": "host-uuid",
+  "client_instance_id": "install-or-boot-scoped-id",
+  "user_id": "account-user-id",
+  "permission": "view|control|full",
+  "since_seq": 42,
+  "expires_at_unix_ms": 1800000000000
+}
+```
+
+ticket 有效期 30 秒且单次使用。Relay 内存只保留 ticket 的 SHA-256 hash 和精确 claims，最多保留 1024 个全局 attempt、每个 signaling peer 最多 8 个。ticket 仅证明 Relay 授权，DataChannel 建立后双方还必须按 direct transport handshake 使用 `account_key` 证明；只持有 ticket 不能伪造直连端点。
+
+### SDP / ICE 路由与终止
+
+双方只可对属于自己的 `attempt_id` 发送以下消息；Relay 从允许字段重建转发消息，不转发额外字段：
+
+```json
+{"version":1,"kind":"signal","attempt_id":"uuid","signal_type":"offer|answer|ice_candidate|ice_end","payload":"opaque string"}
+{"version":1,"kind":"cancel","attempt_id":"uuid","code":"ice_failed"}
+{"version":1,"kind":"consumed","attempt_id":"uuid"}
+```
+
+- client 只能发送一次 offer，host 只能在 offer 后发送一次 answer；两者各最多发送 64 个 ICE candidate 和一次 `ice_end`。
+- offer/answer payload 最大 32 KiB，单个 ICE candidate 最大 8 KiB；`ice_end` payload 必须为空。
+- `cancel` 终止并移除 attempt；`consumed` 只能由 host 发送，表示 ticket 已由 host 原子消费，同样移除 attempt。
+- signaling peer 断开会取消与它相关的全部 attempt；过期 attempt 在下一次相关操作时清理，并向仍在线的两端发送 `cancel` / `ticket_expired`。
+- Relay 不解析 SDP/ICE 做授权决策，也不得记录 ticket、SDP、ICE、proof、key 或 DataChannel payload。
+
+错误以 `{"version":1,"kind":"error","request_id":"...","code":"...","message":"..."}` 返回。协议/边界错误只拒绝当前消息或 attempt；hello 非法才关闭 signaling 连接。稳定 fallback 类别及 direct handshake/record/handover 细节见 [Relay-assisted P2P Acceleration Design](../superpowers/specs/2026-09-22-relay-p2p-acceleration-design.md)。
 
 ## E2EE 信封
 

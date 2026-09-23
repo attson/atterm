@@ -80,6 +80,7 @@ description: atterm 仓库导航——某个功能/场景要改哪些文件，�
 - `ATTERM_RATE_LIMIT_PER_MINUTE` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：限额；`0` 默认值、负数禁用。**per-instance**（不 DB-backed），改后需重启该实例
 - `ATTERM_RELAY_DEBUG` / `ATTERM_RELAY_DEBUG_PAYLOAD`：详细日志（现在 Admin → Config 也能热开关）；开启即无条件输出 `[relay-debug]`，不受下面的级别阈值限制
 - `ATTERM_RELAY_LOG_LEVEL` / `--log-level`：写到 stderr 的最低级别 `DEBUG|INFO|WARN|ERROR`（默认 `INFO`）。`--debug` 会把它压到 `DEBUG`
+- `ATTERM_DIRECT_SIGNAL_ENABLED` / `--direct-signal`：启用 v0.6 beta WebRTC direct signaling broker；默认关闭，per-instance，改后需重启该实例
 
 其它：
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值

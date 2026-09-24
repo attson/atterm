@@ -931,6 +931,23 @@ serial、membership 中的 wrapping public key 与 `ake1` envelope，缺少、�
 保留供诊断/anti-entropy，但不能进入 canonical chain，必须基于 winner 重新轮换。设备解开自己的
 `ake1` 后还要核对 key commitment，防止同一 rotation 给不同 recipient 包裹不同 epoch key。
 
+配置与治理状态通过 transport-independent anti-entropy JSON 消息交换，不占用 Relay
+`proto.Type`。接收端先发送 `AntiEntropyInventory{v,space_id,vector,revocation_hashes,
+rotation_hashes}`：config history 用 contiguous version vector 摘要，grow-only `arv1`/`akr1`
+候选用排序且去重的 SHA-256 token hash 清单摘要（每类最多 4096）。发送端从同一 durable
+snapshot 生成不可变 plan，并严格按 `snapshot → config operation → revocation → rotation`
+输出。默认 batch 上限 256 KiB，可协商范围 1 KiB–16 MiB；上限按完整 JSON 编码后的实际字节数
+检查，不按 token 原始长度估算。
+
+每个 batch 带 `start` cursor、可选 `next` cursor、`done`、发送端 durable ack frontier 和若干
+`{kind,token_hash,offset,total,data}` chunk。超过 batch 上限的单个 signed token（包括最大 32 MiB
+snapshot）跨 batch 连续切分；接收端只在完整重组、SHA-256 相符、原 token 签名/Space 锚/结构
+全部验证后才向上层交付。cursor 必须连续，同一 plan 各页 ack 必须相同；仅允许最近一次已接受
+batch 原字节重发且作为幂等 no-op。任一 chunk 错误不推进 assembler 状态。snapshot 只有在其
+cover vector 覆盖接收端 inventory vector 时才能规划；双方 vector 并发时先反向补齐独有 op 再
+重建 plan，禁止覆盖接收端状态。该逻辑位于 `internal/configsync/anti_entropy.go`，实际
+DataChannel/WSS adapter 后续使用独立 logical channel，不改变 terminal subscriber lifecycle。
+
 Peer DataChannel 复用 Stage 1 的四步 handshake、ECDH traffic key、record 和 fragment
 codec，只替换 `HandshakeAuthenticator`。Relay account authenticator 的 proof 继续是 32-byte
 HMAC；Peer membership authenticator 对相同 transcript 使用设备 P-256 identity 产生 64-byte

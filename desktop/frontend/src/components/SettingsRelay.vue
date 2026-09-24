@@ -459,42 +459,45 @@ defineExpose({
     <div v-if="loading" class="dim">{{ t("common.loading") }}</div>
     <template v-else>
       <div class="uplink-toggle-row">
-        <span class="field-label">{{ t("settings.relay.uplink") }}</span>
-        <label class="toggle-switch" :class="{ disabled: togglingPause }">
-          <input
-            v-model="paused"
-            type="checkbox"
-            :true-value="false"
-            :false-value="true"
-            :disabled="togglingPause || !host"
-            @change="handleTogglePaused"
-          />
-          <span class="toggle-track">
-            <span class="toggle-thumb" />
-          </span>
-          <span class="toggle-label">{{ paused ? t("settings.relay.off") : t("settings.relay.on") }}</span>
-        </label>
+        <div class="connection-toggle-group">
+          <span class="field-label">{{ t("settings.relay.uplink") }}</span>
+          <label class="toggle-switch" :class="{ disabled: togglingPause }">
+            <input
+              v-model="paused"
+              type="checkbox"
+              :true-value="false"
+              :false-value="true"
+              :disabled="togglingPause || !host"
+              @change="handleTogglePaused"
+            />
+            <span class="toggle-track">
+              <span class="toggle-thumb" />
+            </span>
+            <span class="toggle-label">{{ paused ? t("settings.relay.off") : t("settings.relay.on") }}</span>
+          </label>
+        </div>
+
+        <div v-if="!directConnectionLoading" class="connection-toggle-group">
+          <span class="field-label">{{ t("settings.relay.preferDirectConnection") }}</span>
+          <label class="toggle-switch" :class="{ disabled: directConnectionSaving }">
+            <input
+              type="checkbox"
+              data-testid="direct-connection-toggle"
+              :checked="directConnectionEnabled"
+              :disabled="directConnectionSaving"
+              @change="onDirectConnectionToggle"
+            />
+            <span class="toggle-track">
+              <span class="toggle-thumb" />
+            </span>
+            <span class="toggle-label">{{ directConnectionEnabled ? t("settings.relay.on") : t("settings.relay.off") }}</span>
+          </label>
+        </div>
       </div>
 
-      <div v-if="!directConnectionLoading" class="direct-connection-row">
-        <div class="direct-connection-copy">
-          <span class="field-label">{{ t("settings.relay.preferDirectConnection") }}</span>
-          <span class="hint">{{ t("settings.relay.preferDirectConnectionHint") }}</span>
-        </div>
-        <label class="toggle-switch" :class="{ disabled: directConnectionSaving }">
-          <input
-            type="checkbox"
-            data-testid="direct-connection-toggle"
-            :checked="directConnectionEnabled"
-            :disabled="directConnectionSaving"
-            @change="onDirectConnectionToggle"
-          />
-          <span class="toggle-track">
-            <span class="toggle-thumb" />
-          </span>
-          <span class="toggle-label">{{ directConnectionEnabled ? t("settings.relay.on") : t("settings.relay.off") }}</span>
-        </label>
-      </div>
+      <p v-if="!directConnectionLoading" class="hint direct-connection-hint">
+        {{ t("settings.relay.preferDirectConnectionHint") }}
+      </p>
 
       <div class="status-pill" :class="statusPill.cls">
         <span class="dot">●</span>
@@ -779,24 +782,16 @@ defineExpose({
 .uplink-toggle-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  column-gap: 28px;
+  row-gap: 10px;
 }
-.direct-connection-row {
+.connection-toggle-group {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  gap: 10px;
 }
-.direct-connection-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.direct-connection-copy .hint {
+.direct-connection-hint {
   margin: 0;
 }
 .toggle-switch {

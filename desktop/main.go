@@ -17,6 +17,12 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// appIcon is also passed directly to GTK on Linux. Raw dev binaries do not
+// have installed desktop metadata, so GTK needs the pixels at window creation.
+//
+//go:embed build/appicon.png
+var appIcon []byte
+
 // Version is set at build time via -ldflags -X main.Version=<tag>.
 // Empty / "dev" disables the auto-update subsystem.
 var Version = "dev"

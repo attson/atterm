@@ -29,6 +29,7 @@ const (
 	directHostWriteTimeout     = 10 * time.Second
 	directHostHelloTimeout     = 10 * time.Second
 	directStatsReportThreshold = 256 << 10
+	directStatsReportInterval  = 5 * time.Second
 )
 
 type directSignalHost struct {
@@ -45,24 +46,25 @@ type directSignalHost struct {
 }
 
 type directHostAttempt struct {
-	id                uuid.UUID
-	sessionID         uuid.UUID
-	sinceSeq          uint64
-	permission        string
-	clientInstanceID  string
-	host              *directSignalHost
-	mu                sync.Mutex
-	transport         *peertransport.PionHostAttempt
-	channel           *peertransport.PionHostChannel
-	sub               *session.Subscriber
-	subscribedSession *session.Session
-	streamCancel      context.CancelFunc
-	consumed          bool
-	closed            bool
-	closeOnce         sync.Once
-	reportBytes       func(uint64, uint64) error
-	pendingBytesSent  uint64
-	pendingBytesRecv  uint64
+	id                  uuid.UUID
+	sessionID           uuid.UUID
+	sinceSeq            uint64
+	permission          string
+	clientInstanceID    string
+	host                *directSignalHost
+	mu                  sync.Mutex
+	transport           *peertransport.PionHostAttempt
+	channel             *peertransport.PionHostChannel
+	sub                 *session.Subscriber
+	subscribedSession   *session.Session
+	streamCancel        context.CancelFunc
+	consumed            bool
+	closed              bool
+	closeOnce           sync.Once
+	reportBytes         func(uint64, uint64) error
+	statsReportInterval time.Duration
+	pendingBytesSent    uint64
+	pendingBytesRecv    uint64
 }
 
 func newDirectSignalHost(relayURL, token, permission string, host *relayHost, accountKey func() []byte, allowInsecure bool) *directSignalHost {
@@ -277,12 +279,13 @@ func (h *directSignalHost) startAttempt(ctx context.Context, message directsigna
 		return errors.New("invalid direct permission")
 	}
 	entry := &directHostAttempt{
-		id:               attemptID,
-		sessionID:        sessionID,
-		sinceSeq:         message.SinceSeq,
-		permission:       message.Permission,
-		clientInstanceID: message.ClientInstanceID,
-		host:             h,
+		id:                  attemptID,
+		sessionID:           sessionID,
+		sinceSeq:            message.SinceSeq,
+		permission:          message.Permission,
+		clientInstanceID:    message.ClientInstanceID,
+		host:                h,
+		statsReportInterval: directStatsReportInterval,
 		reportBytes: func(sent, received uint64) error {
 			return send(directsignal.Message{
 				Kind:          "direct_stats",
@@ -391,6 +394,7 @@ func (a *directHostAttempt) startStream(parent context.Context, channel *peertra
 	a.subscribedSession = sess
 	a.streamCancel = cancel
 	a.mu.Unlock()
+	go a.reportDirectStats(streamCtx)
 	go func() {
 		for {
 			select {
@@ -440,6 +444,23 @@ func (a *directHostAttempt) startStream(parent context.Context, channel *peertra
 		}
 	}()
 	return nil
+}
+
+func (a *directHostAttempt) reportDirectStats(ctx context.Context) {
+	interval := a.statsReportInterval
+	if interval <= 0 {
+		interval = directStatsReportInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.addDirectBytes(0, 0, true)
+		}
+	}
 }
 
 func (a *directHostAttempt) handleRecord(ctx context.Context, kind peertransport.RecordKind, payload []byte) error {

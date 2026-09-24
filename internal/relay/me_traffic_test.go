@@ -70,3 +70,27 @@ func TestMeTraffic_RequiresAuthenticationAndValidRange(t *testing.T) {
 		}
 	}
 }
+
+func TestMeTraffic_FlushesPendingMetricsBeforeQuery(t *testing.T) {
+	srv, _, userID, token := newAdminTestServer(t)
+	day := time.Now().UTC().Format("2006-01-02")
+	srv.recordTraffic(userID, proto.TypeOut, trafficOut, 73)
+	srv.directStats.recordAttempt(userID)
+	srv.directStats.recordSuccess(userID)
+	srv.directStats.recordBytes(userID, 123, 45)
+
+	rec := adminGetBearer(srv, "/api/me/traffic?from="+day+"&to="+day, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var got meTrafficResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Relay) != 1 || got.Relay[0].BytesOut != 73 {
+		t.Fatalf("relay = %#v", got.Relay)
+	}
+	if len(got.Direct) != 1 || got.Direct[0].Attempts != 1 || got.Direct[0].Successes != 1 || got.Direct[0].BytesSent != 123 || got.Direct[0].BytesReceived != 45 {
+		t.Fatalf("direct = %#v", got.Direct)
+	}
+}

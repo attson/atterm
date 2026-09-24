@@ -76,6 +76,10 @@ func (s *Server) handleMeTrafficHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Personal usage is an explicit refresh surface. Persist the current
+	// in-memory window so active low-volume sessions are visible immediately.
+	s.flushTraffic(s.cfg.Store)
+
 	relayRows, err := s.cfg.Store.QueryTrafficForUser(r.Context(), user.ID, from, to)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

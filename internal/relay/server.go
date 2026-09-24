@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
-	"nhooyr.io/websocket"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +20,7 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
+	"nhooyr.io/websocket"
 )
 
 // Config configures a Server.
@@ -119,9 +120,10 @@ type Server struct {
 	// traffic accumulates per-user byte/frame counts on the send/receive
 	// paths; flushStop signals the flush goroutine to drain and exit, and
 	// flushDone is closed once it has.
-	traffic   *trafficMeter
-	flushStop chan struct{}
-	flushDone chan struct{}
+	traffic        *trafficMeter
+	trafficFlushMu sync.Mutex
+	flushStop      chan struct{}
+	flushDone      chan struct{}
 }
 
 // NewServer builds a Server with its routes installed.

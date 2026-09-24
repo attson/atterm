@@ -115,6 +115,9 @@ func (s *Server) trafficFlushLoop(store userstore.Store) {
 // day's rollup. A failed persist logs a warning and drops the window's data
 // (accepted trade-off; the snapshot has already reset the meter).
 func (s *Server) flushTraffic(store userstore.Store) {
+	s.trafficFlushMu.Lock()
+	defer s.trafficFlushMu.Unlock()
+
 	deltas := s.traffic.snapshot()
 	directDeltas := s.directStats.drain()
 	if len(deltas) == 0 && len(directDeltas) == 0 {

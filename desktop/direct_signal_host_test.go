@@ -295,6 +295,51 @@ func TestDirectHostAttemptReportsDirectionalBytes(t *testing.T) {
 	}
 }
 
+func TestDirectHostAttemptPeriodicallyReportsSmallDeltas(t *testing.T) {
+	reports := make(chan [2]uint64, 2)
+	attempt := &directHostAttempt{
+		statsReportInterval: 5 * time.Millisecond,
+		reportBytes: func(sent, received uint64) error {
+			reports <- [2]uint64{sent, received}
+			return nil
+		},
+	}
+	attempt.addDirectBytes(17, 9, false)
+	select {
+	case report := <-reports:
+		t.Fatalf("reported before interval: %v", report)
+	default:
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		attempt.reportDirectStats(ctx)
+	}()
+	select {
+	case report := <-reports:
+		if report != [2]uint64{17, 9} {
+			t.Fatalf("periodic report = %v, want [17 9]", report)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for periodic report")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("periodic reporter did not stop after cancellation")
+	}
+	attempt.addDirectBytes(0, 0, true)
+	select {
+	case report := <-reports:
+		t.Fatalf("reported the same bytes twice: %v", report)
+	default:
+	}
+}
+
 func TestDirectHostAttemptCarriesSealedOutputAndInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

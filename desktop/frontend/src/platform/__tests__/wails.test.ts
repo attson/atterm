@@ -45,6 +45,12 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetAppVersion: vi.fn().mockResolvedValue('v0.3.19'),
   StartServicePreview: vi.fn().mockResolvedValue({ id: 'preview-1', url: 'http://127.0.0.1:49000/' }),
   StopServicePreview: vi.fn().mockResolvedValue(undefined),
+  GetPeerSpaceStatus: vi.fn().mockResolvedValue({ configured: false }),
+  CreatePeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-1', space_id: 'space-1' }),
+  CreatePeerInvitations: vi.fn().mockResolvedValue([{ invite_id: 'invite-1', batch_id: 'batch-1', token: 'atp1.x.y', expires_at: 10 }]),
+  ListPeerInvitations: vi.fn().mockResolvedValue([]),
+  RevokePeerInvitation: vi.fn().mockResolvedValue(undefined),
+  RevokePeerInvitationBatch: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
@@ -57,7 +63,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 
 import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
-import { GetPluginConfig, SetPluginConfig, GetAppVersion, StartServicePreview } from '../../../wailsjs/go/main/App'
+import { CreatePeerInvitations, GetPluginConfig, SetPluginConfig, GetAppVersion, StartServicePreview } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import {
   fetchRelayMe,
@@ -201,6 +207,24 @@ describe('createWailsPlatform', () => {
         expect.objectContaining({ service_id: 'service-api', port: 8080, path_prefix: '/api' }),
       ],
     }))
+  })
+
+  it('peer bridge wraps invitation requests in the generated model', async () => {
+    const p = createWailsPlatform()
+    const result = await p.peer!.createInvitations({
+      count: 5,
+      valid_for_hours: 24,
+      permission: 'control',
+      allowed_session_ids: [],
+      can_invite: false,
+      can_sync_secrets: false,
+    })
+    expect(CreatePeerInvitations).toHaveBeenCalledWith(expect.objectContaining({
+      count: 5,
+      valid_for_hours: 24,
+      permission: 'control',
+    }))
+    expect(result[0].invite_id).toBe('invite-1')
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {

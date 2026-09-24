@@ -1,0 +1,386 @@
+package main
+
+import (
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/attson/atterm/internal/appdir"
+	"github.com/attson/atterm/internal/peercrypto"
+	"github.com/attson/atterm/internal/peerproto"
+	"github.com/attson/atterm/internal/peerstore"
+)
+
+const activePeerSpaceAccount = "active"
+
+var errPeerIdentityMissing = errors.New("peer identity is missing")
+
+type PeerSpaceStatus struct {
+	Configured      bool   `json:"configured"`
+	PeerID          string `json:"peer_id,omitempty"`
+	SpaceID         string `json:"space_id,omitempty"`
+	GenesisHash     string `json:"genesis_hash,omitempty"`
+	CreatedAt       int64  `json:"created_at,omitempty"`
+	OpenInvitations int    `json:"open_invitations"`
+	UsedInvitations int    `json:"used_invitations"`
+	RevokedInvites  int    `json:"revoked_invitations"`
+	ExpiredInvites  int    `json:"expired_invitations"`
+}
+
+type CreatePeerInvitationsReq struct {
+	Count             int      `json:"count"`
+	ValidForHours     int      `json:"valid_for_hours"`
+	Permission        string   `json:"permission"`
+	AllowedSessionIDs []string `json:"allowed_session_ids"`
+	CanInvite         bool     `json:"can_invite"`
+	CanSyncSecrets    bool     `json:"can_sync_secrets"`
+}
+
+type PeerInvitation struct {
+	InviteID         string `json:"invite_id"`
+	BatchID          string `json:"batch_id"`
+	Token            string `json:"token"`
+	ExpiresAt        int64  `json:"expires_at"`
+	ConsumedAt       int64  `json:"consumed_at,omitempty"`
+	ConsumedByPeerID string `json:"consumed_by_peer_id,omitempty"`
+	RevokedAt        int64  `json:"revoked_at,omitempty"`
+}
+
+type peerSpaceManager struct {
+	store             *peerstore.Store
+	bootstrapLockPath string
+	now               func() time.Time
+}
+
+func peerIdentityService() string {
+	return "com.atterm.peer-identity.v1" + appdir.KeychainSuffix()
+}
+
+func peerStoreKeyService() string {
+	return "com.atterm.peer-store-key.v1" + appdir.KeychainSuffix()
+}
+
+func peerIdentitySlot() keychainSlot[[]byte] {
+	return keychainSlot[[]byte]{service: peerIdentityService(), account: activePeerSpaceAccount, codec: bytesCodec}
+}
+
+func peerStoreKeySlot() keychainSlot[[]byte] {
+	return keychainSlot[[]byte]{service: peerStoreKeyService(), account: activePeerSpaceAccount, codec: bytesCodec}
+}
+
+func newPeerSpaceManager() (*peerSpaceManager, error) {
+	dir, err := appdir.ConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("peer space config directory: %w", err)
+	}
+	storePath := filepath.Join(dir, "peer-space.json")
+	m := &peerSpaceManager{now: time.Now, bootstrapLockPath: storePath + ".bootstrap.lock"}
+	m.store = peerstore.New(storePath, func() ([]byte, error) {
+		key, err := peerStoreKeySlot().Load()
+		if err != nil {
+			return nil, err
+		}
+		if len(key) == 0 {
+			return nil, errors.New("peer space storage key is missing")
+		}
+		return key, nil
+	})
+	return m, nil
+}
+
+func (a *App) peerManager() (*peerSpaceManager, error) {
+	a.peerSpaceMu.Lock()
+	defer a.peerSpaceMu.Unlock()
+	if a.peerSpace != nil {
+		return a.peerSpace, nil
+	}
+	manager, err := newPeerSpaceManager()
+	if err != nil {
+		return nil, err
+	}
+	a.peerSpace = manager
+	return manager, nil
+}
+
+// GetPeerSpaceStatus reports only non-secret identity and invitation counts.
+func (a *App) GetPeerSpaceStatus() (PeerSpaceStatus, error) {
+	manager, err := a.peerManager()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	return manager.status()
+}
+
+// CreatePeerSpace creates the one active Peer Space for this installation.
+// Repeated calls return the existing status and never rotate identity.
+func (a *App) CreatePeerSpace() (PeerSpaceStatus, error) {
+	manager, err := a.peerManager()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	return manager.createSpace()
+}
+
+func (m *peerSpaceManager) createSpace() (PeerSpaceStatus, error) {
+	release, err := m.acquireBootstrapLock()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	defer release()
+
+	if status, err := m.status(); err == nil && status.Configured {
+		return status, nil
+	} else if err != nil && !errors.Is(err, peerstore.ErrNotInitialized) {
+		return PeerSpaceStatus{}, err
+	}
+	identity, err := m.ensureIdentity()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	if err := m.ensureStoreKey(); err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	now := m.now()
+	genesis, membership, err := peerproto.NewSpace(identity, now)
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	if err := m.store.Initialize(peerstore.State{
+		GenesisToken:    genesis,
+		LocalMembership: membership,
+		CreatedAt:       now.Unix(),
+	}); err != nil && !errors.Is(err, peerstore.ErrAlreadyExists) {
+		return PeerSpaceStatus{}, err
+	}
+	return m.status()
+}
+
+// CreatePeerInvitations pre-signs route-independent, one-use tickets.
+func (a *App) CreatePeerInvitations(req CreatePeerInvitationsReq) ([]PeerInvitation, error) {
+	manager, err := a.peerManager()
+	if err != nil {
+		return nil, err
+	}
+	return manager.createInvitations(req)
+}
+
+func (a *App) ListPeerInvitations() ([]PeerInvitation, error) {
+	manager, err := a.peerManager()
+	if err != nil {
+		return nil, err
+	}
+	state, err := manager.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	return publicInvitations(state.Invitations, manager.now().Unix()), nil
+}
+
+func (a *App) RevokePeerInvitation(inviteID string) error {
+	manager, err := a.peerManager()
+	if err != nil {
+		return err
+	}
+	return manager.store.RevokeInvitation(inviteID, manager.now())
+}
+
+func (a *App) RevokePeerInvitationBatch(batchID string) error {
+	manager, err := a.peerManager()
+	if err != nil {
+		return err
+	}
+	return manager.store.RevokeBatch(batchID, manager.now())
+}
+
+func (m *peerSpaceManager) status() (PeerSpaceStatus, error) {
+	state, err := m.store.Load()
+	if errors.Is(err, peerstore.ErrNotInitialized) {
+		return PeerSpaceStatus{Configured: false}, nil
+	}
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return PeerSpaceStatus{}, fmt.Errorf("verify peer genesis: %w", err)
+	}
+	identity, err := m.loadIdentity()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	membership, err := peerproto.VerifyGrant(state.LocalMembership, genesis, m.now())
+	if err != nil {
+		return PeerSpaceStatus{}, fmt.Errorf("verify local membership: %w", err)
+	}
+	if membership.Document.SubjectPeerID != identity.PeerID() {
+		return PeerSpaceStatus{}, errors.New("peer identity does not own local membership")
+	}
+	status := PeerSpaceStatus{
+		Configured:  true,
+		PeerID:      identity.PeerID(),
+		SpaceID:     genesis.Document.SpaceID,
+		GenesisHash: genesis.Hash,
+		CreatedAt:   state.CreatedAt,
+	}
+	now := m.now().Unix()
+	for _, invite := range state.Invitations {
+		switch {
+		case invite.RevokedAt != 0:
+			status.RevokedInvites++
+		case invite.ConsumedAt != 0:
+			status.UsedInvitations++
+		case now >= invite.ExpiresAt:
+			status.ExpiredInvites++
+		default:
+			status.OpenInvitations++
+		}
+	}
+	return status, nil
+}
+
+func (m *peerSpaceManager) createInvitations(req CreatePeerInvitationsReq) ([]PeerInvitation, error) {
+	state, err := m.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	identity, err := m.loadIdentity()
+	if err != nil {
+		return nil, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return nil, err
+	}
+	now := m.now()
+	if req.ValidForHours < 0 || req.ValidForHours > 30*24 {
+		return nil, errors.New("peer invitation validity must be 0 (default) or 1..720 hours")
+	}
+	membership, err := peerproto.VerifyGrant(state.LocalMembership, genesis, now)
+	if err != nil {
+		return nil, err
+	}
+	validFor := time.Duration(req.ValidForHours) * time.Hour
+	tokens, err := peerproto.NewInvitationBatch(identity, genesis, membership, now, peerproto.InvitationOptions{
+		Count:             req.Count,
+		ValidFor:          validFor,
+		Permission:        peerproto.Permission(req.Permission),
+		AllowedSessionIDs: req.AllowedSessionIDs,
+		CanInvite:         req.CanInvite,
+		CanSyncSecrets:    req.CanSyncSecrets,
+	})
+	if err != nil {
+		return nil, err
+	}
+	records := make([]peerstore.Invitation, 0, len(tokens))
+	for _, token := range tokens {
+		doc, _, err := peerproto.VerifyInvitation(token, genesis, now)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, peerstore.Invitation{
+			InviteID: doc.InviteID, BatchID: doc.BatchID, Token: token, ExpiresAt: doc.ExpiresAt,
+		})
+	}
+	if err := m.store.AddInvitations(records, now); err != nil {
+		return nil, err
+	}
+	return publicInvitations(records, now.Unix()), nil
+}
+
+func (m *peerSpaceManager) loadIdentity() (*peercrypto.Identity, error) {
+	raw, err := peerIdentitySlot().Load()
+	if err != nil {
+		return nil, fmt.Errorf("load peer identity: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, errPeerIdentityMissing
+	}
+	identity, err := peercrypto.ParseIdentity(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse peer identity: %w", err)
+	}
+	return identity, nil
+}
+
+func (m *peerSpaceManager) ensureIdentity() (*peercrypto.Identity, error) {
+	identity, err := m.loadIdentity()
+	if err == nil {
+		return identity, nil
+	}
+	if !errors.Is(err, errPeerIdentityMissing) {
+		return nil, err
+	}
+	identity, err = peercrypto.GenerateIdentity()
+	if err != nil {
+		return nil, err
+	}
+	if err := peerIdentitySlot().Save(identity.PrivateBytes()); err != nil {
+		return nil, fmt.Errorf("save peer identity: %w", err)
+	}
+	return identity, nil
+}
+
+func (m *peerSpaceManager) ensureStoreKey() error {
+	key, err := peerStoreKeySlot().Load()
+	if err != nil {
+		return fmt.Errorf("load peer store key: %w", err)
+	}
+	if len(key) == 32 {
+		return nil
+	}
+	if len(key) != 0 {
+		return fmt.Errorf("peer store key has invalid length %d", len(key))
+	}
+	key = make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return fmt.Errorf("generate peer store key: %w", err)
+	}
+	if err := peerStoreKeySlot().Save(key); err != nil {
+		return fmt.Errorf("save peer store key: %w", err)
+	}
+	return nil
+}
+
+func (m *peerSpaceManager) acquireBootstrapLock() (func(), error) {
+	if m.bootstrapLockPath == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(m.bootstrapLockPath), 0o700); err != nil {
+		return nil, fmt.Errorf("create peer bootstrap directory: %w", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := os.Mkdir(m.bootstrapLockPath, 0o700); err == nil {
+			return func() { _ = os.Remove(m.bootstrapLockPath) }, nil
+		} else if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("acquire peer bootstrap lock: %w", err)
+		}
+		if info, err := os.Stat(m.bootstrapLockPath); err == nil && time.Since(info.ModTime()) > 2*time.Minute {
+			_ = os.Remove(m.bootstrapLockPath)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, errors.New("timed out waiting for peer space bootstrap")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func publicInvitations(records []peerstore.Invitation, now int64) []PeerInvitation {
+	out := make([]PeerInvitation, 0, len(records))
+	for _, invite := range records {
+		token := invite.Token
+		if invite.ConsumedAt != 0 || invite.RevokedAt != 0 || now >= invite.ExpiresAt {
+			token = ""
+		}
+		out = append(out, PeerInvitation{
+			InviteID: invite.InviteID, BatchID: invite.BatchID, Token: token,
+			ExpiresAt: invite.ExpiresAt, ConsumedAt: invite.ConsumedAt,
+			ConsumedByPeerID: invite.ConsumedByPeerID, RevokedAt: invite.RevokedAt,
+		})
+	}
+	return out
+}

@@ -6,6 +6,14 @@
 > Release: v0.7.0 beta, v0.7.x stable after soak
 > Outcome: 用户不登录 Relay，也能通过预签邀请和 Quick Tunnel 接管终端并同步配置。
 
+Implementation status (2026-09-24): PR 2.1 foundation is in progress on
+`feature/peer-space-foundation`. P-256 desktop identity storage、immutable
+genesis、signed membership、route-independent `atp1` invitation batches、
+encrypted invite ledger and cross-process single-use/revocation writes are
+implemented. Invitation redemption into a new member, Web/iOS identity
+storage, governance replication and the Peer handshake authenticator remain
+in PR 2.1 and are not implied by the foundation bindings.
+
 ## Why Quick Tunnel Before Rendezvous
 
 Quick Tunnel 把 signaling/WSS endpoint 直接暴露到当前 desktop，不要求先部署新的公共服务。它先验证完整的账户无关信任、邀请、配置同步和 fallback 数据路径；Rendezvous 之后只解决稳定发现/信令，不再承担身份系统首发风险。

@@ -33,6 +33,10 @@ export function ConfirmQuit():Promise<void>;
 
 export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 
+export function CreatePeerInvitations(arg1:main.CreatePeerInvitationsReq):Promise<Array<main.PeerInvitation>>;
+
+export function CreatePeerSpace():Promise<main.PeerSpaceStatus>;
+
 export function DeleteFeishuBinding():Promise<void>;
 
 export function DeleteSSHHost(arg1:string):Promise<void>;
@@ -94,6 +98,8 @@ export function GetLoggingConfig():Promise<main.LoggingConfig>;
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPasteboardFileURLs():Promise<Array<string>>;
+
+export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
 
 export function GetPinnedSessionIds():Promise<Array<string>>;
 
@@ -159,6 +165,8 @@ export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
 
+export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
+
 export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
 
 export function ListRemoteSessions():Promise<string>;
@@ -216,6 +224,10 @@ export function RememberRelayPassword(arg1:string):Promise<void>;
 export function RemoveKnownHost(arg1:string):Promise<void>;
 
 export function RevealSSHKey(arg1:string):Promise<main.SSHKeySecret>;
+
+export function RevokePeerInvitation(arg1:string):Promise<void>;
+
+export function RevokePeerInvitationBatch(arg1:string):Promise<void>;
 
 export function RevokeRelaySession(arg1:string):Promise<void>;
 

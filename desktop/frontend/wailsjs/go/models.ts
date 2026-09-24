@@ -323,6 +323,28 @@ export namespace main {
 	        this.command_notify_threshold_seconds = source["command_notify_threshold_seconds"];
 	    }
 	}
+	export class CreatePeerInvitationsReq {
+	    count: number;
+	    valid_for_hours: number;
+	    permission: string;
+	    allowed_session_ids: string[];
+	    can_invite: boolean;
+	    can_sync_secrets: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new CreatePeerInvitationsReq(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.count = source["count"];
+	        this.valid_for_hours = source["valid_for_hours"];
+	        this.permission = source["permission"];
+	        this.allowed_session_ids = source["allowed_session_ids"];
+	        this.can_invite = source["can_invite"];
+	        this.can_sync_secrets = source["can_sync_secrets"];
+	    }
+	}
 	export class RelayErrorEntry {
 	    timestamp: string;
 	    message: string;
@@ -846,6 +868,58 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class PeerInvitation {
+	    invite_id: string;
+	    batch_id: string;
+	    token: string;
+	    expires_at: number;
+	    consumed_at?: number;
+	    consumed_by_peer_id?: string;
+	    revoked_at?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerInvitation(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.invite_id = source["invite_id"];
+	        this.batch_id = source["batch_id"];
+	        this.token = source["token"];
+	        this.expires_at = source["expires_at"];
+	        this.consumed_at = source["consumed_at"];
+	        this.consumed_by_peer_id = source["consumed_by_peer_id"];
+	        this.revoked_at = source["revoked_at"];
+	    }
+	}
+	export class PeerSpaceStatus {
+	    configured: boolean;
+	    peer_id?: string;
+	    space_id?: string;
+	    genesis_hash?: string;
+	    created_at?: number;
+	    open_invitations: number;
+	    used_invitations: number;
+	    revoked_invitations: number;
+	    expired_invitations: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerSpaceStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.configured = source["configured"];
+	        this.peer_id = source["peer_id"];
+	        this.space_id = source["space_id"];
+	        this.genesis_hash = source["genesis_hash"];
+	        this.created_at = source["created_at"];
+	        this.open_invitations = source["open_invitations"];
+	        this.used_invitations = source["used_invitations"];
+	        this.revoked_invitations = source["revoked_invitations"];
+	        this.expired_invitations = source["expired_invitations"];
+	    }
 	}
 	export class WidgetConfig {
 	    enabled: boolean;

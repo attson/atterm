@@ -377,6 +377,11 @@ type App struct {
 	nativeDirectMu sync.Mutex
 	nativeDirect   map[string]*nativeDirectClient
 
+	// peerSpace is initialized lazily because most existing installations use
+	// only Relay mode and should not create Peer identity or keyring entries.
+	peerSpaceMu sync.Mutex
+	peerSpace   *peerSpaceManager
+
 	startupFatalMu sync.RWMutex
 	startupFatal   StartupError
 

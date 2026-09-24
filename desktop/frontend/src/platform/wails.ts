@@ -25,6 +25,12 @@ import {
   StartNativeDirect,
   SendNativeDirectFrame,
   StopNativeDirect,
+  GetPeerSpaceStatus,
+  CreatePeerSpace,
+  CreatePeerInvitations,
+  ListPeerInvitations,
+  RevokePeerInvitation,
+  RevokePeerInvitationBatch,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -260,6 +266,14 @@ export function createWailsPlatform(): Platform {
         send: (id, frame) => SendNativeDirectFrame(id, frame),
         stop: (id) => StopNativeDirect(id),
       }),
+    },
+    peer: {
+      status: () => GetPeerSpaceStatus(),
+      createSpace: () => CreatePeerSpace(),
+      createInvitations: (req) => CreatePeerInvitations(new WailsModels.CreatePeerInvitationsReq(req)),
+      listInvitations: () => ListPeerInvitations(),
+      revokeInvitation: (inviteID) => RevokePeerInvitation(inviteID),
+      revokeInvitationBatch: (batchID) => RevokePeerInvitationBatch(batchID),
     },
     updater: {
       getState: api.getUpdateState,

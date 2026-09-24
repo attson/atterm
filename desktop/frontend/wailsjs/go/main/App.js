@@ -58,6 +58,14 @@ export function CreatePairingToken() {
   return window['go']['main']['App']['CreatePairingToken']();
 }
 
+export function CreatePeerInvitations(arg1) {
+  return window['go']['main']['App']['CreatePeerInvitations'](arg1);
+}
+
+export function CreatePeerSpace() {
+  return window['go']['main']['App']['CreatePeerSpace']();
+}
+
 export function DeleteFeishuBinding() {
   return window['go']['main']['App']['DeleteFeishuBinding']();
 }
@@ -180,6 +188,10 @@ export function GetNotificationsEnabled() {
 
 export function GetPasteboardFileURLs() {
   return window['go']['main']['App']['GetPasteboardFileURLs']();
+}
+
+export function GetPeerSpaceStatus() {
+  return window['go']['main']['App']['GetPeerSpaceStatus']();
 }
 
 export function GetPinnedSessionIds() {
@@ -310,6 +322,10 @@ export function ListKnownHosts() {
   return window['go']['main']['App']['ListKnownHosts']();
 }
 
+export function ListPeerInvitations() {
+  return window['go']['main']['App']['ListPeerInvitations']();
+}
+
 export function ListRelaySessions() {
   return window['go']['main']['App']['ListRelaySessions']();
 }
@@ -424,6 +440,14 @@ export function RemoveKnownHost(arg1) {
 
 export function RevealSSHKey(arg1) {
   return window['go']['main']['App']['RevealSSHKey'](arg1);
+}
+
+export function RevokePeerInvitation(arg1) {
+  return window['go']['main']['App']['RevokePeerInvitation'](arg1);
+}
+
+export function RevokePeerInvitationBatch(arg1) {
+  return window['go']['main']['App']['RevokePeerInvitationBatch'](arg1);
 }
 
 export function RevokeRelaySession(arg1) {

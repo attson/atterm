@@ -834,6 +834,40 @@ version: "<v>"}`，专供 LB / k8s probe。
 
 实现：`internal/relay/health_http.go`。
 
+## Peer Space signed documents
+
+Peer Space 身份、成员关系和邀请独立于 Relay 账户与 `account_key`。当前文档格式版本为
+`1`，不占用 `internal/proto.Type`，也不改变现有 Relay WebSocket frame。
+
+三类 token 使用相同信封：
+
+```text
+<prefix>.<base64url(exact-json-bytes)>.<base64url(p1363-signature)>
+```
+
+| Prefix | Document | Purpose |
+|---|---|---|
+| `apg1` | `SpaceGenesis` | 不可变 Space trust anchor |
+| `apm1` | `DeviceGrant` | 设备 membership/capability certificate |
+| `atp1` | `CapabilityTicket` | 与网络路径无关的单次预签邀请 |
+
+签名算法是 P-256 ECDSA + SHA-256，signature 为 64-byte IEEE P1363 `r || s`，且只接受
+low-S。签名覆盖 payload 中的原始 JSON bytes；验证端不得先反序列化再序列化。P-256
+public key 使用 65-byte uncompressed SEC1/WebCrypto raw 格式，`peer_id` 是该字节串的
+`base64url(SHA-256(public_key))`。
+
+`CapabilityTicket` 包含 `invite_id`、`batch_id`、`space_id`、
+`redemption_peer_id`、`space_genesis_hash`、`issuer_peer_id`、完整
+`issuer_membership`、32-byte `pairing_secret`、有效期、`max_uses=1`、permission、session
+scope 和可选 delegation capability。它不包含 Relay URL/token、Quick Tunnel URL 或
+Rendezvous 地址；后续连接地址放在独立的 signed `ConnectionBundle`，所以 route 轮换不会
+使 membership 或预签 ticket 失效。
+
+签发设备在本地加密账本中用跨进程原子锁核销 `invite_id`。redeem/revoke 为
+consume/deny-wins；同一 ticket 不能由两个本机 app instance 同时成功核销。当前实现位于
+`internal/peercrypto`、`internal/peerproto`、`internal/peerstore`，桌面绑定位于
+`desktop/peer_space.go`。
+
 ## 重连与续传
 
 ### Agent 短线重连

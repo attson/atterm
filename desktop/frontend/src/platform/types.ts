@@ -26,6 +26,8 @@ export type { SessionSummary } from '../lib/connection'
 export type DirEntry = _Models.DirEntry
 export type FileContent = _Models.FileContent
 export type FileMetaInfo = _Models.FileMetaInfo
+export type PeerSpaceStatus = _Models.PeerSpaceStatus
+export type PeerInvitation = _Models.PeerInvitation
 
 export interface EnvironmentInfo {
   buildType: string
@@ -287,6 +289,27 @@ export interface DirectConnectionBridge {
   createTransport?: (options: DirectClientOptions) => DirectTransport
 }
 
+export interface CreatePeerInvitationsRequest {
+  count: number
+  valid_for_hours: number
+  permission: 'view' | 'control' | 'full'
+  allowed_session_ids: string[]
+  can_invite: boolean
+  can_sync_secrets: boolean
+}
+
+// Peer trust is optional until each platform has its required secure identity
+// backend. Components must gate on platform.peer rather than importing Wails
+// bindings or silently falling back to Relay credentials.
+export interface PeerBridge {
+  status(): Promise<PeerSpaceStatus>
+  createSpace(): Promise<PeerSpaceStatus>
+  createInvitations(req: CreatePeerInvitationsRequest): Promise<PeerInvitation[]>
+  listInvitations(): Promise<PeerInvitation[]>
+  revokeInvitation(inviteID: string): Promise<void>
+  revokeInvitationBatch(batchID: string): Promise<void>
+}
+
 // WidgetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the
 // same executable that owns a frameless always-on-top window. Only the Wails
 // platform implements it — web and Capacitor leave it undefined.
@@ -353,6 +376,7 @@ export interface Platform {
   templates: TemplateBridge
   auxKeys: AuxKeyBridge
   directConnection: DirectConnectionBridge
+  peer?: PeerBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
   deskWidget?: WidgetBridge

@@ -195,6 +195,9 @@ export interface SessionBridge {
 export interface SystemBridge {
   showNotification(title: string, body: string, data?: _NotificationRouteData): Promise<void>
   getClipboardPaste(): Promise<_Clip>
+  // Native shells should provide this so clipboard writes are not subject to
+  // an embedded WebView's focus and transient-user-activation policy.
+  setClipboardText?(text: string): Promise<void>
   pickLogFilePath?(): Promise<string>
   openExternalURL(url: string): Promise<void>
   getEnvironment(): Promise<EnvironmentInfo | null>

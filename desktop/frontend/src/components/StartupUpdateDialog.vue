@@ -9,7 +9,10 @@ import {
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
 
-const emit = defineEmits<{ (e: "dismiss"): void }>();
+const emit = defineEmits<{
+  (e: "dismiss"): void;
+  (e: "install"): void;
+}>();
 
 const { t } = useI18n();
 
@@ -72,6 +75,10 @@ async function onCancel() {
 async function onInstall() {
   try {
     await installUpdate();
+    // InstallUpdate starts the detached helper before returning. Tell App that
+    // the ensuing close is the requested restart, so it can preserve the
+    // boot-loaded recovery snapshot that has not been materialized as tabs yet.
+    emit("install");
   } catch {
     /* state.error reflects in poll */
   }

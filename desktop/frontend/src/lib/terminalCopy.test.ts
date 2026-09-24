@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { copyTerminalSelection, isTerminalCopyShortcut } from "./terminalCopy";
+import { copyTerminalSelection, copyTextToClipboard, isTerminalCopyShortcut } from "./terminalCopy";
 
 function key(opts: KeyboardEventInit) {
   return new KeyboardEvent("keydown", {
@@ -41,5 +41,36 @@ describe("terminal copy shortcuts", () => {
       copyTerminalSelection({ getSelection: () => "" }, { writeText }),
     ).resolves.toBe(false);
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("falls back when the Clipboard API exists but rejects the write", async () => {
+    const denied = new DOMException("clipboard write denied", "NotAllowedError");
+    const writeText = vi.fn().mockRejectedValue(denied);
+    const fallback = vi.fn(() => true);
+
+    await expect(copyTextToClipboard("selected output", { writeText }, fallback)).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith("selected output");
+    expect(fallback).toHaveBeenCalledWith("selected output");
+  });
+
+  it("preserves the Clipboard API error when the fallback also fails", async () => {
+    const denied = new DOMException("clipboard write denied", "NotAllowedError");
+    const fallback = vi.fn(() => false);
+
+    await expect(
+      copyTextToClipboard("selected output", { writeText: vi.fn().mockRejectedValue(denied) }, fallback),
+    ).rejects.toBe(denied);
+  });
+
+  it("preserves the Clipboard API error when the fallback throws", async () => {
+    const denied = new DOMException("clipboard write denied", "NotAllowedError");
+
+    await expect(
+      copyTextToClipboard(
+        "selected output",
+        { writeText: vi.fn().mockRejectedValue(denied) },
+        () => { throw new TypeError("execCommand unavailable"); },
+      ),
+    ).rejects.toBe(denied);
   });
 });

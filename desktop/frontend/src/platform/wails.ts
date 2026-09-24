@@ -11,6 +11,7 @@ import {
   Quit,
   Environment,
   BrowserOpenURL,
+  ClipboardSetText,
 } from '../../wailsjs/runtime/runtime'
 import {
   GetPluginConfig,
@@ -175,6 +176,9 @@ export function createWailsPlatform(): Platform {
     system: {
       showNotification: api.showNotification,
       getClipboardPaste: api.getClipboardPastePayload,
+      setClipboardText: async (text: string) => {
+        await ClipboardSetText(text)
+      },
       pickLogFilePath: api.pickLogFilePath,
       openExternalURL: async (url: string) => {
         BrowserOpenURL(url)

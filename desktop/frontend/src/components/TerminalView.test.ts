@@ -1451,7 +1451,8 @@ describe("Remote Web Preview", () => {
 
   test("offers the active preview URL to the system browser and clipboard", () => {
     expect(source).toContain("platform.system.openExternalURL(url)");
-    expect(source).toContain("navigator.clipboard.writeText(url)");
+    expect(source).toContain("copyTextToClipboard(url, clipboardWriter)");
+    expect(source).toContain("platform.system.setClipboardText");
     expect(source).toContain("const url = activePreview.value?.url;");
     // The switcher emits; TerminalView wires the handlers.
     expect(source).toContain('@open-browser="openPreviewInBrowser"');

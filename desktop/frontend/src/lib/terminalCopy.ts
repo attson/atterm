@@ -8,6 +8,8 @@ export interface ClipboardWriter {
   writeText: (text: string) => Promise<void>;
 }
 
+export type ClipboardFallback = (text: string) => boolean;
+
 function currentPlatform(): TerminalCopyPlatform {
   if (typeof navigator === "undefined") return "other";
   return navigator.platform?.toLowerCase().includes("mac") ? "mac" : "other";
@@ -49,12 +51,30 @@ export function isTerminalCopyShortcut(
 export async function copyTerminalSelection(
   term: TerminalSelectionSource,
   clipboard: ClipboardWriter | undefined = typeof navigator === "undefined" ? undefined : navigator.clipboard,
+  fallback: ClipboardFallback = fallbackCopyText,
 ): Promise<boolean> {
-  const text = term.getSelection();
+  return copyTextToClipboard(term.getSelection(), clipboard, fallback);
+}
+
+export async function copyTextToClipboard(
+  text: string,
+  clipboard: ClipboardWriter | undefined = typeof navigator === "undefined" ? undefined : navigator.clipboard,
+  fallback: ClipboardFallback = fallbackCopyText,
+): Promise<boolean> {
   if (!text) return false;
   if (clipboard?.writeText) {
-    await clipboard.writeText(text);
-    return true;
+    try {
+      await clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      try {
+        if (fallback(text)) return true;
+      } catch {
+        // Keep the original Clipboard API failure; it carries the useful
+        // permission/focus diagnosis that caused the fallback attempt.
+      }
+      throw error;
+    }
   }
-  return fallbackCopyText(text);
+  return fallback(text);
 }

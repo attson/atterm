@@ -12,7 +12,7 @@ import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { createReplayInputGuard } from "../lib/replayInputGuard";
-import { copyTerminalSelection, fallbackCopyText, isTerminalCopyShortcut } from "../lib/terminalCopy";
+import { copyTerminalSelection, copyTextToClipboard, isTerminalCopyShortcut, type ClipboardWriter } from "../lib/terminalCopy";
 import { composeFontFamily } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
 import {
@@ -223,6 +223,9 @@ const selectionPopover = ref({
   sending: false,
 });
 const platform = usePlatform();
+const clipboardWriter: ClipboardWriter | undefined = platform.system.setClipboardText
+  ? { writeText: (text) => platform.system.setClipboardText!(text) }
+  : undefined;
 const fileRevealStore = useFileRevealStore();
 const previewBusy = ref(false);
 // A session can run several independent previews at once, each its own relay
@@ -708,9 +711,7 @@ async function copyPreviewURL(): Promise<void> {
   const url = activePreview.value?.url;
   if (!url) return;
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(url);
-    } else if (!fallbackCopyText(url)) {
+    if (!await copyTextToClipboard(url, clipboardWriter)) {
       throw new Error("clipboard unavailable");
     }
     emit("toast", t("terminal.preview.urlCopied"));
@@ -1044,7 +1045,7 @@ async function handleCopyShortcut(e: KeyboardEvent) {
   e.preventDefault();
   e.stopPropagation();
   try {
-    await copyTerminalSelection(term);
+    await copyTerminalSelection(term, clipboardWriter);
   } catch (err) {
     logWarn("term", "failed to copy terminal selection", { error: errText(err) });
   }
@@ -1501,7 +1502,7 @@ async function onSelectionCopy() {
   selectionPopover.value.copying = true;
   let copied = false;
   try {
-    copied = await copyTerminalSelection(term);
+    copied = await copyTerminalSelection(term, clipboardWriter);
   } catch (err) {
     logWarn("term", "selection copy failed", { error: errText(err) });
   } finally {
@@ -1672,7 +1673,7 @@ async function onMenuCopyLink() {
   closeContextMenu();
   if (!hit) return;
   try {
-    await navigator.clipboard.writeText(hit.text);
+    if (!await copyTextToClipboard(hit.text, clipboardWriter)) throw new Error("clipboard unavailable");
   } catch (err) {
     logWarn("term", "copy link failed", { error: errText(err) });
     emit("toast", t("terminal.copyFailed"));
@@ -1683,7 +1684,7 @@ async function onMenuCopy() {
   closeContextMenu();
   if (!term) return;
   try {
-    await copyTerminalSelection(term);
+    await copyTerminalSelection(term, clipboardWriter);
   } catch (err) {
     logWarn("term", "failed to copy terminal selection", { error: errText(err) });
     emit("toast", t("terminal.copyFailed"));

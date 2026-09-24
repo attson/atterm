@@ -854,6 +854,7 @@ Peer Space 身份、成员关系和邀请独立于 Relay 账户与 `account_key`
 | `atp1` | `CapabilityTicket` | 与网络路径无关的单次预签邀请 |
 | `apj1` | `JoinRequest` | 新设备对 subject private key 的短期持有证明 |
 | `atc1` | `ConnectionBundle` | invitation 与当前可达 route hints 的短期签名包装 |
+| `akr1` | `EpochRotation` | sync/vault epoch key 的成员封装与确定性轮换候选 |
 
 签名算法是 P-256 ECDSA + SHA-256，signature 为 64-byte IEEE P1363 `r || s`，且只接受
 low-S。签名覆盖 payload 中的原始 JSON bytes；验证端不得先反序列化再序列化。P-256
@@ -902,6 +903,20 @@ private key。Web 的 signing 与 wrapping private key 都是 non-exportable `Cr
 record 原地新增 ECDH key pair，不轮换 signing key 或 `peer_id`。iOS v2 record 将两把 PKCS#8
 private key 只序列化到 Keychain，运行时重新导入为 non-exportable key；v1 迁移同样只新增
 wrapping identity。
+
+`akr1` rotation document 包含 `rotation_id`、`space_id`、`key_class`、
+`previous_epoch`、`previous_rotation_hash`、新 `epoch`、epoch key 的 SHA-256 commitment、
+actor membership、按 `peer_id` 排序的 recipient envelopes 和创建时间。actor 必须持有当前有效的
+`permission=full && can_invite=true` membership；接收端还必须用已应用 deny-wins revocation 的
+active membership view 复核 actor 和完整 recipient 集合。sync rotation 必须覆盖所有 active
+members；vault rotation 只覆盖 `can_sync_secrets=true` members。每个 recipient 同时绑定 grant
+serial、membership 中的 wrapping public key 与 `ake1` envelope，缺少、多出或替换任一项都拒绝。
+
+初始 rotation 是 `previous_epoch=0`、空 parent hash、`epoch=1`。后续 rotation 必须满足
+`epoch=previous_epoch+1`，并显式引用父 `akr1` token 的 SHA-256 hash。分区中的两个 admin 若为
+同一 parent 生成候选，lexicographically smaller operation hash 胜出；losing branch 及其后继
+保留供诊断/anti-entropy，但不能进入 canonical chain，必须基于 winner 重新轮换。设备解开自己的
+`ake1` 后还要核对 key commitment，防止同一 rotation 给不同 recipient 包裹不同 epoch key。
 
 Peer DataChannel 复用 Stage 1 的四步 handshake、ECDH traffic key、record 和 fragment
 codec，只替换 `HandshakeAuthenticator`。Relay account authenticator 的 proof 继续是 32-byte

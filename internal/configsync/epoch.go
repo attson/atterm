@@ -113,6 +113,17 @@ type epochEnvelope struct {
 	Ciphertext           string   `json:"ciphertext"`
 }
 
+// EpochEnvelopeInfo exposes only authenticated routing metadata. The wrapped
+// key remains opaque and can only be opened by its recipient.
+type EpochEnvelopeInfo struct {
+	SpaceID              string
+	KeyClass             KeyClass
+	Epoch                uint64
+	RecipientPeerID      string
+	RecipientWrappingKey []byte
+	EphemeralWrappingKey []byte
+}
+
 // SealEpochKey creates a P-256 ECDH/HKDF/AES-GCM hybrid envelope for one
 // member. Vault envelopes are rejected unless membership grants secret sync.
 func SealEpochKey(spaceID string, key EpochKey, recipient EpochRecipient) (string, error) {
@@ -218,6 +229,28 @@ func OpenEpochKey(token, expectedSpaceID, expectedPeerID string, identity *peerc
 		return EpochKey{}, ErrInvalidEpochEnvelope
 	}
 	return ParseEpochKey(doc.KeyClass, doc.Epoch, plaintext)
+}
+
+// InspectEpochEnvelope validates an envelope and returns the metadata needed
+// to bind it into a signed rotation document without exposing its epoch key.
+func InspectEpochEnvelope(token string) (EpochEnvelopeInfo, error) {
+	doc, err := parseEpochEnvelope(token)
+	if err != nil {
+		return EpochEnvelopeInfo{}, err
+	}
+	recipient, err := decodeSized(doc.RecipientWrappingKey, peercrypto.WrappingPublicKeySize, "recipient wrapping key")
+	if err != nil {
+		return EpochEnvelopeInfo{}, ErrInvalidEpochEnvelope
+	}
+	ephemeral, err := decodeSized(doc.EphemeralPublicKey, peercrypto.WrappingPublicKeySize, "ephemeral public key")
+	if err != nil {
+		return EpochEnvelopeInfo{}, ErrInvalidEpochEnvelope
+	}
+	return EpochEnvelopeInfo{
+		SpaceID: doc.SpaceID, KeyClass: doc.KeyClass, Epoch: doc.Epoch,
+		RecipientPeerID:      doc.RecipientPeerID,
+		RecipientWrappingKey: recipient, EphemeralWrappingKey: ephemeral,
+	}, nil
 }
 
 // SignEncryptedOp seals mutation.Payload under the supplied epoch key before
@@ -351,10 +384,18 @@ func parseEpochEnvelope(token string) (epochEnvelope, error) {
 	if err != nil || !bytes.Equal(canonical, raw) || doc.V != epochEnvelopeVersion || !validSpaceID(doc.SpaceID) || !doc.KeyClass.valid() || doc.Epoch == 0 || !validPeerID(doc.RecipientPeerID) {
 		return epochEnvelope{}, ErrInvalidEpochEnvelope
 	}
-	if _, err := decodeSized(doc.RecipientWrappingKey, peercrypto.WrappingPublicKeySize, "recipient wrapping key"); err != nil {
+	recipientKey, err := decodeSized(doc.RecipientWrappingKey, peercrypto.WrappingPublicKeySize, "recipient wrapping key")
+	if err != nil {
 		return epochEnvelope{}, ErrInvalidEpochEnvelope
 	}
-	if _, err := decodeSized(doc.EphemeralPublicKey, peercrypto.WrappingPublicKeySize, "ephemeral public key"); err != nil {
+	if _, err := peercrypto.ValidateWrappingPublicKey(recipientKey); err != nil {
+		return epochEnvelope{}, ErrInvalidEpochEnvelope
+	}
+	ephemeralKey, err := decodeSized(doc.EphemeralPublicKey, peercrypto.WrappingPublicKeySize, "ephemeral public key")
+	if err != nil {
+		return epochEnvelope{}, ErrInvalidEpochEnvelope
+	}
+	if _, err := peercrypto.ValidateWrappingPublicKey(ephemeralKey); err != nil {
 		return epochEnvelope{}, ErrInvalidEpochEnvelope
 	}
 	return doc, nil

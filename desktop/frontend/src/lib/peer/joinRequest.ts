@@ -17,6 +17,7 @@ export interface JoinRequestDocument {
   invitation: string
   subject_peer_id: string
   subject_public_key: string
+  subject_wrapping_public_key: string
   nonce: string
   created_at: number
 }
@@ -25,6 +26,7 @@ export interface VerifiedJoinSubject {
   token: string
   document: JoinRequestDocument
   publicKey: Uint8Array
+  wrappingPublicKey: Uint8Array
 }
 
 const encoder = new TextEncoder()
@@ -33,7 +35,7 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
 function exactJoinDocument(value: unknown): JoinRequestDocument {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('peer join: invalid document')
   const record = value as Record<string, unknown>
-  const expected = ['created_at', 'invitation', 'nonce', 'subject_peer_id', 'subject_public_key', 'v']
+  const expected = ['created_at', 'invitation', 'nonce', 'subject_peer_id', 'subject_public_key', 'subject_wrapping_public_key', 'v']
   if (Object.keys(record).sort().join('\n') !== expected.join('\n')) throw new Error('peer join: unknown or missing field')
   if (record.v !== 1
     || typeof record.invitation !== 'string'
@@ -41,6 +43,7 @@ function exactJoinDocument(value: unknown): JoinRequestDocument {
     || encoder.encode(record.invitation).length > MAX_TOKEN_BYTES
     || typeof record.subject_peer_id !== 'string'
     || typeof record.subject_public_key !== 'string'
+    || typeof record.subject_wrapping_public_key !== 'string'
     || typeof record.nonce !== 'string'
     || typeof record.created_at !== 'number'
     || !Number.isSafeInteger(record.created_at)
@@ -60,6 +63,7 @@ export async function createJoinRequest(identity: PeerIdentity, invitation: stri
     invitation,
     subject_peer_id: identity.peerId,
     subject_public_key: bytesToBase64URL(identity.publicKey),
+    subject_wrapping_public_key: bytesToBase64URL(identity.wrappingPublicKey),
     nonce: bytesToBase64URL(nonce),
     created_at: Math.floor(now.getTime() / 1000),
   }
@@ -89,11 +93,13 @@ export async function verifyJoinRequestSubject(token: string, now: Date = new Da
   const nowSeconds = Math.floor(now.getTime() / 1000)
   if (Math.abs(document.created_at - nowSeconds) > CLOCK_SKEW_SECONDS) throw new Error('peer join: request expired')
   const publicKey = base64URLToBytes(document.subject_public_key)
+  const wrappingPublicKey = base64URLToBytes(document.subject_wrapping_public_key)
   if (await peerIDFromPublicKey(publicKey) !== document.subject_peer_id) throw new Error('peer join: subject peer id mismatch')
   if (base64URLToBytes(document.nonce).length !== 32) throw new Error('peer join: invalid nonce')
   let key: CryptoKey
   try {
     key = await crypto.subtle.importKey('raw', ownedCryptoBytes(publicKey), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+    await crypto.subtle.importKey('raw', ownedCryptoBytes(wrappingPublicKey), { name: 'ECDH', namedCurve: 'P-256' }, false, [])
   } catch {
     throw new Error('peer join: invalid subject public key')
   }
@@ -104,5 +110,5 @@ export async function verifyJoinRequestSubject(token: string, now: Date = new Da
     ownedCryptoBytes(payload),
   )
   if (!valid) throw new Error('peer join: invalid subject signature')
-  return { token, document, publicKey }
+  return { token, document, publicKey, wrappingPublicKey }
 }

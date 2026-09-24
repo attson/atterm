@@ -121,8 +121,8 @@ Stage 1 不创建 Peer identity。Relay 先验证账户、session ownership 和 
 
 - 每个安装生成独立 Peer device identity，与 Relay 账户完全无关。
 - 首台设备创建不可变的 signed genesis document（`space_id`、初始 admin、协议版本）；其 hash 是信任锚。后续设备拿到 space membership certificate，而不是分别加入每台主机的孤立 trust domain。
-- 身份签名算法使用 P-256 ECDSA；会话密钥协商使用临时 P-256 ECDH。
-- Desktop 私钥保存在 OS keyring；iOS 使用新的 Keychain plugin；浏览器使用 IndexedDB 中不可导出的 WebCrypto `CryptoKey`。
+- 身份签名算法使用 P-256 ECDSA；每台设备另有一把静态 P-256 ECDH wrapping identity 用于接收配置 epoch key，会话密钥协商再使用独立的临时 P-256 ECDH。三类私钥不得复用。
+- Desktop signing/wrapping 私钥分别保存在 OS keyring；iOS 使用 Keychain plugin；浏览器使用 IndexedDB 中不可导出的 WebCrypto `CryptoKey`。
 - `peer_id = base64url(SHA-256(canonical public key))`。
 - 每台 desktop 仍是自己本地 session 的最终 owner，可在 Space grant 之上进一步收窄权限；Space membership 本身不覆盖 session owner 的决定。
 - 不导入、不导出、不派生现有 Relay `account_key`。Peer 私钥、邀请 secret、会话密钥不得进入 URL query、日志或 Relay 配置。
@@ -180,7 +180,7 @@ atp1.<base64url(exact-json-bytes)>.<base64url(p1363-signature)>
 - 这条限制是严格单次消费的必要条件：离线分区下若多个副本都能独立核销，就无法阻止同一 ticket 在两个分区各成功一次。
 - 签发设备离线时，预签 ticket 无需用户现场点击授权，但必须等该设备上线才能兑换。未来可增加显式 M-of-N redemption authority，不在 MVP 内。
 - 批量撤销只有传播到对应 redemption device 后才能阻止兑换。已复制到外部但核销设备尚未收到撤销的 delegated invitation 仍可能在过期前使用，UI 必须提示这一点。
-- 兑换成功后，签发设备签发 `DeviceGrant`/membership certificate，绑定 space、client public key、permission、session scope、`can_invite`、`can_sync_secrets`、签发/过期时间和 serial。
+- 兑换成功后，签发设备签发 `DeviceGrant`/membership certificate，绑定 space、client signing/wrapping public keys、permission、session scope、`can_invite`、`can_sync_secrets`、签发/过期时间和 serial。
 - 后续连接使用 grant + client 私钥 proof，不再消耗邀请。
 - 删除 trusted device 会撤销其 grant serial；若该设备可签邀请，同时撤销其未兑换的 delegated tickets。
 

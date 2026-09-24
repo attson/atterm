@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -88,12 +89,23 @@ func TestCreatePeerSpaceIsIdempotent(t *testing.T) {
 	if !first.Configured || first.PeerID == "" || first.SpaceID == "" || first.GenesisHash == "" {
 		t.Fatalf("incomplete status: %+v", first)
 	}
+	firstWrapping, err := peerWrappingIdentitySlot().Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	second, err := app.CreatePeerSpace()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.PeerID != first.PeerID || second.SpaceID != first.SpaceID || second.GenesisHash != first.GenesisHash {
 		t.Fatalf("CreatePeerSpace rotated identity: first=%+v second=%+v", first, second)
+	}
+	secondWrapping, err := peerWrappingIdentitySlot().Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstWrapping, secondWrapping) {
+		t.Fatal("CreatePeerSpace rotated wrapping identity")
 	}
 }
 
@@ -171,7 +183,11 @@ func TestRedeemPeerJoinRequestIsIdempotentAndRejectsReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := peerproto.NewJoinRequest(joiningIdentity, invitations[0].Token, now)
+	joiningWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := peerproto.NewJoinRequest(joiningIdentity, joiningWrapping.PublicBytes(), invitations[0].Token, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,12 +213,19 @@ func TestRedeemPeerJoinRequestIsIdempotentAndRejectsReplay(t *testing.T) {
 	if membership.Document.SubjectPeerID != joiningIdentity.PeerID() || membership.Document.Permission != peerproto.PermissionControl {
 		t.Fatalf("unexpected joined membership: %+v", membership.Document)
 	}
+	if !bytes.Equal(membership.WrappingPublicKey, joiningWrapping.PublicBytes()) {
+		t.Fatal("joined membership did not retain wrapping public key")
+	}
 
 	replayIdentity, err := peercrypto.GenerateIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := peerproto.NewJoinRequest(replayIdentity, invitations[0].Token, now)
+	replayWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := peerproto.NewJoinRequest(replayIdentity, replayWrapping.PublicBytes(), invitations[0].Token, now)
 	if err != nil {
 		t.Fatal(err)
 	}

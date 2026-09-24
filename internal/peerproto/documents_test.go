@@ -1,7 +1,9 @@
 package peerproto
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -17,7 +19,8 @@ func newTestSpace(t *testing.T) (*peercrypto.Identity, VerifiedGenesis, Verified
 	if err != nil {
 		t.Fatal(err)
 	}
-	genesisToken, membershipToken, err := NewSpace(id, now)
+	wrapping := newTestWrappingIdentity(t)
+	genesisToken, membershipToken, err := NewSpace(id, wrapping.PublicBytes(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +32,19 @@ func newTestSpace(t *testing.T) (*peercrypto.Identity, VerifiedGenesis, Verified
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !bytes.Equal(membership.WrappingPublicKey, wrapping.PublicBytes()) {
+		t.Fatal("creator membership does not contain its wrapping public key")
+	}
 	return id, genesis, membership, now
+}
+
+func newTestWrappingIdentity(t *testing.T) *peercrypto.WrappingIdentity {
+	t.Helper()
+	identity, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
 }
 
 func TestNewSpaceAndInvitationBatch(t *testing.T) {
@@ -121,7 +136,8 @@ func TestJoinRequestAndIssuedMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requestToken, err := NewJoinRequest(joiningIdentity, tokens[0], now)
+	joiningWrapping := newTestWrappingIdentity(t)
+	requestToken, err := NewJoinRequest(joiningIdentity, joiningWrapping.PublicBytes(), tokens[0], now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +147,9 @@ func TestJoinRequestAndIssuedMembership(t *testing.T) {
 	}
 	if request.Document.SubjectPeerID != joiningIdentity.PeerID() {
 		t.Fatal("join request subject does not own signing key")
+	}
+	if !bytes.Equal(request.WrappingPublicKey, joiningWrapping.PublicBytes()) {
+		t.Fatal("join request does not contain its wrapping public key")
 	}
 	membershipToken, err := IssueMembership(issuerIdentity, genesis, issuerMembership, request, now)
 	if err != nil {
@@ -142,6 +161,9 @@ func TestJoinRequestAndIssuedMembership(t *testing.T) {
 	}
 	if membership.Document.SubjectPeerID != joiningIdentity.PeerID() || membership.Document.Permission != PermissionControl || !membership.Document.CanSyncSecrets {
 		t.Fatalf("unexpected issued membership: %+v", membership.Document)
+	}
+	if !bytes.Equal(membership.WrappingPublicKey, joiningWrapping.PublicBytes()) {
+		t.Fatal("issued membership did not copy the join wrapping public key")
 	}
 }
 
@@ -155,7 +177,7 @@ func TestJoinRequestRejectsDifferentSubjectSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requestToken, err := NewJoinRequest(joiningIdentity, tokens[0], now)
+	requestToken, err := NewJoinRequest(joiningIdentity, newTestWrappingIdentity(t).PublicBytes(), tokens[0], now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +190,40 @@ func TestJoinRequestRejectsDifferentSubjectSignature(t *testing.T) {
 	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
 	if _, err := VerifyJoinRequest(strings.Join(parts, "."), genesis, now); err == nil {
 		t.Fatal("join request with modified signature verified")
+	}
+}
+
+func TestJoinRequestRejectsMutatedWrappingPublicKey(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	tokens, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiningIdentity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestToken, err := NewJoinRequest(joiningIdentity, newTestWrappingIdentity(t).PublicBytes(), tokens[0], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(requestToken, ".")
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc JoinRequest
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc.SubjectWrappingPublicKey = encode(newTestWrappingIdentity(t).PublicBytes())
+	payload, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts[1] = encode(payload)
+	if _, err := VerifyJoinRequest(strings.Join(parts, "."), genesis, now); err == nil {
+		t.Fatal("join request with mutated wrapping public key verified")
 	}
 }
 

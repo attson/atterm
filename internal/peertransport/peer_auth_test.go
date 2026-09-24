@@ -103,7 +103,11 @@ func peerAuthDocuments(t *testing.T) (clientIdentity, hostIdentity *peercrypto.I
 	if err != nil {
 		t.Fatal(err)
 	}
-	genesisToken, hostMembership, err = peerproto.NewSpace(hostIdentity, now)
+	hostWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesisToken, hostMembership, err = peerproto.NewSpace(hostIdentity, hostWrapping.PublicBytes(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +127,11 @@ func peerAuthDocuments(t *testing.T) (clientIdentity, hostIdentity *peercrypto.I
 	if err != nil {
 		t.Fatal(err)
 	}
-	requestToken, err := peerproto.NewJoinRequest(clientIdentity, invitations[0], now)
+	clientWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestToken, err := peerproto.NewJoinRequest(clientIdentity, clientWrapping.PublicBytes(), invitations[0], now)
 	if err != nil {
 		t.Fatal(err)
 	}

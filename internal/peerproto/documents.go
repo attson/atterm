@@ -74,21 +74,22 @@ type SpaceGenesis struct {
 // for the creator's self-membership and carries the issuer certificate for a
 // delegated member, keeping verification independent of an online directory.
 type DeviceGrant struct {
-	V                 int        `json:"v"`
-	Serial            string     `json:"serial"`
-	SpaceID           string     `json:"space_id"`
-	SpaceGenesisHash  string     `json:"space_genesis_hash"`
-	SubjectPeerID     string     `json:"subject_peer_id"`
-	SubjectPublicKey  string     `json:"subject_public_key"`
-	IssuerPeerID      string     `json:"issuer_peer_id"`
-	IssuerMembership  string     `json:"issuer_membership,omitempty"`
-	IssuedAt          int64      `json:"issued_at"`
-	ExpiresAt         int64      `json:"expires_at,omitempty"`
-	Permission        Permission `json:"permission"`
-	AllowedSessionIDs []string   `json:"allowed_session_ids"`
-	CanInvite         bool       `json:"can_invite"`
-	CanSyncSecrets    bool       `json:"can_sync_secrets"`
-	DelegationDepth   int        `json:"delegation_depth"`
+	V                        int        `json:"v"`
+	Serial                   string     `json:"serial"`
+	SpaceID                  string     `json:"space_id"`
+	SpaceGenesisHash         string     `json:"space_genesis_hash"`
+	SubjectPeerID            string     `json:"subject_peer_id"`
+	SubjectPublicKey         string     `json:"subject_public_key"`
+	SubjectWrappingPublicKey string     `json:"subject_wrapping_public_key"`
+	IssuerPeerID             string     `json:"issuer_peer_id"`
+	IssuerMembership         string     `json:"issuer_membership,omitempty"`
+	IssuedAt                 int64      `json:"issued_at"`
+	ExpiresAt                int64      `json:"expires_at,omitempty"`
+	Permission               Permission `json:"permission"`
+	AllowedSessionIDs        []string   `json:"allowed_session_ids"`
+	CanInvite                bool       `json:"can_invite"`
+	CanSyncSecrets           bool       `json:"can_sync_secrets"`
+	DelegationDepth          int        `json:"delegation_depth"`
 }
 
 // CapabilityTicket is route-independent and may be created before the
@@ -117,12 +118,13 @@ type CapabilityTicket struct {
 // subject key. The complete invitation is embedded so a gateway can forward
 // one self-contained opaque token to the designated redemption peer.
 type JoinRequest struct {
-	V                int    `json:"v"`
-	Invitation       string `json:"invitation"`
-	SubjectPeerID    string `json:"subject_peer_id"`
-	SubjectPublicKey string `json:"subject_public_key"`
-	Nonce            string `json:"nonce"`
-	CreatedAt        int64  `json:"created_at"`
+	V                        int    `json:"v"`
+	Invitation               string `json:"invitation"`
+	SubjectPeerID            string `json:"subject_peer_id"`
+	SubjectPublicKey         string `json:"subject_public_key"`
+	SubjectWrappingPublicKey string `json:"subject_wrapping_public_key"`
+	Nonce                    string `json:"nonce"`
+	CreatedAt                int64  `json:"created_at"`
 }
 
 type RouteKind string
@@ -165,19 +167,21 @@ type VerifiedGenesis struct {
 
 // VerifiedGrant is a membership chain verified back to a genesis document.
 type VerifiedGrant struct {
-	Token     string
-	Document  DeviceGrant
-	PublicKey []byte
+	Token             string
+	Document          DeviceGrant
+	PublicKey         []byte
+	WrappingPublicKey []byte
 }
 
 // VerifiedJoinRequest contains the invitation chain and subject key verified
 // from one signed join request.
 type VerifiedJoinRequest struct {
-	Token     string
-	Document  JoinRequest
-	Ticket    CapabilityTicket
-	Issuer    VerifiedGrant
-	PublicKey []byte
+	Token             string
+	Document          JoinRequest
+	Ticket            CapabilityTicket
+	Issuer            VerifiedGrant
+	PublicKey         []byte
+	WrappingPublicKey []byte
 }
 
 // VerifiedConnectionBundle retains the authenticated invitation and issuer.
@@ -190,7 +194,13 @@ type VerifiedConnectionBundle struct {
 }
 
 // NewSpace creates a genesis document and creator self-membership.
-func NewSpace(identity *peercrypto.Identity, now time.Time) (genesisToken, membershipToken string, err error) {
+func NewSpace(identity *peercrypto.Identity, wrappingPublicKey []byte, now time.Time) (genesisToken, membershipToken string, err error) {
+	if identity == nil {
+		return "", "", fmt.Errorf("%w: space identity", ErrInvalidDocument)
+	}
+	if _, err := peercrypto.ValidateWrappingPublicKey(wrappingPublicKey); err != nil {
+		return "", "", fmt.Errorf("%w: creator wrapping public key: %v", ErrInvalidDocument, err)
+	}
 	genesis := SpaceGenesis{
 		V:                Version,
 		SpaceID:          uuid.NewString(),
@@ -207,19 +217,20 @@ func NewSpace(identity *peercrypto.Identity, now time.Time) (genesisToken, membe
 		return "", "", err
 	}
 	membership := DeviceGrant{
-		V:                 Version,
-		Serial:            uuid.NewString(),
-		SpaceID:           genesis.SpaceID,
-		SpaceGenesisHash:  verified.Hash,
-		SubjectPeerID:     identity.PeerID(),
-		SubjectPublicKey:  encode(identity.PublicBytes()),
-		IssuerPeerID:      identity.PeerID(),
-		IssuedAt:          now.Unix(),
-		Permission:        PermissionFull,
-		AllowedSessionIDs: []string{},
-		CanInvite:         true,
-		CanSyncSecrets:    true,
-		DelegationDepth:   0,
+		V:                        Version,
+		Serial:                   uuid.NewString(),
+		SpaceID:                  genesis.SpaceID,
+		SpaceGenesisHash:         verified.Hash,
+		SubjectPeerID:            identity.PeerID(),
+		SubjectPublicKey:         encode(identity.PublicBytes()),
+		SubjectWrappingPublicKey: encode(wrappingPublicKey),
+		IssuerPeerID:             identity.PeerID(),
+		IssuedAt:                 now.Unix(),
+		Permission:               PermissionFull,
+		AllowedSessionIDs:        []string{},
+		CanInvite:                true,
+		CanSyncSecrets:           true,
+		DelegationDepth:          0,
 	}
 	membershipToken, err = signDocument(membershipPrefix, membership, identity)
 	if err != nil {
@@ -270,6 +281,10 @@ func verifyGrant(token string, genesis VerifiedGenesis, now time.Time, chainDept
 	if err != nil {
 		return VerifiedGrant{}, err
 	}
+	wrappingPub, err := decodeWrappingPublicKey(doc.SubjectWrappingPublicKey, "subject wrapping public key")
+	if err != nil {
+		return VerifiedGrant{}, err
+	}
 	if err := validateGrant(doc, genesis, pub, now); err != nil {
 		return VerifiedGrant{}, err
 	}
@@ -313,7 +328,7 @@ func verifyGrant(token string, genesis VerifiedGenesis, now time.Time, chainDept
 	if err := peercrypto.Verify(issuerPub, raw, sig); err != nil {
 		return VerifiedGrant{}, fmt.Errorf("%w: membership signature: %v", ErrInvalidDocument, err)
 	}
-	return VerifiedGrant{Token: token, Document: doc, PublicKey: pub}, nil
+	return VerifiedGrant{Token: token, Document: doc, PublicKey: pub, WrappingPublicKey: wrappingPub}, nil
 }
 
 // InvitationOptions controls one pre-signed batch. Count defaults to five and
@@ -546,21 +561,25 @@ func VerifyConnectionBundle(token string, now time.Time) (VerifiedConnectionBund
 }
 
 // NewJoinRequest creates a short-lived proof of possession for a new device.
-func NewJoinRequest(identity *peercrypto.Identity, invitation string, now time.Time) (string, error) {
+func NewJoinRequest(identity *peercrypto.Identity, wrappingPublicKey []byte, invitation string, now time.Time) (string, error) {
 	if identity == nil || len(invitation) == 0 || len(invitation) > maxTokenBytes || !strings.HasPrefix(invitation, invitationPrefix+".") {
 		return "", fmt.Errorf("%w: join request input", ErrInvalidDocument)
+	}
+	if _, err := peercrypto.ValidateWrappingPublicKey(wrappingPublicKey); err != nil {
+		return "", fmt.Errorf("%w: join wrapping public key: %v", ErrInvalidDocument, err)
 	}
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
 		return "", fmt.Errorf("generate join nonce: %w", err)
 	}
 	doc := JoinRequest{
-		V:                Version,
-		Invitation:       invitation,
-		SubjectPeerID:    identity.PeerID(),
-		SubjectPublicKey: encode(identity.PublicBytes()),
-		Nonce:            encode(nonce),
-		CreatedAt:        now.Unix(),
+		V:                        Version,
+		Invitation:               invitation,
+		SubjectPeerID:            identity.PeerID(),
+		SubjectPublicKey:         encode(identity.PublicBytes()),
+		SubjectWrappingPublicKey: encode(wrappingPublicKey),
+		Nonce:                    encode(nonce),
+		CreatedAt:                now.Unix(),
 	}
 	token, err := signDocument(joinRequestPrefix, doc, identity)
 	if err != nil {
@@ -589,6 +608,10 @@ func VerifyJoinRequest(token string, genesis VerifiedGenesis, now time.Time) (Ve
 	if peercrypto.PeerID(pub) != doc.SubjectPeerID {
 		return VerifiedJoinRequest{}, fmt.Errorf("%w: join subject peer id", ErrInvalidDocument)
 	}
+	wrappingPub, err := decodeWrappingPublicKey(doc.SubjectWrappingPublicKey, "join subject wrapping public key")
+	if err != nil {
+		return VerifiedJoinRequest{}, err
+	}
 	if _, err := decodeSized(doc.Nonce, 32, "join nonce"); err != nil {
 		return VerifiedJoinRequest{}, err
 	}
@@ -600,7 +623,7 @@ func VerifyJoinRequest(token string, genesis VerifiedGenesis, now time.Time) (Ve
 		return VerifiedJoinRequest{}, err
 	}
 	return VerifiedJoinRequest{
-		Token: token, Document: doc, Ticket: ticket, Issuer: issuer, PublicKey: pub,
+		Token: token, Document: doc, Ticket: ticket, Issuer: issuer, PublicKey: pub, WrappingPublicKey: wrappingPub,
 	}, nil
 }
 
@@ -631,20 +654,21 @@ func IssueMembership(identity *peercrypto.Identity, genesis VerifiedGenesis, iss
 		return "", fmt.Errorf("%w: membership delegation depth", ErrInvalidDocument)
 	}
 	doc := DeviceGrant{
-		V:                 Version,
-		Serial:            uuid.NewString(),
-		SpaceID:           genesis.Document.SpaceID,
-		SpaceGenesisHash:  genesis.Hash,
-		SubjectPeerID:     join.Document.SubjectPeerID,
-		SubjectPublicKey:  join.Document.SubjectPublicKey,
-		IssuerPeerID:      identity.PeerID(),
-		IssuerMembership:  issuer.Token,
-		IssuedAt:          now.Unix(),
-		Permission:        join.Ticket.Permission,
-		AllowedSessionIDs: append([]string(nil), join.Ticket.AllowedSessionIDs...),
-		CanInvite:         join.Ticket.CanInvite,
-		CanSyncSecrets:    join.Ticket.CanSyncSecrets,
-		DelegationDepth:   issuer.Document.DelegationDepth + 1,
+		V:                        Version,
+		Serial:                   uuid.NewString(),
+		SpaceID:                  genesis.Document.SpaceID,
+		SpaceGenesisHash:         genesis.Hash,
+		SubjectPeerID:            join.Document.SubjectPeerID,
+		SubjectPublicKey:         join.Document.SubjectPublicKey,
+		SubjectWrappingPublicKey: join.Document.SubjectWrappingPublicKey,
+		IssuerPeerID:             identity.PeerID(),
+		IssuerMembership:         issuer.Token,
+		IssuedAt:                 now.Unix(),
+		Permission:               join.Ticket.Permission,
+		AllowedSessionIDs:        append([]string(nil), join.Ticket.AllowedSessionIDs...),
+		CanInvite:                join.Ticket.CanInvite,
+		CanSyncSecrets:           join.Ticket.CanSyncSecrets,
+		DelegationDepth:          issuer.Document.DelegationDepth + 1,
 	}
 	return signDocument(membershipPrefix, doc, identity)
 }
@@ -831,6 +855,17 @@ func encode(value []byte) string {
 func decodeSized(value string, size int, name string) ([]byte, error) {
 	decoded, err := base64.RawURLEncoding.Strict().DecodeString(value)
 	if err != nil || len(decoded) != size {
+		return nil, fmt.Errorf("%w: invalid %s", ErrInvalidDocument, name)
+	}
+	return decoded, nil
+}
+
+func decodeWrappingPublicKey(value, name string) ([]byte, error) {
+	decoded, err := decodeSized(value, peercrypto.WrappingPublicKeySize, name)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := peercrypto.ValidateWrappingPublicKey(decoded); err != nil {
 		return nil, fmt.Errorf("%w: invalid %s", ErrInvalidDocument, name)
 	}
 	return decoded, nil

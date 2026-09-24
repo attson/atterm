@@ -860,6 +860,12 @@ low-S。签名覆盖 payload 中的原始 JSON bytes；验证端不得先反序�
 public key 使用 65-byte uncompressed SEC1/WebCrypto raw 格式，`peer_id` 是该字节串的
 `base64url(SHA-256(public_key))`。
 
+每个设备还持有一把独立的静态 P-256 ECDH wrapping identity，只用于接收 sync/vault
+epoch key envelope，绝不复用 ECDSA signing private key。wrapping public key 同样使用
+65-byte uncompressed SEC1/WebCrypto raw 格式，并作为
+`subject_wrapping_public_key` 同时写入 `apj1` JoinRequest 和 `apm1` DeviceGrant。两份文档的
+签名都覆盖该字段；membership 签发时必须逐字节复制已验证 JoinRequest 的 wrapping key。
+
 `CapabilityTicket` 包含 `invite_id`、`batch_id`、`space_id`、
 `redemption_peer_id`、`space_genesis_hash`、`issuer_peer_id`、完整
 `issuer_membership`、32-byte `pairing_secret`、有效期、`max_uses=1`、permission、session
@@ -878,10 +884,11 @@ client 仍须在 handshake 证明自己的有效 membership。因此 invitation 
 `https://*.trycloudflare.com`；Rendezvous 只接受 `https`/`wss` 且必须携带 32-byte opaque
 topic。URL 轮换只创建新的 `atc1`，不创建 invitation 或 membership。
 
-新设备生成自己的 P-256 identity 后，将完整 `atp1` invitation、subject peer/public key、
-32-byte nonce 和创建时间放入 `apj1`，并以 subject private key 签名。签发设备验证 invitation
-chain 与 subject key proof，且只接受 ticket 指定的 `redemption_peer_id`，随后签发持久
-`apm1` membership。JoinRequest 只在创建时间前后 5 分钟内有效。
+新设备生成自己的 P-256 signing identity 和独立 P-256 ECDH wrapping identity 后，将完整
+`atp1` invitation、subject peer/signing public key、wrapping public key、32-byte nonce 和创建
+时间放入 `apj1`，并以 subject signing private key 签名。签发设备验证 invitation chain、
+subject key proof 与 wrapping public key，且只接受 ticket 指定的 `redemption_peer_id`，随后
+签发持久 `apm1` membership。JoinRequest 只在创建时间前后 5 分钟内有效。
 
 签发设备在本地加密账本中用跨进程原子锁核销 `invite_id`，并将已签发 membership 与核销
 记录一同原子落盘。同一 subject 重试返回第一次签发的同一 membership；其它 subject 重放
@@ -891,7 +898,10 @@ chain 与 subject key proof，且只接受 ticket 指定的 `redemption_peer_id`
 `desktop/peer_space.go`。Web 的 non-exportable IndexedDB identity 和 iOS Keychain adapter
 位于 `desktop/frontend/src/lib/peer/identity.ts` 与
 `desktop/frontend/src/platform/capacitorPeerIdentity.ts`；它们不向 Wails 桌面前端暴露桌面
-private key。
+private key。Web 的 signing 与 wrapping private key 都是 non-exportable `CryptoKey`；旧 v1
+record 原地新增 ECDH key pair，不轮换 signing key 或 `peer_id`。iOS v2 record 将两把 PKCS#8
+private key 只序列化到 Keychain，运行时重新导入为 non-exportable key；v1 迁移同样只新增
+wrapping identity。
 
 Peer DataChannel 复用 Stage 1 的四步 handshake、ECDH traffic key、record 和 fragment
 codec，只替换 `HandshakeAuthenticator`。Relay account authenticator 的 proof 继续是 32-byte

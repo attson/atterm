@@ -1,6 +1,6 @@
 const P256_ORDER = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
 const P256_HALF_ORDER = P256_ORDER >> 1n
-const WEB_IDENTITY_VERSION = 1
+const WEB_IDENTITY_VERSION = 2
 const WEB_IDENTITY_DB = 'atterm-peer-identity-v1'
 const WEB_IDENTITY_STORE = 'identities'
 const WEB_IDENTITY_KEY = 'active'
@@ -8,22 +8,31 @@ const WEB_IDENTITY_KEY = 'active'
 export interface PeerIdentity {
   readonly peerId: string
   readonly publicKey: Uint8Array
+  readonly wrappingPublicKey: Uint8Array
   sign(message: Uint8Array): Promise<Uint8Array>
+  deriveWrappingSecret(peerPublicKey: Uint8Array): Promise<Uint8Array>
 }
 
 export interface WebIdentityRecord {
   version: number
   privateKey: CryptoKey
   publicKey: CryptoKey
+  wrappingPrivateKey?: CryptoKey
+  wrappingPublicKey?: CryptoKey
 }
 
 export interface WebIdentityRecordStore {
   get(): Promise<WebIdentityRecord | null>
   add(record: WebIdentityRecord): Promise<boolean>
+  put(record: WebIdentityRecord): Promise<void>
 }
 
-function p256Algorithm(): EcKeyGenParams {
+function signingAlgorithm(): EcKeyGenParams {
   return { name: 'ECDSA', namedCurve: 'P-256' }
+}
+
+function wrappingAlgorithm(): EcKeyGenParams {
+  return { name: 'ECDH', namedCurve: 'P-256' }
 }
 
 function bytesToBigInt(bytes: Uint8Array): bigint {
@@ -94,24 +103,54 @@ export async function peerIDFromPublicKey(publicKey: Uint8Array): Promise<string
   return bytesToBase64URL(new Uint8Array(digest))
 }
 
-async function identityFromKeys(privateKey: CryptoKey, publicKey: CryptoKey): Promise<PeerIdentity> {
+async function identityFromKeys(
+  privateKey: CryptoKey,
+  publicKey: CryptoKey,
+  wrappingPrivateKey: CryptoKey,
+  wrappingPublicKey: CryptoKey,
+): Promise<PeerIdentity> {
+  await verifyWrappingKeyPair(wrappingPrivateKey, wrappingPublicKey)
   const rawPublicKey = new Uint8Array(await crypto.subtle.exportKey('raw', publicKey))
+  const rawWrappingPublicKey = new Uint8Array(await crypto.subtle.exportKey('raw', wrappingPublicKey))
   const peerId = await peerIDFromPublicKey(rawPublicKey)
   return {
     peerId,
     get publicKey(): Uint8Array { return rawPublicKey.slice() },
+    get wrappingPublicKey(): Uint8Array { return rawWrappingPublicKey.slice() },
     async sign(message: Uint8Array): Promise<Uint8Array> {
       const signature = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, ownedCryptoBytes(message))
       return normalizeP1363LowS(new Uint8Array(signature))
     },
+    async deriveWrappingSecret(peerPublicKey: Uint8Array): Promise<Uint8Array> {
+      let peer: CryptoKey
+      try {
+        peer = await crypto.subtle.importKey('raw', ownedCryptoBytes(peerPublicKey), wrappingAlgorithm(), false, [])
+      } catch {
+        throw new Error('peer identity: invalid wrapping public key')
+      }
+      const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: peer }, wrappingPrivateKey, 256)
+      return new Uint8Array(shared)
+    },
   }
 }
 
-function assertStoredKey(record: WebIdentityRecord): void {
+async function verifyWrappingKeyPair(privateKey: CryptoKey, publicKey: CryptoKey): Promise<void> {
+  const probe = await crypto.subtle.generateKey(wrappingAlgorithm(), false, ['deriveBits']) as CryptoKeyPair
+  const [fromStoredPrivate, fromStoredPublic] = await Promise.all([
+    crypto.subtle.deriveBits({ name: 'ECDH', public: probe.publicKey }, privateKey, 256),
+    crypto.subtle.deriveBits({ name: 'ECDH', public: publicKey }, probe.privateKey, 256),
+  ])
+  const left = new Uint8Array(fromStoredPrivate)
+  const right = new Uint8Array(fromStoredPublic)
+  if (left.length !== right.length || left.some((value, index) => value !== right[index])) {
+    throw new Error('peer identity: stored wrapping private/public key mismatch')
+  }
+}
+
+function assertSigningKeys(record: WebIdentityRecord): void {
   const privateAlgorithm = record.privateKey.algorithm as Partial<EcKeyAlgorithm>
   const publicAlgorithm = record.publicKey.algorithm as Partial<EcKeyAlgorithm>
-  if (record.version !== WEB_IDENTITY_VERSION
-    || record.privateKey.type !== 'private'
+  if (record.privateKey.type !== 'private'
     || record.privateKey.extractable
     || !record.privateKey.usages.includes('sign')
     || privateAlgorithm.name !== 'ECDSA'
@@ -124,9 +163,42 @@ function assertStoredKey(record: WebIdentityRecord): void {
   }
 }
 
+function assertStoredKey(record: WebIdentityRecord): asserts record is WebIdentityRecord & {
+  wrappingPrivateKey: CryptoKey
+  wrappingPublicKey: CryptoKey
+} {
+  assertSigningKeys(record)
+  const privateAlgorithm = record.wrappingPrivateKey?.algorithm as Partial<EcKeyAlgorithm> | undefined
+  const publicAlgorithm = record.wrappingPublicKey?.algorithm as Partial<EcKeyAlgorithm> | undefined
+  if (record.version !== WEB_IDENTITY_VERSION
+    || record.wrappingPrivateKey?.type !== 'private'
+    || record.wrappingPrivateKey.extractable
+    || !record.wrappingPrivateKey.usages.includes('deriveBits')
+    || privateAlgorithm?.name !== 'ECDH'
+    || privateAlgorithm.namedCurve !== 'P-256'
+    || record.wrappingPublicKey?.type !== 'public'
+    || publicAlgorithm?.name !== 'ECDH'
+    || publicAlgorithm.namedCurve !== 'P-256') {
+    throw new Error('peer identity: invalid stored WebCrypto wrapping key pair')
+  }
+}
+
+async function generateWrappingKeys(): Promise<CryptoKeyPair> {
+  return crypto.subtle.generateKey(wrappingAlgorithm(), false, ['deriveBits']) as Promise<CryptoKeyPair>
+}
+
 async function generateNonExportableRecord(): Promise<WebIdentityRecord> {
-  const keys = await crypto.subtle.generateKey(p256Algorithm(), false, ['sign', 'verify']) as CryptoKeyPair
-  const record = { version: WEB_IDENTITY_VERSION, privateKey: keys.privateKey, publicKey: keys.publicKey }
+  const [keys, wrappingKeys] = await Promise.all([
+    crypto.subtle.generateKey(signingAlgorithm(), false, ['sign', 'verify']) as Promise<CryptoKeyPair>,
+    generateWrappingKeys(),
+  ])
+  const record = {
+    version: WEB_IDENTITY_VERSION,
+    privateKey: keys.privateKey,
+    publicKey: keys.publicKey,
+    wrappingPrivateKey: wrappingKeys.privateKey,
+    wrappingPublicKey: wrappingKeys.publicKey,
+  }
   assertStoredKey(record)
   return record
 }
@@ -142,8 +214,21 @@ export async function loadOrCreateWebPeerIdentity(store: WebIdentityRecordStore)
       if (record === null) throw new Error('peer identity: concurrent IndexedDB insert disappeared')
     }
   }
+  if (record.version === 1) {
+    assertSigningKeys(record)
+    const wrappingKeys = await generateWrappingKeys()
+    const migrated: WebIdentityRecord = {
+      ...record,
+      version: WEB_IDENTITY_VERSION,
+      wrappingPrivateKey: wrappingKeys.privateKey,
+      wrappingPublicKey: wrappingKeys.publicKey,
+    }
+    await store.put(migrated)
+    record = await store.get()
+    if (record === null) throw new Error('peer identity: migrated IndexedDB record disappeared')
+  }
   assertStoredKey(record)
-  return identityFromKeys(record.privateKey, record.publicKey)
+  return identityFromKeys(record.privateKey, record.publicKey, record.wrappingPrivateKey, record.wrappingPublicKey)
 }
 
 export function createIndexedDBPeerIdentityStore(factory: IDBFactory = indexedDB): WebIdentityRecordStore {
@@ -183,6 +268,16 @@ export function createIndexedDBPeerIdentityStore(factory: IDBFactory = indexedDB
         }
         transaction.oncomplete = () => resolve(!duplicate)
         transaction.onerror = () => reject(transaction.error ?? new Error('peer identity: write IndexedDB failed'))
+        transaction.onabort = () => reject(transaction.error ?? new Error('peer identity: IndexedDB transaction aborted'))
+      })
+    },
+    async put(record: WebIdentityRecord): Promise<void> {
+      const db = await open()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(WEB_IDENTITY_STORE, 'readwrite')
+        transaction.objectStore(WEB_IDENTITY_STORE).put(record, WEB_IDENTITY_KEY)
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error ?? new Error('peer identity: update IndexedDB failed'))
         transaction.onabort = () => reject(transaction.error ?? new Error('peer identity: IndexedDB transaction aborted'))
       })
     },

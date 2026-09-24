@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 const activePeerSpaceAccount = "active"
 
 var errPeerIdentityMissing = errors.New("peer identity is missing")
+var errPeerWrappingIdentityMissing = errors.New("peer wrapping identity is missing")
 
 type PeerSpaceStatus struct {
 	Configured      bool   `json:"configured"`
@@ -68,12 +70,20 @@ func peerStoreKeyService() string {
 	return "com.atterm.peer-store-key.v1" + appdir.KeychainSuffix()
 }
 
+func peerWrappingIdentityService() string {
+	return "com.atterm.peer-wrapping-identity.v1" + appdir.KeychainSuffix()
+}
+
 func peerIdentitySlot() keychainSlot[[]byte] {
 	return keychainSlot[[]byte]{service: peerIdentityService(), account: activePeerSpaceAccount, codec: bytesCodec}
 }
 
 func peerStoreKeySlot() keychainSlot[[]byte] {
 	return keychainSlot[[]byte]{service: peerStoreKeyService(), account: activePeerSpaceAccount, codec: bytesCodec}
+}
+
+func peerWrappingIdentitySlot() keychainSlot[[]byte] {
+	return keychainSlot[[]byte]{service: peerWrappingIdentityService(), account: activePeerSpaceAccount, codec: bytesCodec}
 }
 
 func newPeerSpaceManager() (*peerSpaceManager, error) {
@@ -145,11 +155,15 @@ func (m *peerSpaceManager) createSpace() (PeerSpaceStatus, error) {
 	if err != nil {
 		return PeerSpaceStatus{}, err
 	}
+	wrappingIdentity, err := m.ensureWrappingIdentity()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
 	if err := m.ensureStoreKey(); err != nil {
 		return PeerSpaceStatus{}, err
 	}
 	now := m.now()
-	genesis, membership, err := peerproto.NewSpace(identity, now)
+	genesis, membership, err := peerproto.NewSpace(identity, wrappingIdentity.PublicBytes(), now)
 	if err != nil {
 		return PeerSpaceStatus{}, err
 	}
@@ -216,12 +230,19 @@ func (m *peerSpaceManager) status() (PeerSpaceStatus, error) {
 	if err != nil {
 		return PeerSpaceStatus{}, err
 	}
+	wrappingIdentity, err := m.loadWrappingIdentity()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
 	membership, err := peerproto.VerifyGrant(state.LocalMembership, genesis, m.now())
 	if err != nil {
 		return PeerSpaceStatus{}, fmt.Errorf("verify local membership: %w", err)
 	}
 	if membership.Document.SubjectPeerID != identity.PeerID() {
 		return PeerSpaceStatus{}, errors.New("peer identity does not own local membership")
+	}
+	if !bytes.Equal(membership.WrappingPublicKey, wrappingIdentity.PublicBytes()) {
+		return PeerSpaceStatus{}, errors.New("peer wrapping identity does not own local membership")
 	}
 	status := PeerSpaceStatus{
 		Configured:  true,
@@ -366,6 +387,39 @@ func (m *peerSpaceManager) ensureIdentity() (*peercrypto.Identity, error) {
 	}
 	if err := peerIdentitySlot().Save(identity.PrivateBytes()); err != nil {
 		return nil, fmt.Errorf("save peer identity: %w", err)
+	}
+	return identity, nil
+}
+
+func (m *peerSpaceManager) loadWrappingIdentity() (*peercrypto.WrappingIdentity, error) {
+	raw, err := peerWrappingIdentitySlot().Load()
+	if err != nil {
+		return nil, fmt.Errorf("load peer wrapping identity: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, errPeerWrappingIdentityMissing
+	}
+	identity, err := peercrypto.ParseWrappingIdentity(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse peer wrapping identity: %w", err)
+	}
+	return identity, nil
+}
+
+func (m *peerSpaceManager) ensureWrappingIdentity() (*peercrypto.WrappingIdentity, error) {
+	identity, err := m.loadWrappingIdentity()
+	if err == nil {
+		return identity, nil
+	}
+	if !errors.Is(err, errPeerWrappingIdentityMissing) {
+		return nil, err
+	}
+	identity, err = peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		return nil, err
+	}
+	if err := peerWrappingIdentitySlot().Save(identity.PrivateBytes()); err != nil {
+		return nil, fmt.Errorf("save peer wrapping identity: %w", err)
 	}
 	return identity, nil
 }

@@ -753,7 +753,7 @@ key 派生：每 session 独立 `session_key = HKDF-SHA256(salt=nil, ikm=account
 
 ### AAD 鉴别表（cross-type replay 防线）
 
-AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字段所在帧的 `Type` 字节**，把信封绑死到帧类型上——攻击者就算偷到一条合法信封，也无法把它替换到别的帧里（cipher 解开会因 AAD 不匹配直接失败）。
+Relay session 信封的 AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字段所在帧的 `Type` 字节**，把信封绑死到帧类型上——攻击者就算偷到一条合法信封，也无法把它替换到别的帧里（cipher 解开会因 AAD 不匹配直接失败）。`0xF0..0xF3` 是不上 Relay frame 的合成 namespace，使用表中列出的独立上下文。
 
 | frame_type | 出现位置 | sealed 内容 |
 |------------|----------|-------------|
@@ -770,6 +770,8 @@ AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字�
 | `0x3d` `SERVICE_OPEN` | `ServiceOpenPayload.sealed`（base64） | JSON `SealedServiceOpenFields { port, scheme }` |
 | `0xF0` （合成，不上 wire） | `ssh_hosts_encrypted` 偏好值 | JSON `sshSyncPayload { hosts, keys }` |
 | `0xF1` （合成，不上 wire） | `profiles_encrypted` 偏好值 | JSON `profilesSyncPayload { profiles, default_profile_id }` |
+| `0xF2` （合成，不上 wire） | Peer config payload | `space_id(16B) || 0xF2 || key_class(1B) || epoch(be64) || len16+collection || len16+record_id || len16+op_id` |
+| `0xF3` （合成，不上 wire） | Peer epoch key envelope | `space_id(16B) || 0xF3 || key_class(1B) || epoch(be64) || recipient_peer_id(32B) || recipient_wrap_public_key(65B) || ephemeral_public_key(65B)` |
 
 **红线**：加新 sealed 帧时**必须**给一个**唯一**的 `frame_type` 字节，并在这张表里增行；不允许复用（[AGENTS.md](../../AGENTS.md) §22）。
 

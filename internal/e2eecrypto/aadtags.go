@@ -9,9 +9,9 @@ package e2eecrypto
 // documentation nit: it means an attacker who can capture one sealed
 // envelope can splice it into a different frame type and have it decrypt.
 //
-// Most values are the protocol frame type that carries the envelope. Two are
-// synthetic: they never appear on the relay wire and exist only to give a
-// preference-sync payload its own discriminator.
+// Most values are the protocol frame type that carries the envelope. Four are
+// synthetic: they never appear on the relay wire and give non-frame payloads
+// their own discriminators.
 //
 // Adding a namespace means adding it here AND adding a row to
 // docs/spec/protocol.md's sealed-envelope table — aadtags_test.go fails if the
@@ -37,22 +37,26 @@ const (
 	AADTagServiceOpen  byte = 0x3d
 
 	// Synthetic, AAD-only — no wire frame carries these.
-	AADTagSSHHosts byte = 0xF0
-	AADTagProfiles byte = 0xF1
+	AADTagSSHHosts          byte = 0xF0
+	AADTagProfiles          byte = 0xF1
+	AADTagPeerConfigPayload byte = 0xF2
+	AADTagPeerEpochEnvelope byte = 0xF3
 )
 
 var AADTags = map[byte]string{
-	AADTagIn:           "IN",
-	AADTagOut:          "OUT",
-	AADTagMeta:         "META",
-	AADTagListResp:     "LIST_RESP",
-	AADTagPasteImage:   "PASTE_IMAGE",
-	AADTagCommandEvent: "COMMAND_EVENT",
-	AADTagPasteFile:    "PASTE_FILE",
-	AADTagFSRequest:    "FS_REQUEST",
-	AADTagFSResponse:   "FS_RESPONSE",
-	AADTagFSEvent:      "FS_EVENT",
-	AADTagServiceOpen:  "SERVICE_OPEN",
-	AADTagSSHHosts:     "ssh_hosts_encrypted sync",
-	AADTagProfiles:     "profiles_encrypted sync",
+	AADTagIn:                "IN",
+	AADTagOut:               "OUT",
+	AADTagMeta:              "META",
+	AADTagListResp:          "LIST_RESP",
+	AADTagPasteImage:        "PASTE_IMAGE",
+	AADTagCommandEvent:      "COMMAND_EVENT",
+	AADTagPasteFile:         "PASTE_FILE",
+	AADTagFSRequest:         "FS_REQUEST",
+	AADTagFSResponse:        "FS_RESPONSE",
+	AADTagFSEvent:           "FS_EVENT",
+	AADTagServiceOpen:       "SERVICE_OPEN",
+	AADTagSSHHosts:          "ssh_hosts_encrypted sync",
+	AADTagProfiles:          "profiles_encrypted sync",
+	AADTagPeerConfigPayload: "Peer config payload",
+	AADTagPeerEpochEnvelope: "Peer epoch envelope",
 }

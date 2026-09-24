@@ -402,12 +402,14 @@ WSS fallback 使用同一 encrypted record codec，并给 sync channel 最低调
 普通配置与敏感 vault 分开轮换，避免“能同步主题”自动等于“能拿 SSH 私钥”。密钥层级：
 
 ```text
-device identity key          never synced
-  -> wraps sync_epoch_key    portable preferences/config
-  -> wraps vault_epoch_key   opted-in profiles env / SSH credentials and private keys
+device signing key           signs identity/membership; never used for ECDH
+  -> certifies independent device wrapping public key
+device wrapping key          P-256 ECDH private key; never synced
+  -> unwraps sync_epoch_key  portable preferences/config
+  -> unwraps vault_epoch_key opted-in profiles env / SSH credentials and private keys
 ```
 
-Peer channel 已端到端加密，但同步 payload 仍使用 epoch key 封装后再进入 op log，这样本地 snapshots、未来可选的第三方 store-and-forward 也不会变成明文。AAD 必须包含 `space_id || collection || record_id || op_id || epoch`，并在 `internal/e2eecrypto/aadtags.go`/`docs/spec/protocol.md` 注册独立 namespace，禁止与 Relay account envelopes 交叉重放。
+Peer channel 已端到端加密，但同步 payload 仍使用 epoch key 封装后再进入 op log，这样本地 snapshots、未来可选的第三方 store-and-forward 也不会变成明文。AAD 必须包含 `space_id || collection || record_id || op_id || key_class || epoch`，并在 `internal/e2eecrypto/aadtags.go`/`docs/spec/protocol.md` 注册独立 namespace，禁止与 Relay account envelopes 交叉重放。签名 identity key 与 wrapping key 必须保持用途分离；membership 同时认证 signing public key 和 wrapping public key。
 
 ### 6.6 What syncs
 

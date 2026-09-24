@@ -140,6 +140,25 @@ func (d *DurableReplica) Append(identity *peercrypto.Identity, mutation Mutation
 	return operation, ack, err
 }
 
+// AppendEncrypted allocates the counter, seals plaintext, signs, and persists
+// the operation under one cross-process lock.
+func (d *DurableReplica) AppendEncrypted(identity *peercrypto.Identity, key EpochKey, mutation Mutation) (VerifiedOp, DurableAck, error) {
+	var operation VerifiedOp
+	ack, err := d.mutate(func(replica *Replica, state *durableState) (bool, error) {
+		created, err := replica.AppendEncrypted(identity, key, mutation)
+		if err != nil {
+			return false, err
+		}
+		operation = created
+		state.Ops = append(state.Ops, created.Token)
+		return true, nil
+	})
+	if err != nil {
+		return VerifiedOp{}, DurableAck{}, err
+	}
+	return operation, ack, nil
+}
+
 // AdoptSnapshot durably initializes an empty replica from a trusted snapshot.
 // Membership authorization of the snapshot creator must happen before this
 // method is called.

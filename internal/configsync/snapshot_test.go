@@ -15,11 +15,11 @@ func TestSignedSnapshotRoundTripAndPostSnapshotMutation(t *testing.T) {
 	creator := testIdentity(t)
 	other := testIdentity(t)
 	source := newTestReplica(t, spaceID, 1)
-	first, err := source.Append(creator, Mutation{Collection: "preferences", RecordID: "theme", Kind: KindSet, Payload: []byte("dark")})
+	first, err := source.Append(creator, testConfigMutation("theme", KindSet, "dark"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := source.Append(creator, Mutation{Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("en")}); err != nil {
+	if _, err := source.Append(creator, testConfigMutation("locale", KindSet, "en")); err != nil {
 		t.Fatal(err)
 	}
 	deleteLocale := signTestOp(t, other, spaceID, 1, replicaNowMS+100, source.Vector(), "locale", KindDelete, "", 1)
@@ -59,7 +59,7 @@ func TestSignedSnapshotRoundTripAndPostSnapshotMutation(t *testing.T) {
 	if _, err := restored.Apply(fork); !errors.Is(err, ErrCounterFork) {
 		t.Fatalf("compacted winner fork error=%v", err)
 	}
-	created, err := restored.Append(creator, Mutation{Collection: "preferences", RecordID: "theme", Kind: KindSet, Payload: []byte("light")})
+	created, err := restored.Append(creator, testConfigMutation("theme", KindSet, "light"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestSnapshotRejectsIncompleteHistoryAndMutation(t *testing.T) {
 	}
 
 	complete := newTestReplica(t, spaceID, 1)
-	if _, err := complete.Append(creator, Mutation{Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("en")}); err != nil {
+	if _, err := complete.Append(creator, testConfigMutation("locale", KindSet, "en")); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := complete.SignSnapshot(creator)

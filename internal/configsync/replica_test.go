@@ -28,7 +28,7 @@ func signTestOp(t *testing.T, id *peercrypto.Identity, spaceID string, counter u
 	t.Helper()
 	token, err := SignOp(id, spaceID, counter, Timestamp{PhysicalMS: physical}, causal, Mutation{
 		SchemaVersion: schema, Collection: "preferences", RecordID: record,
-		Kind: kind, Payload: []byte(payload),
+		Kind: kind, KeyClass: KeyClassSync, KeyEpoch: 1, Payload: []byte(payload),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestReplicaRejectsCounterForkAndLocalRollback(t *testing.T) {
 	if _, err := r.Apply(fork); !errors.Is(err, ErrCounterFork) {
 		t.Fatalf("fork error = %v", err)
 	}
-	if _, err := r.AppendAtCounter(id, 1, Mutation{Collection: "preferences", RecordID: "theme", Kind: KindSet, Payload: []byte("dark")}); !errors.Is(err, ErrCounterRollback) {
+	if _, err := r.AppendAtCounter(id, 1, testConfigMutation("theme", KindSet, "dark")); !errors.Is(err, ErrCounterRollback) {
 		t.Fatalf("rollback error = %v", err)
 	}
 	if result, err := r.Apply(one); err != nil || !result.Duplicate || result.Stored {
@@ -209,15 +209,15 @@ func TestReplicaThreeDevicePropagation(t *testing.T) {
 	ids := []*peercrypto.Identity{testIdentity(t), testIdentity(t), testIdentity(t)}
 	replicas := []*Replica{newTestReplica(t, spaceID, 1), newTestReplica(t, spaceID, 1), newTestReplica(t, spaceID, 1)}
 
-	if _, err := replicas[0].Append(ids[0], Mutation{Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("en")}); err != nil {
+	if _, err := replicas[0].Append(ids[0], testConfigMutation("locale", KindSet, "en")); err != nil {
 		t.Fatal(err)
 	}
 	syncReplicas(t, replicas[0], replicas[1])
-	if _, err := replicas[1].Append(ids[1], Mutation{Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("zh-CN")}); err != nil {
+	if _, err := replicas[1].Append(ids[1], testConfigMutation("locale", KindSet, "zh-CN")); err != nil {
 		t.Fatal(err)
 	}
 	syncReplicas(t, replicas[1], replicas[2])
-	if _, err := replicas[2].Append(ids[2], Mutation{Collection: "preferences", RecordID: "theme", Kind: KindSet, Payload: []byte("dark")}); err != nil {
+	if _, err := replicas[2].Append(ids[2], testConfigMutation("theme", KindSet, "dark")); err != nil {
 		t.Fatal(err)
 	}
 	syncReplicas(t, replicas[2], replicas[0])

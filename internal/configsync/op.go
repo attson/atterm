@@ -40,12 +40,16 @@ const (
 	KindDelete Kind = "delete"
 )
 
-// Mutation is the unsigned application-level input for a SyncOp.
+// Mutation is the unsigned application-level input for a SyncOp. Payload is
+// opaque and must already be sealed for normal Peer replication; callers with
+// plaintext should use AppendEncrypted or SignEncryptedOp.
 type Mutation struct {
 	SchemaVersion uint32
 	Collection    string
 	RecordID      string
 	Kind          Kind
+	KeyClass      KeyClass
+	KeyEpoch      uint64
 	Payload       []byte
 }
 
@@ -63,6 +67,8 @@ type SyncOp struct {
 	Collection     string        `json:"collection"`
 	RecordID       string        `json:"record_id"`
 	Kind           Kind          `json:"kind"`
+	KeyClass       KeyClass      `json:"key_class"`
+	KeyEpoch       uint64        `json:"key_epoch"`
 	Payload        []byte        `json:"payload"`
 	PayloadHash    string        `json:"payload_hash"`
 	CausalContext  VersionVector `json:"causal_context"`
@@ -101,6 +107,8 @@ func SignOp(identity *peercrypto.Identity, spaceID string, counter uint64, hlc T
 		Collection:     mutation.Collection,
 		RecordID:       mutation.RecordID,
 		Kind:           mutation.Kind,
+		KeyClass:       mutation.KeyClass,
+		KeyEpoch:       mutation.KeyEpoch,
 		Payload:        payload,
 		PayloadHash:    encode(payloadHash[:]),
 		CausalContext:  causal.Clone(),
@@ -190,6 +198,9 @@ func validateOp(doc SyncOp, publicKey []byte) error {
 	}
 	if doc.Kind != KindSet && doc.Kind != KindDelete {
 		return fmt.Errorf("%w: mutation kind", ErrInvalidOp)
+	}
+	if !doc.KeyClass.valid() || doc.KeyEpoch == 0 {
+		return fmt.Errorf("%w: key class or epoch", ErrInvalidOp)
 	}
 	if len(doc.Payload) > maxPayloadBytes || (doc.Kind == KindDelete && len(doc.Payload) != 0) {
 		return fmt.Errorf("%w: payload", ErrInvalidOp)

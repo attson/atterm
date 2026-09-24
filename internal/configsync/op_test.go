@@ -26,6 +26,8 @@ func testToken(t *testing.T, id *peercrypto.Identity, spaceID string) string {
 		Collection:    "preferences",
 		RecordID:      "terminal_theme",
 		Kind:          KindSet,
+		KeyClass:      KeyClassSync,
+		KeyEpoch:      1,
 		Payload:       []byte(`{"name":"dark"}`),
 	})
 	if err != nil {
@@ -92,10 +94,18 @@ func TestSignedOpRejectsActorKeyMismatchAndUnknownFields(t *testing.T) {
 func TestSignedOpRejectsBrokenCounterChain(t *testing.T) {
 	id := testIdentity(t)
 	_, err := SignOp(id, uuid.NewString(), 2, Timestamp{PhysicalMS: 1}, nil, Mutation{
-		SchemaVersion: 1, Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("zh-CN"),
+		SchemaVersion: 1, Collection: "preferences", RecordID: "locale", Kind: KindSet,
+		KeyClass: KeyClassSync, KeyEpoch: 1, Payload: []byte("zh-CN"),
 	})
 	if err == nil {
 		t.Fatal("counter 2 without causal counter 1 was accepted")
+	}
+}
+
+func testConfigMutation(recordID string, kind Kind, payload string) Mutation {
+	return Mutation{
+		Collection: "preferences", RecordID: recordID, Kind: kind,
+		KeyClass: KeyClassSync, KeyEpoch: 1, Payload: []byte(payload),
 	}
 }
 

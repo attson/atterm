@@ -1,6 +1,7 @@
 package configsync
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func TestDurableReplicaSurvivesRestartAndCompaction(t *testing.T) {
 	remote := testIdentity(t)
 	store := openTestDurable(t, path, spaceID)
 
-	first, ack, err := store.Append(identity, Mutation{Collection: "preferences", RecordID: "theme", Kind: KindSet, Payload: []byte("dark")})
+	first, ack, err := store.Append(identity, testConfigMutation("theme", KindSet, "dark"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +76,7 @@ func TestDurableReplicaSurvivesRestartAndCompaction(t *testing.T) {
 	}
 
 	afterCompact := openTestDurable(t, path, spaceID)
-	third, _, err := afterCompact.Append(identity, Mutation{Collection: "preferences", RecordID: "theme", Kind: KindSet, Payload: []byte("light")})
+	third, _, err := afterCompact.Append(identity, testConfigMutation("theme", KindSet, "light"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +106,7 @@ func TestDurableReplicaCrossProcessCounterAllocation(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			operations[index], _, errs[index] = stores[index].Append(identity, Mutation{
-				Collection: "preferences", RecordID: "record-" + string(rune('a'+index)),
-				Kind: KindSet, Payload: []byte("value"),
-			})
+			operations[index], _, errs[index] = stores[index].Append(identity, testConfigMutation("record-"+string(rune('a'+index)), KindSet, "value"))
 		}(index)
 	}
 	wg.Wait()
@@ -135,13 +133,13 @@ func TestDurableReplicaAdoptsSnapshotBeforeTail(t *testing.T) {
 	identity := testIdentity(t)
 	sourcePath := filepath.Join(t.TempDir(), "source.json")
 	source := openTestDurable(t, sourcePath, spaceID)
-	if _, _, err := source.Append(identity, Mutation{Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("en")}); err != nil {
+	if _, _, err := source.Append(identity, testConfigMutation("locale", KindSet, "en")); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := source.Compact(identity); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := source.Append(identity, Mutation{Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("zh-CN")}); err != nil {
+	if _, _, err := source.Append(identity, testConfigMutation("locale", KindSet, "zh-CN")); err != nil {
 		t.Fatal(err)
 	}
 	transfer := source.StateForPeer(nil)
@@ -183,7 +181,7 @@ func TestDurableReplicaFileIsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Append(identity, Mutation{Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: []byte("en")}); err != nil {
+	if _, _, err := store.Append(identity, testConfigMutation("locale", KindSet, "en")); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -192,5 +190,38 @@ func TestDurableReplicaFileIsPrivate(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("store mode=%o want=600", info.Mode().Perm())
+	}
+}
+
+func TestDurableReplicaEncryptsBeforePersisting(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	store := openTestDurable(t, path, spaceID)
+	identity := testIdentity(t)
+	key, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext := []byte("plaintext-must-not-reach-disk")
+	if _, _, err := store.AppendEncrypted(identity, key, Mutation{
+		Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: plaintext,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(blob, plaintext) {
+		t.Fatal("durable replica contains plaintext config payload")
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	record, ok := reopened.Get("preferences", "locale")
+	if !ok {
+		t.Fatal("encrypted durable record missing")
+	}
+	opened, err := OpenRecordPayload(key, record)
+	if err != nil || !bytes.Equal(opened, plaintext) {
+		t.Fatalf("opened durable payload=%q err=%v", opened, err)
 	}
 }

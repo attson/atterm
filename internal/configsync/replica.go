@@ -27,6 +27,7 @@ type ApplyResult struct {
 // Record is one materialized scalar or map entity. A deleted record remains
 // visible as a tombstone so concurrent stale sets cannot resurrect it.
 type Record struct {
+	SpaceID       string
 	Collection    string
 	RecordID      string
 	Deleted       bool
@@ -35,6 +36,8 @@ type Record struct {
 	ActorDeviceID string
 	Counter       uint64
 	HLC           Timestamp
+	KeyClass      KeyClass
+	KeyEpoch      uint64
 }
 
 type recordKey struct {
@@ -158,6 +161,34 @@ func (r *Replica) Append(identity *peercrypto.Identity, mutation Mutation) (Veri
 	return r.appendAtCounter(identity, next, mutation)
 }
 
+// AppendEncrypted allocates the next local counter and seals the plaintext
+// mutation payload under key before signing and applying the operation.
+func (r *Replica) AppendEncrypted(identity *peercrypto.Identity, key EpochKey, mutation Mutation) (VerifiedOp, error) {
+	if identity == nil {
+		return VerifiedOp{}, fmt.Errorf("%w: missing identity", ErrInvalidOp)
+	}
+	r.localMu.Lock()
+	defer r.localMu.Unlock()
+	r.mu.RLock()
+	next := r.maxCounters[identity.PeerID()] + 1
+	causal := r.vector.Clone()
+	r.mu.RUnlock()
+	if causal[identity.PeerID()] != next-1 {
+		return VerifiedOp{}, fmt.Errorf("%w: actor=%s next=%d contiguous_next=%d", ErrCounterRollback, identity.PeerID(), next, causal[identity.PeerID()]+1)
+	}
+	if mutation.SchemaVersion == 0 {
+		mutation.SchemaVersion = r.supportedSchemaVersion
+	}
+	token, err := SignEncryptedOp(identity, r.spaceID, next, r.clock.Tick(), causal, key, mutation)
+	if err != nil {
+		return VerifiedOp{}, err
+	}
+	if _, err := r.Apply(token); err != nil {
+		return VerifiedOp{}, err
+	}
+	return VerifyOp(token)
+}
+
 // AppendAtCounter is the persistence boundary for callers that own a durable
 // device counter. A mismatch stops sync instead of silently reusing an op ID.
 func (r *Replica) AppendAtCounter(identity *peercrypto.Identity, counter uint64, mutation Mutation) (VerifiedOp, error) {
@@ -246,10 +277,10 @@ func (r *Replica) Get(collection, recordID string) (Record, bool) {
 	}
 	doc := op.Document
 	return Record{
-		Collection: doc.Collection, RecordID: doc.RecordID,
+		SpaceID: doc.SpaceID, Collection: doc.Collection, RecordID: doc.RecordID,
 		Deleted: doc.Kind == KindDelete, Payload: append([]byte(nil), doc.Payload...),
 		OpID: doc.OpID, ActorDeviceID: doc.ActorDeviceID,
-		Counter: doc.Counter, HLC: doc.HLC,
+		Counter: doc.Counter, HLC: doc.HLC, KeyClass: doc.KeyClass, KeyEpoch: doc.KeyEpoch,
 	}, true
 }
 

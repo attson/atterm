@@ -808,6 +808,14 @@ export function createCapacitorPlatform(): Platform {
         localStorage.removeItem(AUXKEYS_KEY)
       },
     },
+    directConnection: {
+      load: async () => typeof localStorage !== 'undefined' && localStorage.getItem('atterm.direct_connection.enabled') === '1',
+      save: async (enabled: boolean) => {
+        if (typeof localStorage === 'undefined') return
+        if (enabled) localStorage.setItem('atterm.direct_connection.enabled', '1')
+        else localStorage.removeItem('atterm.direct_connection.enabled')
+      },
+    },
     // updater + pluginHost omitted — desktop-only
   }
 }

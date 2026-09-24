@@ -363,6 +363,14 @@ export function setWebglRendererEnabled(enabled: boolean): Promise<void> {
   return bindings().SetWebglRendererEnabled(enabled);
 }
 
+export function getDirectP2PEnabled(): Promise<boolean> {
+  return bindings().GetDirectP2PEnabled();
+}
+
+export function setDirectP2PEnabled(enabled: boolean): Promise<void> {
+  return bindings().SetDirectP2PEnabled(enabled);
+}
+
 export function getCommandNotifyThresholdSeconds(): Promise<number> {
   return bindings().GetCommandNotifyThresholdSeconds();
 }

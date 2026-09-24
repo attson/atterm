@@ -1,28 +1,38 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../lib/log";
+import { Info } from "lucide-vue-next";
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword, rememberRelayPassword, clearRelayConfig } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import PairingPanel from "./PairingPanel.vue";
+import AccountTrafficDashboard from "./AccountTrafficDashboard.vue";
+import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import { useI18n } from "../i18n/useI18n";
 
 const emit = defineEmits<{
   (e: "relay-config-changed"): void;
   (e: "dirty", value: boolean): void;
+  (e: "direct-connection-changed", enabled: boolean): void;
 }>();
 
-// `host` holds the bare relay host the user types (no scheme). Relay
-// connections are always HTTPS/WSS; the scheme is rendered as a fixed
-// `https://` prefix. `fullUrl` reconstructs the URL sent to the backend.
+type RelayScheme = "https" | "http";
+
+// `host` holds the bare relay host the user types. `relayScheme` is explicit:
+// production relays stay on HTTPS while loopback development relays can use
+// the HTTP listener started by the documented `go run` command.
 const host = ref("");
+const relayScheme = ref<RelayScheme>("https");
+const relaySchemeOptions: SelectOption[] = [
+  { value: "https", label: "https://" },
+  { value: "http", label: "http://" },
+];
 // `token` mirrors the persisted session token (issued by /api/auth/login).
 // It is no longer user-editable — see the email/password login form below.
 const token = ref("");
-// allowInsecureRelay = "trust self-signed certificate": when checked the
-// desktop skips TLS verification so it can reach a relay serving a
-// self-signed cert (atterm-relay's quick-start default). It no longer
-// downgrades the scheme to http:// — connections stay HTTPS either way.
+// For HTTPS this permits a self-signed certificate. For non-loopback HTTP it
+// is the explicit opt-in required by validateRelayEndpoint; loopback HTTP is
+// allowed without it.
 const allowInsecureRelay = ref(false);
 // disableE2EE = true means agent will NOT seal outbound session content.
 // Persisted in appConfig.DisableE2EE and applied immediately via the
@@ -35,6 +45,9 @@ const loading = ref(true);
 const saving = ref(false);
 const clearing = ref(false);
 const togglingPause = ref(false);
+const directConnectionEnabled = ref(false);
+const directConnectionLoading = ref(true);
+const directConnectionSaving = ref(false);
 const error = ref("");
 const { t } = useI18n();
 
@@ -55,6 +68,7 @@ const connectedUserID = ref("");
 const connectedEmail = ref("");
 
 const persistedHost = ref("");
+const persistedScheme = ref<RelayScheme>("https");
 const persistedToken = ref("");
 const persistedAllowInsecure = ref(false);
 
@@ -64,16 +78,20 @@ function stripScheme(s: string): string {
   return s.trim().replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
 }
 
-// Always HTTPS — WebCrypto/OPAQUE require a secure context and the relay
-// serves TLS by default. The self-signed-trust checkbox is orthogonal to the
-// scheme (it only relaxes certificate verification on the desktop side).
-const urlScheme = computed(() => "https://");
+function schemeFromURL(value: string): RelayScheme {
+  return /^(?:http|ws):\/\//i.test(value.trim()) ? "http" : "https";
+}
+
+const urlScheme = computed(() => `${relayScheme.value}://`);
 
 // If a full URL is pasted into the host field, drop the scheme so the bare
 // host doesn't render doubled against the fixed prefix. Only fires when a
 // `scheme://` is actually present, so normal host typing is untouched.
 watch(host, (value) => {
-  if (/:\/\//.test(value)) host.value = stripScheme(value);
+  if (/:\/\//.test(value)) {
+    relayScheme.value = schemeFromURL(value);
+    host.value = stripScheme(value);
+  }
 });
 
 // Full URL handed to the backend (probe / login / setRelayConfig). Empty when
@@ -82,10 +100,16 @@ const fullUrl = computed(() => {
   const h = stripScheme(host.value);
   return h ? urlScheme.value + h : "";
 });
+const relayConfigUrl = computed(() => {
+  const h = stripScheme(host.value);
+  if (!h) return "";
+  return `${relayScheme.value === "http" ? "ws" : "wss"}://${h}`;
+});
 
 const dirty = computed(
   () =>
     stripScheme(host.value) !== persistedHost.value ||
+    relayScheme.value !== persistedScheme.value ||
     token.value !== persistedToken.value ||
     allowInsecureRelay.value !== persistedAllowInsecure.value,
 );
@@ -135,6 +159,7 @@ async function reload() {
   try {
     const cfg = await getRelayConfig();
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    relayScheme.value = schemeFromURL(cfg.url);
     host.value = stripScheme(cfg.url);
     token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
@@ -171,7 +196,7 @@ async function reload() {
 }
 
 onMounted(async () => {
-  await reload();
+  await Promise.all([reload(), loadDirectConnectionPreference()]);
 
   platform.events.on('relay:auth-info', async (data) => {
     const { user_id } = data as { user_id: string };
@@ -197,6 +222,35 @@ onMounted(async () => {
     }
   });
 });
+
+async function loadDirectConnectionPreference() {
+  try {
+    directConnectionEnabled.value = await platform.directConnection.load();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    directConnectionLoading.value = false;
+  }
+}
+
+async function onDirectConnectionToggle(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previous = directConnectionEnabled.value;
+  directConnectionEnabled.value = target.checked;
+  directConnectionSaving.value = true;
+  error.value = "";
+  try {
+    await platform.directConnection.save(target.checked);
+    const effective = await platform.directConnection.load();
+    directConnectionEnabled.value = effective;
+    emit("direct-connection-changed", effective);
+  } catch (err: any) {
+    directConnectionEnabled.value = previous;
+    error.value = err?.message ?? String(err);
+  } finally {
+    directConnectionSaving.value = false;
+  }
+}
 
 onBeforeUnmount(() => {
   // platform.events handlers are cleaned up at the platform layer when
@@ -225,6 +279,7 @@ async function onDisableE2EEChange(e: Event) {
 
 function snapshotPersisted() {
   persistedHost.value = stripScheme(host.value);
+  persistedScheme.value = relayScheme.value;
   persistedToken.value = token.value;
   persistedAllowInsecure.value = allowInsecureRelay.value;
 }
@@ -236,7 +291,7 @@ function snapshotPersisted() {
 async function rememberInputs() {
   try {
     await setRelayConfig({
-      url: fullUrl.value,
+      url: relayConfigUrl.value,
       token: token.value,
       session_expires_at: 0,
       allow_insecure_relay: allowInsecureRelay.value,
@@ -272,8 +327,8 @@ async function save() {
   saving.value = true;
   error.value = "";
 
-  // 1. URL format check (cheap, local). fullUrl already carries the scheme
-  // derived from insecure mode, so we validate the reconstructed value.
+  // 1. URL format check (cheap, local). fullUrl carries the protocol selected
+  // next to the host field, so validate the reconstructed value.
   if (!isValidRelayUrl(fullUrl.value)) {
     error.value = t("settings.relay.relayInvalid");
     saving.value = false;
@@ -311,7 +366,7 @@ async function save() {
   } else if (hasExistingToken) {
     try {
       await setRelayConfig({
-        url: fullUrl.value,
+        url: relayConfigUrl.value,
         token: token.value,
         session_expires_at: 0,
         allow_insecure_relay: allowInsecureRelay.value,
@@ -337,6 +392,7 @@ async function save() {
   try {
     const cfg = await getRelayConfig();
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    relayScheme.value = schemeFromURL(cfg.url);
     host.value = stripScheme(cfg.url);
     token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
@@ -404,21 +460,49 @@ defineExpose({
     <div v-if="loading" class="dim">{{ t("common.loading") }}</div>
     <template v-else>
       <div class="uplink-toggle-row">
-        <span class="field-label">{{ t("settings.relay.uplink") }}</span>
-        <label class="toggle-switch" :class="{ disabled: togglingPause }">
-          <input
-            v-model="paused"
-            type="checkbox"
-            :true-value="false"
-            :false-value="true"
-            :disabled="togglingPause || !host"
-            @change="handleTogglePaused"
-          />
-          <span class="toggle-track">
-            <span class="toggle-thumb" />
-          </span>
-          <span class="toggle-label">{{ paused ? t("settings.relay.off") : t("settings.relay.on") }}</span>
-        </label>
+        <div class="connection-toggle-group">
+          <span class="field-label">{{ t("settings.relay.uplink") }}</span>
+          <label class="toggle-switch" :class="{ disabled: togglingPause }">
+            <input
+              v-model="paused"
+              type="checkbox"
+              :true-value="false"
+              :false-value="true"
+              :disabled="togglingPause || !host"
+              @change="handleTogglePaused"
+            />
+            <span class="toggle-track">
+              <span class="toggle-thumb" />
+            </span>
+            <span class="toggle-label">{{ paused ? t("settings.relay.off") : t("settings.relay.on") }}</span>
+          </label>
+        </div>
+
+        <div v-if="!directConnectionLoading" class="connection-toggle-group">
+          <span class="field-label">{{ t("settings.relay.preferDirectConnection") }}</span>
+          <button
+            type="button"
+            class="connection-info"
+            data-testid="direct-connection-info"
+            :title="t('settings.relay.preferDirectConnectionHint')"
+            :aria-label="t('settings.relay.preferDirectConnectionHint')"
+          >
+            <Info :size="14" :stroke-width="1.8" aria-hidden="true" />
+          </button>
+          <label class="toggle-switch" :class="{ disabled: directConnectionSaving }">
+            <input
+              type="checkbox"
+              data-testid="direct-connection-toggle"
+              :checked="directConnectionEnabled"
+              :disabled="directConnectionSaving"
+              @change="onDirectConnectionToggle"
+            />
+            <span class="toggle-track">
+              <span class="toggle-thumb" />
+            </span>
+            <span class="toggle-label">{{ directConnectionEnabled ? t("settings.relay.on") : t("settings.relay.off") }}</span>
+          </label>
+        </div>
       </div>
 
       <div class="status-pill" :class="statusPill.cls">
@@ -430,6 +514,10 @@ defineExpose({
         {{ t("settings.relay.hint") }}
       </p>
 
+      <section v-if="connectedUserID" class="traffic-section">
+        <AccountTrafficDashboard />
+      </section>
+
       <div class="url-label-row">
         <label class="field-label" for="relay-host">{{ t("settings.relay.relayUrl") }}</label>
         <label class="insecure-inline">
@@ -438,11 +526,18 @@ defineExpose({
             type="checkbox"
             :disabled="saving"
           />
-          {{ t("settings.relay.insecureMode") }}
+          {{ t(relayScheme === "http" ? "settings.relay.allowCleartext" : "settings.relay.insecureMode") }}
         </label>
       </div>
       <div class="url-input" :class="{ insecure: allowInsecureRelay }">
-        <span class="url-scheme" aria-hidden="true">{{ urlScheme }}</span>
+        <SelectDropdown
+          id="relay-scheme"
+          v-model="relayScheme"
+          class="url-scheme"
+          :options="relaySchemeOptions"
+          :aria-label="t('settings.relay.scheme')"
+          :disabled="saving"
+        />
         <input
           id="relay-host"
           v-model="host"
@@ -454,7 +549,10 @@ defineExpose({
           @keyup.enter="save"
         />
       </div>
-      <p v-if="allowInsecureRelay" class="warning">
+      <p v-if="relayScheme === 'http'" class="warning">
+        {{ t("settings.relay.cleartextWarning") }}
+      </p>
+      <p v-else-if="allowInsecureRelay" class="warning">
         {{ t("settings.relay.insecureWarning") }}
       </p>
 
@@ -608,30 +706,32 @@ defineExpose({
   margin: 0;
 }
 
-/* url input with a fixed, non-editable scheme prefix glued to its left */
+/* URL input with a protocol menu glued to its left. */
 .url-input {
   display: flex;
   align-items: stretch;
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
   background: var(--bg);
 }
 .url-input:focus-within {
   box-shadow: 0 0 0 2px var(--accent);
 }
 .url-scheme {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 8px;
-  font-size: 13px;
-  color: var(--fg-dim);
-  background: color-mix(in srgb, var(--fg-dim) 12%, transparent 88%);
-  border-right: 1px solid var(--border);
-  user-select: none;
-  white-space: nowrap;
+  flex: 0 0 90px;
 }
-.url-input.insecure .url-scheme {
+.url-scheme :deep(.trigger) {
+  height: 100%;
+  min-height: 30px;
+  background: var(--panel);
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 5px 0 0 5px;
+}
+.url-scheme :deep(.menu) {
+  min-width: 100%;
+}
+.url-input.insecure .url-scheme :deep(.trigger-label) {
   color: var(--warn, #d97706);
 }
 .url-input input {
@@ -676,6 +776,11 @@ defineExpose({
   flex-direction: column;
   gap: 12px;
 }
+.traffic-section {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
 .dim {
   color: var(--fg-dim);
   font-size: 13px;
@@ -683,7 +788,36 @@ defineExpose({
 .uplink-toggle-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  column-gap: 28px;
+  row-gap: 10px;
+}
+.connection-toggle-group {
+  display: flex;
+  align-items: center;
   gap: 10px;
+}
+.connection-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0 -4px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: help;
+}
+.connection-info:hover,
+.connection-info:focus-visible {
+  color: var(--accent);
+}
+.connection-info:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 50%;
 }
 .toggle-switch {
   display: inline-flex;

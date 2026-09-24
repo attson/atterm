@@ -29,6 +29,17 @@ describe("TerminalView plugin connection registry", () => {
   });
 });
 
+describe("TerminalView direct transport plumbing", () => {
+  test("keeps the public signaling endpoint separate from the Relay attach endpoint", () => {
+    expect(appSource).toContain(':direct-endpoint="directSignalEndpoint"');
+    expect(paneSource).toContain(':direct-endpoint="pane.remote ? directEndpoint : null"');
+    expect(paneSource).toContain(':prefer-direct="pane.remote && preferDirect"');
+    expect(source).toContain("directEndpoint: props.directEndpoint");
+    expect(source).toContain("directTransportFactory: platform.directConnection.createTransport");
+    expect(source).toContain("preferDirect: props.preferDirect");
+  });
+});
+
 describe("TerminalView async mount lifecycle", () => {
   test("does not attach after an async mount resumes on an unmounted view", () => {
     expect(source).toContain("let isAlive = true;");
@@ -56,13 +67,18 @@ describe("TerminalView async mount lifecycle", () => {
 });
 
 describe("TerminalView overlay placement", () => {
-  test("remote panes move attach progress below the remote badge", () => {
+  test("merges route diagnostics into the host badge and keeps attach progress below it", () => {
     expect(source).toContain("avoidTopRightBadge?: boolean");
     expect(source).toContain("avoidTopRightBadge");
     expect(paneSource).toContain(":avoid-top-right-badge=\"pane.remote ||");
 
     const offsetStyle = styleBlockFor(".overlay.avoid-top-right-badge");
     expect(offsetStyle).toMatch(/top\s*:\s*34px/);
+    expect(source).toContain('<Teleport v-if="!isLocalSession" defer :to="routeIndicatorTarget">');
+    expect(source).toContain("const routeIndicatorTarget = computed(() => `#session-route-indicator-${props.sessionId}`)");
+    expect(paneSource).toContain('class="route-indicator-slot"');
+    expect(paneSource).toContain('`session-route-indicator-${pane.sessionId}`');
+    expect(source).toContain('data-testid="session-route-indicator"');
   });
 });
 

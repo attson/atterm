@@ -207,9 +207,7 @@ func TestJumpUserHostPortElementOnlyMatchesASavedHost(t *testing.T) {
 	if got := bastion.authCredentials(); len(got) != 1 || got[0] != "bastion-user:bastion-pw" {
 		t.Fatalf("the element's user must be ignored in favour of the saved host's, got %q", got)
 	}
-	if opened, _ := bastion.counts(); opened != 1 {
-		t.Fatalf("the saved bastion must be the machine dialled, got %d connection(s)", opened)
-	}
+	waitOpened(t, bastion, 1, "saved bastion is dialled")
 }
 
 // TestJumpElementPortPicksTheSavedHostOnThatPort: two saved records for the
@@ -237,9 +235,7 @@ func TestJumpElementPortPicksTheSavedHostOnThatPort(t *testing.T) {
 	}
 	defer chain.Close()
 
-	if opened, _ := right.counts(); opened != 1 {
-		t.Fatalf("the hop on the port the element named must be the one dialled, got %d connection(s)", opened)
-	}
+	waitOpened(t, right, 1, "hop selected by port is dialled")
 	if opened, _ := wrong.counts(); opened != 0 {
 		t.Fatalf("the record on the other port must not be dialled, got %d connection(s)", opened)
 	}
@@ -271,9 +267,7 @@ func TestJumpChainDialsEveryHopInOrder(t *testing.T) {
 	defer chain.Close()
 
 	for name, srv := range map[string]*forwardTestServer{"a": srvA, "b": srvB, "c": srvC, "target": srvT} {
-		if opened, _ := srv.counts(); opened != 1 {
-			t.Fatalf("hop %s: want exactly 1 connection, got %d", name, opened)
-		}
+		waitOpened(t, srv, 1, "hop "+name+" is dialled once")
 	}
 	wantVia := []struct {
 		from *forwardTestServer
@@ -390,9 +384,7 @@ func TestFailedHopClosesEarlierHops(t *testing.T) {
 		srv  *forwardTestServer
 		name string
 	}{{srv1, "hop 1"}, {srv2, "hop 2"}} {
-		if opened, _ := s.srv.counts(); opened != 1 {
-			t.Fatalf("%s: want exactly 1 connection opened, got %d", s.name, opened)
-		}
+		waitOpened(t, s.srv, 1, s.name+" opened before cleanup")
 		waitClosed(t, s.srv, 1, s.name+" after a later hop failed")
 	}
 	if opened, _ := srvT.counts(); opened != 0 {
@@ -612,9 +604,7 @@ func TestDirectHostDialsWithoutAChain(t *testing.T) {
 	if chain.targetHopIndex() != 0 {
 		t.Fatalf("targetHopIndex = %d, want 0 (no chain to disambiguate)", chain.targetHopIndex())
 	}
-	if opened, _ := srv.counts(); opened != 1 {
-		t.Fatalf("want exactly 1 connection to the host, got %d", opened)
-	}
+	waitOpened(t, srv, 1, "direct host is dialled once")
 	echoHost, echoPort := startEchoTarget(t)
 	remote, err := chain.Target().DialRemote("tcp", net.JoinHostPort(echoHost, echoPort))
 	if err != nil {

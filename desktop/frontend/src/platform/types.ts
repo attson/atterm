@@ -271,11 +271,20 @@ export interface TemplateBridge {
 }
 
 import type { AuxKey } from '../lib/auxKeys'
+import type { DirectClientOptions } from '../lib/directClient'
+import type { DirectTransport } from '../lib/connection'
 
 export interface AuxKeyBridge {
   load(): Promise<AuxKey[]>
   save(list: AuxKey[]): Promise<void>
   clear(): Promise<void>
+}
+
+export interface DirectConnectionBridge {
+  load(): Promise<boolean>
+  save(enabled: boolean): Promise<void>
+  /** Desktop injects Go/Pion; browser/mobile omit this and use WebRTC. */
+  createTransport?: (options: DirectClientOptions) => DirectTransport
 }
 
 // WidgetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the
@@ -343,6 +352,7 @@ export interface Platform {
   events: EventBus
   templates: TemplateBridge
   auxKeys: AuxKeyBridge
+  directConnection: DirectConnectionBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
   deskWidget?: WidgetBridge

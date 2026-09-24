@@ -54,18 +54,30 @@ describe("SettingsDialog shell", () => {
     expect(source).toContain("LogViewerDialog");
   });
 
+  test("forwards direct connection changes from the relay pane", () => {
+    const generalTag = source.match(/<SettingsGeneral[\s\S]*?\/>/)?.[0] ?? "";
+    const relayTag = source.match(/<SettingsRelay[\s\S]*?\/>/)?.[0] ?? "";
+    expect(relayTag).toContain("@direct-connection-changed=\"emit('direct-connection-changed', $event)\"");
+    expect(generalTag).not.toContain("@direct-connection-changed");
+  });
+
   test("confirms before discarding unsaved relay changes on tab switch", () => {
     expect(source).toContain("relayDirty");
     expect(source).toContain("pendingTab");
     expect(source).toMatch(/showDiscardConfirm\s*=/);
   });
 
-  test("dialog uses fixed wider size and pinned column layout", () => {
+  test("all tabs use the relay-sized dialog and pinned column layout", () => {
     const dialogStyle = styleBlockFor(".settings-dialog");
-    expect(dialogStyle).toMatch(/width\s*:\s*720px/);
-    expect(dialogStyle).toMatch(/height\s*:\s*540px/);
+    expect(dialogStyle).toMatch(/width\s*:\s*1040px/);
+    expect(dialogStyle).toMatch(/height\s*:\s*720px/);
     const navStyle = styleBlockFor(".settings-nav");
     expect(navStyle).toMatch(/width\s*:\s*160px/);
+  });
+
+  test("does not resize the dialog when switching to analytics tabs", () => {
+    expect(source).not.toContain("settings-dialog--analytics");
+    expect(source).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.settings-dialog\s*\{[\s\S]*?width:\s*100vw/);
   });
 
   test("imports the SettingsShortcuts subcomponent", () => {

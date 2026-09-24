@@ -69,6 +69,8 @@ export function GetDefaultShell():Promise<string>;
 
 export function GetDiagnostics(arg1:string):Promise<main.DiagnosticsPayload>;
 
+export function GetDirectP2PEnabled():Promise<boolean>;
+
 export function GetEndpoint():Promise<main.Endpoint>;
 
 export function GetFeishuEffectiveMode():Promise<string>;
@@ -241,6 +243,8 @@ export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
 export function SendFeishuTestCard(arg1:string):Promise<void>;
 
+export function SendNativeDirectFrame(arg1:string,arg2:Array<number>):Promise<void>;
+
 export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
@@ -250,6 +254,8 @@ export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
 export function SetDefaultProfileID(arg1:string):Promise<void>;
 
 export function SetDefaultShell(arg1:string):Promise<void>;
+
+export function SetDirectP2PEnabled(arg1:boolean):Promise<void>;
 
 export function SetFeishuCredentials(arg1:feishu.Credentials):Promise<void>;
 
@@ -321,11 +327,15 @@ export function StartDownload():Promise<void>;
 
 export function StartForward(arg1:string,arg2:string):Promise<void>;
 
+export function StartNativeDirect(arg1:main.NativeDirectStartRequest):Promise<void>;
+
 export function StartServicePreview(arg1:main.ServicePreviewStartRequest):Promise<main.ServicePreviewStartResponse>;
 
 export function StartWidget():Promise<void>;
 
 export function StopForward(arg1:string,arg2:string):Promise<void>;
+
+export function StopNativeDirect(arg1:string):Promise<void>;
 
 export function StopServicePreview(arg1:string):Promise<void>;
 

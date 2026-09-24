@@ -5,6 +5,41 @@ export interface MeResponse {
   csrf_token?: string
 }
 
+export interface MeRelayTrafficDay {
+  day: string
+  bytes_in: number
+  bytes_out: number
+  frames_in: number
+  frames_out: number
+}
+
+export interface MeDirectTrafficDay {
+  day: string
+  attempts: number
+  successes: number
+  fallbacks: number
+  bytes_sent: number
+  bytes_received: number
+}
+
+export interface MeRelayTrafficDetail {
+  day: string
+  frame_type: number
+  frame_type_name: string
+  category: string
+  direction: number
+  bytes: number
+  frames: number
+}
+
+export interface MeTrafficResponse {
+  from: string
+  to: string
+  relay: MeRelayTrafficDay[]
+  relay_detail: MeRelayTrafficDetail[]
+  direct: MeDirectTrafficDay[]
+}
+
 export interface AuthSuccess {
   user_id: string
   email: string
@@ -177,6 +212,11 @@ export interface AdminHealthResponse {
   active_sessions: number
   relay_instances: number
   traffic_flush_interval_seconds: number
+  direct_attempts: number
+  direct_signal_enabled: boolean
+  direct_successes: number
+  direct_fallbacks: number
+  direct_bytes_avoided: number
   generated_at: string
   health_check_warnings?: string[]
 }

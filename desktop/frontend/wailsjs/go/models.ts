@@ -721,6 +721,24 @@ export namespace main {
 	        this.level = source["level"];
 	    }
 	}
+	export class NativeDirectStartRequest {
+	    id: string;
+	    session_id: string;
+	    since_seq: number;
+	    client_instance_id: string;
+
+	    static createFrom(source: any = {}) {
+	        return new NativeDirectStartRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.session_id = source["session_id"];
+	        this.since_seq = source["since_seq"];
+	        this.client_instance_id = source["client_instance_id"];
+	    }
+	}
 	export class NewSessionReq {
 	    command: string;
 	    args?: string[];
@@ -1116,6 +1134,7 @@ export namespace main {
 	    connected: boolean;
 	    remote_proxy_url: string;
 	    remote_http_proxy_url: string;
+	    home_instance_url: string;
 	    paused: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -1134,6 +1153,7 @@ export namespace main {
 	        this.connected = source["connected"];
 	        this.remote_proxy_url = source["remote_proxy_url"];
 	        this.remote_http_proxy_url = source["remote_http_proxy_url"];
+	        this.home_instance_url = source["home_instance_url"];
 	        this.paused = source["paused"];
 	    }
 	}
@@ -1677,4 +1697,3 @@ export namespace main {
 	}
 
 }
-

@@ -39,6 +39,9 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	if err != nil {
 		return err
 	}
+	if err := validateRelayEndpoint(wsURL, allowInsecure); err != nil {
+		return err
+	}
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -118,6 +121,9 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 	}
 	httpURL, wsURL, err := relayLoginEndpoints(relayURL)
 	if err != nil {
+		return err
+	}
+	if err := validateRelayEndpoint(wsURL, allowInsecure); err != nil {
 		return err
 	}
 	ctx := a.ctx
@@ -224,9 +230,12 @@ func (a *App) ProbeRelayVersion(relayURL string, allowInsecure bool) error {
 	if relayURL == "" {
 		return fmt.Errorf("relay url is empty")
 	}
-	httpURL, _, err := relayLoginEndpoints(relayURL)
+	httpURL, wsURL, err := relayLoginEndpoints(relayURL)
 	if err != nil {
 		return fmt.Errorf("invalid relay url: %w", err)
+	}
+	if err := validateRelayEndpoint(wsURL, allowInsecure); err != nil {
+		return err
 	}
 	ctx := a.ctx
 	if ctx == nil {

@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
-	"nhooyr.io/websocket"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +20,7 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
+	"nhooyr.io/websocket"
 )
 
 // Config configures a Server.
@@ -84,6 +85,10 @@ type Config struct {
 	// instance_id in the relay_instances registry). Empty disables node
 	// registration / selection (single-instance/dev).
 	InstancePublicURL string
+	// DirectSignalEnabled mounts the v0.6 beta WebRTC signaling surface. It
+	// defaults off so upgrading a Relay cannot change terminal routing until an
+	// operator explicitly joins the beta.
+	DirectSignalEnabled bool
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -95,6 +100,8 @@ type Server struct {
 	rate        *fixedWindowLimiter
 	conns       *connectionLimiter
 	services    *serviceHub
+	direct      *directSignalHub
+	directStats *directMetrics
 	startTime   time.Time
 	uplinkCount int64 // atomic; read via UplinkCount()
 	// feishu holds the runtime Feishu handler; nil = integration disabled.
@@ -113,9 +120,10 @@ type Server struct {
 	// traffic accumulates per-user byte/frame counts on the send/receive
 	// paths; flushStop signals the flush goroutine to drain and exit, and
 	// flushDone is closed once it has.
-	traffic   *trafficMeter
-	flushStop chan struct{}
-	flushDone chan struct{}
+	traffic        *trafficMeter
+	trafficFlushMu sync.Mutex
+	flushStop      chan struct{}
+	flushDone      chan struct{}
 }
 
 // NewServer builds a Server with its routes installed.
@@ -128,6 +136,7 @@ func NewServer(cfg Config) *Server {
 	if connLimit == 0 {
 		connLimit = defaultMaxConnections
 	}
+	directStats := newDirectMetrics()
 	s := &Server{
 		cfg:         cfg,
 		registry:    session.NewRegistry(),
@@ -136,6 +145,8 @@ func NewServer(cfg Config) *Server {
 		rate:        newFixedWindowLimiter(rateLimit, time.Minute),
 		conns:       newConnectionLimiter(connLimit),
 		services:    newServiceHub(),
+		direct:      newDirectSignalHub(directStats),
+		directStats: directStats,
 		startTime:   time.Now(),
 	}
 	originsInit := append([]string(nil), cfg.AllowedOrigins...)
@@ -155,6 +166,7 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/client-sessions", s.requireSession(s.handleClientSessionsHTTP))
 	s.mux.HandleFunc("/service-client", s.requireSession(s.handleServiceClientHTTP))
 	s.mux.HandleFunc("/service-host", s.requireSession(s.handleServiceHostHTTP))
+	s.mux.HandleFunc("/direct-signal", s.requireSession(s.handleDirectSignalHTTP))
 	s.mux.HandleFunc("/api/sessions", s.requireSession(s.handleSessionsHTTP))
 	// Public — anonymous traffic allowed.
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
@@ -212,6 +224,7 @@ func NewServer(cfg Config) *Server {
 		s.mux.HandleFunc("POST /api/sessions/seen", s.requireSession(s.handleSessionsSeenHTTP))
 		s.mux.HandleFunc("GET /api/nodes", s.requireSession(s.handleNodesHTTP))
 		s.mux.HandleFunc("PUT /api/me/home", s.requireSession(s.handleSetHomeHTTP))
+		s.mux.HandleFunc("GET /api/me/traffic", s.requireSession(s.handleMeTrafficHTTP))
 
 		// OPAQUE auth: wire only when both the singleton was built
 		// upstream and the store is the concrete SQLite one the handler

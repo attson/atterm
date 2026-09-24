@@ -104,6 +104,7 @@ const emit = defineEmits<{
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", appearance: TerminalAppearance): void;
+  (e: "direct-connection-changed", enabled: boolean): void;
   (e: "bindings-changed", bindings: Record<string, string>): void;
   (e: "profiles-changed"): void;
   (e: "session-created", sessionId: string): void;
@@ -472,6 +473,7 @@ function onSaveClick() {
             ref="relayRef"
             @dirty="onRelayDirty"
             @relay-config-changed="onRelayConfigChanged"
+            @direct-connection-changed="emit('direct-connection-changed', $event)"
           />
           <SettingsUpdates
             v-if="caps.autoUpdate"
@@ -573,8 +575,8 @@ function onSaveClick() {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  width: 720px;
-  height: 540px;
+  width: 1040px;
+  height: 720px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
   box-sizing: border-box;

@@ -173,6 +173,7 @@ const system: SystemBridge = {
 const TEMPLATES_KEY = 'atterm.quick_templates.value'
 const TEMPLATES_HIDDEN_KEY = 'atterm.templates_hidden.value'
 const AUXKEYS_KEY = 'atterm.aux_keys.value'
+const DIRECT_CONNECTION_KEY = 'atterm.direct_connection.enabled'
 
 const templates: TemplateBridge = {
   async load() {
@@ -221,5 +222,20 @@ const auxKeys: AuxKeyBridge = {
 
 export function createWebPlatform(): Platform {
   setAccountKeyProvider(() => loadAccountKey())
-  return { caps: CAPS, relay, sessions, system, events, templates, auxKeys }
+  return {
+    caps: CAPS,
+    relay,
+    sessions,
+    system,
+    events,
+    templates,
+    auxKeys,
+    directConnection: {
+      load: async () => localStorage.getItem(DIRECT_CONNECTION_KEY) === '1',
+      save: async (enabled) => {
+        if (enabled) localStorage.setItem(DIRECT_CONNECTION_KEY, '1')
+        else localStorage.removeItem(DIRECT_CONNECTION_KEY)
+      },
+    },
+  }
 }

@@ -427,6 +427,17 @@ func (s *forwardTestServer) counts() (opened, closed int) {
 	return s.opened, s.closed
 }
 
+func waitOpened(t *testing.T, srv *forwardTestServer, want int, what string) {
+	t.Helper()
+	waitFor(t, 3*time.Second, what, func() bool {
+		opened, _ := srv.counts()
+		return opened >= want
+	})
+	if opened, _ := srv.counts(); opened != want {
+		t.Fatalf("%s: opened %d SSH connections, want %d", what, opened, want)
+	}
+}
+
 // startEchoTarget stands in for the service behind the tunnel: a plain TCP
 // server that echoes whatever it is sent.
 func startEchoTarget(t *testing.T) (host, port string) {
@@ -988,6 +999,7 @@ func TestLostConnectionStopsRemoteTunnelWithReason(t *testing.T) {
 		t.Fatalf("StartForward: %v", err)
 	}
 
+	waitOpened(t, srv, 1, "remote rule connection established")
 	srv.dropConns()
 
 	waitFor(t, 5*time.Second, "remote rule marked stopped with a reason", func() bool {
@@ -1020,9 +1032,7 @@ func TestLocalAndRemoteRulesShareOneConnection(t *testing.T) {
 	if err := a.StartForward(h.ID, "r2"); err != nil {
 		t.Fatalf("StartForward r2: %v", err)
 	}
-	if opened, _ := srv.counts(); opened != 1 {
-		t.Fatalf("a local + a remote rule on one host opened %d SSH connections, want 1", opened)
-	}
+	waitOpened(t, srv, 1, "local and remote rules share one connection")
 
 	if err := a.StopForward(h.ID, "r1"); err != nil {
 		t.Fatalf("StopForward r1: %v", err)
@@ -1262,6 +1272,7 @@ func TestLostConnectionStopsDynamicTunnel(t *testing.T) {
 	}
 	addr := activeForward(t, a, "r1").ListenAddr
 
+	waitOpened(t, srv, 1, "dynamic rule connection established")
 	srv.dropConns()
 
 	waitFor(t, 5*time.Second, "dynamic rule marked stopped with a reason", func() bool {
@@ -1297,9 +1308,7 @@ func TestDynamicSharesOneConnectionWithOtherKinds(t *testing.T) {
 	if err := a.StartForward(h.ID, "r2"); err != nil {
 		t.Fatalf("StartForward r2: %v", err)
 	}
-	if opened, _ := srv.counts(); opened != 1 {
-		t.Fatalf("a local + a dynamic rule on one host opened %d SSH connections, want 1", opened)
-	}
+	waitOpened(t, srv, 1, "local and dynamic rules share one connection")
 
 	if err := a.StopForward(h.ID, "r1"); err != nil {
 		t.Fatalf("StopForward r1: %v", err)
@@ -1506,9 +1515,7 @@ func TestRulesOnOneHostShareOneConnection(t *testing.T) {
 	if err := a.StartForward(h.ID, "r2"); err != nil {
 		t.Fatalf("StartForward r2: %v", err)
 	}
-	if opened, _ := srv.counts(); opened != 1 {
-		t.Fatalf("two rules on one host opened %d SSH connections, want 1", opened)
-	}
+	waitOpened(t, srv, 1, "two rules share one connection")
 
 	// Interleaved stop: the first stop must not pull the connection out from
 	// under the rule still running.
@@ -1546,9 +1553,7 @@ func TestRulesOnOneHostShareOneConnection(t *testing.T) {
 		t.Fatalf("restart after full stop: %v", err)
 	}
 	defer func() { _ = a.StopForward(h.ID, "r1") }()
-	if opened, _ := srv.counts(); opened != 2 {
-		t.Fatalf("restart opened %d connections total, want 2", opened)
-	}
+	waitOpened(t, srv, 2, "restart opens a fresh connection")
 }
 
 // TestConcurrentStartsShareOneConnection exercises the other order the
@@ -1583,9 +1588,7 @@ func TestConcurrentStartsShareOneConnection(t *testing.T) {
 			t.Fatalf("StartForward %s: %v", rules[i].ID, err)
 		}
 	}
-	if opened, _ := srv.counts(); opened != 1 {
-		t.Fatalf("%d concurrent starts opened %d SSH connections, want 1", len(rules), opened)
-	}
+	waitOpened(t, srv, 1, "concurrent starts share one connection")
 	if got := len(a.ListActiveForwards()); got != len(rules) {
 		t.Fatalf("active forwards = %d, want %d", got, len(rules))
 	}
@@ -1620,6 +1623,7 @@ func TestLostConnectionStopsTunnelsWithReason(t *testing.T) {
 	}
 	addr := activeForward(t, a, "r1").ListenAddr
 
+	waitOpened(t, srv, 1, "active tunnel connection established")
 	srv.dropConns()
 
 	// The drop is noticed on next use: dial the forwarded port and let the
@@ -1668,6 +1672,7 @@ func TestLostConnectionStopsIdleTunnel(t *testing.T) {
 	}
 	addr := activeForward(t, a, "r1").ListenAddr
 
+	waitOpened(t, srv, 1, "idle tunnel connection established")
 	srv.dropConns() // and nothing ever dials the forwarded port
 
 	waitFor(t, 5*time.Second, "idle rule marked stopped with a reason", func() bool {

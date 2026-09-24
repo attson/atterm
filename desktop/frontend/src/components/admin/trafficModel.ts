@@ -50,6 +50,11 @@ export interface CategorySummary {
 const CATEGORY_COLORS: Record<string, string> = {
   terminal: '#58a6ff',
   state: '#39c5cf',
+  config: '#d29922',
+  fs: '#bc8cff',
+  preview: '#db6d28',
+  // Older relays used these category names. Keep their colors stable during
+  // rolling upgrades while current relays emit config/fs/preview.
   filesystem: '#bc8cff',
   service: '#db6d28',
   control: '#d29922',

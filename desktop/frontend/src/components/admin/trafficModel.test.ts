@@ -37,4 +37,19 @@ describe('trafficModel', () => {
     expect(timelineSeries(current, ['2026-09-20', '2026-09-21'], 'group', 'all', 'bytes', false)[0].values).toEqual([100, 50])
     expect(directionSeries(current, ['2026-09-20', '2026-09-21'], 'bytes')).toEqual({ inbound: [0, 50], outbound: [100, 50] })
   })
+
+  test('assigns distinct colors to current relay categories', () => {
+    const categories = ['config', 'fs', 'preview'].map((category, index) => ({
+      user_id: 'u1',
+      day: '2026-09-21',
+      category,
+      direction: index % 2,
+      bytes: 10,
+      frames: 1,
+    })) satisfies AdminTrafficRow[]
+
+    const summaries = categorySummaries(categories)
+    expect(new Set(summaries.map((item) => item.color)).size).toBe(3)
+    expect(summaries.every((item) => item.color !== '#8b949e')).toBe(true)
+  })
 })

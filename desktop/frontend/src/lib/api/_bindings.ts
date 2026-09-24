@@ -373,6 +373,9 @@ export interface RelayConfig {
   // unavailable. The frontend appends "/relay-http". Optional so Capacitor /
   // web fixtures may omit it.
   remote_http_proxy_url?: string;
+  // Public relay node used by /direct-signal. Wails keeps /client on the
+  // loopback remote_proxy_url.
+  home_instance_url?: string;
   // realmId is the relay realm this session belongs to (from login finalize).
   // Written by mobile on login; consumed by subproject C for node selection.
   // Not present on desktop (Go manages realm identity there).
@@ -808,6 +811,8 @@ export interface AppBindings {
   SetRecoveryDialogEnabled(enabled: boolean): Promise<void>;
   GetWebglRendererEnabled(): Promise<boolean>;
   SetWebglRendererEnabled(enabled: boolean): Promise<void>;
+  GetDirectP2PEnabled(): Promise<boolean>;
+  SetDirectP2PEnabled(enabled: boolean): Promise<void>;
   GetCommandNotifyThresholdSeconds(): Promise<number>;
   SetCommandNotifyThresholdSeconds(seconds: number): Promise<void>;
   BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;

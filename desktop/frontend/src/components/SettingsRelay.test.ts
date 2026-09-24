@@ -30,26 +30,36 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.connecting");
   });
 
+  test("mounts the personal traffic dashboard only for an authenticated relay account", () => {
+    expect(source).toContain('v-if="connectedUserID"');
+    expect(source).toContain("<AccountTrafficDashboard />");
+  });
+
   test("remote-session-permission selector is gone (single-user tool, no sharing)", () => {
     expect(source).not.toContain("settings.relay.remotePermissions");
-    expect(source).not.toContain("SelectDropdown");
     expect(source).not.toContain("remotePermission");
     // Sessions are always published with full permission.
     expect(source).toContain('remote_permission: "full"');
   });
 
-  test("relay scheme is always https; the insecure toggle only relaxes cert verification", () => {
-    // Bare host is stored; the scheme prefix is a fixed https:// (no longer
-    // derived from the insecure toggle — connections stay HTTPS/WSS).
+  test("relay scheme explicitly supports HTTPS and loopback HTTP", () => {
     expect(source).toContain("const host = ref");
     expect(source).toContain("function stripScheme");
-    expect(source).toContain('const urlScheme = computed(() => "https://")');
-    expect(source).not.toContain('? "http://" : "https://"');
-    // A non-editable prefix renders the scheme next to the input.
+    expect(source).toContain('import SelectDropdown');
+    expect(source).toContain('id="relay-scheme"');
+    expect(source).toContain('{ value: "https", label: "https://" }');
+    expect(source).toContain('{ value: "http", label: "http://" }');
     expect(source).toContain('class="url-scheme"');
-    expect(source).toContain("{{ urlScheme }}");
-    // The reconstructed URL + the self-signed-trust flag reach the probe.
+    expect(source).not.toContain('<select');
+    expect(source).toContain('relayScheme.value === "http" ? "ws" : "wss"');
     expect(source).toContain("probeRelayVersion(fullUrl.value, allowInsecureRelay.value)");
+  });
+
+  test("owns the direct connection preference instead of the general pane", () => {
+    expect(source).toContain('data-testid="direct-connection-toggle"');
+    expect(source).toContain("platform.directConnection.load()");
+    expect(source).toContain("platform.directConnection.save(target.checked)");
+    expect(source).toContain('emit("direct-connection-changed", effective)');
   });
 
   test("insecure-mode toggle sits on the relay url label row", () => {

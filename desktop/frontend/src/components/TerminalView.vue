@@ -7,7 +7,7 @@ import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "xterm-addon-webgl";
 import { SearchAddon } from "xterm-addon-search";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-import { SessionConnection, type Status } from "../lib/connection";
+import { SessionConnection, type DirectFallbackReason, type SessionRouteDiagnostics, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
@@ -67,6 +67,8 @@ import TerminalSearchBar from "./TerminalSearchBar.vue";
 const props = withDefaults(
   defineProps<{
     endpoint: Endpoint;
+    directEndpoint?: Endpoint | null;
+    preferDirect?: boolean;
     sessionId: string;
     active?: boolean;
     focused?: boolean;
@@ -131,6 +133,40 @@ const { t } = useI18n();
 const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
 const replayProgress = ref<ReplayProgress | null>(null);
+const routeDiagnostics = ref<SessionRouteDiagnostics>({ route: "relay" });
+const routeLabel = computed(() => {
+  switch (routeDiagnostics.value.route) {
+    case "connecting-direct": return t("terminal.route.connectingDirect");
+    case "direct": return t("terminal.route.direct");
+    default: return t("terminal.route.relay");
+  }
+});
+function fallbackReasonLabel(reason: DirectFallbackReason): string {
+  switch (reason) {
+    case "account_key_unavailable": return t("terminal.route.fallback.accountKeyUnavailable");
+    case "signal_endpoint_unavailable": return t("terminal.route.fallback.signalEndpointUnavailable");
+    case "webrtc_unavailable": return t("terminal.route.fallback.webrtcUnavailable");
+    case "timeout": return t("terminal.route.fallback.timeout");
+    case "signaling_rejected": return t("terminal.route.fallback.signalingRejected");
+    case "host_unavailable": return t("terminal.route.fallback.hostUnavailable");
+    case "ice_failed": return t("terminal.route.fallback.iceFailed");
+    case "authentication_failed": return t("terminal.route.fallback.authenticationFailed");
+    case "backpressure": return t("terminal.route.fallback.backpressure");
+    case "protocol_error": return t("terminal.route.fallback.protocolError");
+    case "direct_disconnected": return t("terminal.route.fallback.directDisconnected");
+    case "preference_disabled": return t("terminal.route.fallback.preferenceDisabled");
+    default: return t("terminal.route.fallback.transportError");
+  }
+}
+const routeDiagnosticsTitle = computed(() => {
+  const diagnostics = routeDiagnostics.value;
+  const lines = [t("terminal.route.current", { route: routeLabel.value })];
+  if (diagnostics.iceState) lines.push(t("terminal.route.iceState", { state: diagnostics.iceState }));
+  if (diagnostics.candidateType) lines.push(t("terminal.route.candidateType", { type: diagnostics.candidateType }));
+  if (diagnostics.setupTimeMs !== undefined) lines.push(t("terminal.route.setupTime", { ms: diagnostics.setupTimeMs }));
+  if (diagnostics.fallbackReason) lines.push(t("terminal.route.fallbackReason", { reason: fallbackReasonLabel(diagnostics.fallbackReason) }));
+  return lines.join("\n");
+});
 const menuOpen = ref(false);
 const menuX = ref(0);
 const menuY = ref(0);
@@ -226,6 +262,7 @@ const previewTargetHostOptions: SelectOption[] = [
 ];
 const previewPortInput = ref<HTMLInputElement | null>(null);
 const previewTarget = computed(() => `#service-preview-controls-${props.sessionId}`);
+const routeIndicatorTarget = computed(() => `#session-route-indicator-${props.sessionId}`);
 const previewDraftKey = computed(() => `atterm.service-preview.${props.sessionId}`);
 
 function loadPreviewDraft(): void {
@@ -995,12 +1032,12 @@ function handleViewerKeydown(event: KeyboardEvent) {
   if (event.key === " " && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
     event.preventDefault();
     event.stopPropagation();
-    conn?.claimDriver();
+    takeControl();
   }
 }
 
 function takeControl() {
-  conn?.claimDriver();
+  if (!conn?.claimDriver()) emit("toast", t("terminal.takeControlQueued"));
 }
 
 async function handleCopyShortcut(e: KeyboardEvent) {
@@ -2199,6 +2236,9 @@ function startConnection() {
           replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(release));
         }
       },
+      onRouteChange: (diagnostics) => {
+        routeDiagnostics.value = diagnostics;
+      },
       onMeta: (meta) => {
         if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
         if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
@@ -2218,7 +2258,13 @@ function startConnection() {
         }
       },
     },
-    { clientName: localHostname.value, remote: !props.isLocalSession }
+    {
+      clientName: localHostname.value,
+      remote: !props.isLocalSession,
+      preferDirect: props.preferDirect,
+      directEndpoint: props.directEndpoint,
+      directTransportFactory: platform.directConnection.createTransport,
+    }
   ));
   conn.attach();
   pluginSessionConnections?.set(props.sessionId, conn);
@@ -2582,6 +2628,11 @@ watch(
   },
 );
 
+watch(
+  () => props.preferDirect,
+  (enabled) => conn?.setPreferDirect(enabled ?? false),
+);
+
 // Pane swap inside an already-active tab: the active-watch above doesn't fire
 // (props.active stayed true), so xterm never learns the focus moved. A manual
 // mousedown on the pane goes via the DOM and lands focus on xterm's textarea
@@ -2747,6 +2798,14 @@ watch(
       <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
       <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
     </div>
+    <Teleport v-if="!isLocalSession" defer :to="routeIndicatorTarget">
+      <span
+        class="session-route-indicator"
+        :class="`route-${routeDiagnostics.route}`"
+        :title="routeDiagnosticsTitle"
+        data-testid="session-route-indicator"
+      >{{ routeLabel }}</span>
+    </Teleport>
     <TerminalSearchBar
       :open="searchOpen"
       :focus-seq="searchFocusSeq"
@@ -3366,6 +3425,23 @@ watch(
 }
 .overlay.avoid-top-right-badge {
   top: 34px;
+}
+:global(.session-route-indicator) {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-dim);
+  pointer-events: auto;
+}
+:global(.session-route-indicator)::before {
+  content: "\00b7";
+  margin-right: 6px;
+  color: var(--fg-dim);
+}
+:global(.session-route-indicator.route-connecting-direct) {
+  color: #d29922;
+}
+:global(.session-route-indicator.route-direct) {
+  color: #3fb950;
 }
 .viewer-overlay {
   position: absolute;

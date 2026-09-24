@@ -93,6 +93,10 @@ type uplink struct {
 	// uplink's WebSocket dial skips TLS certificate verification so it can
 	// reach a relay serving a self-signed certificate.
 	allowInsecure bool
+
+	// directEnabled gates the beta P2P host path. It defaults false and is set
+	// only by the app's explicit rollout preference/environment override.
+	directEnabled bool
 }
 
 func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error), accountKey func() []byte, allowInsecure bool) *uplink {
@@ -234,6 +238,10 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	}
 	logInfo("uplink", "connected, sent ANNOUNCE (%d session(s))", len(u.host.Snapshot()))
 	u.tracker.SetState(connhealth.StateConnected, time.Now())
+	if u.directEnabled && u.accountKey != nil && len(u.accountKey()) == e2eecrypto.SessionKeySize {
+		directHost := newDirectSignalHost(u.relayURL, u.token, u.remotePermission, u.host, u.accountKey, u.allowInsecure)
+		go directHost.Run(connCtx)
+	}
 
 	// streaming map and its lock.
 	var (
@@ -675,8 +683,24 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 		logDebug("uplink", "stream_request_repaint %s", desktopUplinkFrameLogDetails(f))
 		requestRepaint()
 	}
-	if !localSubscriberFrameForwardedToUplink(f.Type) {
+	prepared, ok := prepareRemoteSubscriberFrame(f, accountKey)
+	if !ok {
 		return true
+	}
+	select {
+	case out <- prepared:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// prepareRemoteSubscriberFrame applies the shared remote-output policy used by
+// both Relay and direct transports. Keeping sealing and plaintext stripping in
+// one place prevents a direct upgrade from weakening the existing E2EE wire.
+func prepareRemoteSubscriberFrame(f proto.Frame, accountKey func() []byte) (proto.Frame, bool) {
+	if !localSubscriberFrameForwardedToUplink(f.Type) {
+		return proto.Frame{}, false
 	}
 	if f.Type == proto.TypeOut && accountKey != nil {
 		if sealed, ok := sealOutFrame(f, accountKey()); ok {
@@ -694,12 +718,7 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 			}
 		}
 	}
-	select {
-	case out <- f:
-		return true
-	case <-ctx.Done():
-		return false
-	}
+	return f, true
 }
 
 func localSubscriberFrameRequestsRepaint(f proto.Frame) bool {

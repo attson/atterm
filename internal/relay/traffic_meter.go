@@ -115,8 +115,12 @@ func (s *Server) trafficFlushLoop(store userstore.Store) {
 // day's rollup. A failed persist logs a warning and drops the window's data
 // (accepted trade-off; the snapshot has already reset the meter).
 func (s *Server) flushTraffic(store userstore.Store) {
+	s.trafficFlushMu.Lock()
+	defer s.trafficFlushMu.Unlock()
+
 	deltas := s.traffic.snapshot()
-	if len(deltas) == 0 {
+	directDeltas := s.directStats.drain()
+	if len(deltas) == 0 && len(directDeltas) == 0 {
 		return
 	}
 	day := time.Now().UTC().Format("2006-01-02")
@@ -132,8 +136,15 @@ func (s *Server) flushTraffic(store userstore.Store) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := store.AddTrafficDeltas(ctx, day, conv); err != nil {
-		logging.Warn("relay-traffic", "flush failed, dropping %d deltas: %v", len(conv), err)
+	if len(conv) > 0 {
+		if err := store.AddTrafficDeltas(ctx, day, conv); err != nil {
+			logging.Warn("relay-traffic", "flush failed, dropping %d deltas: %v", len(conv), err)
+		}
+	}
+	if len(directDeltas) > 0 {
+		if err := store.AddDirectTrafficDeltas(ctx, day, directDeltas); err != nil {
+			logging.Warn("relay-traffic", "direct flush failed, dropping %d deltas: %v", len(directDeltas), err)
+		}
 	}
 }
 

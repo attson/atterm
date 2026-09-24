@@ -130,6 +130,10 @@ export function GetDiagnostics(arg1) {
   return window['go']['main']['App']['GetDiagnostics'](arg1);
 }
 
+export function GetDirectP2PEnabled() {
+  return window['go']['main']['App']['GetDirectP2PEnabled']();
+}
+
 export function GetEndpoint() {
   return window['go']['main']['App']['GetEndpoint']();
 }
@@ -474,6 +478,10 @@ export function SendFeishuTestCard(arg1) {
   return window['go']['main']['App']['SendFeishuTestCard'](arg1);
 }
 
+export function SendNativeDirectFrame(arg1, arg2) {
+  return window['go']['main']['App']['SendNativeDirectFrame'](arg1, arg2);
+}
+
 export function SetAINotificationsOnly(arg1) {
   return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
 }
@@ -492,6 +500,10 @@ export function SetDefaultProfileID(arg1) {
 
 export function SetDefaultShell(arg1) {
   return window['go']['main']['App']['SetDefaultShell'](arg1);
+}
+
+export function SetDirectP2PEnabled(arg1) {
+  return window['go']['main']['App']['SetDirectP2PEnabled'](arg1);
 }
 
 export function SetFeishuCredentials(arg1) {
@@ -634,6 +646,10 @@ export function StartForward(arg1, arg2) {
   return window['go']['main']['App']['StartForward'](arg1, arg2);
 }
 
+export function StartNativeDirect(arg1) {
+  return window['go']['main']['App']['StartNativeDirect'](arg1);
+}
+
 export function StartServicePreview(arg1) {
   return window['go']['main']['App']['StartServicePreview'](arg1);
 }
@@ -644,6 +660,10 @@ export function StartWidget() {
 
 export function StopForward(arg1, arg2) {
   return window['go']['main']['App']['StopForward'](arg1, arg2);
+}
+
+export function StopNativeDirect(arg1) {
+  return window['go']['main']['App']['StopNativeDirect'](arg1);
 }
 
 export function StopServicePreview(arg1) {

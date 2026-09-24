@@ -21,6 +21,8 @@ import {
 const props = defineProps<{
   tab: Tab;
   endpointFor: (pane: Pane) => Endpoint | null;
+  directEndpoint?: Endpoint | null;
+  preferDirect?: boolean;
   sessionInfoFor: (pane: Pane) => SessionInfo | null;
   viewerCountFor?: (sessionId: string) => number;
   active: boolean;
@@ -220,6 +222,8 @@ function requestServicePreview(pane: Pane): void {
         <TerminalView
           v-if="pane.sessionId && endpointFor(pane)"
           :endpoint="endpointFor(pane)!"
+          :direct-endpoint="pane.remote ? directEndpoint : null"
+          :prefer-direct="pane.remote && preferDirect"
           :session-id="pane.sessionId"
           :active="active"
           :focused="active && idx === tab.activePaneIdx"
@@ -295,6 +299,11 @@ function requestServicePreview(pane: Pane): void {
           </span>
           <span v-else class="who dim">{{ t("terminal.remote") }}</span>
           <span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>
+          <span
+            class="route-indicator-slot"
+            :id="`session-route-indicator-${pane.sessionId}`"
+            aria-live="polite"
+          ></span>
         </div>
 
         <!-- Drag handle. The terminal itself cannot be draggable — xterm needs
@@ -465,6 +474,9 @@ function requestServicePreview(pane: Pane): void {
 .remote-badge .sid::before {
   content: "·";
   margin-right: 4px;
+}
+.route-indicator-slot {
+  display: contents;
 }
 .close-pane {
   border: none;

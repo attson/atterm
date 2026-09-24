@@ -44,6 +44,11 @@ describe('Traffic', () => {
       active_sessions: 3,
       relay_instances: 1,
       traffic_flush_interval_seconds: 60,
+      direct_attempts: 0,
+      direct_signal_enabled: true,
+      direct_successes: 0,
+      direct_fallbacks: 0,
+      direct_bytes_avoided: 0,
       generated_at: new Date().toISOString(),
     })
   })

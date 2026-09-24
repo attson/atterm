@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } fr
 const { fake } = vi.hoisted(() => ({
   fake: {
     events: { on: vi.fn().mockReturnValue(() => {}), off: vi.fn(), emit: vi.fn() },
+    directConnection: { load: vi.fn().mockResolvedValue(false), save: vi.fn().mockResolvedValue(undefined) },
   },
 }))
 
@@ -99,6 +100,64 @@ describe('SettingsRelay post-login password retention', () => {
 
     const pw = w.find('#relay-password').element as HTMLInputElement
     expect(pw.value).toBe('hunter2')
+  })
+})
+
+describe('SettingsRelay relay protocol', () => {
+  it('restores a persisted ws endpoint as HTTP in the protocol menu', async () => {
+    vi.spyOn(api, 'getRelayConfig').mockResolvedValue({
+      ...baseRelayConfig(),
+      url: 'ws://127.0.0.1:8080',
+    } as never)
+    vi.spyOn(api, 'loadSavedRelayPassword').mockResolvedValue('')
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+
+    expect(w.get('#relay-scheme [data-testid="select-trigger"]').text()).toBe('http://')
+    expect((w.get('#relay-host').element as HTMLInputElement).value).toBe('127.0.0.1:8080')
+  })
+
+  it('uses HTTP for the probe and ws:// for persisted loopback config', async () => {
+    vi.spyOn(api, 'loadSavedRelayPassword').mockResolvedValue('')
+    const probe = vi.spyOn(api, 'probeRelayVersion').mockRejectedValue(new Error('stop after probe'))
+    const persist = vi.spyOn(api, 'setRelayConfig').mockResolvedValue(undefined as never)
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    await w.get('#relay-scheme [data-testid="select-trigger"]').trigger('click')
+    await w.findAll('#relay-scheme [data-testid="select-option"]')[1].trigger('click')
+    await w.get('#relay-host').setValue('127.0.0.1:8080')
+    await (w.vm as unknown as { save: () => Promise<void> }).save()
+    await flushPromises()
+
+    expect(probe).toHaveBeenCalledWith('http://127.0.0.1:8080', false)
+    expect(persist).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'ws://127.0.0.1:8080',
+      allow_insecure_relay: false,
+    }))
+  })
+})
+
+describe('SettingsRelay direct connection preference', () => {
+  it('loads, saves, and emits the effective value', async () => {
+    fake.directConnection.load
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    const toggle = w.get<HTMLInputElement>('[data-testid="direct-connection-toggle"]')
+    const info = w.get<HTMLButtonElement>('[data-testid="direct-connection-info"]')
+    expect(toggle.element.closest('.uplink-toggle-row')).not.toBeNull()
+    expect(info.attributes('title')).toBe('settings.relay.preferDirectConnectionHint')
+    expect(toggle.element.checked).toBe(true)
+
+    await toggle.setValue(false)
+    await flushPromises()
+
+    expect(fake.directConnection.save).toHaveBeenCalledWith(false)
+    expect(w.emitted('direct-connection-changed')).toEqual([[false]])
   })
 })
 

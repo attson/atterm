@@ -69,6 +69,11 @@ describe("SettingsGeneral", () => {
     expect(source).toContain('(e: "terminal-theme-changed", themeID: string): void');
   });
 
+  test("keeps relay transport preferences out of the general pane", () => {
+    expect(source).not.toContain("direct-connection-toggle");
+    expect(source).not.toContain("preferDirectConnection");
+  });
+
   test("uses terminal theme registry and saves changes via setTerminalThemePreference", () => {
     expect(source).toContain("TERMINAL_THEMES");
     expect(source).toContain("setTerminalThemePreference");

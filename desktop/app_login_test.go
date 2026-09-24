@@ -115,6 +115,28 @@ func TestLoginRemoteRelay_WrongPasswordReturnsError(t *testing.T) {
 	}
 }
 
+func TestRemoteRelayAuthRejectsPublicCleartextBeforeDial(t *testing.T) {
+	app := &App{ctx: context.Background()}
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "login", call: func() error {
+			return app.LoginRemoteRelay("http://relay.example.com", "u@example.com", "password", false)
+		}},
+		{name: "register", call: func() error {
+			return app.RegisterRemoteRelay("http://relay.example.com", "u@example.com", "password", "", false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call()
+			if err == nil || !strings.Contains(err.Error(), "insecure relay url") {
+				t.Fatalf("expected insecure relay rejection before dialing; got %v", err)
+			}
+		})
+	}
+}
+
 // TestRegisterRemoteRelay_PersistsAndUnlocksKey covers the happy register
 // path: URL + email + token persisted, account_key unlocked into memory.
 func TestRegisterRemoteRelay_PersistsAndUnlocksKey(t *testing.T) {

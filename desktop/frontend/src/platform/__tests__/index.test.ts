@@ -45,6 +45,10 @@ function fakePlatform(): Platform {
       save: async () => {},
       clear: async () => {},
     },
+    directConnection: {
+      load: async () => false,
+      save: async () => {},
+    },
   }
 }
 

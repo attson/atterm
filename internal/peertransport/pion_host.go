@@ -19,8 +19,8 @@ const (
 
 var ErrDirectTransport = errors.New("peertransport: direct transport failed")
 
-// PionHostConfig contains one Relay-authorized host attempt. SendSignal must
-// enqueue bounded signaling messages without logging their payloads.
+// PionHostConfig contains one authorized host attempt. SendSignal must enqueue
+// bounded signaling messages without logging their payloads.
 type PionHostConfig struct {
 	Authorization   Authorization
 	Authenticator   HandshakeAuthenticator
@@ -48,7 +48,7 @@ type PionHostAttempt struct {
 	closed      bool
 }
 
-// PionHostChannel is available only after account-key authentication. Send
+// PionHostChannel is available only after handshake authentication. Send
 // methods serialize counters and enforce DataChannel backpressure.
 type PionHostChannel struct {
 	attempt     *PionHostAttempt

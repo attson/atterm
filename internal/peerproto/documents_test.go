@@ -170,3 +170,83 @@ func TestJoinRequestRejectsDifferentSubjectSignature(t *testing.T) {
 		t.Fatal("join request with modified signature verified")
 	}
 }
+
+func TestConnectionBundleRotatesRoutesWithoutRotatingInvitation(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	invitations, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{{
+		Kind: RouteQuickTunnel, URL: "https://first-route.trycloudflare.com",
+	}}, now, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{{
+		Kind: RouteQuickTunnel, URL: "https://second-route.trycloudflare.com",
+	}}, now.Add(time.Minute), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBundle, err := VerifyConnectionBundle(first, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBundle, err := VerifyConnectionBundle(second, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBundle.Ticket == nil || secondBundle.Ticket == nil || firstBundle.Ticket.InviteID != secondBundle.Ticket.InviteID || firstBundle.Document.BundleID == secondBundle.Document.BundleID {
+		t.Fatalf("route rotation changed trust or reused bundle id: first=%+v second=%+v", firstBundle.Document, secondBundle.Document)
+	}
+}
+
+func TestMemberConnectionBundleSurvivesInvitationExpiry(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	routes := []ConnectionRoute{{Kind: RouteQuickTunnel, URL: "https://member-route.trycloudflare.com"}}
+	bundle, err := NewMemberConnectionBundle(issuerIdentity, genesis, issuerMembership.Token, routes, now.Add(48*time.Hour), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := VerifyConnectionBundle(bundle, now.Add(48*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Ticket != nil || verified.Issuer.Document.SubjectPeerID != issuerIdentity.PeerID() || verified.Genesis.Hash != genesis.Hash {
+		t.Fatalf("unexpected member route bundle: %+v", verified)
+	}
+}
+
+func TestConnectionBundleRejectsInsecureOrMutatedRoutes(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	invitations, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []ConnectionRoute{
+		{Kind: RouteQuickTunnel, URL: "http://unsafe.trycloudflare.com"},
+		{Kind: RouteQuickTunnel, URL: "https://trycloudflare.com.evil.example"},
+		{Kind: RouteRendezvous, URL: "https://rendezvous.example", Topic: "short"},
+	} {
+		if _, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{route}, now, 0); err == nil {
+			t.Fatalf("accepted invalid route: %+v", route)
+		}
+	}
+	token, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{{
+		Kind: RouteQuickTunnel, URL: "https://valid.trycloudflare.com",
+	}}, now, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(token, ".")
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw[20] ^= 1
+	parts[1] = base64.RawURLEncoding.EncodeToString(raw)
+	if _, err := VerifyConnectionBundle(strings.Join(parts, "."), now); err == nil {
+		t.Fatal("mutated connection bundle verified")
+	}
+}

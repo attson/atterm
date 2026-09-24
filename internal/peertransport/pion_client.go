@@ -10,7 +10,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-// PionClientConfig contains one Relay-authorized client attempt.
+// PionClientConfig contains one authorized client attempt.
 type PionClientConfig struct {
 	Authorization   Authorization
 	Authenticator   HandshakeAuthenticator
@@ -38,7 +38,7 @@ type PionClientAttempt struct {
 	closed  bool
 }
 
-// PionClientChannel is available only after account-key authentication.
+// PionClientChannel is available only after handshake authentication.
 type PionClientChannel struct {
 	attempt     *PionClientAttempt
 	dc          *webrtc.DataChannel

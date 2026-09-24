@@ -839,7 +839,7 @@ version: "<v>"}`，专供 LB / k8s probe。
 Peer Space 身份、成员关系和邀请独立于 Relay 账户与 `account_key`。当前文档格式版本为
 `1`，不占用 `internal/proto.Type`，也不改变现有 Relay WebSocket frame。
 
-四类 token 使用相同信封：
+五类 token 使用相同信封：
 
 ```text
 <prefix>.<base64url(exact-json-bytes)>.<base64url(p1363-signature)>
@@ -851,6 +851,7 @@ Peer Space 身份、成员关系和邀请独立于 Relay 账户与 `account_key`
 | `apm1` | `DeviceGrant` | 设备 membership/capability certificate |
 | `atp1` | `CapabilityTicket` | 与网络路径无关的单次预签邀请 |
 | `apj1` | `JoinRequest` | 新设备对 subject private key 的短期持有证明 |
+| `atc1` | `ConnectionBundle` | invitation 与当前可达 route hints 的短期签名包装 |
 
 签名算法是 P-256 ECDSA + SHA-256，signature 为 64-byte IEEE P1363 `r || s`，且只接受
 low-S。签名覆盖 payload 中的原始 JSON bytes；验证端不得先反序列化再序列化。P-256
@@ -863,6 +864,17 @@ public key 使用 65-byte uncompressed SEC1/WebCrypto raw 格式，`peer_id` 是
 scope 和可选 delegation capability。它不包含 Relay URL/token、Quick Tunnel URL 或
 Rendezvous 地址；后续连接地址放在独立的 signed `ConnectionBundle`，所以 route 轮换不会
 使 membership 或预签 ticket 失效。
+
+`ConnectionBundle` 包含完整 `apg1` genesis、`bundle_id`、issuer membership/peer id、
+`routes[]`、创建与过期时间，并由 issuer peer 签名。首次分享时还携带完整 `atp1` ticket；
+全新设备可直接从 bundle 取得 trust anchor 并核对 ticket 的 genesis hash，不依赖外部目录。
+邀请核销后，route refresh bundle 省略一次性 ticket，只用持久 issuer membership 建链；连接
+client 仍须在 handshake 证明自己的有效 membership。因此 invitation 过期或已消费都不要求
+重签 membership。bundle 默认有效 10 分钟、最长 24
+小时，且绝不超过 invitation 到期时间。当前 route kind 是 `quick_tunnel` 与
+`rendezvous`：Quick Tunnel 只接受无 userinfo/query/fragment 的
+`https://*.trycloudflare.com`；Rendezvous 只接受 `https`/`wss` 且必须携带 32-byte opaque
+topic。URL 轮换只创建新的 `atc1`，不创建 invitation 或 membership。
 
 新设备生成自己的 P-256 identity 后，将完整 `atp1` invitation、subject peer/public key、
 32-byte nonce 和创建时间放入 `apj1`，并以 subject private key 签名。签发设备验证 invitation
@@ -878,6 +890,14 @@ chain 与 subject key proof，且只接受 ticket 指定的 `redemption_peer_id`
 位于 `desktop/frontend/src/lib/peer/identity.ts` 与
 `desktop/frontend/src/platform/capacitorPeerIdentity.ts`；它们不向 Wails 桌面前端暴露桌面
 private key。
+
+Peer DataChannel 复用 Stage 1 的四步 handshake、ECDH traffic key、record 和 fragment
+codec，只替换 `HandshakeAuthenticator`。Relay account authenticator 的 proof 继续是 32-byte
+HMAC；Peer membership authenticator 对相同 transcript 使用设备 P-256 identity 产生 64-byte
+low-S P1363 signature，并验证 client/host membership 均锚定到同一 genesis。genesis hash
+和两份 membership token 的 hash 共同进入 ephemeral-ECDH traffic-key binding。identity
+private key 只签名、不跨算法复用为 ECDH，兼容 WebCrypto non-exportable ECDSA key。proof
+长度由 authenticator 声明，所以 Relay v0.6 的现有 wire bytes 不变。
 
 ## 重连与续传
 

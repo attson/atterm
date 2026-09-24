@@ -12,10 +12,11 @@ genesis、signed membership、route-independent `atp1` invitation batches、
 encrypted invite ledger and cross-process single-use/revocation writes are
 implemented. Signed `apj1` join requests、idempotent membership issuance、Web
 non-exportable IndexedDB identity and iOS Keychain identity adapters are also
-implemented locally. ConnectionBundle、new-device join transport/UI、member
-governance/epoch rotation、config replication and the Peer handshake
-authenticator remain; identity and redemption support alone does not provide a
-remote connection.
+implemented locally. Signed `atc1` ConnectionBundle and the Stage 1-compatible
+Peer membership handshake authenticator are implemented locally as well.
+New-device join transport/UI、member governance/epoch rotation and config
+replication remain; identity, route metadata and handshake authentication alone
+do not provide a remote connection.
 
 ## Why Quick Tunnel Before Rendezvous
 

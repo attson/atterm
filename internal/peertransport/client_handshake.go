@@ -25,6 +25,7 @@ type ClientHandshake struct {
 	clientPublicKey []byte
 	trafficKeys     TrafficKeys
 	transcriptHash  [sha256Size]byte
+	proofSize       int
 	state           clientHandshakeState
 	helloSent       bool
 	now             func() time.Time
@@ -46,6 +47,10 @@ func NewClientHandshake(auth HandshakeAuthenticator, authorization Authorization
 	if authorization.AttemptID == uuid.Nil || authorization.SessionID == uuid.Nil || len(authorization.Ticket) != directTicketSize {
 		return nil, fmt.Errorf("%w: malformed authorization", ErrInvalidHandshake)
 	}
+	proofSize, err := validateProofSize(auth)
+	if err != nil {
+		return nil, err
+	}
 	privateKey, err := GenerateEphemeralKey()
 	if err != nil {
 		return nil, err
@@ -55,6 +60,7 @@ func NewClientHandshake(auth HandshakeAuthenticator, authorization Authorization
 	return &ClientHandshake{
 		auth:            auth,
 		authorization:   copyAuthorization,
+		proofSize:       proofSize,
 		privateKey:      privateKey,
 		clientPublicKey: privateKey.PublicKey().Bytes(),
 		state:           clientHandshakeAwaitHostHello,
@@ -94,7 +100,7 @@ func (h *ClientHandshake) handleHostHello(message []byte) (ClientHandshakeResult
 	if !h.helloSent {
 		return ClientHandshakeResult{}, fmt.Errorf("%w: client hello not sent", ErrInvalidHandshake)
 	}
-	hostPublicKey, hostProof, err := DecodeHostHello(message)
+	hostPublicKey, hostProof, err := decodeHostHello(message, h.proofSize)
 	if err != nil {
 		return ClientHandshakeResult{}, err
 	}
@@ -129,7 +135,7 @@ func (h *ClientHandshake) handleHostHello(message []byte) (ClientHandshakeResult
 	if err != nil {
 		return ClientHandshakeResult{}, err
 	}
-	response, err := EncodeClientFinish(clientProof, finishProof)
+	response, err := encodeClientFinish(clientProof, finishProof, h.proofSize)
 	if err != nil {
 		return ClientHandshakeResult{}, err
 	}

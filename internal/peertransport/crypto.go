@@ -151,10 +151,14 @@ func appendField(dst, value []byte) []byte {
 // HandshakeAuthenticator proves authority over one transcript without
 // exposing its root secret to the transport implementation.
 type HandshakeAuthenticator interface {
+	ProofSize() int
 	BuildProof(transcript []byte, role Role) ([]byte, error)
 	VerifyProof(transcript []byte, role Role, proof []byte) error
 	KeyBinding(transcript []byte) ([]byte, error)
 }
+
+// ProofSize keeps the v0.6 account handshake wire format at 32-byte HMACs.
+func (a *AccountKeyAuthenticator) ProofSize() int { return sha256Size }
 
 // AccountKeyAuthenticator implements the v0.6 same-account direct handshake.
 // It copies accountKey so callers may clear their input buffer immediately.

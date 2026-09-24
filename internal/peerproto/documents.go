@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ const (
 	membershipPrefix  = "apm1"
 	invitationPrefix  = "atp1"
 	joinRequestPrefix = "apj1"
+	connectionPrefix  = "atc1"
 	maxTokenBytes     = 64 << 10
 )
 
@@ -123,6 +125,36 @@ type JoinRequest struct {
 	CreatedAt        int64  `json:"created_at"`
 }
 
+type RouteKind string
+
+const (
+	RouteQuickTunnel RouteKind = "quick_tunnel"
+	RouteRendezvous  RouteKind = "rendezvous"
+)
+
+// ConnectionRoute is a replaceable reachability hint. It never grants access
+// by itself and is kept outside CapabilityTicket so route rotation does not
+// rotate trust.
+type ConnectionRoute struct {
+	Kind  RouteKind `json:"kind"`
+	URL   string    `json:"url"`
+	Topic string    `json:"topic,omitempty"`
+}
+
+// ConnectionBundle combines an existing invitation with currently reachable
+// routes. The redemption peer signs the complete bundle.
+type ConnectionBundle struct {
+	V            int               `json:"v"`
+	BundleID     string            `json:"bundle_id"`
+	Genesis      string            `json:"genesis"`
+	Ticket       string            `json:"ticket,omitempty"`
+	IssuerPeerID string            `json:"issuer_peer_id"`
+	IssuerGrant  string            `json:"issuer_membership"`
+	Routes       []ConnectionRoute `json:"routes"`
+	CreatedAt    int64             `json:"created_at"`
+	ExpiresAt    int64             `json:"expires_at"`
+}
+
 // VerifiedGenesis retains the exact signed token and decoded public key.
 type VerifiedGenesis struct {
 	Token     string
@@ -146,6 +178,15 @@ type VerifiedJoinRequest struct {
 	Ticket    CapabilityTicket
 	Issuer    VerifiedGrant
 	PublicKey []byte
+}
+
+// VerifiedConnectionBundle retains the authenticated invitation and issuer.
+type VerifiedConnectionBundle struct {
+	Token    string
+	Document ConnectionBundle
+	Genesis  VerifiedGenesis
+	Ticket   *CapabilityTicket
+	Issuer   VerifiedGrant
 }
 
 // NewSpace creates a genesis document and creator self-membership.
@@ -377,6 +418,133 @@ func VerifyInvitation(token string, genesis VerifiedGenesis, now time.Time) (Cap
 	return doc, issuer, nil
 }
 
+// NewConnectionBundle signs replaceable route hints around an existing
+// invitation. Validity defaults to ten minutes and is capped by the ticket.
+func NewConnectionBundle(identity *peercrypto.Identity, genesis VerifiedGenesis, invitation string, routes []ConnectionRoute, now time.Time, validFor time.Duration) (string, error) {
+	if identity == nil {
+		return "", fmt.Errorf("%w: connection bundle issuer", ErrInvalidDocument)
+	}
+	ticket, issuer, err := VerifyInvitation(invitation, genesis, now)
+	if err != nil {
+		return "", err
+	}
+	if ticket.RedemptionPeerID != identity.PeerID() || issuer.Document.SubjectPeerID != identity.PeerID() {
+		return "", fmt.Errorf("%w: connection bundle issuer", ErrInvalidDocument)
+	}
+	return newConnectionBundle(identity, genesis, issuer, invitation, routes, now, validFor, ticket.ExpiresAt)
+}
+
+// NewMemberConnectionBundle publishes refreshed routes after invitation
+// redemption. The durable issuer membership replaces the one-time ticket as
+// the signing chain; the connecting client still proves its own membership in
+// the transport handshake.
+func NewMemberConnectionBundle(identity *peercrypto.Identity, genesis VerifiedGenesis, issuerMembership string, routes []ConnectionRoute, now time.Time, validFor time.Duration) (string, error) {
+	if identity == nil {
+		return "", fmt.Errorf("%w: connection bundle issuer", ErrInvalidDocument)
+	}
+	issuer, err := VerifyGrant(issuerMembership, genesis, now)
+	if err != nil {
+		return "", err
+	}
+	if issuer.Document.SubjectPeerID != identity.PeerID() {
+		return "", fmt.Errorf("%w: connection bundle issuer", ErrInvalidDocument)
+	}
+	maxExpiresAt := int64(0)
+	if issuer.Document.ExpiresAt != 0 {
+		maxExpiresAt = issuer.Document.ExpiresAt
+	}
+	return newConnectionBundle(identity, genesis, issuer, "", routes, now, validFor, maxExpiresAt)
+}
+
+func newConnectionBundle(identity *peercrypto.Identity, genesis VerifiedGenesis, issuer VerifiedGrant, invitation string, routes []ConnectionRoute, now time.Time, validFor time.Duration, maxExpiresAt int64) (string, error) {
+	if validFor == 0 {
+		validFor = 10 * time.Minute
+	}
+	if validFor < time.Minute || validFor > 24*time.Hour {
+		return "", fmt.Errorf("%w: connection bundle validity", ErrInvalidDocument)
+	}
+	if err := validateConnectionRoutes(routes); err != nil {
+		return "", err
+	}
+	expiresAt := now.Add(validFor).Unix()
+	if maxExpiresAt != 0 && expiresAt > maxExpiresAt {
+		expiresAt = maxExpiresAt
+	}
+	if expiresAt <= now.Unix() {
+		return "", ErrExpired
+	}
+	doc := ConnectionBundle{
+		V:            Version,
+		BundleID:     uuid.NewString(),
+		Genesis:      genesis.Token,
+		Ticket:       invitation,
+		IssuerPeerID: identity.PeerID(),
+		IssuerGrant:  issuer.Token,
+		Routes:       append([]ConnectionRoute(nil), routes...),
+		CreatedAt:    now.Unix(),
+		ExpiresAt:    expiresAt,
+	}
+	token, err := signDocument(connectionPrefix, doc, identity)
+	if err != nil {
+		return "", err
+	}
+	if len(token) > maxTokenBytes {
+		return "", fmt.Errorf("%w: connection bundle too large", ErrInvalidDocument)
+	}
+	return token, nil
+}
+
+// VerifyConnectionBundle authenticates both the replaceable route wrapper and
+// its route-independent invitation chain.
+func VerifyConnectionBundle(token string, now time.Time) (VerifiedConnectionBundle, error) {
+	var doc ConnectionBundle
+	raw, signature, err := parseDocument(connectionPrefix, token, &doc)
+	if err != nil {
+		return VerifiedConnectionBundle{}, err
+	}
+	genesis, err := VerifyGenesis(doc.Genesis)
+	if err != nil {
+		return VerifiedConnectionBundle{}, fmt.Errorf("%w: connection bundle genesis: %v", ErrInvalidDocument, err)
+	}
+	issuer, err := VerifyGrant(doc.IssuerGrant, genesis, now)
+	if err != nil {
+		return VerifiedConnectionBundle{}, err
+	}
+	var ticket *CapabilityTicket
+	maxExpiresAt := issuer.Document.ExpiresAt
+	minCreatedAt := issuer.Document.IssuedAt
+	if doc.Ticket != "" {
+		verifiedTicket, ticketIssuer, err := VerifyInvitation(doc.Ticket, genesis, now)
+		if err != nil {
+			return VerifiedConnectionBundle{}, err
+		}
+		if ticketIssuer.Token != issuer.Token || verifiedTicket.RedemptionPeerID != doc.IssuerPeerID {
+			return VerifiedConnectionBundle{}, fmt.Errorf("%w: connection bundle ticket issuer", ErrInvalidDocument)
+		}
+		ticket = &verifiedTicket
+		maxExpiresAt = verifiedTicket.ExpiresAt
+		if verifiedTicket.IssuedAt > minCreatedAt {
+			minCreatedAt = verifiedTicket.IssuedAt
+		}
+	}
+	if doc.V != Version || uuid.Validate(doc.BundleID) != nil || doc.IssuerPeerID != issuer.Document.SubjectPeerID {
+		return VerifiedConnectionBundle{}, fmt.Errorf("%w: connection bundle anchor", ErrInvalidDocument)
+	}
+	if doc.CreatedAt < minCreatedAt || doc.CreatedAt > now.Add(5*time.Minute).Unix() || doc.ExpiresAt <= doc.CreatedAt || maxExpiresAt != 0 && doc.ExpiresAt > maxExpiresAt {
+		return VerifiedConnectionBundle{}, fmt.Errorf("%w: connection bundle lifetime", ErrInvalidDocument)
+	}
+	if now.Unix() >= doc.ExpiresAt {
+		return VerifiedConnectionBundle{}, ErrExpired
+	}
+	if err := validateConnectionRoutes(doc.Routes); err != nil {
+		return VerifiedConnectionBundle{}, err
+	}
+	if err := peercrypto.Verify(issuer.PublicKey, raw, signature); err != nil {
+		return VerifiedConnectionBundle{}, fmt.Errorf("%w: connection bundle signature: %v", ErrInvalidDocument, err)
+	}
+	return VerifiedConnectionBundle{Token: token, Document: doc, Genesis: genesis, Ticket: ticket, Issuer: issuer}, nil
+}
+
 // NewJoinRequest creates a short-lived proof of possession for a new device.
 func NewJoinRequest(identity *peercrypto.Identity, invitation string, now time.Time) (string, error) {
 	if identity == nil || len(invitation) == 0 || len(invitation) > maxTokenBytes || !strings.HasPrefix(invitation, invitationPrefix+".") {
@@ -578,6 +746,44 @@ func validateInvitation(doc CapabilityTicket, genesis VerifiedGenesis, issuer Ve
 		return fmt.Errorf("%w: invitation broadens session scope", ErrInvalidDocument)
 	}
 	return validateSessionIDs(doc.AllowedSessionIDs)
+}
+
+func validateConnectionRoutes(routes []ConnectionRoute) error {
+	if len(routes) == 0 || len(routes) > 8 {
+		return fmt.Errorf("%w: connection route count", ErrInvalidDocument)
+	}
+	seen := make(map[string]struct{}, len(routes))
+	for _, route := range routes {
+		if len(route.URL) == 0 || len(route.URL) > 2048 {
+			return fmt.Errorf("%w: connection route URL", ErrInvalidDocument)
+		}
+		parsed, err := url.Parse(route.URL)
+		if err != nil || parsed.User != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("%w: connection route URL", ErrInvalidDocument)
+		}
+		switch route.Kind {
+		case RouteQuickTunnel:
+			host := strings.ToLower(parsed.Hostname())
+			if parsed.Scheme != "https" || parsed.Port() != "" || parsed.Path != "" && parsed.Path != "/" || route.Topic != "" || !strings.HasSuffix(host, ".trycloudflare.com") || len(host) <= len(".trycloudflare.com") {
+				return fmt.Errorf("%w: Quick Tunnel route", ErrInvalidDocument)
+			}
+		case RouteRendezvous:
+			if parsed.Scheme != "https" && parsed.Scheme != "wss" {
+				return fmt.Errorf("%w: Rendezvous route", ErrInvalidDocument)
+			}
+			if _, err := decodeSized(route.Topic, 32, "Rendezvous topic"); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%w: connection route kind", ErrInvalidDocument)
+		}
+		key := string(route.Kind) + "\x00" + route.URL + "\x00" + route.Topic
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("%w: duplicate connection route", ErrInvalidDocument)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
 }
 
 func validateDigest(value, name string) error {

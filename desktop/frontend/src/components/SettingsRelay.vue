@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../lib/log";
+import { Info } from "lucide-vue-next";
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword, rememberRelayPassword, clearRelayConfig } from "../lib/api";
 import { usePlatform } from '../platform'
@@ -479,6 +480,15 @@ defineExpose({
 
         <div v-if="!directConnectionLoading" class="connection-toggle-group">
           <span class="field-label">{{ t("settings.relay.preferDirectConnection") }}</span>
+          <button
+            type="button"
+            class="connection-info"
+            data-testid="direct-connection-info"
+            :title="t('settings.relay.preferDirectConnectionHint')"
+            :aria-label="t('settings.relay.preferDirectConnectionHint')"
+          >
+            <Info :size="14" :stroke-width="1.8" aria-hidden="true" />
+          </button>
           <label class="toggle-switch" :class="{ disabled: directConnectionSaving }">
             <input
               type="checkbox"
@@ -494,10 +504,6 @@ defineExpose({
           </label>
         </div>
       </div>
-
-      <p v-if="!directConnectionLoading" class="hint direct-connection-hint">
-        {{ t("settings.relay.preferDirectConnectionHint") }}
-      </p>
 
       <div class="status-pill" :class="statusPill.cls">
         <span class="dot">●</span>
@@ -791,8 +797,27 @@ defineExpose({
   align-items: center;
   gap: 10px;
 }
-.direct-connection-hint {
-  margin: 0;
+.connection-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0 -4px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: help;
+}
+.connection-info:hover,
+.connection-info:focus-visible {
+  color: var(--accent);
+}
+.connection-info:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 50%;
 }
 .toggle-switch {
   display: inline-flex;

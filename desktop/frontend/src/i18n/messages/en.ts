@@ -519,7 +519,7 @@ export const en = {
       hint: "configure a remote atterm-relay so this machine's sessions can be attached from other devices. when no one is attached, no bytes leave this machine.",
       relayUrl: "relay url",
       preferDirectConnection: "Prefer direct connection",
-      preferDirectConnectionHint: "After the Relay attaches and restores history, try an encrypted peer-to-peer terminal route. If direct setup fails, the session stays on Relay. This per-device beta setting also lets a desktop accept direct connections.",
+      preferDirectConnectionHint: "After the Relay attaches and restores history, try an encrypted peer-to-peer terminal route. If direct setup fails, the session stays on Relay. This setting applies only to the current device; enabling it on desktop also accepts direct connections from other devices.",
       scheme: "Relay protocol",
       email: "Email",
       password: "Password",

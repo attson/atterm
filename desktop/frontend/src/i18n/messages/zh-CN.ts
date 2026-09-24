@@ -486,7 +486,7 @@ export const zhCN = {
       hint: "配置远端 atterm-relay 后，此机器上的会话可从其他设备附加。无人附加时，不会有字节离开此机器。",
       relayUrl: "relay url",
       preferDirectConnection: "优先使用直连",
-      preferDirectConnectionHint: "Relay 完成连接和历史恢复后，尝试建立端到端加密的 P2P 终端通道；直连失败时继续使用 Relay。此 Beta 设置仅对当前设备生效，桌面端开启后也会接受其他设备直连。",
+      preferDirectConnectionHint: "Relay 完成连接和历史恢复后，尝试建立端到端加密的 P2P 终端通道；直连失败时继续使用 Relay。该设置仅对当前设备生效；桌面端开启后，也会接受其他设备发起的直连。",
       scheme: "Relay 协议",
       email: "邮箱",
       password: "密码",

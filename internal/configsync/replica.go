@@ -9,7 +9,11 @@ import (
 	"github.com/attson/atterm/internal/peercrypto"
 )
 
-var ErrWrongSpace = errors.New("configsync: operation belongs to another space")
+var (
+	ErrWrongSpace        = errors.New("configsync: operation belongs to another space")
+	ErrReplicaNotEmpty   = errors.New("configsync: snapshot requires an empty replica")
+	ErrIncompleteHistory = errors.New("configsync: operation history has counter gaps")
+)
 
 // ApplyResult describes whether an inbound token changed durable replica
 // state and its materialized view.
@@ -17,6 +21,7 @@ type ApplyResult struct {
 	Stored       bool
 	Materialized bool
 	Duplicate    bool
+	Compacted    bool
 }
 
 // Record is one materialized scalar or map entity. A deleted record remains
@@ -50,6 +55,9 @@ type Replica struct {
 	maxCounters            VersionVector
 	vector                 VersionVector
 	view                   map[recordKey]VerifiedOp
+	compactedVector        VersionVector
+	compactedPayloadIDs    map[string][32]byte
+	retained               map[string]VerifiedOp
 }
 
 // NewReplica creates an empty replica. Only operations matching
@@ -71,6 +79,9 @@ func NewReplica(spaceID string, supportedSchemaVersion uint32, clock *Clock) (*R
 		maxCounters:            make(VersionVector),
 		vector:                 make(VersionVector),
 		view:                   make(map[recordKey]VerifiedOp),
+		compactedVector:        make(VersionVector),
+		compactedPayloadIDs:    make(map[string][32]byte),
+		retained:               make(map[string]VerifiedOp),
 	}, nil
 }
 
@@ -88,6 +99,12 @@ func (r *Replica) Apply(token string) (ApplyResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	doc := verified.Document
+	if doc.Counter <= r.compactedVector[doc.ActorDeviceID] {
+		if payloadID, known := r.compactedPayloadIDs[doc.OpID]; known && payloadID != verified.payloadID {
+			return ApplyResult{}, fmt.Errorf("%w: actor=%s counter=%d", ErrCounterFork, doc.ActorDeviceID, doc.Counter)
+		}
+		return ApplyResult{Duplicate: true, Compacted: true}, nil
+	}
 	if existing, ok := r.ops[doc.OpID]; ok {
 		if existing.payloadID == verified.payloadID {
 			return ApplyResult{Duplicate: true}, nil
@@ -211,6 +228,14 @@ func (r *Replica) MissingTokens(remote VersionVector) []string {
 	return out
 }
 
+// CompactedVector returns history represented only by an installed snapshot.
+// A peer behind this vector needs the snapshot before tail operations.
+func (r *Replica) CompactedVector() VersionVector {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.compactedVector.Clone()
+}
+
 // Get returns one materialized record, including tombstones.
 func (r *Replica) Get(collection, recordID string) (Record, bool) {
 	r.mu.RLock()
@@ -254,4 +279,22 @@ func cloneVerified(op VerifiedOp) VerifiedOp {
 	op.Document.Payload = append([]byte(nil), op.Document.Payload...)
 	op.Document.CausalContext = op.Document.CausalContext.Clone()
 	return op
+}
+
+func (r *Replica) replaceState(other *Replica) {
+	other.mu.RLock()
+	defer other.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.spaceID = other.spaceID
+	r.supportedSchemaVersion = other.supportedSchemaVersion
+	r.clock = other.clock
+	r.ops = other.ops
+	r.seenCounters = other.seenCounters
+	r.maxCounters = other.maxCounters
+	r.vector = other.vector
+	r.view = other.view
+	r.compactedVector = other.compactedVector
+	r.compactedPayloadIDs = other.compactedPayloadIDs
+	r.retained = other.retained
 }

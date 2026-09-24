@@ -17,10 +17,12 @@ Peer membership handshake authenticator are implemented locally as well. The
 transport-independent config replica core is now implemented locally too:
 exact-byte signed immutable ops、bounded HLC、contiguous version vectors、
 counter-fork detection、causal/LWW scalar merge and record-level remove-wins
-tombstones. Durable storage、snapshot/compaction、epoch envelopes、anti-entropy
-batching and the `prefssync` compatibility adapter remain, as do new-device
-join transport/UI and member governance/epoch rotation. Identity, route
-metadata and handshake authentication alone do not provide a remote connection.
+tombstones. The durable cross-process op log、post-fsync ack frontier and signed
+snapshot/compaction path are also implemented locally. Epoch envelopes、
+anti-entropy batching and the `prefssync` compatibility adapter remain, as do
+new-device join transport/UI and member governance/epoch rotation. Identity,
+route metadata and handshake authentication alone do not provide a remote
+connection.
 
 ## Why Quick Tunnel Before Rendezvous
 

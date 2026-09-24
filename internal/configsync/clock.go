@@ -121,6 +121,20 @@ func (c *Clock) Observe(remote Timestamp) (Timestamp, error) {
 	return c.last, nil
 }
 
+// Restore advances the clock from trusted durable local state without a wall
+// clock skew check. It must not be used for network input.
+func (c *Clock) Restore(persisted Timestamp) error {
+	if persisted.PhysicalMS <= 0 {
+		return ErrInvalidTimestamp
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if CompareTimestamp(persisted, c.last) > 0 {
+		c.last = persisted
+	}
+	return nil
+}
+
 func incrementLogical(ts Timestamp) Timestamp {
 	if ts.Logical == math.MaxUint32 {
 		return Timestamp{PhysicalMS: ts.PhysicalMS + 1}

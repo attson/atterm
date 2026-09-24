@@ -51,3 +51,18 @@ func TestCompareTimestamp(t *testing.T) {
 		}
 	}
 }
+
+func TestClockRestoreTrustedDurableState(t *testing.T) {
+	now := time.UnixMilli(1_000)
+	clock := NewClockWithSource(func() time.Time { return now }, time.Second)
+	persisted := Timestamp{PhysicalMS: now.Add(time.Hour).UnixMilli(), Logical: 7}
+	if _, err := clock.Observe(persisted); !errors.Is(err, ErrClockSkew) {
+		t.Fatalf("network observe error=%v", err)
+	}
+	if err := clock.Restore(persisted); err != nil {
+		t.Fatal(err)
+	}
+	if next := clock.Tick(); CompareTimestamp(next, persisted) <= 0 {
+		t.Fatalf("tick after restore=%+v persisted=%+v", next, persisted)
+	}
+}

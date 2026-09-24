@@ -145,6 +145,30 @@ func TestCreateAndRevokePeerInvitationBatch(t *testing.T) {
 	if err := app.RevokePeerInvitationBatch(invitations[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
+	state, err = app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Revocations) != 1 {
+		t.Fatalf("signed revocations=%d want=1", len(state.Revocations))
+	}
+	revocation, err := peerproto.VerifyRevocation(state.Revocations[0], genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revocation.Document.Kind != peerproto.RevocationInvitationBatch || revocation.Document.TargetID != invitations[0].BatchID {
+		t.Fatalf("unexpected batch revocation: %+v", revocation.Document)
+	}
+	if err := app.RevokePeerInvitationBatch(invitations[0].BatchID); err != nil {
+		t.Fatal(err)
+	}
+	state, err = app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Revocations) != 1 {
+		t.Fatalf("idempotent batch revoke stored %d tokens", len(state.Revocations))
+	}
 	status, err = app.GetPeerSpaceStatus()
 	if err != nil {
 		t.Fatal(err)
@@ -160,6 +184,9 @@ func TestCreateAndRevokePeerInvitationBatch(t *testing.T) {
 		if invite.Token != "" {
 			t.Fatal("revoked invitation still exposes its pairing secret")
 		}
+	}
+	if err := app.RevokePeerInvitationBatch("db8f16c4-8bf5-47b6-8672-b5b75a70d82d"); !errors.Is(err, peerstore.ErrInviteInvalid) {
+		t.Fatalf("unknown batch error=%v", err)
 	}
 }
 

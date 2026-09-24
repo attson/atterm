@@ -27,11 +27,13 @@ a non-exportable IndexedDB ECDH key with v1 migration、and iOS stores the v2
 ECDH material in Keychain. Signed `akr1` epoch rotations now bind the actor
 membership、exact capability-filtered recipient set、parent rotation hash and
 key commitment. The resolver retains concurrent branches but deterministically
-selects the lower operation hash and requires loser branches to rebase. Durable
-deny-wins revocation distribution、anti-entropy batching and the `prefssync`
-compatibility adapter remain, as do new-device join transport/UI. Identity,
-route metadata and handshake authentication alone do not provide a remote
-connection.
+selects the lower operation hash and requires loser branches to rebase. Signed
+`arv1` member/grant/issuer-scoped batch revocations now form a grow-only
+deny-wins set; their exact tokens and derived denial maps are atomically stored
+in the encrypted cross-process Peer Space ledger. Anti-entropy batching and the
+`prefssync` compatibility adapter remain, as do new-device join transport/UI.
+Identity, route metadata and handshake authentication alone do not provide a
+remote connection.
 
 ## Why Quick Tunnel Before Rendezvous
 

@@ -2,12 +2,17 @@ package peerstore
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/attson/atterm/internal/peercrypto"
+	"github.com/attson/atterm/internal/peerproto"
 )
 
 func testStore(t *testing.T) (*Store, []byte) {
@@ -109,6 +114,50 @@ func TestMissingStore(t *testing.T) {
 	}
 }
 
+func TestLegacyV1StateMigratesWithoutChangingEnvelopeAAD(t *testing.T) {
+	store, _ := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	legacy, err := json.Marshal(State{
+		Version: legacyStateVersion, GenesisToken: "g", LocalMembership: "m",
+		Invitations: []Invitation{}, CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := store.aead()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := bytes.Repeat([]byte{0x23}, aead.NonceSize())
+	wrapped, err := json.Marshal(envelope{
+		Version: encryptedEnvelopeV1, Nonce: base64.RawURLEncoding.EncodeToString(nonce),
+		Ciphertext: base64.RawURLEncoding.EncodeToString(aead.Seal(nil, nonce, legacy, storeAAD)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.path, wrapped, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Version != Version || state.GenesisToken != "g" || state.LocalMembership != "m" {
+		t.Fatalf("migrated state=%+v", state)
+	}
+	if err := store.AddInvitations([]Invitation{{InviteID: "i", BatchID: "b", Token: "t", ExpiresAt: now.Add(time.Hour).Unix()}}, now); err != nil {
+		t.Fatal(err)
+	}
+	state, err = store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Version != Version || len(state.Invitations) != 1 {
+		t.Fatalf("persisted migrated state=%+v", state)
+	}
+}
+
 func TestTwoStoreInstancesCannotRedeemOneInvitationForDifferentPeers(t *testing.T) {
 	store, key := testStore(t)
 	now := time.Unix(1_800_000_000, 0)
@@ -194,5 +243,183 @@ func TestRedeemInvitationIsIdempotentForSamePeer(t *testing.T) {
 	}
 	if state.Invitations[0].RevokedAt != 0 || state.Invitations[0].IssuedMembership != memberships[0] {
 		t.Fatalf("consumed invitation changed by revoke: %+v", state.Invitations[0])
+	}
+}
+
+func TestSignedRevocationsPersistAndMaterializeDenyWins(t *testing.T) {
+	store, key := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	identity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesisToken, membershipToken, err := peerproto.NewSpace(identity, wrapping.PublicBytes(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(genesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership, err := peerproto.VerifyGrant(membershipToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Initialize(State{GenesisToken: genesisToken, LocalMembership: membershipToken, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	tickets, err := peerproto.NewInvitationBatch(identity, genesis, membership, now, peerproto.InvitationOptions{Count: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := make([]Invitation, 0, len(tickets))
+	var batchID string
+	for _, token := range tickets {
+		doc, _, err := peerproto.VerifyInvitation(token, genesis, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		batchID = doc.BatchID
+		records = append(records, Invitation{InviteID: doc.InviteID, BatchID: doc.BatchID, Token: token, ExpiresAt: doc.ExpiresAt})
+	}
+	if err := store.AddInvitations(records, now); err != nil {
+		t.Fatal(err)
+	}
+	batchRevocation, err := peerproto.NewRevocation(identity, genesis, membership, peerproto.RevocationInvitationBatch, batchID, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberTarget, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberRevocation, err := peerproto.NewRevocation(identity, genesis, membership, peerproto.RevocationMember, memberTarget.PeerID(), now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantTarget := "5e716a35-04ed-4ad8-8787-f73f44bb51c7"
+	grantRevocation, err := peerproto.NewRevocation(identity, genesis, membership, peerproto.RevocationGrant, grantTarget, now.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := store.ApplyRevocations([]string{grantRevocation.Token, batchRevocation.Token, memberRevocation.Token}, now.Add(4*time.Minute)); err != nil || stored != 3 {
+		t.Fatalf("stored=%d err=%v", stored, err)
+	}
+	if stored, err := store.ApplyRevocations([]string{batchRevocation.Token}, now.Add(5*time.Minute)); err != nil || stored != 0 {
+		t.Fatalf("duplicate stored=%d err=%v", stored, err)
+	}
+
+	reopened := New(store.path, func() ([]byte, error) { return append([]byte(nil), key...), nil })
+	state, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Revocations) != 3 || state.RevokedMembers[memberTarget.PeerID()] != memberRevocation.Document.CreatedAt || state.RevokedGrantSerials[grantTarget] != grantRevocation.Document.CreatedAt {
+		t.Fatalf("materialized state=%+v", state)
+	}
+	for _, invitation := range state.Invitations {
+		if invitation.RevokedAt != batchRevocation.Document.CreatedAt {
+			t.Fatalf("batch invitation not revoked: %+v", invitation)
+		}
+	}
+	if _, err := reopened.RedeemInvitation(records[0].InviteID, "peer", "membership", now.Add(6*time.Minute)); !errors.Is(err, ErrInviteRevoked) {
+		t.Fatalf("redeem signed-revoked invitation error=%v", err)
+	}
+}
+
+func TestConcurrentSignedRevocationsMergeAcrossStoreInstances(t *testing.T) {
+	store, key := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	identity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesisToken, membershipToken, err := peerproto.NewSpace(identity, wrapping.PublicBytes(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, _ := peerproto.VerifyGenesis(genesisToken)
+	membership, _ := peerproto.VerifyGrant(membershipToken, genesis, now)
+	if err := store.Initialize(State{GenesisToken: genesisToken, LocalMembership: membershipToken, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	targets := []string{"35268ed0-edc7-44ca-97b5-2117cb48a7fc", "c598cf82-2387-432a-ad84-c6263cc47656"}
+	tokens := make([]string, len(targets))
+	for index, target := range targets {
+		revocation, err := peerproto.NewRevocation(identity, genesis, membership, peerproto.RevocationGrant, target, now.Add(time.Duration(index)*time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens[index] = revocation.Token
+	}
+	stores := []*Store{
+		store,
+		New(store.path, func() ([]byte, error) { return append([]byte(nil), key...), nil }),
+	}
+	errs := make([]error, len(stores))
+	var wg sync.WaitGroup
+	for index := range stores {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			_, errs[index] = stores[index].ApplyRevocations([]string{tokens[index]}, now.Add(time.Hour))
+		}(index)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Revocations) != 2 || len(state.RevokedGrantSerials) != 2 {
+		t.Fatalf("concurrent revocations lost: %+v", state)
+	}
+}
+
+func TestApplyRevocationsIsAtomicOnInvalidToken(t *testing.T) {
+	store, _ := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	identity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesisToken, membershipToken, err := peerproto.NewSpace(identity, wrapping.PublicBytes(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, _ := peerproto.VerifyGenesis(genesisToken)
+	membership, _ := peerproto.VerifyGrant(membershipToken, genesis, now)
+	if err := store.Initialize(State{GenesisToken: genesisToken, LocalMembership: membershipToken, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	revocation, err := peerproto.NewRevocation(identity, genesis, membership, peerproto.RevocationGrant, "d349a09d-253a-42c0-8ecc-d9a79cfa5a78", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := store.ApplyRevocations([]string{revocation.Token, "not-a-token"}, now); err == nil || stored != 0 {
+		t.Fatalf("stored=%d err=%v", stored, err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Revocations) != 0 || len(state.RevokedGrantSerials) != 0 {
+		t.Fatalf("partial revocation transaction persisted: %+v", state)
 	}
 }

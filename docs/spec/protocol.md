@@ -841,7 +841,7 @@ version: "<v>"}`，专供 LB / k8s probe。
 Peer Space 身份、成员关系和邀请独立于 Relay 账户与 `account_key`。当前文档格式版本为
 `1`，不占用 `internal/proto.Type`，也不改变现有 Relay WebSocket frame。
 
-五类 token 使用相同信封：
+七类 token 使用相同信封：
 
 ```text
 <prefix>.<base64url(exact-json-bytes)>.<base64url(p1363-signature)>
@@ -854,6 +854,7 @@ Peer Space 身份、成员关系和邀请独立于 Relay 账户与 `account_key`
 | `atp1` | `CapabilityTicket` | 与网络路径无关的单次预签邀请 |
 | `apj1` | `JoinRequest` | 新设备对 subject private key 的短期持有证明 |
 | `atc1` | `ConnectionBundle` | invitation 与当前可达 route hints 的短期签名包装 |
+| `arv1` | `Revocation` | deny-wins member/grant/issuer-scoped invitation batch 撤销 |
 | `akr1` | `EpochRotation` | sync/vault epoch key 的成员封装与确定性轮换候选 |
 
 签名算法是 P-256 ECDSA + SHA-256，signature 为 64-byte IEEE P1363 `r || s`，且只接受
@@ -903,6 +904,18 @@ private key。Web 的 signing 与 wrapping private key 都是 non-exportable `Cr
 record 原地新增 ECDH key pair，不轮换 signing key 或 `peer_id`。iOS v2 record 将两把 PKCS#8
 private key 只序列化到 Keychain，运行时重新导入为 non-exportable key；v1 迁移同样只新增
 wrapping identity。
+
+`arv1` revocation 是不可变 grow-only governance operation，包含 `revocation_id`、Space/genesis
+锚、kind、target、actor membership 和创建时间。`member` 撤销永久拒绝 peer identity，`grant`
+撤销拒绝单个 membership serial；两者要求 actor 具有 `permission=full && can_invite=true`。
+`invitation_batch` 允许 `can_invite=true` 的 actor 撤销自己签发的 batch，作用域实际是
+`(actor_peer_id, batch_id)`，相同 UUID 不会影响其它 issuer。所有有效撤销做集合并集，不存在
+un-revoke，也不走普通配置 LWW；重复 token 幂等，同一 `revocation_id` 对应不同有效 token 时
+fail closed。设备保留全部 token 供后续 anti-entropy，并从中派生 member/grant deny map；本地
+redemption ledger 只把 actor membership 与本机 membership 完全一致的 batch 撤销应用到未消费
+ticket。已消费 invitation 对应的 membership 不会因 batch 撤销失效，必须显式发布 member/grant
+撤销。当前撤销日志和派生集合随加密 `peer-space.json` 原子持久化。明文 state schema 为 v2；
+读取 v1 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏已有本地 Space。
 
 `akr1` rotation document 包含 `rotation_id`、`space_id`、`key_class`、
 `previous_epoch`、`previous_rotation_hash`、新 `epoch`、epoch key 的 SHA-256 commitment、

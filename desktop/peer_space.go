@@ -211,7 +211,49 @@ func (a *App) RevokePeerInvitationBatch(batchID string) error {
 	if err != nil {
 		return err
 	}
-	return manager.store.RevokeBatch(batchID, manager.now())
+	return manager.revokeInvitationBatch(batchID)
+}
+
+func (m *peerSpaceManager) revokeInvitationBatch(batchID string) error {
+	state, err := m.store.Load()
+	if err != nil {
+		return err
+	}
+	found := false
+	hasOpenInvitation := false
+	for _, invitation := range state.Invitations {
+		if invitation.BatchID == batchID {
+			found = true
+			if invitation.ConsumedAt == 0 && invitation.RevokedAt == 0 {
+				hasOpenInvitation = true
+			}
+		}
+	}
+	if !found {
+		return peerstore.ErrInviteInvalid
+	}
+	if !hasOpenInvitation {
+		return nil
+	}
+	identity, err := m.loadIdentity()
+	if err != nil {
+		return err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return err
+	}
+	now := m.now()
+	membership, err := peerproto.VerifyGrant(state.LocalMembership, genesis, now)
+	if err != nil {
+		return err
+	}
+	revocation, err := peerproto.NewRevocation(identity, genesis, membership, peerproto.RevocationInvitationBatch, batchID, now)
+	if err != nil {
+		return err
+	}
+	_, err = m.store.ApplyRevocations([]string{revocation.Token}, now)
+	return err
 }
 
 func (m *peerSpaceManager) status() (PeerSpaceStatus, error) {

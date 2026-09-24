@@ -17,13 +17,17 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/attson/atterm/internal/peerproto"
 )
 
 const (
-	Version      = 1
-	maxStoreSize = 4 << 20
-	lockTimeout  = 5 * time.Second
-	staleLockAge = 30 * time.Second
+	Version             = 2
+	legacyStateVersion  = 1
+	encryptedEnvelopeV1 = 1
+	maxStoreSize        = 4 << 20
+	lockTimeout         = 5 * time.Second
+	staleLockAge        = 30 * time.Second
 )
 
 var (
@@ -58,6 +62,7 @@ type State struct {
 	GenesisToken        string           `json:"genesis_token"`
 	LocalMembership     string           `json:"local_membership"`
 	Invitations         []Invitation     `json:"invitations"`
+	Revocations         []string         `json:"revocations,omitempty"`
 	RevokedMembers      map[string]int64 `json:"revoked_members,omitempty"`
 	RevokedGrantSerials map[string]int64 `json:"revoked_grant_serials,omitempty"`
 	CreatedAt           int64            `json:"created_at"`
@@ -101,6 +106,7 @@ func (s *Store) Initialize(state State) error {
 		}
 		state.UpdatedAt = state.CreatedAt
 		state.Invitations = append([]Invitation(nil), state.Invitations...)
+		state.Revocations = append([]string(nil), state.Revocations...)
 		return s.writeLocked(state)
 	})
 }
@@ -192,6 +198,40 @@ func (s *Store) RevokeBatch(batchID string, now time.Time) error {
 	return s.revoke(func(invite Invitation) bool { return invite.BatchID == batchID }, now)
 }
 
+// ApplyRevocations verifies and atomically persists signed governance tokens.
+// It returns the number of newly stored operations; duplicates are harmless.
+func (s *Store) ApplyRevocations(tokens []string, now time.Time) (int, error) {
+	if len(tokens) == 0 || now.Unix() <= 0 {
+		return 0, ErrInviteInvalid
+	}
+	stored := 0
+	err := s.mutate(func(state *State) error {
+		genesis, set, err := buildRevocationSet(*state)
+		if err != nil {
+			return err
+		}
+		for _, token := range tokens {
+			result, err := set.Apply(token)
+			if err != nil {
+				return err
+			}
+			if result.Stored {
+				stored++
+			}
+		}
+		state.Revocations = set.Tokens()
+		if err := materializeRevocations(state, genesis, set); err != nil {
+			return err
+		}
+		state.UpdatedAt = now.Unix()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return stored, nil
+}
+
 func (s *Store) revoke(match func(Invitation) bool, now time.Time) error {
 	return s.mutate(func(state *State) error {
 		found := false
@@ -238,7 +278,7 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("peerstore: file exceeds size limit")
 	}
 	var wrapped envelope
-	if err := strictJSON(blob, &wrapped); err != nil || wrapped.Version != Version {
+	if err := strictJSON(blob, &wrapped); err != nil || wrapped.Version != encryptedEnvelopeV1 {
 		return State{}, fmt.Errorf("peerstore: invalid envelope")
 	}
 	nonce, err := base64.RawURLEncoding.Strict().DecodeString(wrapped.Nonce)
@@ -261,16 +301,30 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("peerstore: decrypt: %w", err)
 	}
 	var state State
-	if err := strictJSON(plaintext, &state); err != nil || state.Version != Version || state.GenesisToken == "" || state.LocalMembership == "" {
+	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
 		return State{}, fmt.Errorf("peerstore: invalid state")
 	}
+	// v2 adds signed revocation tokens. The encrypted envelope and its AAD stay
+	// at v1 so existing stores can be migrated without decrypt-and-rewrap glue.
+	state.Version = Version
 	state.Invitations = append([]Invitation(nil), state.Invitations...)
+	state.Revocations = append([]string(nil), state.Revocations...)
 	state.RevokedMembers = cloneMap(state.RevokedMembers)
 	state.RevokedGrantSerials = cloneMap(state.RevokedGrantSerials)
+	if len(state.Revocations) != 0 {
+		genesis, set, err := buildRevocationSet(state)
+		if err != nil {
+			return State{}, err
+		}
+		if err := materializeRevocations(&state, genesis, set); err != nil {
+			return State{}, err
+		}
+	}
 	return state, nil
 }
 
 func (s *Store) writeLocked(state State) error {
+	state.Version = Version
 	plaintext, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("marshal peer store: %w", err)
@@ -287,7 +341,7 @@ func (s *Store) writeLocked(state State) error {
 		return fmt.Errorf("peerstore: nonce: %w", err)
 	}
 	wrapped, err := json.Marshal(envelope{
-		Version:    Version,
+		Version:    encryptedEnvelopeV1,
 		Nonce:      base64.RawURLEncoding.EncodeToString(nonce),
 		Ciphertext: base64.RawURLEncoding.EncodeToString(aead.Seal(nil, nonce, plaintext, storeAAD)),
 	})
@@ -396,4 +450,58 @@ func cloneMap(in map[string]int64) map[string]int64 {
 		out[key] = value
 	}
 	return out
+}
+
+func buildRevocationSet(state State) (peerproto.VerifiedGenesis, *peerproto.RevocationSet, error) {
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return peerproto.VerifiedGenesis{}, nil, fmt.Errorf("peerstore: verify revocation genesis: %w", err)
+	}
+	set, err := peerproto.NewRevocationSet(genesis)
+	if err != nil {
+		return peerproto.VerifiedGenesis{}, nil, fmt.Errorf("peerstore: create revocation set: %w", err)
+	}
+	for _, token := range state.Revocations {
+		if _, err := set.Apply(token); err != nil {
+			return peerproto.VerifiedGenesis{}, nil, fmt.Errorf("peerstore: verify revocation: %w", err)
+		}
+	}
+	return genesis, set, nil
+}
+
+func materializeRevocations(state *State, genesis peerproto.VerifiedGenesis, set *peerproto.RevocationSet) error {
+	for _, token := range set.Tokens() {
+		revocation, err := peerproto.VerifyRevocation(token, genesis)
+		if err != nil {
+			return fmt.Errorf("peerstore: materialize revocation: %w", err)
+		}
+		switch revocation.Document.Kind {
+		case peerproto.RevocationMember:
+			setEarliest(&state.RevokedMembers, revocation.Document.TargetID, revocation.Document.CreatedAt)
+		case peerproto.RevocationGrant:
+			setEarliest(&state.RevokedGrantSerials, revocation.Document.TargetID, revocation.Document.CreatedAt)
+		case peerproto.RevocationInvitationBatch:
+			// The invitation ledger is authoritative only for batches issued by
+			// this exact local grant. Other issuers retain their own ledgers.
+			if revocation.Document.ActorMembership != state.LocalMembership {
+				continue
+			}
+			for index := range state.Invitations {
+				invite := &state.Invitations[index]
+				if invite.BatchID == revocation.Document.TargetID && invite.ConsumedAt == 0 && (invite.RevokedAt == 0 || revocation.Document.CreatedAt < invite.RevokedAt) {
+					invite.RevokedAt = revocation.Document.CreatedAt
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func setEarliest(destination *map[string]int64, key string, timestamp int64) {
+	if *destination == nil {
+		*destination = make(map[string]int64)
+	}
+	if existing, ok := (*destination)[key]; !ok || timestamp < existing {
+		(*destination)[key] = timestamp
+	}
 }

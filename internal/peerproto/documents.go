@@ -22,10 +22,11 @@ import (
 const (
 	Version = 1
 
-	genesisPrefix    = "apg1"
-	membershipPrefix = "apm1"
-	invitationPrefix = "atp1"
-	maxTokenBytes    = 64 << 10
+	genesisPrefix     = "apg1"
+	membershipPrefix  = "apm1"
+	invitationPrefix  = "atp1"
+	joinRequestPrefix = "apj1"
+	maxTokenBytes     = 64 << 10
 )
 
 var (
@@ -110,6 +111,18 @@ type CapabilityTicket struct {
 	CanSyncSecrets    bool       `json:"can_sync_secrets"`
 }
 
+// JoinRequest proves that the device redeeming an invitation owns the new
+// subject key. The complete invitation is embedded so a gateway can forward
+// one self-contained opaque token to the designated redemption peer.
+type JoinRequest struct {
+	V                int    `json:"v"`
+	Invitation       string `json:"invitation"`
+	SubjectPeerID    string `json:"subject_peer_id"`
+	SubjectPublicKey string `json:"subject_public_key"`
+	Nonce            string `json:"nonce"`
+	CreatedAt        int64  `json:"created_at"`
+}
+
 // VerifiedGenesis retains the exact signed token and decoded public key.
 type VerifiedGenesis struct {
 	Token     string
@@ -122,6 +135,16 @@ type VerifiedGenesis struct {
 type VerifiedGrant struct {
 	Token     string
 	Document  DeviceGrant
+	PublicKey []byte
+}
+
+// VerifiedJoinRequest contains the invitation chain and subject key verified
+// from one signed join request.
+type VerifiedJoinRequest struct {
+	Token     string
+	Document  JoinRequest
+	Ticket    CapabilityTicket
+	Issuer    VerifiedGrant
 	PublicKey []byte
 }
 
@@ -352,6 +375,110 @@ func VerifyInvitation(token string, genesis VerifiedGenesis, now time.Time) (Cap
 		return CapabilityTicket{}, VerifiedGrant{}, fmt.Errorf("%w: invitation signature: %v", ErrInvalidDocument, err)
 	}
 	return doc, issuer, nil
+}
+
+// NewJoinRequest creates a short-lived proof of possession for a new device.
+func NewJoinRequest(identity *peercrypto.Identity, invitation string, now time.Time) (string, error) {
+	if identity == nil || len(invitation) == 0 || len(invitation) > maxTokenBytes || !strings.HasPrefix(invitation, invitationPrefix+".") {
+		return "", fmt.Errorf("%w: join request input", ErrInvalidDocument)
+	}
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("generate join nonce: %w", err)
+	}
+	doc := JoinRequest{
+		V:                Version,
+		Invitation:       invitation,
+		SubjectPeerID:    identity.PeerID(),
+		SubjectPublicKey: encode(identity.PublicBytes()),
+		Nonce:            encode(nonce),
+		CreatedAt:        now.Unix(),
+	}
+	token, err := signDocument(joinRequestPrefix, doc, identity)
+	if err != nil {
+		return "", err
+	}
+	if len(token) > maxTokenBytes {
+		return "", fmt.Errorf("%w: join request too large", ErrInvalidDocument)
+	}
+	return token, nil
+}
+
+// VerifyJoinRequest validates the subject proof and the embedded invitation.
+func VerifyJoinRequest(token string, genesis VerifiedGenesis, now time.Time) (VerifiedJoinRequest, error) {
+	var doc JoinRequest
+	raw, sig, err := parseDocument(joinRequestPrefix, token, &doc)
+	if err != nil {
+		return VerifiedJoinRequest{}, err
+	}
+	if doc.V != Version || doc.CreatedAt <= 0 || doc.CreatedAt < now.Add(-5*time.Minute).Unix() || doc.CreatedAt > now.Add(5*time.Minute).Unix() {
+		return VerifiedJoinRequest{}, fmt.Errorf("%w: join request time", ErrInvalidDocument)
+	}
+	pub, err := decodeSized(doc.SubjectPublicKey, peercrypto.PublicKeySize, "join subject public key")
+	if err != nil {
+		return VerifiedJoinRequest{}, err
+	}
+	if peercrypto.PeerID(pub) != doc.SubjectPeerID {
+		return VerifiedJoinRequest{}, fmt.Errorf("%w: join subject peer id", ErrInvalidDocument)
+	}
+	if _, err := decodeSized(doc.Nonce, 32, "join nonce"); err != nil {
+		return VerifiedJoinRequest{}, err
+	}
+	if err := peercrypto.Verify(pub, raw, sig); err != nil {
+		return VerifiedJoinRequest{}, fmt.Errorf("%w: join signature: %v", ErrInvalidDocument, err)
+	}
+	ticket, issuer, err := VerifyInvitation(doc.Invitation, genesis, now)
+	if err != nil {
+		return VerifiedJoinRequest{}, err
+	}
+	return VerifiedJoinRequest{
+		Token: token, Document: doc, Ticket: ticket, Issuer: issuer, PublicKey: pub,
+	}, nil
+}
+
+// IssueMembership signs the durable membership created by one verified join.
+// The invitation capabilities are copied exactly; redemption cannot widen
+// permission, session scope, invite delegation, or secret-sync access.
+func IssueMembership(identity *peercrypto.Identity, genesis VerifiedGenesis, issuer VerifiedGrant, join VerifiedJoinRequest, now time.Time) (string, error) {
+	if identity == nil {
+		return "", fmt.Errorf("%w: membership issuer", ErrInvalidDocument)
+	}
+	verifiedIssuer, err := VerifyGrant(issuer.Token, genesis, now)
+	if err != nil {
+		return "", fmt.Errorf("%w: membership issuer: %v", ErrInvalidDocument, err)
+	}
+	verifiedJoin, err := VerifyJoinRequest(join.Token, genesis, now)
+	if err != nil {
+		return "", fmt.Errorf("%w: membership join: %v", ErrInvalidDocument, err)
+	}
+	issuer = verifiedIssuer
+	join = verifiedJoin
+	if issuer.Document.SubjectPeerID != identity.PeerID() || join.Ticket.IssuerPeerID != identity.PeerID() || join.Ticket.RedemptionPeerID != identity.PeerID() {
+		return "", fmt.Errorf("%w: membership issuer", ErrInvalidDocument)
+	}
+	if join.Ticket.SpaceID != genesis.Document.SpaceID || join.Ticket.SpaceGenesisHash != genesis.Hash || join.Issuer.Token != issuer.Token {
+		return "", fmt.Errorf("%w: membership join anchor", ErrInvalidDocument)
+	}
+	if issuer.Document.DelegationDepth >= 8 {
+		return "", fmt.Errorf("%w: membership delegation depth", ErrInvalidDocument)
+	}
+	doc := DeviceGrant{
+		V:                 Version,
+		Serial:            uuid.NewString(),
+		SpaceID:           genesis.Document.SpaceID,
+		SpaceGenesisHash:  genesis.Hash,
+		SubjectPeerID:     join.Document.SubjectPeerID,
+		SubjectPublicKey:  join.Document.SubjectPublicKey,
+		IssuerPeerID:      identity.PeerID(),
+		IssuerMembership:  issuer.Token,
+		IssuedAt:          now.Unix(),
+		Permission:        join.Ticket.Permission,
+		AllowedSessionIDs: append([]string(nil), join.Ticket.AllowedSessionIDs...),
+		CanInvite:         join.Ticket.CanInvite,
+		CanSyncSecrets:    join.Ticket.CanSyncSecrets,
+		DelegationDepth:   issuer.Document.DelegationDepth + 1,
+	}
+	return signDocument(membershipPrefix, doc, identity)
 }
 
 func signDocument(prefix string, doc any, identity *peercrypto.Identity) (string, error) {

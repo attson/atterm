@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peerstore"
 	"github.com/attson/atterm/internal/safekeyring"
@@ -154,5 +155,58 @@ func TestPeerInvitationsRequireSpace(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	if _, err := app.CreatePeerInvitations(CreatePeerInvitationsReq{Count: 1}); !errors.Is(err, peerstore.ErrNotInitialized) {
 		t.Fatalf("CreatePeerInvitations without space error = %v", err)
+	}
+}
+
+func TestRedeemPeerJoinRequestIsIdempotentAndRejectsReplay(t *testing.T) {
+	app, now := newTestPeerApp(t)
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	invitations, err := app.CreatePeerInvitations(CreatePeerInvitationsReq{Count: 1, Permission: "control"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiningIdentity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := peerproto.NewJoinRequest(joiningIdentity, invitations[0].Token, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := app.peerSpace.redeemJoinRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := app.peerSpace.redeemJoinRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.GenesisToken == "" || first.MembershipToken == "" || second != first {
+		t.Fatalf("idempotent join results differ: first=%+v second=%+v", first, second)
+	}
+	genesis, err := peerproto.VerifyGenesis(first.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership, err := peerproto.VerifyGrant(first.MembershipToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membership.Document.SubjectPeerID != joiningIdentity.PeerID() || membership.Document.Permission != peerproto.PermissionControl {
+		t.Fatalf("unexpected joined membership: %+v", membership.Document)
+	}
+
+	replayIdentity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := peerproto.NewJoinRequest(replayIdentity, invitations[0].Token, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.peerSpace.redeemJoinRequest(replay); !errors.Is(err, peerstore.ErrInviteConsumed) {
+		t.Fatalf("cross-device replay error = %v", err)
 	}
 }

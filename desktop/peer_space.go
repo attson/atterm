@@ -49,6 +49,11 @@ type PeerInvitation struct {
 	RevokedAt        int64  `json:"revoked_at,omitempty"`
 }
 
+type peerJoinResult struct {
+	GenesisToken    string
+	MembershipToken string
+}
+
 type peerSpaceManager struct {
 	store             *peerstore.Store
 	bootstrapLockPath string
@@ -288,6 +293,48 @@ func (m *peerSpaceManager) createInvitations(req CreatePeerInvitationsReq) ([]Pe
 		return nil, err
 	}
 	return publicInvitations(records, now.Unix()), nil
+}
+
+// redeemJoinRequest is the transport-independent authorization core used by
+// future Quick Tunnel and Rendezvous gateways. It deliberately has no route or
+// Relay inputs.
+func (m *peerSpaceManager) redeemJoinRequest(requestToken string) (peerJoinResult, error) {
+	state, err := m.store.Load()
+	if err != nil {
+		return peerJoinResult{}, err
+	}
+	identity, err := m.loadIdentity()
+	if err != nil {
+		return peerJoinResult{}, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return peerJoinResult{}, fmt.Errorf("verify peer genesis: %w", err)
+	}
+	now := m.now()
+	issuer, err := peerproto.VerifyGrant(state.LocalMembership, genesis, now)
+	if err != nil {
+		return peerJoinResult{}, fmt.Errorf("verify local membership: %w", err)
+	}
+	if issuer.Document.SubjectPeerID != identity.PeerID() {
+		return peerJoinResult{}, errors.New("peer identity does not own local membership")
+	}
+	join, err := peerproto.VerifyJoinRequest(requestToken, genesis, now)
+	if err != nil {
+		return peerJoinResult{}, fmt.Errorf("verify peer join request: %w", err)
+	}
+	if join.Ticket.RedemptionPeerID != identity.PeerID() {
+		return peerJoinResult{}, errors.New("peer invitation belongs to a different redemption device")
+	}
+	issued, err := peerproto.IssueMembership(identity, genesis, issuer, join, now)
+	if err != nil {
+		return peerJoinResult{}, fmt.Errorf("issue peer membership: %w", err)
+	}
+	membership, err := m.store.RedeemInvitation(join.Ticket.InviteID, join.Document.SubjectPeerID, issued, now)
+	if err != nil {
+		return peerJoinResult{}, err
+	}
+	return peerJoinResult{GenesisToken: state.GenesisToken, MembershipToken: membership}, nil
 }
 
 func (m *peerSpaceManager) loadIdentity() (*peercrypto.Identity, error) {

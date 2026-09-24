@@ -46,6 +46,7 @@ type Invitation struct {
 	ExpiresAt        int64  `json:"expires_at"`
 	ConsumedAt       int64  `json:"consumed_at,omitempty"`
 	ConsumedByPeerID string `json:"consumed_by_peer_id,omitempty"`
+	IssuedMembership string `json:"issued_membership,omitempty"`
 	RevokedAt        int64  `json:"revoked_at,omitempty"`
 }
 
@@ -133,36 +134,56 @@ func (s *Store) AddInvitations(invitations []Invitation, now time.Time) error {
 	})
 }
 
-// ConsumeInvitation records the only successful redemption for inviteID.
-func (s *Store) ConsumeInvitation(inviteID, consumerPeerID string, now time.Time) error {
-	if inviteID == "" || consumerPeerID == "" {
-		return ErrInviteInvalid
+// RedeemInvitation atomically records the membership issued for a ticket.
+// Retrying with the same subject returns the original membership, while a
+// different subject can never replace it.
+func (s *Store) RedeemInvitation(inviteID, consumerPeerID, issuedMembership string, now time.Time) (string, error) {
+	if inviteID == "" || consumerPeerID == "" || issuedMembership == "" {
+		return "", ErrInviteInvalid
 	}
-	return s.mutate(func(state *State) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var membership string
+	err := s.withFileLock(func() error {
+		state, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
 		for index := range state.Invitations {
 			invite := &state.Invitations[index]
 			if invite.InviteID != inviteID {
 				continue
 			}
+			if invite.ConsumedAt != 0 {
+				if invite.ConsumedByPeerID != consumerPeerID || invite.IssuedMembership == "" {
+					return ErrInviteConsumed
+				}
+				membership = invite.IssuedMembership
+				return nil
+			}
 			if invite.RevokedAt != 0 {
 				return ErrInviteRevoked
-			}
-			if invite.ConsumedAt != 0 {
-				return ErrInviteConsumed
 			}
 			if now.Unix() >= invite.ExpiresAt {
 				return ErrInviteInvalid
 			}
 			invite.ConsumedAt = now.Unix()
 			invite.ConsumedByPeerID = consumerPeerID
+			invite.IssuedMembership = issuedMembership
 			state.UpdatedAt = now.Unix()
+			if err := s.writeLocked(state); err != nil {
+				return err
+			}
+			membership = issuedMembership
 			return nil
 		}
 		return ErrInviteInvalid
 	})
+	return membership, err
 }
 
-// RevokeInvitation and RevokeBatch are idempotent deny-wins updates.
+// RevokeInvitation and RevokeBatch are idempotent updates for unused tickets.
+// A membership remains valid after the invitation that created it is consumed.
 func (s *Store) RevokeInvitation(inviteID string, now time.Time) error {
 	return s.revoke(func(invite Invitation) bool { return invite.InviteID == inviteID }, now)
 }
@@ -177,7 +198,7 @@ func (s *Store) revoke(match func(Invitation) bool, now time.Time) error {
 		for index := range state.Invitations {
 			if match(state.Invitations[index]) {
 				found = true
-				if state.Invitations[index].RevokedAt == 0 {
+				if state.Invitations[index].ConsumedAt == 0 && state.Invitations[index].RevokedAt == 0 {
 					state.Invitations[index].RevokedAt = now.Unix()
 				}
 			}

@@ -1,6 +1,7 @@
 package peerproto
 
 import (
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -105,5 +106,67 @@ func TestStrictJSONRejectsUnknownFields(t *testing.T) {
 	token := genesisPrefix + "." + encode(raw) + "." + encode(sig)
 	if _, err := VerifyGenesis(token); err == nil {
 		t.Fatal("unknown JSON field was accepted")
+	}
+}
+
+func TestJoinRequestAndIssuedMembership(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	tokens, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{
+		Count: 1, Permission: PermissionControl, CanSyncSecrets: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiningIdentity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestToken, err := NewJoinRequest(joiningIdentity, tokens[0], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := VerifyJoinRequest(requestToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Document.SubjectPeerID != joiningIdentity.PeerID() {
+		t.Fatal("join request subject does not own signing key")
+	}
+	membershipToken, err := IssueMembership(issuerIdentity, genesis, issuerMembership, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership, err := VerifyGrant(membershipToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membership.Document.SubjectPeerID != joiningIdentity.PeerID() || membership.Document.Permission != PermissionControl || !membership.Document.CanSyncSecrets {
+		t.Fatalf("unexpected issued membership: %+v", membership.Document)
+	}
+}
+
+func TestJoinRequestRejectsDifferentSubjectSignature(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	tokens, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiningIdentity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestToken, err := NewJoinRequest(joiningIdentity, tokens[0], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(requestToken, ".")
+	signature, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature[0] ^= 1
+	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
+	if _, err := VerifyJoinRequest(strings.Join(parts, "."), genesis, now); err == nil {
+		t.Fatal("join request with modified signature verified")
 	}
 }

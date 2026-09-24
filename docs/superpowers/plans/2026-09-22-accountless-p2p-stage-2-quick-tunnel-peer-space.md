@@ -10,9 +10,12 @@ Implementation status (2026-09-24): PR 2.1 foundation is in progress on
 `feature/peer-space-foundation`. P-256 desktop identity storage、immutable
 genesis、signed membership、route-independent `atp1` invitation batches、
 encrypted invite ledger and cross-process single-use/revocation writes are
-implemented. Invitation redemption into a new member, Web/iOS identity
-storage, governance replication and the Peer handshake authenticator remain
-in PR 2.1 and are not implied by the foundation bindings.
+implemented. Signed `apj1` join requests、idempotent membership issuance、Web
+non-exportable IndexedDB identity and iOS Keychain identity adapters are also
+implemented locally. ConnectionBundle、new-device join transport/UI、member
+governance/epoch rotation、config replication and the Peer handshake
+authenticator remain; identity and redemption support alone does not provide a
+remote connection.
 
 ## Why Quick Tunnel Before Rendezvous
 

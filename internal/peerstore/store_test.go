@@ -36,10 +36,10 @@ func TestEncryptedStoreAndAtomicConsumption(t *testing.T) {
 			t.Fatalf("encrypted store contains plaintext %q", plaintext)
 		}
 	}
-	if err := store.ConsumeInvitation("invite-1", "consumer-peer", now.Add(time.Minute)); err != nil {
+	if _, err := store.RedeemInvitation("invite-1", "consumer-peer", "issued-membership", now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ConsumeInvitation("invite-1", "other-peer", now.Add(2*time.Minute)); !errors.Is(err, ErrInviteConsumed) {
+	if _, err := store.RedeemInvitation("invite-1", "other-peer", "replacement-membership", now.Add(2*time.Minute)); !errors.Is(err, ErrInviteConsumed) {
 		t.Fatalf("second consume error = %v", err)
 	}
 	state, err := store.Load()
@@ -67,7 +67,7 @@ func TestRevocationIsIdempotentAndDenyWins(t *testing.T) {
 	if err := store.RevokeBatch("b", now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ConsumeInvitation("i", "peer", now.Add(3*time.Minute)); !errors.Is(err, ErrInviteRevoked) {
+	if _, err := store.RedeemInvitation("i", "peer", "membership", now.Add(3*time.Minute)); !errors.Is(err, ErrInviteRevoked) {
 		t.Fatalf("consume revoked error = %v", err)
 	}
 	state, err := store.Load()
@@ -109,7 +109,7 @@ func TestMissingStore(t *testing.T) {
 	}
 }
 
-func TestTwoStoreInstancesCannotConsumeOneInvitation(t *testing.T) {
+func TestTwoStoreInstancesCannotRedeemOneInvitationForDifferentPeers(t *testing.T) {
 	store, key := testStore(t)
 	now := time.Unix(1_800_000_000, 0)
 	if err := store.Initialize(State{GenesisToken: "g", LocalMembership: "m", CreatedAt: now.Unix()}); err != nil {
@@ -126,7 +126,12 @@ func TestTwoStoreInstancesCannotConsumeOneInvitation(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			errs[index] = stores[index].ConsumeInvitation("i", "peer", now.Add(time.Minute))
+			_, errs[index] = stores[index].RedeemInvitation(
+				"i",
+				"peer-"+string(rune('a'+index)),
+				"membership-"+string(rune('a'+index)),
+				now.Add(time.Minute),
+			)
 		}(index)
 	}
 	wg.Wait()
@@ -144,5 +149,50 @@ func TestTwoStoreInstancesCannotConsumeOneInvitation(t *testing.T) {
 	}
 	if successes != 1 || consumed != 1 {
 		t.Fatalf("consume results = %#v", errs)
+	}
+}
+
+func TestRedeemInvitationIsIdempotentForSamePeer(t *testing.T) {
+	store, key := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	if err := store.Initialize(State{GenesisToken: "g", LocalMembership: "m", CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddInvitations([]Invitation{{InviteID: "i", BatchID: "b", Token: "t", ExpiresAt: now.Add(time.Hour).Unix()}}, now); err != nil {
+		t.Fatal(err)
+	}
+	other := New(store.path, func() ([]byte, error) { return append([]byte(nil), key...), nil })
+	stores := []*Store{store, other}
+	memberships := make([]string, len(stores))
+	errs := make([]error, len(stores))
+	var wg sync.WaitGroup
+	for index := range stores {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			memberships[index], errs[index] = stores[index].RedeemInvitation("i", "peer", "membership-"+string(rune('a'+index)), now.Add(time.Minute))
+		}(index)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if memberships[0] == "" || memberships[0] != memberships[1] {
+		t.Fatalf("idempotent memberships = %#v", memberships)
+	}
+	if _, err := store.RedeemInvitation("i", "different-peer", "replacement", now.Add(2*time.Minute)); !errors.Is(err, ErrInviteConsumed) {
+		t.Fatalf("different peer redemption error = %v", err)
+	}
+	if err := store.RevokeInvitation("i", now.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Invitations[0].RevokedAt != 0 || state.Invitations[0].IssuedMembership != memberships[0] {
+		t.Fatalf("consumed invitation changed by revoke: %+v", state.Invitations[0])
 	}
 }

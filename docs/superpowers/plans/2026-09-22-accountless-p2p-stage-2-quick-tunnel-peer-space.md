@@ -58,8 +58,14 @@ canonical mutation batches without advancing HLCs for unchanged records, but
 setters deliberately do not use that path until the old writer can be replaced
 atomically. Relay imports filter SSH secrets and device-inaccessible vault
 records; Relay exports currently skip the whole SSH bundle so metadata cannot
-overwrite Relay-only secrets. New-device join transport/UI and the actual Peer
-logical-channel adapter still remain. Relay
+overwrite Relay-only secrets. Canonical winners can also be projected directly
+into a detached local `appConfig` without a Relay account key; scalar
+tombstones、Profile env capability rules and SSH metadata-only application are
+covered before one final config-store commit. Pre-join local customizations now
+have a versioned, encrypted, write-once pending payload in `peerstore`; user
+acceptance creates merge-only upserts and clears it only after durable append.
+These helpers remain deliberately unwired until new-device join transport/UI
+and the actual Peer logical-channel adapter exist. Relay
 compatibility hash/timestamp/record-ref state is persisted per Space and realm
 with cross-process transactional updates. Canonical winners can now be
 decrypted by exact epoch、grouped per legacy key and materialized back into

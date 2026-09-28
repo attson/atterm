@@ -310,6 +310,83 @@ func TestCreatePeerSpaceBootstrapsPortableConfigOnce(t *testing.T) {
 	}
 }
 
+func TestPeerConfigReplicaAppendsOnlyChangedLocalRecords(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	cfg := appConfig{
+		TerminalTheme:    "nord",
+		TerminalFontSize: 17,
+		Profiles: []SessionProfile{{
+			ID: "profile-1", Name: "Shared", SyncEnv: true,
+			Env: map[string]string{"TOKEN": "shared"},
+		}},
+		DefaultProfileID: "profile-1",
+		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Before", Host: "example.com", User: "alice"}},
+	}
+	app.cfgStore = &configStore{cfg: cfg}
+	status, err := app.CreatePeerSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	before := runtime.replica.Vector()[status.PeerID]
+
+	if operations, err := runtime.appendLocalRelayKey(cfg, "terminal_theme"); err != nil || operations != 0 {
+		t.Fatalf("unchanged terminal theme operations=%d err=%v", operations, err)
+	}
+	changed := cfg
+	changed.TerminalTheme = "dark"
+	if operations, err := runtime.appendLocalRelayKey(changed, "terminal_theme"); err != nil || operations != 1 {
+		t.Fatalf("changed terminal theme operations=%d err=%v", operations, err)
+	}
+	if font, ok := runtime.replica.Get(configsync.CollectionPreferences, "terminal_font_size"); !ok || font.Deleted {
+		t.Fatal("updating one scalar deleted another preference")
+	}
+
+	changed.Profiles = append([]SessionProfile(nil), cfg.Profiles...)
+	changed.Profiles[0].SyncEnv = false
+	if operations, err := runtime.appendLocalRelayKey(changed, "profiles_encrypted"); err != nil || operations != 2 {
+		t.Fatalf("disable profile env operations=%d err=%v", operations, err)
+	}
+	if env, ok := runtime.replica.Get(configsync.CollectionProfileEnv, "profile-1"); !ok || !env.Deleted {
+		t.Fatalf("disabled profile env was not tombstoned: ok=%t record=%+v", ok, env)
+	}
+	if operations, err := runtime.appendLocalRelayKey(changed, "profiles_encrypted"); err != nil || operations != 0 {
+		t.Fatalf("repeated profile update operations=%d err=%v", operations, err)
+	}
+
+	secretValue, err := configsync.CanonicalEntityJSON("host-1", sshCredentialRecord{ID: "host-1", Password: "relay-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretMutation, err := configsync.SetRecordMutation(configsync.PlainRecord{
+		Collection: configsync.CollectionSSHCredential, RecordID: "host-1",
+		KeyClass: configsync.KeyClassVault, Value: secretValue,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, runtime.keys[configsync.KeyClassVault], configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion,
+		Collection:    secretMutation.Collection,
+		RecordID:      secretMutation.RecordID,
+		Kind:          secretMutation.Kind,
+		Payload:       secretMutation.Payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	changed.SSHHosts = append([]SSHHost(nil), cfg.SSHHosts...)
+	changed.SSHHosts[0].Alias = "After"
+	if operations, err := runtime.appendLocalRelayKey(changed, "ssh_hosts_encrypted"); err != nil || operations != 1 {
+		t.Fatalf("changed SSH metadata operations=%d err=%v", operations, err)
+	}
+	if secret, ok := runtime.replica.Get(configsync.CollectionSSHCredential, "host-1"); !ok || secret.Deleted {
+		t.Fatal("SSH metadata update deleted Relay-only credential")
+	}
+	if got := runtime.replica.Vector()[status.PeerID]; got != before+5 {
+		t.Fatalf("local diff advanced vector to %d want=%d", got, before+5)
+	}
+}
+
 func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

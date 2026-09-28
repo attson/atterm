@@ -72,6 +72,48 @@ func peerBootstrapRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
 		return nil, err
 	}
 
+	profiles, err := peerLocalRecordsForKey(cfg, "profiles_encrypted")
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, profiles...)
+	ssh, err := peerLocalRecordsForKey(cfg, "ssh_hosts_encrypted")
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, ssh...)
+	return records, nil
+}
+
+// peerLocalRecordsForKey translates one local Relay-compatible preference
+// into canonical records without opening Relay account-key envelopes. SSH
+// secrets stay in the legacy account/keychain path until users can opt in to
+// a dedicated Peer secret-sync policy.
+func peerLocalRecordsForKey(cfg appConfig, key string) ([]configsync.PlainRecord, error) {
+	if _, ok := configsync.RelaySpec(key); !ok {
+		return nil, fmt.Errorf("unknown Peer config key %q", key)
+	}
+	switch key {
+	case "profiles_encrypted":
+		return peerLocalProfileRecords(cfg)
+	case "ssh_hosts_encrypted":
+		return peerLocalSSHMetadataRecords(cfg)
+	default:
+		store := &configStore{cfg: cfg}
+		value, ok := newAppConfigAdapter(store, nil).ReadValue(key)
+		if !ok {
+			return nil, nil
+		}
+		records, err := configsync.DecodeRelayRecords(configsync.RelayValue{Key: key, Value: value}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("prepare local Peer config %s: %w", key, err)
+		}
+		return records, nil
+	}
+}
+
+func peerLocalProfileRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
+	var records []configsync.PlainRecord
 	profiles := filterValidProfiles(cfg.Profiles)
 	for index, source := range profiles {
 		profile := source
@@ -108,7 +150,11 @@ func peerBootstrapRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
 			KeyClass: configsync.KeyClassSync, Value: value,
 		})
 	}
+	return records, nil
+}
 
+func peerLocalSSHMetadataRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
+	records := make([]configsync.PlainRecord, 0, len(cfg.SSHHosts)+len(cfg.SSHKeys))
 	for index, host := range cfg.SSHHosts {
 		value, err := configsync.CanonicalEntityJSON(host.ID, host)
 		if err != nil {
@@ -133,21 +179,15 @@ func peerBootstrapRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
 }
 
 func peerBootstrapLegacyRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
-	store := &configStore{cfg: cfg}
-	adapter := newAppConfigAdapter(store, nil)
 	customized := isPrefCustomized(cfg)
 	var records []configsync.PlainRecord
 	for _, spec := range configsync.RelayKeySpecs() {
 		if spec.Mode == configsync.RelaySealedBundle || !customized(spec.Key) {
 			continue
 		}
-		value, ok := adapter.ReadValue(spec.Key)
-		if !ok {
-			continue
-		}
-		decoded, err := configsync.DecodeRelayRecords(configsync.RelayValue{Key: spec.Key, Value: value}, nil)
+		decoded, err := peerLocalRecordsForKey(cfg, spec.Key)
 		if err != nil {
-			return nil, fmt.Errorf("prepare local Peer config %s: %w", spec.Key, err)
+			return nil, err
 		}
 		records = append(records, decoded...)
 	}

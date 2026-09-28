@@ -31,16 +31,24 @@ var (
 type RecordKind byte
 
 const (
-	RecordFrame       RecordKind = 1
-	RecordFragment    RecordKind = 2
-	RecordDirectReady RecordKind = 3
-	RecordPing        RecordKind = 4
-	RecordPong        RecordKind = 5
-	RecordClose       RecordKind = 6
+	RecordFrame           RecordKind = 1
+	RecordFragment        RecordKind = 2
+	RecordDirectReady     RecordKind = 3
+	RecordPing            RecordKind = 4
+	RecordPong            RecordKind = 5
+	RecordClose           RecordKind = 6
+	RecordConfigInventory RecordKind = 7
+	RecordConfigBatch     RecordKind = 8
+	RecordConfigAck       RecordKind = 9
+	RecordConfigFragment  RecordKind = 10
 )
 
 func (k RecordKind) valid() bool {
-	return k >= RecordFrame && k <= RecordClose
+	return k >= RecordFrame && k <= RecordConfigFragment
+}
+
+func (k RecordKind) configMessage() bool {
+	return k >= RecordConfigInventory && k <= RecordConfigAck
 }
 
 // RecordSealer emits strictly increasing records for one direction.

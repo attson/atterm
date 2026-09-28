@@ -66,6 +66,18 @@ func NewPeerMembershipAuthenticator(identity *peercrypto.Identity, localRole Rol
 
 func (a *PeerMembershipAuthenticator) ProofSize() int { return peercrypto.SignatureSize }
 
+// RemoteMembershipToken returns the exact verified token bound into this
+// side's handshake key schedule.
+func (a *PeerMembershipAuthenticator) RemoteMembershipToken() string {
+	if a == nil {
+		return ""
+	}
+	if a.localRole == RoleClient {
+		return a.hostMembership.Token
+	}
+	return a.clientMembership.Token
+}
+
 func (a *PeerMembershipAuthenticator) BuildProof(transcript []byte, role Role) ([]byte, error) {
 	if a == nil || a.identity == nil || role != a.localRole {
 		return nil, fmt.Errorf("%w: peer proof role", ErrAuthentication)

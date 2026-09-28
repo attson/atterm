@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestRecordKindWireValuesRemainStable(t *testing.T) {
+	want := map[RecordKind]byte{
+		RecordFrame:           1,
+		RecordFragment:        2,
+		RecordDirectReady:     3,
+		RecordPing:            4,
+		RecordPong:            5,
+		RecordClose:           6,
+		RecordConfigInventory: 7,
+		RecordConfigBatch:     8,
+		RecordConfigAck:       9,
+		RecordConfigFragment:  10,
+	}
+	for kind, wire := range want {
+		if byte(kind) != wire {
+			t.Fatalf("record kind %d has wire value %d, want %d", kind, byte(kind), wire)
+		}
+	}
+}
+
 func recordPair(t *testing.T) (*RecordSealer, *RecordOpener) {
 	t.Helper()
 	key := bytes.Repeat([]byte{0x71}, 32)

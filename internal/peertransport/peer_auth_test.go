@@ -22,6 +22,9 @@ func TestPeerMembershipAuthenticatorHandshake(t *testing.T) {
 	if clientAuth.ProofSize() != peercrypto.SignatureSize || hostAuth.ProofSize() != peercrypto.SignatureSize {
 		t.Fatal("peer proof size is not P1363")
 	}
+	if clientAuth.RemoteMembershipToken() != hostMembership || hostAuth.RemoteMembershipToken() != clientMembership {
+		t.Fatal("authenticator did not retain the role-bound remote membership")
+	}
 	authorization := testAuthorization(now.Add(time.Minute))
 	authorization.UserID = clientIdentity.PeerID()
 	authorization.HostID = hostIdentity.PeerID()

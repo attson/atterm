@@ -80,9 +80,19 @@ missing membership tokens before snapshots and tail operations, so a device can
 authorize sibling actors and exact multi-member rotation recipient sets without
 a central directory. Current views choose one deterministic active grant per
 peer and apply member/grant revocation deny-wins; expired and revoked grants do
-not enter rotation recipients. This receiver/planner path remains un-wired, so
-the transport adapter must advertise and send the stored membership inventory.
-Relay
+not enter rotation recipients. The authenticated Pion record layer now carries
+a separate config logical channel without renumbering the six Stage 1 record
+kinds. Inventory、batch and durable ack use record kinds 7–9; kind 10 provides
+a type-preserving 16 MiB bounded fragment format with reassembly state isolated
+from terminal fragments. Pion routes config messages through an error-returning
+config callback, so fragment、JSON or authorization failures close the attempt
+instead of reaching the terminal callback. The Desktop adapter obtains the exact
+remote membership token from the completed Peer handshake, drives inventory →
+immutable plan → batch → durable ack, and retains exact batch bytes for lost-ack
+retry. A multi-page loopback test over independent encrypted stores confirms
+eventual projection and zero terminal subscriber lifecycle callbacks. This is
+transport plumbing only: Relay-assisted direct still uses account authentication,
+and no Quick Tunnel gateway or accountless route lifecycle is wired yet. Relay
 compatibility hash/timestamp/record-ref state is persisted per Space and realm
 with cross-process transactional updates. Canonical winners can now be
 decrypted by exact epoch、grouped per legacy key and materialized back into

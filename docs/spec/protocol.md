@@ -957,8 +957,43 @@ snapshot）跨 batch 连续切分；接收端只在完整重组、SHA-256 相符
 全部验证后才向上层交付。cursor 必须连续，同一 plan 各页 ack 必须相同；仅允许最近一次已接受
 batch 原字节重发且作为幂等 no-op。任一 chunk 错误不推进 assembler 状态。snapshot 只有在其
 cover vector 覆盖接收端 inventory vector 时才能规划；双方 vector 并发时先反向补齐独有 op 再
-重建 plan，禁止覆盖接收端状态。该逻辑位于 `internal/configsync/anti_entropy.go`，实际
-DataChannel/WSS adapter 后续使用独立 logical channel，不改变 terminal subscriber lifecycle。
+重建 plan，禁止覆盖接收端状态。该逻辑位于 `internal/configsync/anti_entropy.go`。Peer
+DataChannel adapter 在同一条可靠有序 DataChannel 上使用独立 config logical channel；配置消息
+只进入 config callback，不进入 terminal frame callback，也不创建 `session.Subscribe`，因此不改变
+terminal subscriber lifecycle。
+
+配置 logical channel 使用 direct encrypted record kind，不占用 Relay `proto.Type`，且保留 Stage 1
+已有 kind 的 wire byte：
+
+| Record kind | Byte | Plaintext |
+|---|---:|---|
+| `FRAME` | `0x01` | 单个 marshaled terminal `proto.Frame` |
+| `FRAGMENT` | `0x02` | Stage 1 terminal frame fragment |
+| `DIRECT_READY` | `0x03` | initial replay frontier |
+| `PING` / `PONG` / `CLOSE` | `0x04` / `0x05` / `0x06` | direct route control |
+| `CONFIG_INVENTORY` | `0x07` | JSON `AntiEntropyInventory` |
+| `CONFIG_BATCH` | `0x08` | JSON `AntiEntropyBatch` |
+| `CONFIG_ACK` | `0x09` | JSON `{v,space_id,cursor,durable,done}` |
+| `CONFIG_FRAGMENT` | `0x0a` | 分片后的任一 config logical message |
+
+单个 record plaintext 上限仍是 16 KiB。超过上限的配置消息用独立格式分片：
+
+```text
+"ACF1"(4B) || message_id(be64) || 0xffffffff(4B) || original_kind(1B) ||
+offset(be32) || total(be32) || data
+```
+
+`original_kind` 只允许 `0x07..0x09`；`total` 必须大于 16 KiB 且不超过 16 MiB。固定
+`0xffffffff` 同时使 config fragment 无法被 terminal fragment reassembler 接受。terminal 与
+config 各自只允许一个连续消息重组，状态完全分离；乱序、交错、超时、越界、未知类型、AEAD
+篡改或上层 JSON/授权失败都关闭当前 Peer route，不把 payload 投递到另一逻辑通道。
+
+双方在 membership handshake 成功后各自发送 inventory。收到 inventory 的一方从同一 durable
+snapshot 建 plan 并发送 batch；接收方只有在完整 token 已验证、持久化和必要的最终 projection
+成功后才返回 ack。发送方只接受与 outstanding batch 的 accepted cursor 和 `done` 精确匹配的
+ack；丢 ack 时重发原始 batch JSON，依赖 assembler 的 exact-replay idempotency 返回同一 durable
+ack。transport adapter 只从完成 Peer handshake 的 channel 读取远端 membership token，不能由
+调用者另传一个 token 替换认证身份。
 
 Peer DataChannel 复用 Stage 1 的四步 handshake、ECDH traffic key、record 和 fragment
 codec，只替换 `HandshakeAuthenticator`。Relay account authenticator 的 proof 继续是 32-byte

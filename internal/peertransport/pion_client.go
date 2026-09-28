@@ -18,6 +18,7 @@ type PionClientConfig struct {
 	SendSignal      func(signalType, payload string) error
 	OnAuthenticated func(*PionClientChannel)
 	OnRecord        func(RecordKind, []byte)
+	OnConfigMessage func(RecordKind, []byte) error
 	OnDiagnostics   func(iceState, candidateType string)
 	OnClosed        func(error)
 }
@@ -40,11 +41,12 @@ type PionClientAttempt struct {
 
 // PionClientChannel is available only after handshake authentication.
 type PionClientChannel struct {
-	attempt     *PionClientAttempt
-	dc          *webrtc.DataChannel
-	sealer      *RecordSealer
-	opener      *RecordOpener
-	reassembler Reassembler
+	attempt           *PionClientAttempt
+	dc                *webrtc.DataChannel
+	sealer            *RecordSealer
+	opener            *RecordOpener
+	reassembler       Reassembler
+	configReassembler ConfigReassembler
 
 	sendMu        sync.Mutex
 	receiveMu     sync.Mutex
@@ -243,8 +245,51 @@ func (c *PionClientChannel) receive(record []byte) error {
 		kind = RecordFrame
 		plaintext = frame
 	}
+	if kind == RecordConfigFragment {
+		configKind, message, complete, err := c.configReassembler.Add(plaintext, time.Now())
+		if err != nil || !complete {
+			return err
+		}
+		kind = configKind
+		plaintext = message
+	}
+	if kind.configMessage() {
+		if c.attempt.cfg.OnConfigMessage != nil {
+			if err := c.attempt.cfg.OnConfigMessage(kind, append([]byte(nil), plaintext...)); err != nil {
+				return fmt.Errorf("%w: config message: %w", ErrDirectTransport, err)
+			}
+		}
+		return nil
+	}
 	if c.attempt.cfg.OnRecord != nil {
 		c.attempt.cfg.OnRecord(kind, append([]byte(nil), plaintext...))
+	}
+	return nil
+}
+
+// SendConfigMessage encrypts one config logical message, fragmenting it
+// independently from terminal frames when needed.
+func (c *PionClientChannel) SendConfigMessage(ctx context.Context, kind RecordKind, message []byte) error {
+	if c == nil || c.dc == nil || c.sealer == nil || !kind.configMessage() {
+		return fmt.Errorf("%w: invalid config channel", ErrDirectTransport)
+	}
+	if len(message) > MaxConfigMessageSize {
+		return fmt.Errorf("%w: config message too large", ErrDirectTransport)
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if len(message) <= MaxRecordPlaintext {
+		return c.sendRecordLocked(ctx, kind, message)
+	}
+	fragments, err := FragmentConfigMessage(kind, c.nextMessageID, message)
+	if err != nil {
+		return err
+	}
+	c.nextMessageID++
+	for _, fragment := range fragments {
+		if err := c.sendRecordLocked(ctx, RecordConfigFragment, fragment); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -308,6 +353,20 @@ func (c *PionClientChannel) Close() error {
 		return nil
 	}
 	return c.attempt.Close()
+}
+
+// RemoteMembershipToken returns the Peer membership authenticated by this
+// channel. Relay-account channels return false.
+func (c *PionClientChannel) RemoteMembershipToken() (string, bool) {
+	if c == nil || c.attempt == nil {
+		return "", false
+	}
+	auth, ok := c.attempt.cfg.Authenticator.(interface{ RemoteMembershipToken() string })
+	if !ok {
+		return "", false
+	}
+	token := auth.RemoteMembershipToken()
+	return token, token != ""
 }
 
 func (a *PionClientAttempt) Close() error {

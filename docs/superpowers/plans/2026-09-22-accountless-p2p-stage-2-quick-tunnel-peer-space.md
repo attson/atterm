@@ -43,10 +43,12 @@ to records previously known by that Relay key, keeps ordered entity positions,
 and can atomically append mixed sync/vault encrypted mutation batches. The
 Desktop compatibility codec now round-trips the legacy encrypted profile/SSH
 blobs while splitting portable metadata、ordered positions、default profile and
-vault secrets into independent records. Epoch-key persistence and wiring this
-path as the sole config writer are still required before migration can be
-enabled. New-device join transport/UI and the actual Peer logical-channel
-adapter also remain.
+vault secrets into independent records. Desktop now creates signed sync/vault
+root rotations、persists their tokens in encrypted Peer Space state, stores
+opened keys in Keychain, and can
+recover missing Keychain entries from the device-bound rotation envelope.
+Config-replica bootstrap/writer migration、new-device join transport/UI and the
+actual Peer logical-channel adapter still remain.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.
 

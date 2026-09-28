@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +54,36 @@ func TestEncryptedStoreAndAtomicConsumption(t *testing.T) {
 	}
 	if state.Invitations[0].ConsumedByPeerID != "consumer-peer" {
 		t.Fatalf("consumed by = %q", state.Invitations[0].ConsumedByPeerID)
+	}
+}
+
+func TestInitializeEpochRotationsIsWriteOnceAndDetached(t *testing.T) {
+	store, key := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	if err := store.Initialize(State{GenesisToken: "genesis", LocalMembership: "membership", CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InitializeEpochRotations([]string{"sync-rotation", "vault-rotation"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InitializeEpochRotations([]string{"replacement"}, now.Add(time.Minute)); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("replacement error=%v", err)
+	}
+	reopened := New(store.path, func() ([]byte, error) { return append([]byte(nil), key...), nil })
+	state, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Version != Version || !reflect.DeepEqual(state.EpochRotations, []string{"sync-rotation", "vault-rotation"}) {
+		t.Fatalf("state=%+v", state)
+	}
+	state.EpochRotations[0] = "caller-mutation"
+	again, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.EpochRotations[0] != "sync-rotation" {
+		t.Fatalf("Load returned aliased rotations: %+v", again.EpochRotations)
 	}
 }
 

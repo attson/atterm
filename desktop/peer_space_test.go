@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/configsync"
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peerstore"
@@ -106,6 +108,64 @@ func TestCreatePeerSpaceIsIdempotent(t *testing.T) {
 	}
 	if !bytes.Equal(firstWrapping, secondWrapping) {
 		t.Fatal("CreatePeerSpace rotated wrapping identity")
+	}
+}
+
+func TestCreatePeerSpacePersistsAndRecoversInitialEpochKeys(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	status, err := app.CreatePeerSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.EpochRotations) != 2 {
+		t.Fatalf("epoch rotations=%d want=2", len(state.EpochRotations))
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotations, err := currentEpochRotations(state.EpochRotations, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapping, err := app.peerSpace.loadWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, class := range []configsync.KeyClass{configsync.KeyClassSync, configsync.KeyClassVault} {
+		stored, err := loadPeerEpochKey(status.SpaceID, class)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened, err := configsync.OpenRotationEpochKey(rotations[class], genesis, status.PeerID, wrapping)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Epoch != 1 || !bytes.Equal(stored.Bytes(), opened.Bytes()) {
+			t.Fatalf("stored %s epoch key differs from rotation", class)
+		}
+		if err := peerEpochKeySlot(status.SpaceID, class).Clear(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := app.GetPeerSpaceStatus(); err != nil {
+		t.Fatalf("recover epoch keys: %v", err)
+	}
+	recoveredState, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(recoveredState.EpochRotations, state.EpochRotations) {
+		t.Fatal("epoch key recovery replaced signed rotations")
+	}
+	for _, class := range []configsync.KeyClass{configsync.KeyClassSync, configsync.KeyClassVault} {
+		if _, err := loadPeerEpochKey(status.SpaceID, class); err != nil {
+			t.Fatalf("recovered %s key: %v", class, err)
+		}
 	}
 }
 

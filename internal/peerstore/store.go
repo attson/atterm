@@ -22,12 +22,13 @@ import (
 )
 
 const (
-	Version             = 2
-	legacyStateVersion  = 1
-	encryptedEnvelopeV1 = 1
-	maxStoreSize        = 4 << 20
-	lockTimeout         = 5 * time.Second
-	staleLockAge        = 30 * time.Second
+	Version                 = 3
+	legacyStateVersion      = 1
+	legacyRevocationVersion = 2
+	encryptedEnvelopeV1     = 1
+	maxStoreSize            = 4 << 20
+	lockTimeout             = 5 * time.Second
+	staleLockAge            = 30 * time.Second
 )
 
 var (
@@ -63,6 +64,7 @@ type State struct {
 	LocalMembership     string           `json:"local_membership"`
 	Invitations         []Invitation     `json:"invitations"`
 	Revocations         []string         `json:"revocations,omitempty"`
+	EpochRotations      []string         `json:"epoch_rotations,omitempty"`
 	RevokedMembers      map[string]int64 `json:"revoked_members,omitempty"`
 	RevokedGrantSerials map[string]int64 `json:"revoked_grant_serials,omitempty"`
 	CreatedAt           int64            `json:"created_at"`
@@ -107,7 +109,35 @@ func (s *Store) Initialize(state State) error {
 		state.UpdatedAt = state.CreatedAt
 		state.Invitations = append([]Invitation(nil), state.Invitations...)
 		state.Revocations = append([]string(nil), state.Revocations...)
+		state.EpochRotations = append([]string(nil), state.EpochRotations...)
 		return s.writeLocked(state)
+	})
+}
+
+// InitializeEpochRotations installs the first signed sync/vault key
+// rotations exactly once. A concurrent initializer that loses the race reads
+// the persisted winners and unwraps those keys instead of replacing them.
+func (s *Store) InitializeEpochRotations(tokens []string, now time.Time) error {
+	if len(tokens) == 0 || now.Unix() <= 0 {
+		return fmt.Errorf("peerstore: invalid epoch rotations")
+	}
+	seen := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		if token == "" {
+			return fmt.Errorf("peerstore: invalid epoch rotations")
+		}
+		if _, duplicate := seen[token]; duplicate {
+			return fmt.Errorf("peerstore: duplicate epoch rotation")
+		}
+		seen[token] = struct{}{}
+	}
+	return s.mutate(func(state *State) error {
+		if len(state.EpochRotations) != 0 {
+			return ErrAlreadyExists
+		}
+		state.EpochRotations = append([]string(nil), tokens...)
+		state.UpdatedAt = now.Unix()
+		return nil
 	})
 }
 
@@ -301,14 +331,16 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("peerstore: decrypt: %w", err)
 	}
 	var state State
-	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
+	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
 		return State{}, fmt.Errorf("peerstore: invalid state")
 	}
-	// v2 adds signed revocation tokens. The encrypted envelope and its AAD stay
-	// at v1 so existing stores can be migrated without decrypt-and-rewrap glue.
+	// v2 adds signed revocations and v3 adds signed epoch rotations. The
+	// encrypted envelope and its AAD stay at v1 so existing stores migrate
+	// without decrypt-and-rewrap glue.
 	state.Version = Version
 	state.Invitations = append([]Invitation(nil), state.Invitations...)
 	state.Revocations = append([]string(nil), state.Revocations...)
+	state.EpochRotations = append([]string(nil), state.EpochRotations...)
 	state.RevokedMembers = cloneMap(state.RevokedMembers)
 	state.RevokedGrantSerials = cloneMap(state.RevokedGrantSerials)
 	if len(state.Revocations) != 0 {

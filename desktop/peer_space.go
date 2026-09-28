@@ -126,7 +126,23 @@ func (a *App) GetPeerSpaceStatus() (PeerSpaceStatus, error) {
 	if err != nil {
 		return PeerSpaceStatus{}, err
 	}
-	return manager.status()
+	return manager.readyStatus()
+}
+
+func (m *peerSpaceManager) readyStatus() (PeerSpaceStatus, error) {
+	release, err := m.acquireBootstrapLock()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	defer release()
+	status, err := m.status()
+	if err != nil || !status.Configured {
+		return status, err
+	}
+	if err := m.ensureInitialEpochState(); err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	return m.status()
 }
 
 // CreatePeerSpace creates the one active Peer Space for this installation.
@@ -147,6 +163,9 @@ func (m *peerSpaceManager) createSpace() (PeerSpaceStatus, error) {
 	defer release()
 
 	if status, err := m.status(); err == nil && status.Configured {
+		if err := m.ensureInitialEpochState(); err != nil {
+			return PeerSpaceStatus{}, err
+		}
 		return status, nil
 	} else if err != nil && !errors.Is(err, peerstore.ErrNotInitialized) {
 		return PeerSpaceStatus{}, err
@@ -172,6 +191,9 @@ func (m *peerSpaceManager) createSpace() (PeerSpaceStatus, error) {
 		LocalMembership: membership,
 		CreatedAt:       now.Unix(),
 	}); err != nil && !errors.Is(err, peerstore.ErrAlreadyExists) {
+		return PeerSpaceStatus{}, err
+	}
+	if err := m.ensureInitialEpochState(); err != nil {
 		return PeerSpaceStatus{}, err
 	}
 	return m.status()

@@ -25,11 +25,12 @@ const (
 var ErrDurableStoreInvalid = errors.New("configsync: invalid durable store")
 
 type durableState struct {
-	Version       int      `json:"version"`
-	SpaceID       string   `json:"space_id"`
-	SchemaVersion uint32   `json:"schema_version"`
-	Snapshot      string   `json:"snapshot,omitempty"`
-	Ops           []string `json:"ops"`
+	Version                int      `json:"version"`
+	SpaceID                string   `json:"space_id"`
+	SchemaVersion          uint32   `json:"schema_version"`
+	LocalBootstrapComplete bool     `json:"local_bootstrap_complete,omitempty"`
+	Snapshot               string   `json:"snapshot,omitempty"`
+	Ops                    []string `json:"ops"`
 }
 
 // DurableAck is safe to send only after the operation and its vector have
@@ -189,6 +190,34 @@ func (d *DurableReplica) AppendEncryptedBatch(identity *peercrypto.Identity, mut
 	return operations, ack, nil
 }
 
+// BootstrapEncrypted appends the installation's initial local records and
+// marks the migration complete in one durable replacement. Retrying after a
+// crash is idempotent, including when there were no customized records.
+func (d *DurableReplica) BootstrapEncrypted(identity *peercrypto.Identity, mutations []EncryptedMutation) ([]VerifiedOp, DurableAck, bool, error) {
+	operations := make([]VerifiedOp, 0, len(mutations))
+	seeded := false
+	ack, err := d.mutate(func(replica *Replica, state *durableState) (bool, error) {
+		if state.LocalBootstrapComplete {
+			return false, nil
+		}
+		for index, item := range mutations {
+			created, err := replica.AppendEncrypted(identity, item.Key, item.Mutation)
+			if err != nil {
+				return false, fmt.Errorf("bootstrap encrypted mutation %d: %w", index, err)
+			}
+			operations = append(operations, created)
+			state.Ops = append(state.Ops, created.Token)
+		}
+		state.LocalBootstrapComplete = true
+		seeded = true
+		return true, nil
+	})
+	if err != nil {
+		return nil, DurableAck{}, false, err
+	}
+	return operations, ack, seeded, nil
+}
+
 // AdoptSnapshot durably initializes an empty replica from a trusted snapshot.
 // Membership authorization of the snapshot creator must happen before this
 // method is called.
@@ -215,6 +244,7 @@ func (d *DurableReplica) Compact(identity *peercrypto.Identity) (string, Durable
 			return false, err
 		}
 		next := d.emptyState()
+		next.LocalBootstrapComplete = state.LocalBootstrapComplete
 		next.Snapshot = created
 		rebuilt, err := d.buildReplica(next)
 		if err != nil {

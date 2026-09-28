@@ -49,7 +49,10 @@ opened keys in Keychain, and can
 recover missing Keychain entries from the device-bound rotation envelope.
 Desktop now also restores a per-Space durable config replica with its signing
 identity and current capability-gated epoch keys without making app startup
-depend on Peer state. Portable-config seeding/writer migration、new-device join
+depend on Peer state. Space creation atomically seeds customized portable
+preferences、templates、profile/SSH metadata and explicitly opted-in profile
+environment values; SSH credentials/private keys remain local pending a
+dedicated Peer secret-sync opt-in. Local-writer migration、new-device join
 transport/UI and the actual Peer logical-channel adapter still remain.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.

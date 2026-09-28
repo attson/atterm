@@ -109,5 +109,13 @@ func (a *App) restorePeerConfigReplica() {
 		logWarn("peer-config", "restore config replica: %v", err)
 		return
 	}
+	seededRecords, seeded, err := a.bootstrapPeerConfig(manager)
+	if err != nil {
+		logWarn("peer-config", "bootstrap local config: %v", err)
+		return
+	}
+	if seeded {
+		logInfo("peer-config", "local config bootstrap complete (space=%s records=%d)", status.SpaceID, seededRecords)
+	}
 	logInfo("peer-config", "config replica ready (space=%s)", status.SpaceID)
 }

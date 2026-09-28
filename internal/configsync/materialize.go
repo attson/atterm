@@ -123,14 +123,11 @@ func PlanRelayRecordImport(value RelayValue, previous []RecordRef, codec SealedR
 	for _, record := range records {
 		key := canonicalRecordKey(record.Collection, record.RecordID)
 		incoming[key] = record
-		payload, err := marshalCanonicalRecordPayload(record)
+		mutation, err := SetRecordMutation(record)
 		if err != nil {
 			return nil, nil, err
 		}
-		mutations = append(mutations, RecordMutation{
-			Collection: record.Collection, RecordID: record.RecordID,
-			Kind: KindSet, KeyClass: record.KeyClass, Payload: payload,
-		})
+		mutations = append(mutations, mutation)
 		refs = append(refs, RecordRef{Collection: record.Collection, RecordID: record.RecordID, KeyClass: record.KeyClass})
 	}
 	seenPrevious := make(map[string]struct{}, len(previous))
@@ -154,6 +151,22 @@ func PlanRelayRecordImport(value RelayValue, previous []RecordRef, codec SealedR
 	sortRecordMutations(mutations)
 	sortRecordRefs(refs)
 	return mutations, refs, nil
+}
+
+// SetRecordMutation validates one canonical plaintext record and wraps ordered
+// collection metadata into the payload encrypted by the durable replica.
+func SetRecordMutation(record PlainRecord) (RecordMutation, error) {
+	payload, err := marshalCanonicalRecordPayload(record)
+	if err != nil {
+		return RecordMutation{}, err
+	}
+	return RecordMutation{
+		Collection: record.Collection,
+		RecordID:   record.RecordID,
+		Kind:       KindSet,
+		KeyClass:   record.KeyClass,
+		Payload:    payload,
+	}, nil
 }
 
 // EncodeRelayRecords materializes current canonical winners into one legacy
@@ -238,7 +251,7 @@ func marshalCanonicalRecordPayload(record PlainRecord) (json.RawMessage, error) 
 
 func unmarshalCanonicalRecordPayload(collection, recordID string, class KeyClass, raw json.RawMessage) (PlainRecord, error) {
 	record := PlainRecord{Collection: collection, RecordID: recordID, KeyClass: class}
-	if collection == CollectionQuickTemplate || collection == CollectionProfiles {
+	if collection == CollectionQuickTemplate || collection == CollectionProfiles || collection == CollectionSSHHosts || collection == CollectionSSHKeys {
 		var ordered orderedRecordPayload
 		if err := decodeStrictJSON(raw, &ordered); err != nil {
 			return PlainRecord{}, fmt.Errorf("%w: ordered record %q: %v", ErrInvalidSchemaValue, recordID, err)

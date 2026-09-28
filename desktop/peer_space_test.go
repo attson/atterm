@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -217,6 +218,81 @@ func TestCreatePeerSpaceInitializesDurableConfigReplica(t *testing.T) {
 	}
 	if got := reopened.replica.Vector()[status.PeerID]; got != 1 {
 		t.Fatalf("reopened config vector counter=%d want=1", got)
+	}
+}
+
+func TestCreatePeerSpaceBootstrapsPortableConfigOnce(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{
+		TerminalTheme:  "nord",
+		QuickTemplates: []QuickTemplate{{ID: "template-1", Label: "Build", Text: "go test ./..."}},
+		Profiles: []SessionProfile{
+			{ID: "profile-local", Name: "Local env", Env: map[string]string{"LOCAL_ONLY": "secret"}},
+			{ID: "profile-shared", Name: "Shared env", SyncEnv: true, Env: map[string]string{"SHARED": "yes"}},
+		},
+		DefaultProfileID: "profile-shared",
+		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Production", Host: "example.com", User: "alice", AuthKind: "key", KeyID: "key-1"}},
+		SSHKeys:          []SSHKey{{ID: "key-1", Name: "Primary", KeyType: "ED25519"}},
+	}}
+	if err := sshCredentialSlot("host-1").Save(sshCredential{Password: "must-not-sync"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sshKeySecretSlot("key-1").Save(sshKeySecret{PrivateKey: "must-not-sync"}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := app.CreatePeerSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	if got := runtime.replica.Vector()[status.PeerID]; got != 8 {
+		t.Fatalf("bootstrap operation count=%d want=8", got)
+	}
+	if len(runtime.replica.Records(configsync.CollectionSSHCredential)) != 0 || len(runtime.replica.Records(configsync.CollectionSSHKeySecret)) != 0 {
+		t.Fatal("SSH secrets entered the Peer bootstrap replica")
+	}
+	if got := len(runtime.replica.Records(configsync.CollectionProfileEnv)); got != 1 {
+		t.Fatalf("profile env record count=%d want=1", got)
+	}
+
+	profileRecord, ok := runtime.replica.Get(configsync.CollectionProfiles, "profile-local")
+	if !ok {
+		t.Fatal("local profile metadata missing")
+	}
+	plainProfile, err := configsync.OpenPlainRecord(profileRecord, runtime.keys[configsync.KeyClassSync])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile SessionProfile
+	if err := json.Unmarshal(plainProfile.Value, &profile); err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.Env) != 0 {
+		t.Fatalf("non-opted profile env leaked into metadata: %+v", profile.Env)
+	}
+
+	envRecord, ok := runtime.replica.Get(configsync.CollectionProfileEnv, "profile-shared")
+	if !ok {
+		t.Fatal("opted-in profile env missing")
+	}
+	plainEnv, err := configsync.OpenPlainRecord(envRecord, runtime.keys[configsync.KeyClassVault])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var environment profileEnvRecord
+	if err := json.Unmarshal(plainEnv.Value, &environment); err != nil {
+		t.Fatal(err)
+	}
+	if environment.Env["SHARED"] != "yes" {
+		t.Fatalf("opted-in profile env=%+v", environment.Env)
+	}
+
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	if got := runtime.replica.Vector()[status.PeerID]; got != 8 {
+		t.Fatalf("idempotent bootstrap advanced vector to %d", got)
 	}
 }
 

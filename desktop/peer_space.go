@@ -161,7 +161,14 @@ func (a *App) CreatePeerSpace() (PeerSpaceStatus, error) {
 	if err != nil {
 		return PeerSpaceStatus{}, err
 	}
-	return manager.createSpace()
+	status, err := manager.createSpace()
+	if err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	if _, _, err := a.bootstrapPeerConfig(manager); err != nil {
+		return status, err
+	}
+	return status, nil
 }
 
 func (m *peerSpaceManager) createSpace() (PeerSpaceStatus, error) {

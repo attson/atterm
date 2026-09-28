@@ -1,6 +1,7 @@
 package configsync
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -141,6 +142,48 @@ func TestOpenPlainRecordAuthenticatesThenValidatesSchema(t *testing.T) {
 	}
 	if !reflect.DeepEqual(opened, plain) {
 		t.Fatalf("opened=%+v plain=%+v", opened, plain)
+	}
+}
+
+func TestOpenPlainRecordRestoresEveryOrderedCollection(t *testing.T) {
+	for _, collection := range []string{CollectionQuickTemplate, CollectionProfiles, CollectionSSHHosts, CollectionSSHKeys} {
+		t.Run(collection, func(t *testing.T) {
+			identity := testIdentity(t)
+			key, err := GenerateEpochKey(KeyClassSync, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recordID := "record-1"
+			value := json.RawMessage(`{"id":"record-1","name":"example"}`)
+			if collection == CollectionQuickTemplate {
+				value = json.RawMessage(`{"id":"record-1","label":"Example","text":"echo ok"}`)
+			}
+			mutation, err := SetRecordMutation(PlainRecord{
+				Collection: collection, RecordID: recordID, KeyClass: KeyClassSync,
+				Position: PositionForIndex(4), Value: value,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			replica := newTestReplica(t, uuid.NewString(), SchemaVersion)
+			if _, err := replica.AppendEncrypted(identity, key, Mutation{
+				SchemaVersion: SchemaVersion, Collection: mutation.Collection,
+				RecordID: mutation.RecordID, Kind: mutation.Kind, Payload: mutation.Payload,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			record, ok := replica.Get(collection, recordID)
+			if !ok {
+				t.Fatal("ordered record missing")
+			}
+			opened, err := OpenPlainRecord(record, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opened.Position != PositionForIndex(4) || !bytes.Equal(opened.Value, value) {
+				t.Fatalf("opened record=%+v", opened)
+			}
+		})
 	}
 }
 

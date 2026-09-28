@@ -274,3 +274,87 @@ func TestDurableReplicaAppendEncryptedBatchIsAtomic(t *testing.T) {
 		t.Fatalf("failed batch reached disk: %v", vector)
 	}
 }
+
+func TestDurableReplicaBootstrapEncryptedIsAtomicAndIdempotent(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	key, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := openTestDurable(t, path, spaceID)
+	mutations := []EncryptedMutation{{Key: key, Mutation: Mutation{
+		SchemaVersion: SchemaVersion,
+		Collection:    CollectionPreferences,
+		RecordID:      "terminal_theme",
+		Kind:          KindSet,
+		Payload:       []byte(`"nord"`),
+	}}}
+	bad := append([]EncryptedMutation(nil), mutations...)
+	bad = append(bad, EncryptedMutation{Key: key, Mutation: Mutation{
+		SchemaVersion: SchemaVersion,
+		Collection:    "INVALID COLLECTION",
+		RecordID:      "broken",
+		Kind:          KindSet,
+		Payload:       []byte(`true`),
+	}})
+	if _, _, _, err := store.BootstrapEncrypted(identity, bad); err == nil {
+		t.Fatal("invalid bootstrap batch succeeded")
+	}
+	if len(store.Vector()) != 0 {
+		t.Fatalf("failed bootstrap changed vector: %#v", store.Vector())
+	}
+	operations, ack, seeded, err := store.BootstrapEncrypted(identity, mutations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seeded || len(operations) != 1 || ack.Vector[identity.PeerID()] != 1 {
+		t.Fatalf("first bootstrap seeded=%t operations=%d ack=%#v", seeded, len(operations), ack)
+	}
+
+	reopened := openTestDurable(t, path, spaceID)
+	operations, ack, seeded, err = reopened.BootstrapEncrypted(identity, []EncryptedMutation{{Key: key, Mutation: Mutation{
+		SchemaVersion: SchemaVersion,
+		Collection:    CollectionPreferences,
+		RecordID:      "terminal_theme",
+		Kind:          KindSet,
+		Payload:       []byte(`"daylight"`),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seeded || len(operations) != 0 || ack.Vector[identity.PeerID()] != 1 {
+		t.Fatalf("retry bootstrap seeded=%t operations=%d ack=%#v", seeded, len(operations), ack)
+	}
+	record, ok := reopened.Get(CollectionPreferences, "terminal_theme")
+	if !ok {
+		t.Fatal("bootstrapped record missing")
+	}
+	plain, err := OpenPlainRecord(record, key)
+	if err != nil || string(plain.Value) != `"nord"` {
+		t.Fatalf("bootstrapped value=%s err=%v", plain.Value, err)
+	}
+
+	if _, _, err := reopened.Compact(identity); err != nil {
+		t.Fatal(err)
+	}
+	afterCompact := openTestDurable(t, path, spaceID)
+	if _, _, seeded, err := afterCompact.BootstrapEncrypted(identity, nil); err != nil || seeded {
+		t.Fatalf("bootstrap marker lost during compaction: seeded=%t err=%v", seeded, err)
+	}
+}
+
+func TestDurableReplicaEmptyBootstrapPersistsMarker(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	store := openTestDurable(t, path, spaceID)
+	if operations, _, seeded, err := store.BootstrapEncrypted(identity, nil); err != nil || !seeded || len(operations) != 0 {
+		t.Fatalf("empty bootstrap operations=%d seeded=%t err=%v", len(operations), seeded, err)
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	if _, _, seeded, err := reopened.BootstrapEncrypted(identity, nil); err != nil || seeded {
+		t.Fatalf("empty bootstrap retry seeded=%t err=%v", seeded, err)
+	}
+}

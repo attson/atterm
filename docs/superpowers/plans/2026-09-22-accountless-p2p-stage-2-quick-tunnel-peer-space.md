@@ -33,8 +33,13 @@ deny-wins set; their exact tokens and derived denial maps are atomically stored
 in the encrypted cross-process Peer Space ledger. Transport-independent
 anti-entropy inventory、bounded cursor batches、large-token chunking、retry
 deduplication and verified reassembly now cover config snapshots/tails plus
-revocation/rotation candidates. The `prefssync` compatibility adapter remains,
-as do new-device join transport/UI and the actual Peer logical-channel adapter.
+revocation/rotation candidates. The canonical schema now covers all 18 legacy
+Relay preference keys、separates portable/vault collections、splits ordered
+template records by stable id, and maintains durable-ready per-realm Relay
+import/export hashes so echoes do not create another mutation. Desktop still
+needs to persist and wire this compatibility state in place of direct
+`prefssync` writes. New-device join transport/UI and the actual Peer
+logical-channel adapter also remain.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.
 

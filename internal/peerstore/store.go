@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	Version                 = 5
+	Version                 = 6
 	legacyStateVersion      = 1
 	legacyRevocationVersion = 2
 	legacyEpochVersion      = 3
 	legacyPendingVersion    = 4
+	legacyMembershipVersion = 5
 	encryptedEnvelopeV1     = 1
 	maxStoreSize            = 4 << 20
 	maxPendingConfigSize    = 1 << 20
@@ -74,6 +75,7 @@ type State struct {
 	Invitations         []Invitation     `json:"invitations"`
 	Revocations         []string         `json:"revocations,omitempty"`
 	EpochRotations      []string         `json:"epoch_rotations,omitempty"`
+	EpochEnvelopes      []string         `json:"epoch_envelopes,omitempty"`
 	PendingConfigImport []byte           `json:"pending_config_import,omitempty"`
 	RevokedMembers      map[string]int64 `json:"revoked_members,omitempty"`
 	RevokedGrantSerials map[string]int64 `json:"revoked_grant_serials,omitempty"`
@@ -121,6 +123,7 @@ func (s *Store) Initialize(state State) error {
 		state.Memberships = append([]string(nil), state.Memberships...)
 		state.Revocations = append([]string(nil), state.Revocations...)
 		state.EpochRotations = append([]string(nil), state.EpochRotations...)
+		state.EpochEnvelopes = append([]string(nil), state.EpochEnvelopes...)
 		state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
 		return s.writeLocked(state)
 	})
@@ -453,14 +456,15 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("peerstore: decrypt: %w", err)
 	}
 	var state State
-	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != legacyEpochVersion && state.Version != legacyPendingVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
+	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != legacyEpochVersion && state.Version != legacyPendingVersion && state.Version != legacyMembershipVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
 		return State{}, fmt.Errorf("peerstore: invalid state")
 	}
 	if len(state.PendingConfigImport) > maxPendingConfigSize {
 		return State{}, fmt.Errorf("peerstore: pending config import exceeds size limit")
 	}
 	// v2 adds signed revocations, v3 adds signed epoch rotations, v4 adds an
-	// opaque pending-config import, and v5 adds the membership directory. The
+	// opaque pending-config import, v5 adds the membership directory, and v6
+	// adds recipient-bound bootstrap epoch envelopes. The
 	// encrypted envelope and its AAD stay at v1 so existing stores migrate
 	// without decrypt-and-rewrap glue.
 	state.Version = Version
@@ -468,6 +472,7 @@ func (s *Store) loadLocked() (State, error) {
 	state.Memberships = append([]string(nil), state.Memberships...)
 	state.Revocations = append([]string(nil), state.Revocations...)
 	state.EpochRotations = append([]string(nil), state.EpochRotations...)
+	state.EpochEnvelopes = append([]string(nil), state.EpochEnvelopes...)
 	state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
 	state.RevokedMembers = cloneMap(state.RevokedMembers)
 	state.RevokedGrantSerials = cloneMap(state.RevokedGrantSerials)

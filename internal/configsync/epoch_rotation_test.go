@@ -107,6 +107,16 @@ func TestEpochRotationBindsMembershipsCapabilitiesAndCommitment(t *testing.T) {
 	if len(syncRotation.Document.Recipients) != 3 {
 		t.Fatalf("sync recipients=%d want=3", len(syncRotation.Document.Recipients))
 	}
+	if err := ValidateEpochKeyForRotation(syncKey, syncRotation); err != nil {
+		t.Fatalf("validate committed sync key: %v", err)
+	}
+	wrongKey, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEpochKeyForRotation(wrongKey, syncRotation); !errors.Is(err, ErrInvalidEpochKey) {
+		t.Fatalf("wrong committed key error=%v", err)
+	}
 	for _, member := range fixture.members {
 		peerID := member.Document.SubjectPeerID
 		opened, err := OpenRotationEpochKey(syncRotation, fixture.genesis, peerID, fixture.wrapping[peerID])

@@ -142,8 +142,14 @@ control/input over terminal output over config sync while keeping fragments of
 the same logical message contiguous within a priority. Desktop routes WSS and
 Pion through the same Session、permission、driver and anti-entropy adapter, and a
 real loopback test confirms replay/input/config plus exactly one terminal
-subscriber. Join/bootstrap UI and Web/iOS client wiring remain pending, so the
-fallback consent API is not yet user reachable.
+subscriber. The first PR 2.5 slice is now implemented locally as well: Quick
+Tunnel exposes an application-encrypted first-join endpoint, and Desktop can
+preview a pasted token or fragment deep link, require an echoed genesis
+fingerprint, redeem the invitation, verify the complete governance/rotation
+bootstrap, persist opened epoch keys plus recipient-bound recovery envelopes,
+and initialize the local Peer Space only after every required check succeeds.
+The typed Wails platform bridge is ready for Settings. QR/paste/deep-link UI,
+Web/iOS client wiring and the end-user fallback consent flow remain pending.
 
 ## Why Quick Tunnel Before Rendezvous
 

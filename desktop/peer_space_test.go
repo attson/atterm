@@ -979,7 +979,10 @@ func TestRedeemPeerJoinRequestIsIdempotentAndRejectsReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.GenesisToken == "" || first.MembershipToken == "" || second != first {
+	firstStable, secondStable := first, second
+	firstStable.EpochEnvelopes = nil
+	secondStable.EpochEnvelopes = nil
+	if first.GenesisToken == "" || first.MembershipToken == "" || !reflect.DeepEqual(secondStable, firstStable) {
 		t.Fatalf("idempotent join results differ: first=%+v second=%+v", first, second)
 	}
 	genesis, err := peerproto.VerifyGenesis(first.GenesisToken)
@@ -995,6 +998,20 @@ func TestRedeemPeerJoinRequestIsIdempotentAndRejectsReplay(t *testing.T) {
 	}
 	if !bytes.Equal(membership.WrappingPublicKey, joiningWrapping.PublicBytes()) {
 		t.Fatal("joined membership did not retain wrapping public key")
+	}
+	if len(first.EpochRotations) != 2 || len(first.EpochEnvelopes) != 1 {
+		t.Fatalf("join bootstrap rotations=%d envelopes=%d", len(first.EpochRotations), len(first.EpochEnvelopes))
+	}
+	rotations, err := currentEpochRotations(first.EpochRotations, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := configsync.OpenEpochKey(first.EpochEnvelopes[0], genesis.Document.SpaceID, joiningIdentity.PeerID(), joiningWrapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := configsync.ValidateEpochKeyForRotation(key, rotations[configsync.KeyClassSync]); err != nil {
+		t.Fatalf("bootstrap envelope key does not match signed rotation: %v", err)
 	}
 	state, err := app.peerSpace.store.Load()
 	if err != nil {

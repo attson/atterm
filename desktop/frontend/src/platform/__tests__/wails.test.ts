@@ -51,6 +51,8 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   ListPeerInvitations: vi.fn().mockResolvedValue([]),
   RevokePeerInvitation: vi.fn().mockResolvedValue(undefined),
   RevokePeerInvitationBatch: vi.fn().mockResolvedValue(undefined),
+  PreviewPeerConnectionBundle: vi.fn().mockResolvedValue({ fingerprint: 'SHA256:space' }),
+  JoinPeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-2', space_id: 'space-1' }),
 }))
 
 vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
@@ -63,7 +65,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 
 import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
-import { CreatePeerInvitations, GetPluginConfig, SetPluginConfig, GetAppVersion, StartServicePreview } from '../../../wailsjs/go/main/App'
+import { CreatePeerInvitations, GetPluginConfig, JoinPeerSpace, PreviewPeerConnectionBundle, SetPluginConfig, GetAppVersion, StartServicePreview } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import {
   fetchRelayMe,
@@ -225,6 +227,22 @@ describe('createWailsPlatform', () => {
       permission: 'control',
     }))
     expect(result[0].invite_id).toBe('invite-1')
+  })
+
+  it('peer bridge previews and joins through typed Wails bindings', async () => {
+    const p = createWailsPlatform()
+    const preview = await p.peer!.previewConnectionBundle('atc1.bundle.signature')
+    expect(PreviewPeerConnectionBundle).toHaveBeenCalledWith('atc1.bundle.signature')
+    expect(preview.fingerprint).toBe('SHA256:space')
+
+    await p.peer!.joinSpace({
+      connection_bundle: 'atc1.bundle.signature',
+      expected_fingerprint: 'SHA256:space',
+    })
+    expect(JoinPeerSpace).toHaveBeenCalledWith(expect.objectContaining({
+      connection_bundle: 'atc1.bundle.signature',
+      expected_fingerprint: 'SHA256:space',
+    }))
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {

@@ -906,7 +906,28 @@ record 原地新增 ECDH key pair，不轮换 signing key 或 `peer_id`。iOS v2
 private key 只序列化到 Keychain，运行时重新导入为 non-exportable key；v1 迁移同样只新增
 wrapping identity。
 
-Peer Space 的加密本地 state schema v5 增加 grow-only `memberships[]` 目录（最多 256 个候选）。
+首次加入通过 Quick Tunnel 同源的 `POST /peer/v1/join` 完成。HTTP body 只暴露版本、
+`invite_id`、XChaCha20-Poly1305 nonce 和 ciphertext；完整 `apj1`、`atp1`、pairing secret、
+membership 与 epoch envelope 都不会以明文经过 tunnel。request/response key 分别由
+HKDF-SHA256(`pairing_secret`, salt=`invite_id`,
+info=`atterm-quick-tunnel-join-v1\x00<direction>`) 派生，AAD 为
+`atterm-quick-tunnel-join-v1\x00<direction>\x00<invite_id>`，两个方向不能互换重放。
+生产客户端只使用签名 `atc1` 中的 HTTPS Quick Tunnel route；HTTP override 仅允许 loopback
+测试。服务端所有失败统一返回拒绝，不暴露 invitation 是否存在、已消费或已撤销。
+
+解密后的响应只包含完整 genesis、新签 membership、membership directory、revocations、
+epoch rotations，以及为新设备 wrapping key 单独封装的当前 `ake1` bootstrap envelopes。
+加入新成员不旋转 epoch；客户端验证 genesis 与 `atc1` trust anchor 完全一致、membership 的
+subject/wrapping key 和 ticket capability 完全一致、全部 governance token 与 rotation DAG，
+再解开当前 sync（及获准时 vault）key并核对 rotation key commitment。Desktop 的
+`PreviewPeerConnectionBundle` 只返回上述签名元数据供用户确认，`JoinPeerSpace` 必须收到原样
+回传的 `SHA256:<genesis hash>` 后才发网络请求；邀请只能放在原始 token 或 URL fragment，拒绝
+query 携带。epoch keys 先写 secure storage，最后才一次性创建加密 Peer store；任一验证或
+解封失败都不能留下已初始化 Space。bootstrap envelopes 也保存在加密 store 中，Keychain
+epoch entry 丢失后可重新解封恢复。
+
+Peer Space 的加密本地 state schema v6 包含 grow-only `memberships[]` 目录（最多 256 个候选）
+和 recipient-bound `epoch_envelopes[]`。
 新建 Space、邀请核销和读取 v1-v4 state 时，都会从 local membership、已核销 invitation 以及
 每个 token 内嵌的 issuer chain 补齐目录；真实 genesis 下每个 token 必须按签发时刻验证完整签名
 与 capability narrowing。同一 token 重放幂等，同一 membership serial 对应不同有效 token 时整批
@@ -925,7 +946,7 @@ fail closed。设备保留全部 token 供后续 anti-entropy，并从中派生 
 redemption ledger 只把 actor membership 与本机 membership 完全一致的 batch 撤销应用到未消费
 ticket。已消费 invitation 对应的 membership 不会因 batch 撤销失效，必须显式发布 member/grant
 撤销。当前 membership 目录、撤销日志和派生集合随加密 `peer-space.json` 原子持久化。明文 state
-schema 为 v5；读取 v1-v4 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏
+schema 为 v6；读取 v1-v5 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏
 已有本地 Space。
 
 `akr1` rotation document 包含 `rotation_id`、`space_id`、`key_class`、

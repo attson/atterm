@@ -101,6 +101,7 @@ type HostAuthorization struct {
 // HostConfig controls an authenticated Peer signaling endpoint.
 type HostConfig struct {
 	Authorize       func(context.Context, OpenRequest) (HostAuthorization, error)
+	Join            *JoinHostConfig
 	OnAuthenticated func(*SignalChannel)
 	OnSignal        func(*SignalChannel, Signal) error
 	OnClosed        func(*SignalChannel, error)
@@ -150,6 +151,9 @@ func NewPeerHandler(cfg HostConfig) (*PeerHandler, error) {
 	if cfg.Authorize == nil {
 		return nil, errors.New("quicktunnel: missing host authorizer")
 	}
+	if cfg.Join != nil && (cfg.Join.LookupSecret == nil || cfg.Join.Redeem == nil) {
+		return nil, errors.New("quicktunnel: incomplete join handler")
+	}
 	if cfg.MaxConnections < 0 {
 		return nil, errors.New("quicktunnel: negative connection limit")
 	}
@@ -160,6 +164,10 @@ func NewPeerHandler(cfg HostConfig) (*PeerHandler, error) {
 }
 
 func (h *PeerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == PeerJoinPath {
+		h.serveJoin(w, r)
+		return
+	}
 	if r.URL.Path != PeerConnectPath || r.Method != http.MethodGet {
 		http.NotFound(w, r)
 		return

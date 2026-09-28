@@ -153,6 +153,8 @@ export function GetUpdateGHProxyURL():Promise<string>;
 
 export function GetUpdateState():Promise<main.UpdateState>;
 
+export function JoinPeerSpace(arg1:main.JoinPeerSpaceReq):Promise<main.PeerSpaceStatus>;
+
 export function GetUplinkHealth():Promise<connhealth.Snapshot>;
 
 export function GetUserHomeDir():Promise<string>;
@@ -202,6 +204,8 @@ export function NewSshSessionByID(arg1:string,arg2:main.AcceptedHostKey):Promise
 export function PickLogFilePath():Promise<string>;
 
 export function PreviewConfigImport(arg1:string):Promise<main.ImportPreview>;
+
+export function PreviewPeerConnectionBundle(arg1:string):Promise<main.PeerConnectionPreview>;
 
 export function PreviewSSHConfigImport():Promise<main.SSHConfigImportPreview>;
 

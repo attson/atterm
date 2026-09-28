@@ -31,6 +31,8 @@ import {
   ListPeerInvitations,
   RevokePeerInvitation,
   RevokePeerInvitationBatch,
+  PreviewPeerConnectionBundle,
+  JoinPeerSpace,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -270,6 +272,8 @@ export function createWailsPlatform(): Platform {
     peer: {
       status: () => GetPeerSpaceStatus(),
       createSpace: () => CreatePeerSpace(),
+      previewConnectionBundle: (raw) => PreviewPeerConnectionBundle(raw),
+      joinSpace: (req) => JoinPeerSpace(new WailsModels.JoinPeerSpaceReq(req)),
       createInvitations: (req) => CreatePeerInvitations(new WailsModels.CreatePeerInvitationsReq(req)),
       listInvitations: () => ListPeerInvitations(),
       revokeInvitation: (inviteID) => RevokePeerInvitation(inviteID),

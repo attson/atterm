@@ -345,6 +345,20 @@ export namespace main {
 	        this.can_sync_secrets = source["can_sync_secrets"];
 	    }
 	}
+	export class JoinPeerSpaceReq {
+	    connection_bundle: string;
+	    expected_fingerprint: string;
+
+	    static createFrom(source: any = {}) {
+	        return new JoinPeerSpaceReq(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.connection_bundle = source["connection_bundle"];
+	        this.expected_fingerprint = source["expected_fingerprint"];
+	    }
+	}
 	export class RelayErrorEntry {
 	    timestamp: string;
 	    message: string;
@@ -891,6 +905,38 @@ export namespace main {
 	        this.consumed_at = source["consumed_at"];
 	        this.consumed_by_peer_id = source["consumed_by_peer_id"];
 	        this.revoked_at = source["revoked_at"];
+	    }
+	}
+	export class PeerConnectionPreview {
+	    space_id: string;
+	    fingerprint: string;
+	    issuer_peer_id: string;
+	    permission: string;
+	    allowed_session_ids: string[];
+	    can_invite: boolean;
+	    can_sync_secrets: boolean;
+	    invitation_expires_at: number;
+	    bundle_expires_at: number;
+	    route_kind: string;
+	    route_url: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerConnectionPreview(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.space_id = source["space_id"];
+	        this.fingerprint = source["fingerprint"];
+	        this.issuer_peer_id = source["issuer_peer_id"];
+	        this.permission = source["permission"];
+	        this.allowed_session_ids = source["allowed_session_ids"];
+	        this.can_invite = source["can_invite"];
+	        this.can_sync_secrets = source["can_sync_secrets"];
+	        this.invitation_expires_at = source["invitation_expires_at"];
+	        this.bundle_expires_at = source["bundle_expires_at"];
+	        this.route_kind = source["route_kind"];
+	        this.route_url = source["route_url"];
 	    }
 	}
 	export class PeerQuickTunnelStatus {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/configsync"
+	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peerstore"
 )
@@ -110,7 +111,7 @@ func (m *peerSpaceManager) ensureInitialEpochState() error {
 	if !ok {
 		return errors.New("Peer Space sync epoch rotation is missing")
 	}
-	syncKey, err := configsync.OpenRotationEpochKey(syncRotation, genesis, identity.PeerID(), wrapping)
+	syncKey, err := m.resolvePeerEpochKey(state, genesis, syncRotation, identity.PeerID(), wrapping)
 	if err != nil {
 		return err
 	}
@@ -122,7 +123,7 @@ func (m *peerSpaceManager) ensureInitialEpochState() error {
 		if !ok {
 			return errors.New("Peer Space vault epoch rotation is missing")
 		}
-		vaultKey, err := configsync.OpenRotationEpochKey(vaultRotation, genesis, identity.PeerID(), wrapping)
+		vaultKey, err := m.resolvePeerEpochKey(state, genesis, vaultRotation, identity.PeerID(), wrapping)
 		if err != nil {
 			return err
 		}
@@ -131,6 +132,65 @@ func (m *peerSpaceManager) ensureInitialEpochState() error {
 		}
 	}
 	return nil
+}
+
+func (m *peerSpaceManager) resolvePeerEpochKey(
+	state peerstore.State,
+	genesis peerproto.VerifiedGenesis,
+	rotation configsync.VerifiedEpochRotation,
+	peerID string,
+	wrapping *peercrypto.WrappingIdentity,
+) (configsync.EpochKey, error) {
+	if stored, err := loadPeerEpochKey(genesis.Document.SpaceID, rotation.Document.KeyClass); err == nil {
+		if configsync.ValidateEpochKeyForRotation(stored, rotation) == nil {
+			return stored, nil
+		}
+	}
+	if key, err := configsync.OpenRotationEpochKey(rotation, genesis, peerID, wrapping); err == nil {
+		return key, nil
+	}
+	for _, envelope := range state.EpochEnvelopes {
+		info, err := configsync.InspectEpochEnvelope(envelope)
+		if err != nil || info.SpaceID != genesis.Document.SpaceID || info.KeyClass != rotation.Document.KeyClass || info.Epoch != rotation.Document.Epoch || info.RecipientPeerID != peerID {
+			continue
+		}
+		key, err := configsync.OpenEpochKey(envelope, genesis.Document.SpaceID, peerID, wrapping)
+		if err == nil && configsync.ValidateEpochKeyForRotation(key, rotation) == nil {
+			return key, nil
+		}
+	}
+	return configsync.EpochKey{}, errors.New("Peer Space epoch key is unavailable to this device")
+}
+
+func (m *peerSpaceManager) bootstrapEpochEnvelopes(state peerstore.State, genesis peerproto.VerifiedGenesis, member peerproto.VerifiedGrant) ([]string, error) {
+	rotations, err := currentEpochRotations(state.EpochRotations, genesis)
+	if err != nil {
+		return nil, err
+	}
+	classes := []configsync.KeyClass{configsync.KeyClassSync}
+	if member.Document.CanSyncSecrets {
+		classes = append(classes, configsync.KeyClassVault)
+	}
+	envelopes := make([]string, 0, len(classes))
+	for _, class := range classes {
+		rotation, ok := rotations[class]
+		if !ok {
+			return nil, fmt.Errorf("Peer Space %s epoch rotation is missing", class)
+		}
+		key, err := loadPeerEpochKey(genesis.Document.SpaceID, class)
+		if err != nil || configsync.ValidateEpochKeyForRotation(key, rotation) != nil {
+			return nil, fmt.Errorf("load current Peer Space %s epoch key", class)
+		}
+		envelope, err := configsync.SealEpochKey(genesis.Document.SpaceID, key, configsync.EpochRecipient{
+			PeerID: member.Document.SubjectPeerID, WrappingPublicKey: member.WrappingPublicKey,
+			CanSyncSecrets: member.Document.CanSyncSecrets,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("seal Peer Space %s bootstrap epoch key: %w", class, err)
+		}
+		envelopes = append(envelopes, envelope)
+	}
+	return envelopes, nil
 }
 
 func activePeerMemberships(state peerstore.State, genesis peerproto.VerifiedGenesis, now time.Time) ([]peerproto.VerifiedGrant, error) {

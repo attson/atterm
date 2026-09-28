@@ -298,6 +298,10 @@ export function GetUpdateState() {
   return window['go']['main']['App']['GetUpdateState']();
 }
 
+export function JoinPeerSpace(arg1) {
+  return window['go']['main']['App']['JoinPeerSpace'](arg1);
+}
+
 export function GetUplinkHealth() {
   return window['go']['main']['App']['GetUplinkHealth']();
 }
@@ -396,6 +400,10 @@ export function PickLogFilePath() {
 
 export function PreviewConfigImport(arg1) {
   return window['go']['main']['App']['PreviewConfigImport'](arg1);
+}
+
+export function PreviewPeerConnectionBundle(arg1) {
+  return window['go']['main']['App']['PreviewPeerConnectionBundle'](arg1);
 }
 
 export function PreviewSSHConfigImport() {

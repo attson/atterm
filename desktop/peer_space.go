@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peerstore"
+	"github.com/attson/atterm/internal/quicktunnel"
 )
 
 const activePeerSpaceAccount = "active"
@@ -55,6 +58,10 @@ type PeerInvitation struct {
 type peerJoinResult struct {
 	GenesisToken    string
 	MembershipToken string
+	Memberships     []string
+	Revocations     []string
+	EpochRotations  []string
+	EpochEnvelopes  []string
 }
 
 type peerSpaceManager struct {
@@ -62,6 +69,7 @@ type peerSpaceManager struct {
 	bootstrapLockPath string
 	configRoot        string
 	now               func() time.Time
+	joinQuickTunnel   func(context.Context, quicktunnel.JoinClientConfig) (quicktunnel.JoinBootstrap, error)
 
 	configMu      sync.Mutex
 	configReplica *peerConfigReplica
@@ -441,7 +449,51 @@ func (m *peerSpaceManager) redeemJoinRequest(requestToken string) (peerJoinResul
 	if err != nil {
 		return peerJoinResult{}, err
 	}
-	return peerJoinResult{GenesisToken: state.GenesisToken, MembershipToken: membership}, nil
+	state, err = m.store.Load()
+	if err != nil {
+		return peerJoinResult{}, err
+	}
+	joined, err := peerproto.VerifyGrant(membership, genesis, now)
+	if err != nil {
+		return peerJoinResult{}, fmt.Errorf("verify issued peer membership: %w", err)
+	}
+	envelopes, err := m.bootstrapEpochEnvelopes(state, genesis, joined)
+	if err != nil {
+		return peerJoinResult{}, err
+	}
+	return peerJoinResult{
+		GenesisToken: state.GenesisToken, MembershipToken: membership,
+		Memberships:    append([]string(nil), state.Memberships...),
+		Revocations:    append([]string(nil), state.Revocations...),
+		EpochRotations: append([]string(nil), state.EpochRotations...),
+		EpochEnvelopes: envelopes,
+	}, nil
+}
+
+func (m *peerSpaceManager) invitationPairingSecret(inviteID string) ([]byte, error) {
+	state, err := m.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return nil, err
+	}
+	for _, invitation := range state.Invitations {
+		if invitation.InviteID != inviteID {
+			continue
+		}
+		ticket, _, err := peerproto.VerifyInvitation(invitation.Token, genesis, m.now())
+		if err != nil || ticket.InviteID != inviteID || invitation.RevokedAt != 0 {
+			return nil, peerstore.ErrInviteInvalid
+		}
+		secret, err := base64.RawURLEncoding.Strict().DecodeString(ticket.PairingSecret)
+		if err != nil || len(secret) != 32 {
+			return nil, peerstore.ErrInviteInvalid
+		}
+		return secret, nil
+	}
+	return nil, peerstore.ErrInviteInvalid
 }
 
 func (m *peerSpaceManager) loadIdentity() (*peercrypto.Identity, error) {

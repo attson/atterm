@@ -82,7 +82,11 @@ func newPeerQuickTunnelHost(app *App, host *relayHost) (*peerQuickTunnelHost, er
 		app: app, host: host, attempts: make(map[*quicktunnel.SignalChannel]*peerQuickTunnelAttempt),
 	}
 	handler, err := quicktunnel.NewPeerHandler(quicktunnel.HostConfig{
-		Authorize:       peerHost.authorize,
+		Authorize: peerHost.authorize,
+		Join: &quicktunnel.JoinHostConfig{
+			LookupSecret: peerHost.lookupJoinSecret,
+			Redeem:       peerHost.redeemJoin,
+		},
 		OnAuthenticated: peerHost.onAuthenticated,
 		OnClosed:        peerHost.onSignalClosed,
 	})
@@ -92,6 +96,40 @@ func newPeerQuickTunnelHost(app *App, host *relayHost) (*peerQuickTunnelHost, er
 	peerHost.handler = handler
 	peerHost.tunnel = quicktunnel.New(quicktunnel.Config{Handler: handler})
 	return peerHost, nil
+}
+
+func (h *peerQuickTunnelHost) lookupJoinSecret(ctx context.Context, inviteID string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	manager, err := h.app.peerManager()
+	if err != nil {
+		return nil, quicktunnel.ErrJoinRejected
+	}
+	secret, err := manager.invitationPairingSecret(inviteID)
+	if err != nil {
+		return nil, quicktunnel.ErrJoinRejected
+	}
+	return secret, nil
+}
+
+func (h *peerQuickTunnelHost) redeemJoin(ctx context.Context, requestToken string) (quicktunnel.JoinBootstrap, error) {
+	if err := ctx.Err(); err != nil {
+		return quicktunnel.JoinBootstrap{}, err
+	}
+	manager, err := h.app.peerManager()
+	if err != nil {
+		return quicktunnel.JoinBootstrap{}, quicktunnel.ErrJoinRejected
+	}
+	result, err := manager.redeemJoinRequest(requestToken)
+	if err != nil {
+		return quicktunnel.JoinBootstrap{}, err
+	}
+	return quicktunnel.JoinBootstrap{
+		GenesisToken: result.GenesisToken, MembershipToken: result.MembershipToken,
+		Memberships: result.Memberships, Revocations: result.Revocations,
+		EpochRotations: result.EpochRotations, EpochEnvelopes: result.EpochEnvelopes,
+	}, nil
 }
 
 func (h *peerQuickTunnelHost) authorize(ctx context.Context, request quicktunnel.OpenRequest) (quicktunnel.HostAuthorization, error) {

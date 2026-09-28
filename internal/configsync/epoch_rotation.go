@@ -220,13 +220,25 @@ func OpenRotationEpochKey(rotation VerifiedEpochRotation, genesis peerproto.Veri
 		if err != nil {
 			return EpochKey{}, err
 		}
-		commitment := sha256.Sum256(key.Bytes())
-		if encode(commitment[:]) != verified.Document.KeyCommitment {
+		if err := ValidateEpochKeyForRotation(key, verified); err != nil {
 			return EpochKey{}, ErrInvalidEpochRotation
 		}
 		return key, nil
 	}
 	return EpochKey{}, ErrEpochRotationDenied
+}
+
+// ValidateEpochKeyForRotation binds a key recovered from secure storage or a
+// bootstrap envelope to the signed canonical rotation that committed it.
+func ValidateEpochKeyForRotation(key EpochKey, rotation VerifiedEpochRotation) error {
+	if !key.valid || key.Class != rotation.Document.KeyClass || key.Epoch != rotation.Document.Epoch {
+		return ErrInvalidEpochKey
+	}
+	commitment := sha256.Sum256(key.Bytes())
+	if encode(commitment[:]) != rotation.Document.KeyCommitment {
+		return ErrInvalidEpochKey
+	}
+	return nil
 }
 
 // EpochRotationAuthorizer resolves revocations and the active membership view

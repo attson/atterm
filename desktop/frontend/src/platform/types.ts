@@ -28,6 +28,7 @@ export type FileContent = _Models.FileContent
 export type FileMetaInfo = _Models.FileMetaInfo
 export type PeerSpaceStatus = _Models.PeerSpaceStatus
 export type PeerInvitation = _Models.PeerInvitation
+export type PeerConnectionPreview = _Models.PeerConnectionPreview
 
 export interface EnvironmentInfo {
   buildType: string
@@ -304,6 +305,8 @@ export interface CreatePeerInvitationsRequest {
 export interface PeerBridge {
   status(): Promise<PeerSpaceStatus>
   createSpace(): Promise<PeerSpaceStatus>
+  previewConnectionBundle(raw: string): Promise<PeerConnectionPreview>
+  joinSpace(req: { connection_bundle: string; expected_fingerprint: string }): Promise<PeerSpaceStatus>
   createInvitations(req: CreatePeerInvitationsRequest): Promise<PeerInvitation[]>
   listInvitations(): Promise<PeerInvitation[]>
   revokeInvitation(inviteID: string): Promise<void>

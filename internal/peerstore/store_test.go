@@ -293,6 +293,41 @@ func TestInitializeEpochRotationsIsWriteOnceAndDetached(t *testing.T) {
 	}
 }
 
+func TestInitializePersistsBootstrapEpochEnvelopesEncryptedAndDetached(t *testing.T) {
+	store, key := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	envelopes := []string{"ake1.sync-envelope", "ake1.vault-envelope"}
+	if err := store.Initialize(State{
+		GenesisToken: "genesis", LocalMembership: "membership",
+		EpochEnvelopes: envelopes, CreatedAt: now.Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := os.ReadFile(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(blob, []byte(envelopes[0])) {
+		t.Fatal("bootstrap epoch envelope was stored in plaintext")
+	}
+	reopened := New(store.path, func() ([]byte, error) { return append([]byte(nil), key...), nil })
+	state, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(state.EpochEnvelopes, envelopes) || state.Version != Version {
+		t.Fatalf("state=%+v", state)
+	}
+	state.EpochEnvelopes[0] = "caller-mutation"
+	again, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.EpochEnvelopes[0] != envelopes[0] {
+		t.Fatal("Load returned aliased bootstrap epoch envelopes")
+	}
+}
+
 func TestPendingConfigImportIsEncryptedWriteOnceAndDetached(t *testing.T) {
 	store, key := testStore(t)
 	now := time.Unix(1_800_000_000, 0)

@@ -709,6 +709,93 @@ func TestPendingPeerConfigIsWriteOnceCapabilityGatedAndMergeOnly(t *testing.T) {
 	}
 }
 
+func TestApplyPeerConfigProjectionPreservesThenImportsLocalConfig(t *testing.T) {
+	isolateConfigDir(t)
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{
+		TerminalTheme:  "nord",
+		QuickTemplates: []QuickTemplate{{ID: "peer-template", Label: "Peer", Text: "peer"}},
+	}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	commits := 0
+	app.cfgStore = &configStore{cfg: appConfig{
+		TerminalTheme:  "local-theme",
+		QuickTemplates: []QuickTemplate{{ID: "local-template", Label: "Local", Text: "local"}},
+	}}
+	app.cfgStore.setOnCommit(func(appConfig) { commits++ })
+
+	pendingRecords, err := app.applyPeerConfigProjection(true)
+	if err != nil || pendingRecords != 2 {
+		t.Fatalf("initial projection pending=%d err=%v", pendingRecords, err)
+	}
+	projected := app.cfgStore.Get()
+	if projected.TerminalTheme != "nord" || len(projected.QuickTemplates) != 1 || projected.QuickTemplates[0].ID != "peer-template" {
+		t.Fatalf("initial projected config=%+v", projected)
+	}
+	if commits != 1 {
+		t.Fatalf("initial projection commits=%d want=1", commits)
+	}
+	if _, ok, err := app.peerSpace.loadPendingPeerConfig(); err != nil || !ok {
+		t.Fatalf("pre-join config not pending: ok=%t err=%v", ok, err)
+	}
+
+	operations, err := app.peerSpace.acceptPendingPeerConfig()
+	if err != nil || operations != 2 {
+		t.Fatalf("accept pre-join config operations=%d err=%v", operations, err)
+	}
+	if pendingRecords, err := app.applyPeerConfigProjection(false); err != nil || pendingRecords != 0 {
+		t.Fatalf("post-import projection pending=%d err=%v", pendingRecords, err)
+	}
+	merged := app.cfgStore.Get()
+	if merged.TerminalTheme != "local-theme" || len(merged.QuickTemplates) != 2 {
+		t.Fatalf("merged projected config=%+v", merged)
+	}
+	ids := map[string]bool{}
+	for _, template := range merged.QuickTemplates {
+		ids[template.ID] = true
+	}
+	if !ids["peer-template"] || !ids["local-template"] {
+		t.Fatalf("merged templates=%+v", merged.QuickTemplates)
+	}
+	if commits != 2 {
+		t.Fatalf("total projection commits=%d want=2", commits)
+	}
+}
+
+func TestApplyPeerConfigProjectionRejectsPartialCommit(t *testing.T) {
+	isolateConfigDir(t)
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	unknownEpoch, err := configsync.GenerateEpochKey(configsync.KeyClassSync, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, unknownEpoch, configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion,
+		Collection:    configsync.CollectionPreferences,
+		RecordID:      "terminal_theme",
+		Kind:          configsync.KindSet,
+		Payload:       json.RawMessage(`"dark"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	commits := 0
+	app.cfgStore = &configStore{cfg: appConfig{TerminalTheme: "local-theme"}}
+	app.cfgStore.setOnCommit(func(appConfig) { commits++ })
+	if _, err := app.applyPeerConfigProjection(false); !errors.Is(err, configsync.ErrInvalidEpochKey) {
+		t.Fatalf("projection error=%v", err)
+	}
+	if commits != 0 || app.cfgStore.Get().TerminalTheme != "local-theme" {
+		t.Fatalf("failed projection committed config=%+v commits=%d", app.cfgStore.Get(), commits)
+	}
+}
+
 func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

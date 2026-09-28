@@ -2,11 +2,46 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/attson/atterm/internal/configsync"
 )
+
+// applyPeerConfigProjection is the single local commit boundary for a future
+// Peer snapshot or inbound-op batch. It remains unwired until configsync can
+// replace the legacy writer as one mode switch.
+func (a *App) applyPeerConfigProjection(preserveLocal bool) (int, error) {
+	if a.cfgStore == nil {
+		return 0, errors.New("config store not ready")
+	}
+	manager, err := a.peerManager()
+	if err != nil {
+		return 0, err
+	}
+	runtime, err := manager.ensureConfigReplica()
+	if err != nil {
+		return 0, err
+	}
+	base := a.cfgStore.Get()
+	pendingRecords := 0
+	if preserveLocal {
+		pendingRecords, _, err = manager.capturePendingPeerConfig(base)
+		if err != nil {
+			return 0, err
+		}
+	}
+	projected, projectionErrors := runtime.projectLocalConfig(base)
+	if len(projectionErrors) != 0 {
+		return pendingRecords, errors.Join(projectionErrors...)
+	}
+	if err := a.cfgStore.Set(projected); err != nil {
+		return pendingRecords, err
+	}
+	a.emitPrefsChanged()
+	return pendingRecords, nil
+}
 
 // projectLocalConfig applies the current canonical winners to an independent
 // config snapshot. The caller decides when that snapshot may replace local

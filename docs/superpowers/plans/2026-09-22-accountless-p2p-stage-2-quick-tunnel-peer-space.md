@@ -41,8 +41,11 @@ needs to persist and wire this compatibility state in place of direct
 `prefssync` writes. The record materializer now scopes whole-value deletions
 to records previously known by that Relay key, keeps ordered entity positions,
 and can atomically append mixed sync/vault encrypted mutation batches. The
-Desktop codecs and epoch-key persistence are still required before migration
-can be enabled. New-device join transport/UI and the actual Peer logical-channel
+Desktop compatibility codec now round-trips the legacy encrypted profile/SSH
+blobs while splitting portable metadata、ordered positions、default profile and
+vault secrets into independent records. Epoch-key persistence and wiring this
+path as the sole config writer are still required before migration can be
+enabled. New-device join transport/UI and the actual Peer logical-channel
 adapter also remain.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.

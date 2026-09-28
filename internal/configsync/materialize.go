@@ -385,9 +385,9 @@ func validateEntityObject(raw json.RawMessage, recordID, collection string) erro
 
 func canonicalCollectionRule(collection string) (KeyClass, bool, bool) {
 	switch collection {
-	case CollectionPreferences, CollectionSSHHosts, CollectionSSHKeys:
+	case CollectionPreferences, CollectionProfileConfig:
 		return KeyClassSync, false, true
-	case CollectionQuickTemplate, CollectionProfiles:
+	case CollectionQuickTemplate, CollectionProfiles, CollectionSSHHosts, CollectionSSHKeys:
 		return KeyClassSync, true, true
 	case CollectionProfileEnv, CollectionSSHCredential, CollectionSSHKeySecret:
 		return KeyClassVault, false, true
@@ -427,6 +427,35 @@ func clonePlainRecords(records []PlainRecord) []PlainRecord {
 	}
 	return out
 }
+
+// CanonicalEntityJSON converts a platform-owned entity struct into the stable
+// object encoding required by PlainRecord.Value and verifies its id field.
+func CanonicalEntityJSON(recordID string, value any) (json.RawMessage, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: marshal entity %q: %v", ErrInvalidSchemaValue, recordID, err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var object map[string]any
+	if err := decoder.Decode(&object); err != nil || object == nil {
+		return nil, fmt.Errorf("%w: entity %q is not an object", ErrInvalidSchemaValue, recordID)
+	}
+	canonical, err := json.Marshal(object)
+	if err != nil {
+		return nil, fmt.Errorf("%w: marshal canonical entity %q: %v", ErrInvalidSchemaValue, recordID, err)
+	}
+	if id, _ := object["id"].(string); id != recordID {
+		return nil, fmt.Errorf("%w: entity payload id does not match %q", ErrInvalidSchemaValue, recordID)
+	}
+	return canonical, nil
+}
+
+// PositionForIndex maps a legacy array rank to a stable sortable position.
+func PositionForIndex(index uint64) string { return legacyPosition(index) }
+
+// IndexFromPosition parses a position previously returned by PositionForIndex.
+func IndexFromPosition(position string) (uint64, error) { return parseLegacyPosition(position) }
 
 func sortRecordMutations(mutations []RecordMutation) {
 	sort.Slice(mutations, func(i, j int) bool {

@@ -82,7 +82,7 @@ func TestRelayKeySpecsSeparatePortableAndVaultCollections(t *testing.T) {
 	if !ok || profiles.Mode != RelaySealedBundle {
 		t.Fatalf("profiles spec=%+v ok=%v", profiles, ok)
 	}
-	if !reflect.DeepEqual(profiles.Collections, []string{CollectionProfiles, CollectionProfileEnv}) ||
+	if !reflect.DeepEqual(profiles.Collections, []string{CollectionProfiles, CollectionProfileConfig, CollectionProfileEnv}) ||
 		!reflect.DeepEqual(profiles.KeyClasses, []KeyClass{KeyClassSync, KeyClassVault}) {
 		t.Fatalf("profiles spec=%+v", profiles)
 	}

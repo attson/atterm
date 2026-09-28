@@ -16,6 +16,7 @@ const (
 	CollectionPreferences   = "preferences"
 	CollectionQuickTemplate = "quick_templates"
 	CollectionProfiles      = "profiles"
+	CollectionProfileConfig = "profile_config"
 	CollectionProfileEnv    = "profile_env"
 	CollectionSSHHosts      = "ssh_hosts"
 	CollectionSSHKeys       = "ssh_keys"
@@ -68,7 +69,7 @@ var relayKeySpecs = []RelayKeySpec{
 	{Key: "locale_preference", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeString},
 	{Key: "notifications_enabled", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "pinned_session_ids", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeStringArray},
-	{Key: "profiles_encrypted", Mode: RelaySealedBundle, Collections: []string{CollectionProfiles, CollectionProfileEnv}, KeyClasses: []KeyClass{KeyClassSync, KeyClassVault}, shape: shapeSealed},
+	{Key: "profiles_encrypted", Mode: RelaySealedBundle, Collections: []string{CollectionProfiles, CollectionProfileConfig, CollectionProfileEnv}, KeyClasses: []KeyClass{KeyClassSync, KeyClassVault}, shape: shapeSealed},
 	{Key: "quick_templates", Mode: RelayRecordArray, Collections: []string{CollectionQuickTemplate}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeTemplateList},
 	{Key: "shell_integration_enabled", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "shortcut_bindings", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeStringMap},

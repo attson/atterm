@@ -6,7 +6,7 @@
 > Release: v0.7.0 beta, v0.7.x stable after soak
 > Outcome: 用户不登录 Relay，也能通过预签邀请和 Quick Tunnel 接管终端并同步配置。
 
-Implementation status (2026-09-24): PR 2.1 foundation is in progress on
+Implementation status (2026-09-28): PR 2.1 foundation is in progress on
 `feature/peer-space-foundation`. P-256 desktop identity storage、immutable
 genesis、signed membership、route-independent `atp1` invitation batches、
 encrypted invite ledger and cross-process single-use/revocation writes are
@@ -35,10 +35,11 @@ anti-entropy inventory、bounded cursor batches、large-token chunking、retry
 deduplication and verified reassembly now cover config snapshots/tails plus
 revocation/rotation candidates. The canonical schema now covers all 18 legacy
 Relay preference keys、separates portable/vault collections、splits ordered
-template records by stable id, and maintains durable-ready per-realm Relay
-import/export hashes so echoes do not create another mutation. Desktop still
-needs to persist and wire this compatibility state in place of direct
-`prefssync` writes. The record materializer now scopes whole-value deletions
+template records by stable id, and maintains durable per-realm Relay
+import/export hashes so echoes do not create another mutation. Desktop now
+persists this compatibility state and has un-wired helpers for durable Relay
+imports and retryable exports; replacing direct `prefssync` network writes is
+still pending. The record materializer now scopes whole-value deletions
 to records previously known by that Relay key, keeps ordered entity positions,
 and can atomically append mixed sync/vault encrypted mutation batches. The
 Desktop compatibility codec now round-trips the legacy encrypted profile/SSH
@@ -52,8 +53,13 @@ identity and current capability-gated epoch keys without making app startup
 depend on Peer state. Space creation atomically seeds customized portable
 preferences、templates、profile/SSH metadata and explicitly opted-in profile
 environment values; SSH credentials/private keys remain local pending a
-dedicated Peer secret-sync opt-in. Local-writer migration、new-device join
-transport/UI and the actual Peer logical-channel adapter still remain. Relay
+dedicated Peer secret-sync opt-in. Local edits can now be reduced to minimal
+canonical mutation batches without advancing HLCs for unchanged records, but
+setters deliberately do not use that path until the old writer can be replaced
+atomically. Relay imports filter SSH secrets and device-inaccessible vault
+records; Relay exports currently skip the whole SSH bundle so metadata cannot
+overwrite Relay-only secrets. New-device join transport/UI and the actual Peer
+logical-channel adapter still remain. Relay
 compatibility hash/timestamp/record-ref state is persisted per Space and realm
 with cross-process transactional updates. Canonical winners can now be
 decrypted by exact epoch、grouped per legacy key and materialized back into

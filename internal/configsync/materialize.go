@@ -174,6 +174,56 @@ func SetRecordMutation(record PlainRecord) (RecordMutation, error) {
 	}, nil
 }
 
+// PlanRecordReplacement computes the minimal record-level mutations needed to
+// make a scoped canonical view equal current. previous must contain only live
+// records owned by that scope; unchanged entities retain their existing HLC.
+func PlanRecordReplacement(current, previous []PlainRecord) ([]RecordMutation, error) {
+	currentByID := make(map[string]PlainRecord, len(current))
+	mutations := make([]RecordMutation, 0, len(current)+len(previous))
+	for _, record := range current {
+		key := canonicalRecordKey(record.Collection, record.RecordID)
+		if _, duplicate := currentByID[key]; duplicate {
+			return nil, fmt.Errorf("%w: duplicate current record %q", ErrInvalidSchemaValue, key)
+		}
+		if _, err := SetRecordMutation(record); err != nil {
+			return nil, err
+		}
+		currentByID[key] = record
+	}
+	previousByID := make(map[string]PlainRecord, len(previous))
+	for _, record := range previous {
+		key := canonicalRecordKey(record.Collection, record.RecordID)
+		if _, duplicate := previousByID[key]; duplicate {
+			return nil, fmt.Errorf("%w: duplicate previous record %q", ErrInvalidSchemaValue, key)
+		}
+		if _, err := SetRecordMutation(record); err != nil {
+			return nil, err
+		}
+		previousByID[key] = record
+	}
+	for key, record := range currentByID {
+		if old, ok := previousByID[key]; ok && old.KeyClass == record.KeyClass && old.Position == record.Position && bytes.Equal(old.Value, record.Value) {
+			continue
+		}
+		mutation, err := SetRecordMutation(record)
+		if err != nil {
+			return nil, err
+		}
+		mutations = append(mutations, mutation)
+	}
+	for key, record := range previousByID {
+		if _, exists := currentByID[key]; exists {
+			continue
+		}
+		mutations = append(mutations, RecordMutation{
+			Collection: record.Collection, RecordID: record.RecordID,
+			Kind: KindDelete, KeyClass: record.KeyClass,
+		})
+	}
+	sortRecordMutations(mutations)
+	return mutations, nil
+}
+
 // EncodeRelayRecords materializes current canonical winners into one legacy
 // Relay value. Deleted records must be omitted by the caller.
 func EncodeRelayRecords(key string, records []PlainRecord, codec SealedRelayCodec) (json.RawMessage, []RecordRef, error) {

@@ -259,6 +259,36 @@ func TestMaterializeRelayValueUsesWinnersTombstonesAndEpochs(t *testing.T) {
 	}
 }
 
+func TestPlanRecordReplacementEmitsOnlyChangedAndDeletedRecords(t *testing.T) {
+	previous := []PlainRecord{
+		{Collection: CollectionProfiles, RecordID: "same", KeyClass: KeyClassSync, Position: PositionForIndex(0), Value: json.RawMessage(`{"id":"same","name":"Same"}`)},
+		{Collection: CollectionProfiles, RecordID: "changed", KeyClass: KeyClassSync, Position: PositionForIndex(1), Value: json.RawMessage(`{"id":"changed","name":"Before"}`)},
+		{Collection: CollectionProfileEnv, RecordID: "removed", KeyClass: KeyClassVault, Value: json.RawMessage(`{"env":{"TOKEN":"old"},"id":"removed"}`)},
+	}
+	current := []PlainRecord{
+		previous[0],
+		{Collection: CollectionProfiles, RecordID: "changed", KeyClass: KeyClassSync, Position: PositionForIndex(1), Value: json.RawMessage(`{"id":"changed","name":"After"}`)},
+		{Collection: CollectionProfiles, RecordID: "added", KeyClass: KeyClassSync, Position: PositionForIndex(2), Value: json.RawMessage(`{"id":"added","name":"Added"}`)},
+	}
+	mutations, err := PlanRecordReplacement(current, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mutationKindsByID(mutations); !reflect.DeepEqual(got, map[string]Kind{
+		"added": KindSet, "changed": KindSet, "removed": KindDelete,
+	}) {
+		t.Fatalf("mutations=%+v", mutations)
+	}
+	for _, mutation := range mutations {
+		if mutation.RecordID == "same" {
+			t.Fatal("unchanged record produced a mutation")
+		}
+	}
+	if _, err := PlanRecordReplacement(append(current, current[0]), previous); !errors.Is(err, ErrInvalidSchemaValue) {
+		t.Fatalf("duplicate current error=%v", err)
+	}
+}
+
 func TestReplicaRecordsReturnsStableDetachedCollection(t *testing.T) {
 	id, err := peercrypto.GenerateIdentity()
 	if err != nil {

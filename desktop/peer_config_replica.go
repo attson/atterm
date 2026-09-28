@@ -105,6 +105,30 @@ func (m *peerSpaceManager) relayCompatibilityStore(realmID string) (*configsync.
 	return configsync.OpenDurableRelayCompatibility(path, realmID)
 }
 
+func (r *peerConfigReplica) materializeRelayValues(codec configsync.SealedRelayCodec) ([]configsync.RelayValue, []error) {
+	resolve := func(class configsync.KeyClass, epoch uint64) (configsync.EpochKey, bool) {
+		key, ok := r.keys[class]
+		return key, ok && key.Epoch == epoch
+	}
+	values := make([]configsync.RelayValue, 0, len(configsync.RelayKeySpecs()))
+	var errs []error
+	for _, spec := range configsync.RelayKeySpecs() {
+		var records []configsync.Record
+		for _, collection := range spec.Collections {
+			records = append(records, r.replica.Records(collection)...)
+		}
+		value, ok, err := configsync.MaterializeRelayValue(spec.Key, records, resolve, codec)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("materialize Relay key %s: %w", spec.Key, err))
+			continue
+		}
+		if ok {
+			values = append(values, value)
+		}
+	}
+	return values, errs
+}
+
 // restorePeerConfigReplica prepares an already-configured Space during boot.
 // Peer state must never become a dependency of the local terminal or Relay.
 func (a *App) restorePeerConfigReplica() {

@@ -55,7 +55,9 @@ environment values; SSH credentials/private keys remain local pending a
 dedicated Peer secret-sync opt-in. Local-writer migration、new-device join
 transport/UI and the actual Peer logical-channel adapter still remain. Relay
 compatibility hash/timestamp/record-ref state is persisted per Space and realm
-with cross-process transactional updates, ready for adapter wiring.
+with cross-process transactional updates. Canonical winners can now be
+decrypted by exact epoch、grouped per legacy key and materialized back into
+Relay scalar/ordered/sealed values, ready for adapter wiring.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.
 

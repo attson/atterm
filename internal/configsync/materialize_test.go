@@ -187,6 +187,78 @@ func TestOpenPlainRecordRestoresEveryOrderedCollection(t *testing.T) {
 	}
 }
 
+func TestMaterializeRelayValueUsesWinnersTombstonesAndEpochs(t *testing.T) {
+	identity := testIdentity(t)
+	key, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica := newTestReplica(t, uuid.NewString(), SchemaVersion)
+	appendTemplate := func(id, label string) {
+		t.Helper()
+		mutation, err := SetRecordMutation(PlainRecord{
+			Collection: CollectionQuickTemplate, RecordID: id, KeyClass: KeyClassSync,
+			Position: PositionForIndex(uint64(len(replica.Records(CollectionQuickTemplate)))),
+			Value:    json.RawMessage(`{"id":"` + id + `","label":"` + label + `","text":"echo ok"}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := replica.AppendEncrypted(identity, key, Mutation{
+			Collection: mutation.Collection, RecordID: mutation.RecordID, Kind: mutation.Kind, Payload: mutation.Payload,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendTemplate("a", "A")
+	appendTemplate("b", "B")
+	if _, err := replica.AppendEncrypted(identity, key, Mutation{
+		Collection: CollectionQuickTemplate, RecordID: "a", Kind: KindDelete,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	records := replica.Records(CollectionQuickTemplate)
+	latest := records[0].HLC.PhysicalMS
+	if records[1].HLC.PhysicalMS > latest {
+		latest = records[1].HLC.PhysicalMS
+	}
+	resolve := func(class KeyClass, epoch uint64) (EpochKey, bool) {
+		return key, class == key.Class && epoch == key.Epoch
+	}
+	value, ok, err := MaterializeRelayValue("quick_templates", records, resolve, nil)
+	if err != nil || !ok {
+		t.Fatalf("materialize ok=%t err=%v", ok, err)
+	}
+	if string(value.Value) != `[{"id":"b","label":"B","text":"echo ok"}]` || value.UpdatedAt != latest || len(value.Records) != 1 || value.Records[0].RecordID != "b" {
+		t.Fatalf("materialized value=%+v", value)
+	}
+	if _, _, err := MaterializeRelayValue("quick_templates", records, func(KeyClass, uint64) (EpochKey, bool) {
+		return EpochKey{}, false
+	}, nil); !errors.Is(err, ErrInvalidEpochKey) {
+		t.Fatalf("missing epoch error=%v", err)
+	}
+
+	scalarMutation, err := SetRecordMutation(PlainRecord{
+		Collection: CollectionPreferences, RecordID: "terminal_theme", KeyClass: KeyClassSync, Value: json.RawMessage(`"nord"`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replica.AppendEncrypted(identity, key, Mutation{
+		Collection: scalarMutation.Collection, RecordID: scalarMutation.RecordID, Kind: scalarMutation.Kind, Payload: scalarMutation.Payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replica.AppendEncrypted(identity, key, Mutation{
+		Collection: CollectionPreferences, RecordID: "terminal_theme", Kind: KindDelete,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := MaterializeRelayValue("terminal_theme", replica.Records(CollectionPreferences), resolve, nil); err != nil || ok {
+		t.Fatalf("deleted scalar materialized ok=%t err=%v", ok, err)
+	}
+}
+
 func TestReplicaRecordsReturnsStableDetachedCollection(t *testing.T) {
 	id, err := peercrypto.GenerateIdentity()
 	if err != nil {

@@ -287,6 +287,20 @@ func TestCreatePeerSpaceBootstrapsPortableConfigOnce(t *testing.T) {
 	if environment.Env["SHARED"] != "yes" {
 		t.Fatalf("opted-in profile env=%+v", environment.Env)
 	}
+	codec := newDesktopRelaySealedCodec(func() []byte { return bytes.Repeat([]byte{7}, 32) })
+	materialized, materializeErrors := runtime.materializeRelayValues(codec)
+	if len(materializeErrors) != 0 {
+		t.Fatalf("materialize Relay values: %v", materializeErrors)
+	}
+	materializedByKey := make(map[string]configsync.RelayValue, len(materialized))
+	for _, value := range materialized {
+		materializedByKey[value.Key] = value
+	}
+	for _, key := range []string{"terminal_theme", "quick_templates", "profiles_encrypted", "ssh_hosts_encrypted"} {
+		if _, ok := materializedByKey[key]; !ok {
+			t.Fatalf("materialized Relay value %s missing: %+v", key, materializedByKey)
+		}
+	}
 
 	if _, err := app.CreatePeerSpace(); err != nil {
 		t.Fatal(err)

@@ -50,6 +50,11 @@ type SealedRelayCodec interface {
 	EncodeSealedRelayValue(key string, records []PlainRecord) (json.RawMessage, error)
 }
 
+// EpochKeyResolver returns the exact historical epoch needed to open a
+// materialized winner. Rotation must not make older, still-winning records
+// unreadable merely because a newer current key exists.
+type EpochKeyResolver func(class KeyClass, epoch uint64) (EpochKey, bool)
+
 type orderedRecordPayload struct {
 	Position string          `json:"position"`
 	Value    json.RawMessage `json:"value"`
@@ -221,6 +226,62 @@ func EncodeRelayRecords(key string, records []PlainRecord, codec SealedRelayCode
 	}
 	sortRecordRefs(refs)
 	return normalized, refs, nil
+}
+
+// MaterializeRelayValue groups canonical winners back into one legacy Relay
+// value. The bool is false when the replica has never contained this key, or
+// when a scalar's winner is a tombstone; collection tombstones materialize as
+// an empty array/bundle so Relay can observe deletions.
+func MaterializeRelayValue(key string, records []Record, resolve EpochKeyResolver, codec SealedRelayCodec) (RelayValue, bool, error) {
+	spec, ok := RelaySpec(key)
+	if !ok {
+		return RelayValue{}, false, fmt.Errorf("%w: unknown relay key %q", ErrInvalidSchemaValue, key)
+	}
+	allowed := make(map[string]struct{}, len(spec.Collections))
+	for _, collection := range spec.Collections {
+		allowed[collection] = struct{}{}
+	}
+	plain := make([]PlainRecord, 0, len(records))
+	found := false
+	var latest int64
+	for _, record := range records {
+		if _, matches := allowed[record.Collection]; !matches {
+			continue
+		}
+		if spec.Mode == RelayScalar && record.RecordID != key {
+			continue
+		}
+		found = true
+		if record.HLC.PhysicalMS > latest {
+			latest = record.HLC.PhysicalMS
+		}
+		if record.Deleted {
+			continue
+		}
+		if resolve == nil {
+			return RelayValue{}, false, fmt.Errorf("%w: no epoch resolver for %s/%s", ErrInvalidSchemaValue, record.Collection, record.RecordID)
+		}
+		epochKey, ok := resolve(record.KeyClass, record.KeyEpoch)
+		if !ok {
+			return RelayValue{}, false, fmt.Errorf("%w: epoch key %s/%d unavailable", ErrInvalidEpochKey, record.KeyClass, record.KeyEpoch)
+		}
+		opened, err := OpenPlainRecord(record, epochKey)
+		if err != nil {
+			return RelayValue{}, false, err
+		}
+		plain = append(plain, opened)
+	}
+	if !found || spec.Mode == RelayScalar && len(plain) == 0 {
+		return RelayValue{}, false, nil
+	}
+	value, refs, err := EncodeRelayRecords(key, plain, codec)
+	if err != nil {
+		return RelayValue{}, false, err
+	}
+	if latest <= 0 {
+		return RelayValue{}, false, fmt.Errorf("%w: materialized timestamp for %q", ErrInvalidSchemaValue, key)
+	}
+	return RelayValue{Key: key, Value: value, UpdatedAt: latest, Records: refs}, true, nil
 }
 
 // OpenPlainRecord validates and unwraps a decrypted replica record.

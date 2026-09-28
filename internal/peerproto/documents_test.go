@@ -367,6 +367,14 @@ func TestConnectionBundleRejectsInsecureOrMutatedRoutes(t *testing.T) {
 	for _, route := range []ConnectionRoute{
 		{Kind: RouteQuickTunnel, URL: "http://unsafe.trycloudflare.com"},
 		{Kind: RouteQuickTunnel, URL: "https://trycloudflare.com.evil.example"},
+		{Kind: RouteQuickTunnel, URL: "https://nested.unsafe.trycloudflare.com"},
+		{Kind: RouteQuickTunnel, URL: "https://trycloudflare.com"},
+		{Kind: RouteQuickTunnel, URL: "https://user@unsafe.trycloudflare.com"},
+		{Kind: RouteQuickTunnel, URL: "https://unsafe.trycloudflare.com:443"},
+		{Kind: RouteQuickTunnel, URL: "https://unsafe.trycloudflare.com/path"},
+		{Kind: RouteQuickTunnel, URL: "https://unsafe.trycloudflare.com?"},
+		{Kind: RouteQuickTunnel, URL: "https://unsafe.trycloudflare.com#fragment"},
+		{Kind: RouteQuickTunnel, URL: "https://*.trycloudflare.com"},
 		{Kind: RouteRendezvous, URL: "https://rendezvous.example", Topic: "short"},
 	} {
 		if _, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{route}, now, 0); err == nil {

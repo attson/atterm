@@ -1,0 +1,87 @@
+// Package quicktunnel supervises the local endpoint and cloudflared process
+// used by the accountless Peer transport. It provides reachability only;
+// callers remain responsible for Peer authentication and payload encryption.
+package quicktunnel
+
+import (
+	"context"
+	"errors"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+)
+
+const (
+	gatewayReadHeaderTimeout = 5 * time.Second
+	gatewayIdleTimeout       = 30 * time.Second
+	gatewayMaxHeaderBytes    = 1 << 20
+)
+
+// Gateway is an HTTP endpoint bound to an ephemeral IPv4 loopback port.
+// cloudflared is the only intended non-local path to it.
+type Gateway struct {
+	listener net.Listener
+	server   *http.Server
+	done     chan error
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// OpenGateway starts a loopback HTTP endpoint. A nil handler deliberately
+// exposes nothing, so transport lifecycle work cannot accidentally publish a
+// diagnostic or default mux before the authenticated Peer handler is wired.
+func OpenGateway(handler http.Handler) (*Gateway, error) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	if handler == nil {
+		handler = http.NotFoundHandler()
+	}
+
+	gateway := &Gateway{
+		listener: listener,
+		server: &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: gatewayReadHeaderTimeout,
+			IdleTimeout:       gatewayIdleTimeout,
+			MaxHeaderBytes:    gatewayMaxHeaderBytes,
+		},
+		done: make(chan error, 1),
+	}
+	go func() {
+		err := gateway.server.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		gateway.done <- err
+		close(gateway.done)
+	}()
+	return gateway, nil
+}
+
+// Address returns the allocated loopback host:port.
+func (g *Gateway) Address() string {
+	return g.listener.Addr().String()
+}
+
+// Origin returns the HTTP origin passed to cloudflared.
+func (g *Gateway) Origin() string {
+	return "http://" + g.Address()
+}
+
+// Close stops accepting requests and waits for active handlers until ctx
+// expires. A timed-out graceful shutdown is followed by a hard server close.
+func (g *Gateway) Close(ctx context.Context) error {
+	g.closeOnce.Do(func() {
+		g.closeErr = g.server.Shutdown(ctx)
+		if g.closeErr != nil {
+			_ = g.server.Close()
+		}
+		_ = g.listener.Close()
+		<-g.done
+	})
+	return g.closeErr
+}

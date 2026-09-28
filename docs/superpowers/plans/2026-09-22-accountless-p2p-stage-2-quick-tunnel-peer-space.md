@@ -98,7 +98,16 @@ with cross-process transactional updates. Canonical winners can now be
 decrypted by exact epoch、grouped per legacy key and materialized back into
 Relay scalar/ordered/sealed values, ready for adapter wiring.
 Identity, route metadata and handshake authentication alone do not provide a
-remote connection.
+remote connection. PR 2.3 is now implemented locally: `internal/quicktunnel`
+binds an ephemeral IPv4 loopback gateway、discovers only an explicitly supplied
+or PATH-installed `cloudflared`、launches it with auto-update disabled、accepts
+only a single-label `https://<label>.trycloudflare.com` endpoint, and owns the
+30-second start / 5-second process-tree shutdown lifecycle. Desktop shutdown
+owns the lifecycle through a narrow interface. Fake-process tests cover stdout
+and stderr discovery、invalid endpoints、timeouts、forced termination and Unix
+descendant cleanup; no public tunnel is opened by tests. The gateway still has
+no signaling/WSS handler and defaults to 404, so accountless remote terminal
+access remains unavailable until PR 2.4.
 
 ## Why Quick Tunnel Before Rendezvous
 

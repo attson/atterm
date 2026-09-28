@@ -882,8 +882,9 @@ Rendezvous 地址；后续连接地址放在独立的 signed `ConnectionBundle`�
 client 仍须在 handshake 证明自己的有效 membership。因此 invitation 过期或已消费都不要求
 重签 membership。bundle 默认有效 10 分钟、最长 24
 小时，且绝不超过 invitation 到期时间。当前 route kind 是 `quick_tunnel` 与
-`rendezvous`：Quick Tunnel 只接受无 userinfo/query/fragment 的
-`https://*.trycloudflare.com`；Rendezvous 只接受 `https`/`wss` 且必须携带 32-byte opaque
+`rendezvous`：Quick Tunnel 只接受无 userinfo/port/query/fragment、root path 且 hostname
+恰为单个合法 DNS label 的 `https://<label>.trycloudflare.com`；Rendezvous 只接受
+`https`/`wss` 且必须携带 32-byte opaque
 topic。URL 轮换只创建新的 `atc1`，不创建 invitation 或 membership。
 
 新设备生成自己的 P-256 signing identity 和独立 P-256 ECDH wrapping identity 后，将完整

@@ -805,7 +805,7 @@ func validateConnectionRoutes(routes []ConnectionRoute) error {
 		switch route.Kind {
 		case RouteQuickTunnel:
 			host := strings.ToLower(parsed.Hostname())
-			if parsed.Scheme != "https" || parsed.Port() != "" || parsed.Path != "" && parsed.Path != "/" || route.Topic != "" || !strings.HasSuffix(host, ".trycloudflare.com") || len(host) <= len(".trycloudflare.com") {
+			if parsed.Scheme != "https" || parsed.Port() != "" || parsed.Path != "" && parsed.Path != "/" || parsed.ForceQuery || parsed.RawFragment != "" || route.Topic != "" || !validQuickTunnelHost(host) {
 				return fmt.Errorf("%w: Quick Tunnel route", ErrInvalidDocument)
 			}
 		case RouteRendezvous:
@@ -825,6 +825,25 @@ func validateConnectionRoutes(routes []ConnectionRoute) error {
 		seen[key] = struct{}{}
 	}
 	return nil
+}
+
+func validQuickTunnelHost(host string) bool {
+	const suffix = ".trycloudflare.com"
+	if !strings.HasSuffix(host, suffix) {
+		return false
+	}
+	label := strings.TrimSuffix(host, suffix)
+	if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validateDigest(value, name string) error {

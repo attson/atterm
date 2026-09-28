@@ -249,6 +249,10 @@ type StartupError struct {
 	LogPath string `json:"log_path"`
 }
 
+type quickTunnelLifecycle interface {
+	Stop() error
+}
+
 // App is the Wails-bound application surface.
 type App struct {
 	ctx         context.Context
@@ -309,6 +313,11 @@ type App struct {
 	// bridge. It is independent of PTY/session lifecycle and is stopped on
 	// relay reconfiguration or app shutdown.
 	servicePreviews servicePreviewManager
+
+	// quickTunnel is populated when the accountless Peer host is enabled.
+	// Keeping shutdown ownership here ensures the public route cannot outlive
+	// the desktop process even though its start/UI wiring lands separately.
+	quickTunnel quickTunnelLifecycle
 
 	// sftp holds the file explorer's SSH data source (see sftp_source.go).
 	// Built lazily by sftpBrowser() because App is constructed in a dozen
@@ -609,6 +618,11 @@ func (a *App) startup(ctx context.Context) {
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
 func (a *App) shutdown(ctx context.Context) {
 	a.servicePreviews.stopAll()
+	if a.quickTunnel != nil {
+		if err := a.quickTunnel.Stop(); err != nil {
+			logWarn("quick-tunnel", "stop on app shutdown: %v", err)
+		}
+	}
 	a.stopNativeDirectClients()
 	a.mu.Lock()
 	if a.uplinkCancel != nil {

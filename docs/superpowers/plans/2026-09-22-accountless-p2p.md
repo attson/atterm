@@ -261,7 +261,7 @@ Peer Space 没有“服务器上的用户记录”。所有决策都是签名 op
 - `cmd/atterm-rendezvous/`
   - 可独立自建的最小服务
 - `internal/quicktunnel/`
-  - 后续 cloudflared lifecycle、URL extraction、timeouts
+  - random-port loopback gateway、cloudflared lifecycle、strict URL extraction、timeouts 和 process-tree cleanup
 
 修改建议：
 
@@ -533,7 +533,7 @@ Relay 加速 release gate 到此：旧客户端不变、直连失败永远可回
 
 ### P4 - Quick Tunnel accountless route
 
-- [ ] cloudflared lifecycle 和 loopback peer gateway。
+- [x] cloudflared lifecycle 和 loopback peer gateway（仅基础生命周期；signaling/WSS 由后续项接入）。
 - [ ] 临时 route bundle、tunnel signaling、WebRTC-first。
 - [ ] 用户允许时使用 application-encrypted WSS fallback。
 - [ ] URL 轮换只刷新 route bundle，不重建 membership。

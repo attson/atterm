@@ -153,6 +153,9 @@ func TestDurableReplicaAdoptsSnapshotBeforeTail(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := destination.AdoptSnapshot(transfer.Snapshot); err != nil {
+		t.Fatalf("retry exact snapshot after tail: %v", err)
+	}
 	locale, _ := destination.Get("preferences", "locale")
 	if string(locale.Payload) != "zh-CN" || destination.Vector().Compare(source.Vector()) != VectorEqual {
 		t.Fatalf("destination record=%+v vector=%#v source=%#v", locale, destination.Vector(), source.Vector())

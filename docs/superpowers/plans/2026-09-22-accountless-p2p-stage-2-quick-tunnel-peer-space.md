@@ -64,8 +64,18 @@ tombstones、Profile env capability rules and SSH metadata-only application are
 covered before one final config-store commit. Pre-join local customizations now
 have a versioned, encrypted, write-once pending payload in `peerstore`; user
 acceptance creates merge-only upserts and clears it only after durable append.
-These helpers remain deliberately unwired until new-device join transport/UI
-and the actual Peer logical-channel adapter exist. Relay
+An un-wired Desktop anti-entropy receiver now binds verified batches to the
+membership authenticated by the transport, rejects snapshot creators and tail
+operation actors outside the current deny-wins member view, captures local
+customizations before first snapshot adoption, persists snapshot/tail and
+governance candidates before one terminal projection, refreshes accepted epoch
+keys, and returns a separate transfer cursor plus durable vector. Exact snapshot
+and completed-batch retries are idempotent. The receiver has no session/uplink
+dependency, so config exchange cannot create a PTY subscriber. The remaining
+transport work must supply the exact membership token already authenticated by
+the Peer handshake; it must not accept a caller-selected token. Multi-member
+rotations beyond locally known membership/issuer chains still require the
+planned replicated membership directory before network wiring. Relay
 compatibility hash/timestamp/record-ref state is persisted per Space and realm
 with cross-process transactional updates. Canonical winners can now be
 decrypted by exact epoch、grouped per legacy key and materialized back into

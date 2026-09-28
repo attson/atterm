@@ -182,6 +182,47 @@ func (s *Store) InitializeEpochRotations(tokens []string, now time.Time) error {
 	})
 }
 
+// ApplyEpochRotations retains newly verified rotation candidates. Authorization
+// runs under the same cross-process lock as the append, so a concurrent
+// revocation cannot invalidate the membership view between check and write.
+func (s *Store) ApplyEpochRotations(tokens []string, now time.Time, authorize func(State, []string) error) (int, error) {
+	if len(tokens) == 0 || now.Unix() <= 0 || authorize == nil {
+		return 0, fmt.Errorf("peerstore: invalid epoch rotations")
+	}
+	stored := 0
+	err := s.mutate(func(state *State) error {
+		seen := make(map[string]struct{}, len(state.EpochRotations)+len(tokens))
+		for _, token := range state.EpochRotations {
+			seen[token] = struct{}{}
+		}
+		newTokens := make([]string, 0, len(tokens))
+		for _, token := range tokens {
+			if token == "" {
+				return fmt.Errorf("peerstore: invalid epoch rotations")
+			}
+			if _, duplicate := seen[token]; duplicate {
+				continue
+			}
+			seen[token] = struct{}{}
+			newTokens = append(newTokens, token)
+		}
+		if len(newTokens) == 0 {
+			return nil
+		}
+		if err := authorize(*state, append([]string(nil), newTokens...)); err != nil {
+			return err
+		}
+		state.EpochRotations = append(state.EpochRotations, newTokens...)
+		stored = len(newTokens)
+		state.UpdatedAt = now.Unix()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return stored, nil
+}
+
 // Load returns a detached snapshot.
 func (s *Store) Load() (State, error) {
 	s.mu.Lock()

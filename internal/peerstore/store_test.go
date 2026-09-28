@@ -139,6 +139,46 @@ func TestPendingConfigImportIsEncryptedWriteOnceAndDetached(t *testing.T) {
 	}
 }
 
+func TestApplyEpochRotationsIsAtomicAndIdempotent(t *testing.T) {
+	store, _ := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	if err := store.Initialize(State{GenesisToken: "genesis", LocalMembership: "membership", CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	allow := func(State, []string) error { return nil }
+	if stored, err := store.ApplyEpochRotations([]string{"rotation-a", "rotation-b", "rotation-a"}, now.Add(time.Minute), allow); err != nil || stored != 2 {
+		t.Fatalf("first apply stored=%d err=%v", stored, err)
+	}
+	if stored, err := store.ApplyEpochRotations([]string{"rotation-b"}, now.Add(2*time.Minute), allow); err != nil || stored != 0 {
+		t.Fatalf("duplicate apply stored=%d err=%v", stored, err)
+	}
+	before, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := store.ApplyEpochRotations([]string{"rotation-c", ""}, now.Add(3*time.Minute), allow); err == nil || stored != 0 {
+		t.Fatalf("invalid apply stored=%d err=%v", stored, err)
+	}
+	after, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after.EpochRotations, before.EpochRotations) {
+		t.Fatalf("failed apply changed rotations: before=%v after=%v", before.EpochRotations, after.EpochRotations)
+	}
+	denied := errors.New("rotation denied")
+	if stored, err := store.ApplyEpochRotations([]string{"rotation-c"}, now.Add(4*time.Minute), func(State, []string) error { return denied }); !errors.Is(err, denied) || stored != 0 {
+		t.Fatalf("denied apply stored=%d err=%v", stored, err)
+	}
+	afterDenied, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterDenied.EpochRotations, before.EpochRotations) {
+		t.Fatalf("denied apply changed rotations: before=%v after=%v", before.EpochRotations, afterDenied.EpochRotations)
+	}
+}
+
 func TestRevocationIsIdempotentAndDenyWins(t *testing.T) {
 	store, _ := testStore(t)
 	now := time.Unix(1_800_000_000, 0)

@@ -223,6 +223,9 @@ func (d *DurableReplica) BootstrapEncrypted(identity *peercrypto.Identity, mutat
 // method is called.
 func (d *DurableReplica) AdoptSnapshot(token string) (DurableAck, error) {
 	return d.mutate(func(replica *Replica, state *durableState) (bool, error) {
+		if state.Snapshot == token {
+			return false, nil
+		}
 		if state.Snapshot != "" || len(state.Ops) != 0 {
 			return false, ErrReplicaNotEmpty
 		}

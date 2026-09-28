@@ -142,16 +142,20 @@ func activePeerMemberships(state peerstore.State, genesis peerproto.VerifiedGene
 	}
 	memberships := make([]peerproto.VerifiedGrant, 0, len(tokens))
 	seen := make(map[string]struct{}, len(tokens))
-	for _, token := range tokens {
+	for len(tokens) != 0 {
+		token := tokens[0]
+		tokens = tokens[1:]
 		membership, err := peerproto.VerifyGrant(token, genesis, now)
 		if err != nil {
 			return nil, fmt.Errorf("verify Peer Space member for epochs: %w", err)
 		}
-		if _, duplicate := seen[membership.Document.SubjectPeerID]; duplicate {
-			continue
+		if _, duplicate := seen[membership.Document.SubjectPeerID]; !duplicate {
+			seen[membership.Document.SubjectPeerID] = struct{}{}
+			memberships = append(memberships, membership)
 		}
-		seen[membership.Document.SubjectPeerID] = struct{}{}
-		memberships = append(memberships, membership)
+		if membership.Document.IssuerMembership != "" {
+			tokens = append(tokens, membership.Document.IssuerMembership)
+		}
 	}
 	revocations, err := peerproto.NewRevocationSet(genesis)
 	if err != nil {
@@ -163,6 +167,64 @@ func activePeerMemberships(state peerstore.State, genesis peerproto.VerifiedGene
 		}
 	}
 	return revocations.FilterActiveMemberships(memberships, now)
+}
+
+func (m *peerSpaceManager) applyPeerEpochRotations(tokens []string) (bool, error) {
+	if len(tokens) == 0 {
+		return false, nil
+	}
+	now := m.now()
+	authorize := func(state peerstore.State, newTokens []string) error {
+		genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+		if err != nil {
+			return err
+		}
+		active, err := activePeerMemberships(state, genesis, now)
+		if err != nil {
+			return err
+		}
+		resolvers := make(map[configsync.KeyClass]*configsync.EpochRotationResolver, 2)
+		for _, class := range []configsync.KeyClass{configsync.KeyClassSync, configsync.KeyClassVault} {
+			resolver, err := configsync.NewEpochRotationResolver(genesis, class, func(configsync.VerifiedEpochRotation) error { return nil })
+			if err != nil {
+				return err
+			}
+			resolvers[class] = resolver
+		}
+		for _, token := range state.EpochRotations {
+			rotation, err := configsync.VerifyEpochRotation(token, genesis)
+			if err != nil {
+				return err
+			}
+			if _, err := resolvers[rotation.Document.KeyClass].Apply(token); err != nil {
+				return err
+			}
+		}
+		for _, token := range newTokens {
+			rotation, err := configsync.VerifyEpochRotation(token, genesis)
+			if err != nil {
+				return err
+			}
+			if err := configsync.AuthorizeEpochRotation(rotation, genesis, active, now); err != nil {
+				return err
+			}
+			if _, err := resolvers[rotation.Document.KeyClass].Apply(token); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	stored, err := m.store.ApplyEpochRotations(tokens, now, authorize)
+	if err != nil {
+		return false, err
+	}
+	if err := m.ensureInitialEpochState(); err != nil {
+		return false, err
+	}
+	m.configMu.Lock()
+	m.configReplica = nil
+	m.configMu.Unlock()
+	return stored != 0, nil
 }
 
 func currentEpochRotations(tokens []string, genesis peerproto.VerifiedGenesis) (map[configsync.KeyClass]configsync.VerifiedEpochRotation, error) {

@@ -114,10 +114,16 @@ permission、and reuses the existing Peer membership handshake to derive
 direction-separated encrypted records. SDP/ICE signals support an isolated
 64 KiB fragment format and strict per-direction count/size limits; wrong
 identity、scope、subprotocol、capacity and tampered ciphertext fail closed.
-This is still a transport foundation only: Desktop does not yet mount the
-handler, ConnectionBundle route publication and Pion negotiation are not wired,
-and terminal/config WSS fallback is not implemented, so accountless remote
-terminal access remains unavailable.
+The second PR 2.4 slice is now implemented locally too: an authenticated signal
+channel can drive the existing Pion host/client attempts、exchange encrypted
+offer/answer、complete a separate membership handshake on the DataChannel、and
+carry bidirectional terminal/control and fragmented config records. Signal and
+DataChannel record kinds are mutually rejected, and closing either transport
+reclaims the other attempt. This is still a transport foundation only: Desktop
+does not yet mount the handler or publish the current ConnectionBundle route,
+no authenticated channel is attached to a concrete PTY, and terminal/config
+WSS fallback is not implemented. Accountless remote terminal access therefore
+remains unavailable.
 
 ## Why Quick Tunnel Before Rendezvous
 

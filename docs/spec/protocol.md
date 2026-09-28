@@ -1057,9 +1057,18 @@ message、AEAD 篡改、sequence gap 或上层校验失败都会关闭 channel�
 
 `Signal.type` 只允许 `offer`、`answer`、`ice_candidate`、`ice_end`。每个方向最多一个 offer、
 一个 answer、64 个 ICE candidate 和一个 `ice_end`；offer/answer payload 最大 32 KiB，candidate
-最大 8 KiB，`ice_end.payload` 必须为空。单个序列化 signal 最大 64 KiB。当前该 endpoint 是
-Quick Tunnel transport foundation：还没有接 Desktop route lifecycle、Pion offer/answer 驱动或
-terminal/config WSS fallback。
+最大 8 KiB，`ice_end.payload` 必须为空。单个序列化 signal 最大 64 KiB。
+
+完成 signaling handshake 后，其 exact `Authorization` 与 Peer authenticator 可以驱动现有 Pion
+host/client attempt。offer/answer 只经上述 encrypted signal record 交换；Pion DataChannel 建立后
+仍执行自己的一次四步 membership handshake，使用新的 ephemeral ECDH 和独立 record counters，
+不复用 signaling channel 的 traffic key/nonce。`SIGNAL` / `SIGNAL_FRAGMENT` 在 Pion DataChannel
+上必须拒绝，反之 signaling WebSocket 也只接受这两种 kind。任一侧 signaling channel 关闭会回收
+关联 Pion attempt；Pion 失败/关闭也会关闭 signaling channel。
+
+当前仍是 transport foundation：Pion bridge 已可建立双向 authenticated DataChannel 并承载
+terminal/config record，但 Desktop 尚未挂载 gateway handler、发布 route bundle 或把 channel
+接到具体 PTY；terminal/config WSS fallback 也未实现。
 
 ## 重连与续传
 

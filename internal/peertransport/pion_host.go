@@ -243,6 +243,9 @@ func (c *PionHostChannel) receive(record []byte) error {
 	if err != nil {
 		return err
 	}
+	if !kind.dataChannelMessage() {
+		return fmt.Errorf("%w: record kind %d is not valid on DataChannel", ErrDirectTransport, kind)
+	}
 	if kind == RecordFragment {
 		frame, complete, err := c.reassembler.Add(plaintext, time.Now())
 		if err != nil || !complete {
@@ -301,6 +304,9 @@ func (c *PionHostChannel) SendConfigMessage(ctx context.Context, kind RecordKind
 }
 
 func (c *PionHostChannel) SendRecord(ctx context.Context, kind RecordKind, plaintext []byte) error {
+	if !kind.dataChannelMessage() {
+		return fmt.Errorf("%w: record kind %d is not valid on DataChannel", ErrDirectTransport, kind)
+	}
 	if c == nil || c.dc == nil || c.sealer == nil {
 		return fmt.Errorf("%w: unauthenticated channel", ErrDirectTransport)
 	}

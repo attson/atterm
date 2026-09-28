@@ -20,6 +20,13 @@ type signalDirectionState struct {
 	candidates int
 }
 
+type signalChannelRole byte
+
+const (
+	signalChannelClient signalChannelRole = iota + 1
+	signalChannelHost
+)
+
 // SignalChannel is an authenticated, application-encrypted signaling path.
 // The WebSocket carries only Peer records after the membership handshake.
 type SignalChannel struct {
@@ -27,17 +34,25 @@ type SignalChannel struct {
 	sealer           *peertransport.RecordSealer
 	opener           *peertransport.RecordOpener
 	remoteMembership string
-	onSignal         func(*SignalChannel, Signal) error
 	onClosed         func(*SignalChannel, error)
+	role             signalChannelRole
+	authorization    peertransport.Authorization
+	authenticator    peertransport.HandshakeAuthenticator
 
 	writeMu       sync.Mutex
 	sendState     signalDirectionState
 	nextMessageID uint64
+	handlerMu     sync.RWMutex
+	onSignal      func(*SignalChannel, Signal) error
+	bridgeBound   bool
+	closeOnce     sync.Once
+	closeDone     chan struct{}
+	closeErr      error
 	finishOnce    sync.Once
 	done          chan struct{}
 }
 
-func newHostSignalChannel(conn *websocket.Conn, result peertransport.HostHandshakeResult, remoteMembership string, onSignal func(*SignalChannel, Signal) error, onClosed func(*SignalChannel, error)) (*SignalChannel, error) {
+func newHostSignalChannel(conn *websocket.Conn, result peertransport.HostHandshakeResult, authorization peertransport.Authorization, authenticator peertransport.HandshakeAuthenticator, remoteMembership string, onSignal func(*SignalChannel, Signal) error, onClosed func(*SignalChannel, error)) (*SignalChannel, error) {
 	sealer, err := peertransport.NewRecordSealer(result.TrafficKeys.HostToClientKey[:], result.TrafficKeys.HostToClientNoncePrefix[:], result.TranscriptHash)
 	if err != nil {
 		return nil, err
@@ -46,10 +61,10 @@ func newHostSignalChannel(conn *websocket.Conn, result peertransport.HostHandsha
 	if err != nil {
 		return nil, err
 	}
-	return newSignalChannel(conn, sealer, opener, remoteMembership, onSignal, onClosed), nil
+	return newSignalChannel(conn, sealer, opener, signalChannelHost, authorization, authenticator, remoteMembership, onSignal, onClosed), nil
 }
 
-func newClientSignalChannel(conn *websocket.Conn, result peertransport.ClientHandshakeResult, remoteMembership string, onSignal func(*SignalChannel, Signal) error, onClosed func(*SignalChannel, error)) (*SignalChannel, error) {
+func newClientSignalChannel(conn *websocket.Conn, result peertransport.ClientHandshakeResult, authorization peertransport.Authorization, authenticator peertransport.HandshakeAuthenticator, remoteMembership string, onSignal func(*SignalChannel, Signal) error, onClosed func(*SignalChannel, error)) (*SignalChannel, error) {
 	sealer, err := peertransport.NewRecordSealer(result.TrafficKeys.ClientToHostKey[:], result.TrafficKeys.ClientToHostNoncePrefix[:], result.TranscriptHash)
 	if err != nil {
 		return nil, err
@@ -58,13 +73,16 @@ func newClientSignalChannel(conn *websocket.Conn, result peertransport.ClientHan
 	if err != nil {
 		return nil, err
 	}
-	return newSignalChannel(conn, sealer, opener, remoteMembership, onSignal, onClosed), nil
+	return newSignalChannel(conn, sealer, opener, signalChannelClient, authorization, authenticator, remoteMembership, onSignal, onClosed), nil
 }
 
-func newSignalChannel(conn *websocket.Conn, sealer *peertransport.RecordSealer, opener *peertransport.RecordOpener, remoteMembership string, onSignal func(*SignalChannel, Signal) error, onClosed func(*SignalChannel, error)) *SignalChannel {
+func newSignalChannel(conn *websocket.Conn, sealer *peertransport.RecordSealer, opener *peertransport.RecordOpener, role signalChannelRole, authorization peertransport.Authorization, authenticator peertransport.HandshakeAuthenticator, remoteMembership string, onSignal func(*SignalChannel, Signal) error, onClosed func(*SignalChannel, error)) *SignalChannel {
+	authorization.Ticket = append([]byte(nil), authorization.Ticket...)
 	return &SignalChannel{
 		conn: conn, sealer: sealer, opener: opener, remoteMembership: remoteMembership,
-		onSignal: onSignal, onClosed: onClosed, done: make(chan struct{}),
+		onSignal: onSignal, onClosed: onClosed, role: role,
+		authorization: authorization, authenticator: authenticator,
+		closeDone: make(chan struct{}), done: make(chan struct{}),
 	}
 }
 
@@ -174,11 +192,51 @@ func (c *SignalChannel) deliverSignal(payload []byte, state *signalDirectionStat
 	if err := state.accept(signal); err != nil {
 		return err
 	}
-	if c.onSignal != nil {
-		if err := c.onSignal(c, signal); err != nil {
-			return fmt.Errorf("handle encrypted signal: %w", err)
-		}
+	c.handlerMu.RLock()
+	handler := c.onSignal
+	c.handlerMu.RUnlock()
+	if handler == nil {
+		return fmt.Errorf("%w: no signal handler", ErrInvalidSignal)
 	}
+	if err := handler(c, signal); err != nil {
+		return fmt.Errorf("handle encrypted signal: %w", err)
+	}
+	return nil
+}
+
+func (c *SignalChannel) reserveSignalHandler() error {
+	c.handlerMu.Lock()
+	defer c.handlerMu.Unlock()
+	if c.bridgeBound || c.onSignal != nil {
+		return errors.New("quicktunnel: signaling handler already bound")
+	}
+	select {
+	case <-c.done:
+		return errors.New("quicktunnel: closed signal channel")
+	default:
+	}
+	c.bridgeBound = true
+	return nil
+}
+
+func (c *SignalChannel) releaseSignalHandlerReservation() {
+	c.handlerMu.Lock()
+	if c.onSignal == nil {
+		c.bridgeBound = false
+	}
+	c.handlerMu.Unlock()
+}
+
+func (c *SignalChannel) installSignalHandler(handler func(*SignalChannel, Signal) error) error {
+	if handler == nil {
+		return errors.New("quicktunnel: invalid signaling bridge")
+	}
+	c.handlerMu.Lock()
+	defer c.handlerMu.Unlock()
+	if !c.bridgeBound || c.onSignal != nil {
+		return errors.New("quicktunnel: signaling handler reservation lost")
+	}
+	c.onSignal = handler
 	return nil
 }
 
@@ -219,18 +277,21 @@ func (c *SignalChannel) Close() error {
 	if c == nil || c.conn == nil {
 		return nil
 	}
-	closed := make(chan error, 1)
-	go func() {
-		closed <- c.conn.Close(websocket.StatusNormalClosure, "")
-	}()
-	var err error
-	select {
-	case err = <-closed:
-	case <-time.After(time.Second):
-		err = c.conn.CloseNow()
-	}
+	c.closeOnce.Do(func() {
+		closed := make(chan error, 1)
+		go func() {
+			closed <- c.conn.Close(websocket.StatusNormalClosure, "")
+		}()
+		select {
+		case c.closeErr = <-closed:
+		case <-time.After(time.Second):
+			c.closeErr = c.conn.CloseNow()
+		}
+		close(c.closeDone)
+	})
+	<-c.closeDone
 	c.finish(nil)
-	return err
+	return c.closeErr
 }
 
 func (c *SignalChannel) finish(err error) {

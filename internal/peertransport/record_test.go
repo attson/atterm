@@ -28,6 +28,19 @@ func TestRecordKindWireValuesRemainStable(t *testing.T) {
 	}
 }
 
+func TestSignalRecordKindsAreNotDataChannelMessages(t *testing.T) {
+	for _, kind := range []RecordKind{RecordSignal, RecordSignalFragment} {
+		if kind.dataChannelMessage() {
+			t.Fatalf("signaling kind %d accepted as DataChannel message", kind)
+		}
+	}
+	for kind := RecordFrame; kind <= RecordConfigFragment; kind++ {
+		if !kind.dataChannelMessage() {
+			t.Fatalf("existing DataChannel kind %d rejected", kind)
+		}
+	}
+}
+
 func recordPair(t *testing.T) (*RecordSealer, *RecordOpener) {
 	t.Helper()
 	key := bytes.Repeat([]byte{0x71}, 32)

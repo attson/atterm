@@ -263,7 +263,8 @@ func (h *PeerHandler) authenticate(ctx context.Context, conn *websocket.Conn) (*
 		closePolicy(conn, "peer handshake failed")
 		return nil, ErrUnauthorized
 	}
-	return newHostSignalChannel(conn, result, remoteMembership, h.cfg.OnSignal, h.cfg.OnClosed)
+	exactAuthorization := authorizationFrom(request, claims)
+	return newHostSignalChannel(conn, result, exactAuthorization, authenticator, remoteMembership, h.cfg.OnSignal, h.cfg.OnClosed)
 }
 
 // Dial opens and authenticates one accountless Peer signaling channel.
@@ -357,7 +358,8 @@ func Dial(ctx context.Context, cfg ClientConfig) (*SignalChannel, error) {
 	if err != nil || !result.Authenticated {
 		return nil, fmt.Errorf("%w: auth confirmation", ErrUnauthorized)
 	}
-	channel, err := newClientSignalChannel(conn, result, authenticator.RemoteMembershipToken(), cfg.OnSignal, cfg.OnClosed)
+	exactAuthorization := authorizationFrom(request, claims)
+	channel, err := newClientSignalChannel(conn, result, exactAuthorization, authenticator, authenticator.RemoteMembershipToken(), cfg.OnSignal, cfg.OnClosed)
 	if err != nil {
 		return nil, err
 	}

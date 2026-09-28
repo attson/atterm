@@ -53,6 +53,10 @@ func (k RecordKind) configMessage() bool {
 	return k >= RecordConfigInventory && k <= RecordConfigAck
 }
 
+func (k RecordKind) dataChannelMessage() bool {
+	return k >= RecordFrame && k <= RecordConfigFragment
+}
+
 // RecordSealer emits strictly increasing records for one direction.
 type RecordSealer struct {
 	aead           cipher.AEAD

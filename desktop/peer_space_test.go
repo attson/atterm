@@ -387,6 +387,60 @@ func TestPeerConfigReplicaAppendsOnlyChangedLocalRecords(t *testing.T) {
 	}
 }
 
+func TestPeerConfigReplicaRelayImportFiltersSecretsAndCapabilities(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	accountKey := bytes.Repeat([]byte{9}, 32)
+	codec := newDesktopRelaySealedCodec(func() []byte { return accountKey })
+
+	sshValue, err := sealSSHHosts(
+		accountKey,
+		[]SSHHost{{ID: "host-1", Alias: "Production", Host: "example.com", User: "alice", KeyID: "key-1"}},
+		map[string]sshCredential{"host-1": {Password: "relay-password"}},
+		[]SSHKey{{ID: "key-1", Name: "Primary", KeyType: "ED25519"}},
+		map[string]sshKeySecret{"key-1": {PrivateKey: "relay-private-key"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, operations, err := runtime.appendRelayValue(configsync.RelayValue{
+		Key: "ssh_hosts_encrypted", Value: sshValue, UpdatedAt: 10,
+	}, nil, codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operations != 2 || len(refs) != 2 {
+		t.Fatalf("SSH Relay import operations=%d refs=%+v", operations, refs)
+	}
+	if len(runtime.replica.Records(configsync.CollectionSSHCredential)) != 0 || len(runtime.replica.Records(configsync.CollectionSSHKeySecret)) != 0 {
+		t.Fatal("Relay SSH secrets entered the Peer replica")
+	}
+
+	delete(runtime.keys, configsync.KeyClassVault)
+	profileValue, err := sealProfiles(accountKey, []SessionProfile{{
+		ID: "profile-1", Name: "Shared", SyncEnv: true, Env: map[string]string{"TOKEN": "relay-secret"},
+	}}, "profile-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, operations, err = runtime.appendRelayValue(configsync.RelayValue{
+		Key: "profiles_encrypted", Value: profileValue, UpdatedAt: 11,
+	}, nil, codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operations != 2 || len(refs) != 2 {
+		t.Fatalf("non-vault Profile import operations=%d refs=%+v", operations, refs)
+	}
+	if len(runtime.replica.Records(configsync.CollectionProfileEnv)) != 0 {
+		t.Fatal("device without vault capability imported profile env")
+	}
+}
+
 func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

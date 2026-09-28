@@ -183,11 +183,59 @@ func (r *peerConfigReplica) appendLocalRelayKey(cfg appConfig, relayKey string) 
 	if len(mutations) == 0 {
 		return 0, nil
 	}
+	return r.appendPeerConfigMutations("local Peer config "+relayKey, mutations)
+}
+
+// appendRelayValue imports one legacy Relay winner into the canonical
+// replica. SSH credentials and private keys deliberately remain outside Peer
+// sync until a separate opt-in policy and lossless Relay sidecar exist.
+func (r *peerConfigReplica) appendRelayValue(value configsync.RelayValue, previous []configsync.RecordRef, codec configsync.SealedRelayCodec) ([]configsync.RecordRef, int, error) {
+	filteredPrevious := make([]configsync.RecordRef, 0, len(previous))
+	for _, ref := range previous {
+		if r.canImportRelayRecord(value.Key, ref.Collection, ref.KeyClass) {
+			filteredPrevious = append(filteredPrevious, ref)
+		}
+	}
+	mutations, refs, err := configsync.PlanRelayRecordImport(value, filteredPrevious, codec)
+	if err != nil {
+		return nil, 0, err
+	}
+	filteredMutations := make([]configsync.RecordMutation, 0, len(mutations))
+	for _, mutation := range mutations {
+		if r.canImportRelayRecord(value.Key, mutation.Collection, mutation.KeyClass) {
+			filteredMutations = append(filteredMutations, mutation)
+		}
+	}
+	filteredRefs := make([]configsync.RecordRef, 0, len(refs))
+	for _, ref := range refs {
+		if r.canImportRelayRecord(value.Key, ref.Collection, ref.KeyClass) {
+			filteredRefs = append(filteredRefs, ref)
+		}
+	}
+	operations, err := r.appendPeerConfigMutations("Relay import "+value.Key, filteredMutations)
+	if err != nil {
+		return nil, 0, err
+	}
+	return filteredRefs, operations, nil
+}
+
+func (r *peerConfigReplica) canImportRelayRecord(relayKey, collection string, class configsync.KeyClass) bool {
+	if relayKey == "ssh_hosts_encrypted" && (collection == configsync.CollectionSSHCredential || collection == configsync.CollectionSSHKeySecret) {
+		return false
+	}
+	_, ok := r.keys[class]
+	return ok
+}
+
+func (r *peerConfigReplica) appendPeerConfigMutations(label string, mutations []configsync.RecordMutation) (int, error) {
+	if len(mutations) == 0 {
+		return 0, nil
+	}
 	encrypted := make([]configsync.EncryptedMutation, 0, len(mutations))
 	for _, mutation := range mutations {
 		key, ok := r.keys[mutation.KeyClass]
 		if !ok {
-			return 0, fmt.Errorf("write local Peer config %s: key class %s unavailable", relayKey, mutation.KeyClass)
+			return 0, fmt.Errorf("write %s: key class %s unavailable", label, mutation.KeyClass)
 		}
 		encrypted = append(encrypted, configsync.EncryptedMutation{Key: key, Mutation: configsync.Mutation{
 			SchemaVersion: configsync.SchemaVersion,
@@ -199,7 +247,7 @@ func (r *peerConfigReplica) appendLocalRelayKey(cfg appConfig, relayKey string) 
 	}
 	operations, _, err := r.replica.AppendEncryptedBatch(r.identity, encrypted)
 	if err != nil {
-		return 0, fmt.Errorf("append local Peer config %s: %w", relayKey, err)
+		return 0, fmt.Errorf("append %s: %w", label, err)
 	}
 	return len(operations), nil
 }

@@ -148,8 +148,11 @@ preview a pasted token or fragment deep link, require an echoed genesis
 fingerprint, redeem the invitation, verify the complete governance/rotation
 bootstrap, persist opened epoch keys plus recipient-bound recovery envelopes,
 and initialize the local Peer Space only after every required check succeeds.
-The typed Wails platform bridge is ready for Settings. QR/paste/deep-link UI,
-Web/iOS client wiring and the end-user fallback consent flow remain pending.
+The shared Settings join UI now accepts pasted tokens and fragment deep links,
+shows the authenticated fingerprint/capabilities/route, and requires explicit
+confirmation before redemption. It exposes QR scanning only when both a Peer
+bridge and Capacitor camera capability are present. Web/iOS Peer bridge wiring
+and the end-user fallback consent flow remain pending.
 
 ## Why Quick Tunnel Before Rendezvous
 

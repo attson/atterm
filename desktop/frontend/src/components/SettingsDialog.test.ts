@@ -27,7 +27,9 @@ describe("SettingsDialog shell", () => {
   });
 
   test("tracks the active tab and switches via sidebar clicks", () => {
-    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']account["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']\s*\|\s*["']shortcuts["']/);
+    expect(source).toContain('type SettingsTabId = "general"');
+    expect(source).toContain('"peer"');
+    expect(source).toContain('const activeTab = ref<SettingsTabId>(initialTab)');
     expect(source).toContain('@click="switchTab(\'general\')"');
     expect(source).toContain('@click="switchTab(\'relay\')"');
     expect(source).toContain('@click="switchTab(\'updates\')"');
@@ -292,6 +294,33 @@ describe("SettingsDialog caps gating", () => {
     platform.caps = { ...platform.caps, wailsBindings: true };
     __setPlatformForTests(platform);
     expect(navLabels(mountDialog())).not.toContain(en.settings.account.title);
+  });
+
+  it("shows and mounts Peer connection only when the platform provides a Peer bridge", async () => {
+    expect(navLabels(mountDialog())).not.toContain(en.settings.tabs.peer);
+
+    platform.peer = {
+      status: vi.fn().mockResolvedValue({
+        configured: false,
+        open_invitations: 0,
+        used_invitations: 0,
+        revoked_invitations: 0,
+        expired_invitations: 0,
+      }),
+      createSpace: vi.fn(),
+      previewConnectionBundle: vi.fn(),
+      joinSpace: vi.fn(),
+      createInvitations: vi.fn(),
+      listInvitations: vi.fn(),
+      revokeInvitation: vi.fn(),
+      revokeInvitationBatch: vi.fn(),
+    };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+
+    expect(navLabels(w)).toContain(en.settings.tabs.peer);
+    await switchToTab(w, en.settings.tabs.peer);
+    expect(w.find('[data-testid="settings-peer"]').exists()).toBe(true);
   });
 
   it("hides Relay / Diagnostics / Received files / Feishu / Profiles on non-wails platforms", () => {

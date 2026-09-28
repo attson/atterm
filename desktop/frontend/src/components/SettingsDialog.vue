@@ -13,6 +13,7 @@ import SettingsGeneral from "./SettingsGeneral.vue";
 import type { TerminalAppearanceState } from "./SettingsTerminalAppearance.vue";
 import SettingsAccount from "./SettingsAccount.vue";
 import SettingsRelay from "./SettingsRelay.vue";
+import SettingsPeer from "./SettingsPeer.vue";
 import SettingsLogging from "./SettingsLogging.vue";
 import SettingsUpdates from "./SettingsUpdates.vue";
 import SettingsPlugins from "./SettingsPlugins.vue";
@@ -40,7 +41,7 @@ const { t, resolvedLocale } = useI18n();
 // Tab heading metadata: i18n key + English subtitle shown under H2 when the
 // UI is in Chinese (CodeIsland-style "通用 General preferences" anchor).
 // English locale skips the subtitle to avoid duplicate text.
-type SettingsTabId = "general" | "account" | "tasks" | "relay" | "plugins"
+type SettingsTabId = "general" | "account" | "tasks" | "relay" | "peer" | "plugins"
   | "shortcuts" | "templates" | "profiles" | "logging" | "updates" | "diagnostics" | "feishu" | "devices" | "received-files"
   | "mobile-profiles" | "mobile-hosts";
 
@@ -49,6 +50,7 @@ const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> 
   account:     { labelKey: "settings.account.title",       english: "Account" },
   tasks:       { labelKey: "tasks.settings.section",       english: "Tasks display" },
   relay:       { labelKey: "settings.tabs.relay",          english: "Relay" },
+  peer:        { labelKey: "settings.tabs.peer",           english: "Peer connection" },
   plugins:     { labelKey: "settings.tabs.plugins",        english: "Plugins" },
   shortcuts:   { labelKey: "settings.tabs.shortcuts",      english: "Keyboard shortcuts" },
   templates:   { labelKey: "settings.templates.tab",       english: "Quick templates" },
@@ -77,6 +79,7 @@ const tabIcons: Record<SettingsTabId, string> = {
   account:     `<svg ${icoBase}><circle cx="8" cy="5.6" r="2.6"/><path d="M3 14c0-2.8 2.2-4.6 5-4.6s5 1.8 5 4.6"/></svg>`,
   tasks:       `<svg ${icoBase}><path d="M3 4h10M3 8h10M3 12h6"/></svg>`,
   relay:       `<svg ${icoBase}><circle cx="8" cy="8" r="1.4"/><path d="M4.4 4.4a5 5 0 0 0 0 7.2M11.6 11.6a5 5 0 0 0 0-7.2M2.4 2.4a8 8 0 0 0 0 11.2M13.6 13.6a8 8 0 0 0 0-11.2"/></svg>`,
+  peer:        `<svg ${icoBase}><circle cx="4" cy="8" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="12" cy="12" r="2"/><path d="m5.8 7.1 4.4-2.2M5.8 8.9l4.4 2.2"/></svg>`,
   plugins:     `<svg ${icoBase}><path d="M5 2v2.5H2.5V8H5v3.5h3.5V14H12V11.5h2V8h-2.5V4.5H8.5V2z"/></svg>`,
   shortcuts:   `<svg ${icoBase}><rect x="1.6" y="4.2" width="12.8" height="7.6" rx="1.6"/><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M4.5 9.5h7"/></svg>`,
   templates:   `<svg ${icoBase}><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.4"/><path d="M2.4 6h11.2M6 6v7.6"/></svg>`,
@@ -95,7 +98,7 @@ const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
-  initialTab?: "general" | "account" | "relay" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices";
+  initialTab?: "general" | "account" | "relay" | "peer" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices";
 }>();
 
 const emit = defineEmits<{
@@ -114,11 +117,12 @@ const emit = defineEmits<{
 // pane. Map any legacy `initialTab: 'logging'` onto diagnostics so deep links
 // keep working.
 const initialTab = props.initialTab === "logging" ? "diagnostics" : (props.initialTab ?? "general");
-const activeTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | "mobile-profiles" | "mobile-hosts">(initialTab);
+const activeTab = ref<SettingsTabId>(initialTab);
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
 if (!caps.pluginHost) { hiddenTabs.add('plugins'); hiddenTabs.add('shortcuts') }
+if (!platform.peer) hiddenTabs.add('peer')
 // SettingsAccount is for browser/Capacitor account state. On Wails the
 // desktop relay config owns auth, so this tab is hidden.
 if (caps.wailsBindings) hiddenTabs.add('account')
@@ -161,7 +165,7 @@ watch(
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | "mobile-profiles" | "mobile-hosts" | null>(null);
+const pendingTab = ref<SettingsTabId | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -197,7 +201,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "profiles" | "tasks" | "feishu" | "devices" | "received-files" | "mobile-profiles" | "mobile-hosts") {
+function switchTab(next: SettingsTabId) {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -355,6 +359,15 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.tabs.relay") }}</span>
           </button>
           <button
+            v-if="platform.peer"
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'peer' }"
+            @click="switchTab('peer')"
+          >
+            <span class="nav-icon" v-html="tabIcons.peer"></span>
+            <span class="nav-label">{{ t("settings.tabs.peer") }}</span>
+          </button>
+          <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'devices' }"
             @click="switchTab('devices')"
@@ -475,6 +488,7 @@ function onSaveClick() {
             @relay-config-changed="onRelayConfigChanged"
             @direct-connection-changed="emit('direct-connection-changed', $event)"
           />
+          <SettingsPeer v-if="activeTab === 'peer' && platform.peer" />
           <SettingsUpdates
             v-if="caps.autoUpdate"
             v-show="activeTab === 'updates'"

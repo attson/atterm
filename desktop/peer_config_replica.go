@@ -106,6 +106,10 @@ func (m *peerSpaceManager) relayCompatibilityStore(realmID string) (*configsync.
 }
 
 func (r *peerConfigReplica) materializeRelayValues(codec configsync.SealedRelayCodec) ([]configsync.RelayValue, []error) {
+	return r.materializeRelayValuesMatching(codec, func(string) bool { return true })
+}
+
+func (r *peerConfigReplica) materializeRelayValuesMatching(codec configsync.SealedRelayCodec, include func(string) bool) ([]configsync.RelayValue, []error) {
 	resolve := func(class configsync.KeyClass, epoch uint64) (configsync.EpochKey, bool) {
 		key, ok := r.keys[class]
 		return key, ok && key.Epoch == epoch
@@ -113,6 +117,9 @@ func (r *peerConfigReplica) materializeRelayValues(codec configsync.SealedRelayC
 	values := make([]configsync.RelayValue, 0, len(configsync.RelayKeySpecs()))
 	var errs []error
 	for _, spec := range configsync.RelayKeySpecs() {
+		if include != nil && !include(spec.Key) {
+			continue
+		}
 		var records []configsync.Record
 		for _, collection := range spec.Collections {
 			records = append(records, r.replica.Records(collection)...)
@@ -127,6 +134,29 @@ func (r *peerConfigReplica) materializeRelayValues(codec configsync.SealedRelayC
 		}
 	}
 	return values, errs
+}
+
+// planRelayExports records retryable export hashes for canonical values that
+// can be represented losslessly by the legacy Relay schema. SSH stays out
+// until its Relay-only secrets can be carried alongside Peer metadata.
+func (r *peerConfigReplica) planRelayExports(store *configsync.DurableRelayCompatibility, codec configsync.SealedRelayCodec) ([]configsync.RelayValue, []error, error) {
+	if store == nil {
+		return nil, nil, configsync.ErrInvalidRelayState
+	}
+	values, materializeErrors := r.materializeRelayValuesMatching(codec, func(key string) bool {
+		return key != "ssh_hosts_encrypted"
+	})
+	var exports []configsync.RelayValue
+	var planErrors []error
+	_, err := store.Update(func(compatibility *configsync.RelayCompatibility) error {
+		exports, planErrors = compatibility.PlanExports(values)
+		return nil
+	})
+	errs := append(materializeErrors, planErrors...)
+	if err != nil {
+		return nil, errs, err
+	}
+	return exports, errs, nil
 }
 
 // appendLocalRelayKey records a local whole-preference edit as the minimal

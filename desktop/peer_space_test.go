@@ -482,6 +482,52 @@ func TestPeerConfigReplicaPersistsRelayImportAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestPeerConfigReplicaPlansSafeRelayExportsUntilAcknowledged(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{
+		TerminalTheme: "nord",
+		SSHHosts:      []SSHHost{{ID: "host-1", Alias: "Production", Host: "example.com", User: "alice"}},
+	}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	store, err := app.peerSpace.relayCompatibilityStore("realm-export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec := newDesktopRelaySealedCodec(func() []byte { return bytes.Repeat([]byte{3}, 32) })
+
+	exports, exportErrors, err := runtime.planRelayExports(store, codec)
+	if err != nil || len(exportErrors) != 0 {
+		t.Fatalf("plan Relay exports errors=%v err=%v", exportErrors, err)
+	}
+	if len(exports) != 1 || exports[0].Key != "terminal_theme" {
+		t.Fatalf("planned Relay exports=%+v", exports)
+	}
+	retry, exportErrors, err := runtime.planRelayExports(store, codec)
+	if err != nil || len(exportErrors) != 0 || len(retry) != 1 {
+		t.Fatalf("pending Relay export was not retryable: exports=%+v errors=%v err=%v", retry, exportErrors, err)
+	}
+
+	operations, importErrors, err := runtime.importRelayValues(store, exports, codec)
+	if err != nil || len(importErrors) != 0 || operations != 0 {
+		t.Fatalf("acknowledge Relay export operations=%d errors=%v err=%v", operations, importErrors, err)
+	}
+	exports, exportErrors, err = runtime.planRelayExports(store, codec)
+	if err != nil || len(exportErrors) != 0 || len(exports) != 0 {
+		t.Fatalf("acknowledged Relay export replanned: exports=%+v errors=%v err=%v", exports, exportErrors, err)
+	}
+	compatibility, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := compatibility.State()
+	if _, exists := state.Keys["ssh_hosts_encrypted"]; exists {
+		t.Fatal("unsafe SSH bundle entered Relay export state")
+	}
+}
+
 func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

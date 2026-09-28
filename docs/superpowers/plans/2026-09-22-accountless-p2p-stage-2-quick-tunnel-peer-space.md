@@ -38,8 +38,12 @@ Relay preference keys、separates portable/vault collections、splits ordered
 template records by stable id, and maintains durable-ready per-realm Relay
 import/export hashes so echoes do not create another mutation. Desktop still
 needs to persist and wire this compatibility state in place of direct
-`prefssync` writes. New-device join transport/UI and the actual Peer
-logical-channel adapter also remain.
+`prefssync` writes. The record materializer now scopes whole-value deletions
+to records previously known by that Relay key, keeps ordered entity positions,
+and can atomically append mixed sync/vault encrypted mutation batches. The
+Desktop codecs and epoch-key persistence are still required before migration
+can be enabled. New-device join transport/UI and the actual Peer logical-channel
+adapter also remain.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.
 

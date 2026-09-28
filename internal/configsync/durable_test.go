@@ -225,3 +225,52 @@ func TestDurableReplicaEncryptsBeforePersisting(t *testing.T) {
 		t.Fatalf("opened durable payload=%q err=%v", opened, err)
 	}
 }
+
+func TestDurableReplicaAppendEncryptedBatchIsAtomic(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "replica.json")
+	store := openTestDurable(t, path, spaceID)
+	identity := testIdentity(t)
+	syncKey, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultKey, err := GenerateEpochKey(KeyClassVault, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations := []EncryptedMutation{
+		{Key: syncKey, Mutation: Mutation{
+			Collection: CollectionProfiles, RecordID: "profile-1", Kind: KindSet,
+			KeyClass: KeyClassSync, KeyEpoch: 1, Payload: []byte(`{"position":"0000000000000000","value":{"id":"profile-1","name":"Work"}}`),
+		}},
+		{Key: vaultKey, Mutation: Mutation{
+			Collection: CollectionProfileEnv, RecordID: "profile-1", Kind: KindSet,
+			KeyClass: KeyClassVault, KeyEpoch: 1, Payload: []byte(`{"env":{"TOKEN":"secret"},"id":"profile-1"}`),
+		}},
+	}
+	operations, ack, err := store.AppendEncryptedBatch(identity, mutations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 2 || operations[0].Document.Counter != 1 || operations[1].Document.Counter != 2 || ack.Vector[identity.PeerID()] != 2 {
+		t.Fatalf("operations=%+v ack=%+v", operations, ack)
+	}
+
+	bad := append([]EncryptedMutation(nil), mutations...)
+	bad[0].Mutation.RecordID = "profile-2"
+	bad[1].Mutation.Collection = "INVALID COLLECTION"
+	if _, _, err := store.AppendEncryptedBatch(identity, bad); err == nil {
+		t.Fatal("batch with invalid second mutation succeeded")
+	}
+	if vector := store.Vector(); vector[identity.PeerID()] != 2 {
+		t.Fatalf("failed batch advanced vector: %v", vector)
+	}
+	if _, ok := store.Get(CollectionProfiles, "profile-2"); ok {
+		t.Fatal("first mutation from failed batch reached durable view")
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	if vector := reopened.Vector(); vector[identity.PeerID()] != 2 {
+		t.Fatalf("failed batch reached disk: %v", vector)
+	}
+}

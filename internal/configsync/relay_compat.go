@@ -32,10 +32,12 @@ type RelayCompatibilityState struct {
 // RelayKeyState tracks the last value actually observed on Relay separately
 // from a locally materialized value submitted to it.
 type RelayKeyState struct {
-	RelayValueHash        string `json:"relay_value_hash,omitempty"`
-	RelayUpdatedAt        int64  `json:"relay_updated_at,omitempty"`
-	PendingExportHash     string `json:"pending_export_hash,omitempty"`
-	LastExportedValueHash string `json:"last_exported_value_hash,omitempty"`
+	RelayValueHash        string      `json:"relay_value_hash,omitempty"`
+	RelayUpdatedAt        int64       `json:"relay_updated_at,omitempty"`
+	PendingExportHash     string      `json:"pending_export_hash,omitempty"`
+	LastExportedValueHash string      `json:"last_exported_value_hash,omitempty"`
+	RelayRecords          []RecordRef `json:"relay_records,omitempty"`
+	PendingExportRecords  []RecordRef `json:"pending_export_records,omitempty"`
 }
 
 // RelayValue is the schema-validated compatibility representation shared by
@@ -45,12 +47,17 @@ type RelayValue struct {
 	Key       string
 	Value     json.RawMessage
 	UpdatedAt int64
+	Records   []RecordRef
 }
 
 // RelayImport applies one normalized Relay value by creating canonical signed
 // operations. The callback must return only after those operations are
 // durable; state advances afterward so a failed import remains retryable.
-type RelayImport func(RelayValue) error
+type RelayImport func(value RelayValue, previous []RecordRef) (next []RecordRef, err error)
+
+// RelayMutationImport persists one record-level import plan. It is called
+// only for a non-echo Relay winner.
+type RelayMutationImport func(value RelayValue, mutations []RecordMutation) error
 
 // RelayCompatibility turns Relay snapshots into canonical imports and plans
 // canonical materialized values for Relay export. It never writes app config.
@@ -112,13 +119,23 @@ func (c *RelayCompatibility) Import(items []RelayValue, apply RelayImport) []err
 		}
 
 		echo := hash == entry.PendingExportHash || hash == entry.RelayValueHash
+		nextRecords := cloneRecordRefs(entry.RelayRecords)
 		if !echo {
 			if apply == nil {
 				errs = append(errs, fmt.Errorf("%w: missing import callback for %s", ErrInvalidRelayState, item.Key))
 				continue
 			}
-			if err := apply(RelayValue{Key: item.Key, Value: normalized, UpdatedAt: item.UpdatedAt}); err != nil {
+			var err error
+			nextRecords, err = apply(
+				RelayValue{Key: item.Key, Value: normalized, UpdatedAt: item.UpdatedAt},
+				cloneRecordRefs(entry.RelayRecords),
+			)
+			if err != nil {
 				errs = append(errs, fmt.Errorf("import relay key %s: %w", item.Key, err))
+				continue
+			}
+			if err := validateRecordRefsForRelayKey(item.Key, nextRecords); err != nil {
+				errs = append(errs, fmt.Errorf("import relay key %s refs: %w", item.Key, err))
 				continue
 			}
 		}
@@ -126,15 +143,37 @@ func (c *RelayCompatibility) Import(items []RelayValue, apply RelayImport) []err
 		entry.RelayUpdatedAt = item.UpdatedAt
 		if hash == entry.PendingExportHash {
 			entry.LastExportedValueHash = hash
+			nextRecords = cloneRecordRefs(entry.PendingExportRecords)
 			entry.PendingExportHash = ""
+			entry.PendingExportRecords = nil
 		} else if entry.PendingExportHash != "" {
 			// Relay returned a competing winner. The imported winner becomes the
 			// observed baseline; a still-winning Peer value will be planned again.
 			entry.PendingExportHash = ""
+			entry.PendingExportRecords = nil
 		}
+		entry.RelayRecords = cloneRecordRefs(nextRecords)
 		c.state.Keys[item.Key] = entry
 	}
 	return errs
+}
+
+// ImportRecords combines compatibility de-duplication with record-level
+// planning. apply must durably append every mutation before returning.
+func (c *RelayCompatibility) ImportRecords(items []RelayValue, codec SealedRelayCodec, apply RelayMutationImport) []error {
+	return c.Import(items, func(value RelayValue, previous []RecordRef) ([]RecordRef, error) {
+		mutations, refs, err := PlanRelayRecordImport(value, previous, codec)
+		if err != nil {
+			return nil, err
+		}
+		if apply == nil {
+			return nil, fmt.Errorf("%w: missing record import callback for %s", ErrInvalidRelayState, value.Key)
+		}
+		if err := apply(value, mutations); err != nil {
+			return nil, err
+		}
+		return refs, nil
+	})
 }
 
 // PlanExports returns materialized values that differ from the most recently
@@ -165,14 +204,26 @@ func (c *RelayCompatibility) PlanExports(values []RelayValue) ([]RelayValue, []e
 		}
 		hash := relayValueHash(normalized)
 		entry := c.state.Keys[value.Key]
+		records := cloneRecordRefs(value.Records)
+		if len(records) == 0 {
+			if spec, ok := RelaySpec(value.Key); ok && spec.Mode == RelayScalar {
+				records = []RecordRef{{Collection: CollectionPreferences, RecordID: value.Key, KeyClass: KeyClassSync}}
+			}
+		}
+		if err := validateRecordRefsForRelayKey(value.Key, records); err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		if hash == entry.RelayValueHash {
 			entry.PendingExportHash = ""
+			entry.PendingExportRecords = nil
 			c.state.Keys[value.Key] = entry
 			continue
 		}
 		entry.PendingExportHash = hash
+		entry.PendingExportRecords = records
 		c.state.Keys[value.Key] = entry
-		out = append(out, RelayValue{Key: value.Key, Value: normalized, UpdatedAt: value.UpdatedAt})
+		out = append(out, RelayValue{Key: value.Key, Value: normalized, UpdatedAt: value.UpdatedAt, Records: cloneRecordRefs(records)})
 	}
 	return out, errs
 }
@@ -224,6 +275,15 @@ func validateRelayCompatibilityState(state RelayCompatibilityState) error {
 		if entry.RelayUpdatedAt > 0 && entry.RelayValueHash == "" {
 			return fmt.Errorf("%w: timestamp without value hash for %q", ErrInvalidRelayState, key)
 		}
+		if err := validateRecordRefsForRelayKey(key, entry.RelayRecords); err != nil {
+			return fmt.Errorf("%w: relay records for %q: %v", ErrInvalidRelayState, key, err)
+		}
+		if err := validateRecordRefsForRelayKey(key, entry.PendingExportRecords); err != nil {
+			return fmt.Errorf("%w: pending export records for %q: %v", ErrInvalidRelayState, key, err)
+		}
+		if entry.PendingExportHash == "" && len(entry.PendingExportRecords) != 0 {
+			return fmt.Errorf("%w: pending records without hash for %q", ErrInvalidRelayState, key)
+		}
 	}
 	return nil
 }
@@ -231,9 +291,33 @@ func validateRelayCompatibilityState(state RelayCompatibilityState) error {
 func cloneRelayKeyStates(source map[string]RelayKeyState) map[string]RelayKeyState {
 	out := make(map[string]RelayKeyState, len(source))
 	for key, state := range source {
+		state.RelayRecords = cloneRecordRefs(state.RelayRecords)
+		state.PendingExportRecords = cloneRecordRefs(state.PendingExportRecords)
 		out[key] = state
 	}
 	return out
+}
+
+func validateRecordRefsForRelayKey(key string, refs []RecordRef) error {
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if err := validateRecordRefForRelayKey(key, ref); err != nil {
+			return err
+		}
+		canonical := canonicalRecordKey(ref.Collection, ref.RecordID)
+		if _, duplicate := seen[canonical]; duplicate {
+			return fmt.Errorf("%w: duplicate record ref %q", ErrInvalidSchemaValue, canonical)
+		}
+		seen[canonical] = struct{}{}
+	}
+	return nil
+}
+
+func cloneRecordRefs(refs []RecordRef) []RecordRef {
+	if refs == nil {
+		return nil
+	}
+	return append([]RecordRef(nil), refs...)
 }
 
 func relayValueHash(value []byte) string {

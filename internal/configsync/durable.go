@@ -48,6 +48,14 @@ type SyncState struct {
 	Ack      DurableAck `json:"ack"`
 }
 
+// EncryptedMutation pairs one plaintext mutation with its current epoch key.
+// Batches may contain both sync and vault records without exposing either key
+// to the compatibility adapter.
+type EncryptedMutation struct {
+	Key      EpochKey
+	Mutation Mutation
+}
+
 // DurableReplica serializes each mutation across processes and acknowledges
 // it only after fsync and atomic rename. Read methods use the last loaded view;
 // Reload observes changes written by another process.
@@ -159,6 +167,28 @@ func (d *DurableReplica) AppendEncrypted(identity *peercrypto.Identity, key Epoc
 	return operation, ack, nil
 }
 
+// AppendEncryptedBatch allocates contiguous counters and persists all signed
+// operations with one atomic file replacement. Validation or encryption
+// failure at any position leaves the durable replica unchanged.
+func (d *DurableReplica) AppendEncryptedBatch(identity *peercrypto.Identity, mutations []EncryptedMutation) ([]VerifiedOp, DurableAck, error) {
+	operations := make([]VerifiedOp, 0, len(mutations))
+	ack, err := d.mutate(func(replica *Replica, state *durableState) (bool, error) {
+		for index, item := range mutations {
+			created, err := replica.AppendEncrypted(identity, item.Key, item.Mutation)
+			if err != nil {
+				return false, fmt.Errorf("append encrypted mutation %d: %w", index, err)
+			}
+			operations = append(operations, created)
+			state.Ops = append(state.Ops, created.Token)
+		}
+		return len(mutations) != 0, nil
+	})
+	if err != nil {
+		return nil, DurableAck{}, err
+	}
+	return operations, ack, nil
+}
+
 // AdoptSnapshot durably initializes an empty replica from a trusted snapshot.
 // Membership authorization of the snapshot creator must happen before this
 // method is called.
@@ -213,6 +243,13 @@ func (d *DurableReplica) Get(collection, recordID string) (Record, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.replica.Get(collection, recordID)
+}
+
+// Records returns one collection's last loaded durable materialized view.
+func (d *DurableReplica) Records(collection string) []Record {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.replica.Records(collection)
 }
 
 // StateForPeer returns either missing tail operations or a snapshot plus tail

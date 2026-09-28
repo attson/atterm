@@ -3,6 +3,7 @@ package configsync
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -18,13 +19,13 @@ func newTestRelayCompatibility(t *testing.T) *RelayCompatibility {
 func TestRelayPullImportsOnceAndIgnoresEquivalentJSON(t *testing.T) {
 	compat := newTestRelayCompatibility(t)
 	imports := 0
-	apply := func(value RelayValue) error {
+	apply := testRelayImport(func(value RelayValue) error {
 		imports++
 		if string(value.Value) != `{"a":"first","z":"last"}` {
 			t.Fatalf("import was not normalized: %s", value.Value)
 		}
 		return nil
-	}
+	})
 	first := RelayValue{Key: "shortcut_bindings", Value: json.RawMessage(`{"z":"last","a":"first"}`), UpdatedAt: 100}
 	if errs := compat.Import([]RelayValue{first}, apply); len(errs) != 0 {
 		t.Fatalf("first import errors=%v", errs)
@@ -51,7 +52,7 @@ func TestRelayEchoDoesNotCreateCanonicalMutation(t *testing.T) {
 	}
 	imports := 0
 	echo := RelayValue{Key: "terminal_theme", Value: json.RawMessage(`"nord"`), UpdatedAt: 500}
-	if errs := compat.Import([]RelayValue{echo}, func(RelayValue) error { imports++; return nil }); len(errs) != 0 {
+	if errs := compat.Import([]RelayValue{echo}, testRelayImport(func(RelayValue) error { imports++; return nil })); len(errs) != 0 {
 		t.Fatalf("echo errors=%v", errs)
 	}
 	if imports != 0 {
@@ -66,6 +67,47 @@ func TestRelayEchoDoesNotCreateCanonicalMutation(t *testing.T) {
 	exports, errs = compat.PlanExports([]RelayValue{{Key: "terminal_theme", Value: json.RawMessage(` "nord" `), UpdatedAt: 600}})
 	if len(errs) != 0 || len(exports) != 0 {
 		t.Fatalf("repeat exports=%v errs=%v", exports, errs)
+	}
+}
+
+func TestImportRecordsPersistsRefsAndPlansScopedTombstones(t *testing.T) {
+	compat := newTestRelayCompatibility(t)
+	first := RelayValue{Key: "quick_templates", Value: json.RawMessage(`[
+		{"id":"keep","label":"Keep","text":"keep"},
+		{"id":"remove","label":"Remove","text":"remove"}
+	]`), UpdatedAt: 100}
+	var batches [][]RecordMutation
+	apply := func(_ RelayValue, mutations []RecordMutation) error {
+		batches = append(batches, append([]RecordMutation(nil), mutations...))
+		return nil
+	}
+	if errs := compat.ImportRecords([]RelayValue{first}, nil, apply); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	state := compat.State().Keys[first.Key]
+	if len(state.RelayRecords) != 2 || state.RelayRecords[0].RecordID != "keep" || state.RelayRecords[1].RecordID != "remove" {
+		t.Fatalf("relay refs=%+v", state.RelayRecords)
+	}
+	second := RelayValue{Key: "quick_templates", Value: json.RawMessage(`[
+		{"id":"keep","label":"Keep","text":"updated"},
+		{"id":"new","label":"New","text":"new"}
+	]`), UpdatedAt: 200}
+	if errs := compat.ImportRecords([]RelayValue{second}, nil, apply); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("batches=%d", len(batches))
+	}
+	if got := mutationKindsByID(batches[1]); !reflect.DeepEqual(got, map[string]Kind{
+		"keep": KindSet, "new": KindSet, "remove": KindDelete,
+	}) {
+		t.Fatalf("second batch=%+v", batches[1])
+	}
+	if errs := compat.ImportRecords([]RelayValue{second}, nil, apply); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("same Relay winner generated another batch: %d", len(batches))
 	}
 }
 
@@ -85,10 +127,10 @@ func TestFailedRelayExportRemainsRetryable(t *testing.T) {
 func TestConcurrentRelayAndPeerChangesConvergeWithoutOscillation(t *testing.T) {
 	compat := newTestRelayCompatibility(t)
 	var imported []string
-	apply := func(value RelayValue) error {
+	apply := testRelayImport(func(value RelayValue) error {
 		imported = append(imported, string(value.Value))
 		return nil
-	}
+	})
 	if errs := compat.Import([]RelayValue{{Key: "terminal_theme", Value: json.RawMessage(`"classic"`), UpdatedAt: 100}}, apply); len(errs) != 0 {
 		t.Fatal(errs)
 	}
@@ -117,10 +159,10 @@ func TestMalformedRelayValueDoesNotBlockSiblingImport(t *testing.T) {
 	errs := compat.Import([]RelayValue{
 		{Key: "terminal_font_size", Value: json.RawMessage(`"large"`), UpdatedAt: 100},
 		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 100},
-	}, func(value RelayValue) error {
+	}, testRelayImport(func(value RelayValue) error {
 		imported = append(imported, value.Key)
 		return nil
-	})
+	}))
 	if len(errs) != 1 || !errors.Is(errs[0], ErrInvalidSchemaValue) {
 		t.Fatalf("errors=%v", errs)
 	}
@@ -133,7 +175,7 @@ func TestFailedRelayImportDoesNotAdvanceState(t *testing.T) {
 	compat := newTestRelayCompatibility(t)
 	wantErr := errors.New("durable append failed")
 	item := RelayValue{Key: "terminal_theme", Value: json.RawMessage(`"nord"`), UpdatedAt: 100}
-	errs := compat.Import([]RelayValue{item}, func(RelayValue) error { return wantErr })
+	errs := compat.Import([]RelayValue{item}, testRelayImport(func(RelayValue) error { return wantErr }))
 	if len(errs) != 1 || !errors.Is(errs[0], wantErr) {
 		t.Fatalf("errors=%v", errs)
 	}
@@ -141,19 +183,28 @@ func TestFailedRelayImportDoesNotAdvanceState(t *testing.T) {
 		t.Fatalf("failed import advanced state: %+v", compat.State())
 	}
 	called := 0
-	if errs := compat.Import([]RelayValue{item}, func(RelayValue) error { called++; return nil }); len(errs) != 0 || called != 1 {
+	if errs := compat.Import([]RelayValue{item}, testRelayImport(func(RelayValue) error { called++; return nil })); len(errs) != 0 || called != 1 {
 		t.Fatalf("retry called=%d errors=%v", called, errs)
 	}
 }
 
 func TestRelayTimestampForkIsRejected(t *testing.T) {
 	compat := newTestRelayCompatibility(t)
-	if errs := compat.Import([]RelayValue{{Key: "terminal_theme", Value: json.RawMessage(`"nord"`), UpdatedAt: 100}}, func(RelayValue) error { return nil }); len(errs) != 0 {
+	if errs := compat.Import([]RelayValue{{Key: "terminal_theme", Value: json.RawMessage(`"nord"`), UpdatedAt: 100}}, testRelayImport(func(RelayValue) error { return nil })); len(errs) != 0 {
 		t.Fatal(errs)
 	}
-	errs := compat.Import([]RelayValue{{Key: "terminal_theme", Value: json.RawMessage(`"classic"`), UpdatedAt: 100}}, func(RelayValue) error { return nil })
+	errs := compat.Import([]RelayValue{{Key: "terminal_theme", Value: json.RawMessage(`"classic"`), UpdatedAt: 100}}, testRelayImport(func(RelayValue) error { return nil }))
 	if len(errs) != 1 || !errors.Is(errs[0], ErrRelayTimestampFork) {
 		t.Fatalf("errors=%v", errs)
+	}
+}
+
+func testRelayImport(apply func(RelayValue) error) RelayImport {
+	return func(value RelayValue, _ []RecordRef) ([]RecordRef, error) {
+		if err := apply(value); err != nil {
+			return nil, err
+		}
+		return []RecordRef{{Collection: CollectionPreferences, RecordID: value.Key, KeyClass: KeyClassSync}}, nil
 	}
 }
 

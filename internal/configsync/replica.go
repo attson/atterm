@@ -284,6 +284,28 @@ func (r *Replica) Get(collection, recordID string) (Record, bool) {
 	}, true
 }
 
+// Records returns one collection's materialized winners, including
+// tombstones, in stable record-id order.
+func (r *Replica) Records(collection string) []Record {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Record, 0)
+	for key, op := range r.view {
+		if key.collection != collection {
+			continue
+		}
+		doc := op.Document
+		out = append(out, Record{
+			SpaceID: doc.SpaceID, Collection: doc.Collection, RecordID: doc.RecordID,
+			Deleted: doc.Kind == KindDelete, Payload: append([]byte(nil), doc.Payload...),
+			OpID: doc.OpID, ActorDeviceID: doc.ActorDeviceID,
+			Counter: doc.Counter, HLC: doc.HLC, KeyClass: doc.KeyClass, KeyEpoch: doc.KeyEpoch,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RecordID < out[j].RecordID })
+	return out
+}
+
 func operationWins(candidate, current SyncOp) bool {
 	candidateSawCurrent := candidate.CausalContext[current.ActorDeviceID] >= current.Counter
 	currentSawCandidate := current.CausalContext[candidate.ActorDeviceID] >= candidate.Counter

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -87,6 +89,20 @@ func samePeerEpochs(left, right map[configsync.KeyClass]configsync.EpochKey) boo
 		}
 	}
 	return true
+}
+
+func (m *peerSpaceManager) relayCompatibilityStore(realmID string) (*configsync.DurableRelayCompatibility, error) {
+	runtime, err := m.ensureConfigReplica()
+	if err != nil {
+		return nil, err
+	}
+	if realmID == "" {
+		return nil, configsync.ErrInvalidRelayState
+	}
+	digest := sha256.Sum256([]byte(realmID))
+	name := base64.RawURLEncoding.EncodeToString(digest[:]) + ".json"
+	path := filepath.Join(m.configRoot, runtime.spaceID, "relay-compat", name)
+	return configsync.OpenDurableRelayCompatibility(path, realmID)
 }
 
 // restorePeerConfigReplica prepares an already-configured Space during boot.

@@ -53,7 +53,9 @@ depend on Peer state. Space creation atomically seeds customized portable
 preferences、templates、profile/SSH metadata and explicitly opted-in profile
 environment values; SSH credentials/private keys remain local pending a
 dedicated Peer secret-sync opt-in. Local-writer migration、new-device join
-transport/UI and the actual Peer logical-channel adapter still remain.
+transport/UI and the actual Peer logical-channel adapter still remain. Relay
+compatibility hash/timestamp/record-ref state is persisted per Space and realm
+with cross-process transactional updates, ready for adapter wiring.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.
 

@@ -325,6 +325,43 @@ func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	}
 }
 
+func TestPeerRelayCompatibilityStateSurvivesRestart(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := app.peerSpace.relayCompatibilityStore("realm-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Update(func(compatibility *configsync.RelayCompatibility) error {
+		compatibility.SetMigrationMarkers(true, false)
+		_, errs := compatibility.PlanExports([]configsync.RelayValue{{
+			Key: "terminal_theme", Value: json.RawMessage(`"nord"`), UpdatedAt: 100,
+		}})
+		if len(errs) != 0 {
+			return errs[0]
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.peerSpace.configReplica = nil
+	reopenedStore, err := app.peerSpace.relayCompatibilityStore("realm-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := reopenedStore.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := reopened.State()
+	if !restored.LocalSeeded || restored.Keys["terminal_theme"].PendingExportHash != state.Keys["terminal_theme"].PendingExportHash {
+		t.Fatalf("restored Relay compatibility state=%+v", restored)
+	}
+}
+
 func TestCreateAndRevokePeerInvitationBatch(t *testing.T) {
 	app, now := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

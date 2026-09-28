@@ -106,8 +106,18 @@ only a single-label `https://<label>.trycloudflare.com` endpoint, and owns the
 owns the lifecycle through a narrow interface. Fake-process tests cover stdout
 and stderr discovery、invalid endpoints、timeouts、forced termination and Unix
 descendant cleanup; no public tunnel is opened by tests. The gateway still has
-no signaling/WSS handler and defaults to 404, so accountless remote terminal
-access remains unavailable until PR 2.4.
+no handler wired by Desktop and defaults to 404. The first independently
+shippable PR 2.4 slice is now implemented locally: `GET /peer/v1/connect`
+requires the `atterm-peer-v1` subprotocol、uses a bounded routing-only open
+envelope、revalidates both signed memberships/session scope/effective
+permission、and reuses the existing Peer membership handshake to derive
+direction-separated encrypted records. SDP/ICE signals support an isolated
+64 KiB fragment format and strict per-direction count/size limits; wrong
+identity、scope、subprotocol、capacity and tampered ciphertext fail closed.
+This is still a transport foundation only: Desktop does not yet mount the
+handler, ConnectionBundle route publication and Pion negotiation are not wired,
+and terminal/config WSS fallback is not implemented, so accountless remote
+terminal access remains unavailable.
 
 ## Why Quick Tunnel Before Rendezvous
 

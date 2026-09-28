@@ -18,6 +18,8 @@ func TestRecordKindWireValuesRemainStable(t *testing.T) {
 		RecordConfigBatch:     8,
 		RecordConfigAck:       9,
 		RecordConfigFragment:  10,
+		RecordSignal:          11,
+		RecordSignalFragment:  12,
 	}
 	for kind, wire := range want {
 		if byte(kind) != wire {

@@ -976,6 +976,8 @@ terminal subscriber lifecycle。
 | `CONFIG_BATCH` | `0x08` | JSON `AntiEntropyBatch` |
 | `CONFIG_ACK` | `0x09` | JSON `{v,space_id,cursor,durable,done}` |
 | `CONFIG_FRAGMENT` | `0x0a` | 分片后的任一 config logical message |
+| `SIGNAL` | `0x0b` | JSON `Signal{v,type,payload}`，仅用于加密后的 SDP/ICE |
+| `SIGNAL_FRAGMENT` | `0x0c` | 分片后的单个 signaling message |
 
 单个 record plaintext 上限仍是 16 KiB。超过上限的配置消息用独立格式分片：
 
@@ -988,6 +990,16 @@ offset(be32) || total(be32) || data
 `0xffffffff` 同时使 config fragment 无法被 terminal fragment reassembler 接受。terminal 与
 config 各自只允许一个连续消息重组，状态完全分离；乱序、交错、超时、越界、未知类型、AEAD
 篡改或上层 JSON/授权失败都关闭当前 Peer route，不把 payload 投递到另一逻辑通道。
+
+Quick Tunnel signaling 使用第三套独立分片格式：
+
+```text
+"ASF1"(4B) || message_id(be64) || 0xfffffffe(4B) ||
+offset(be32) || total(be32) || data
+```
+
+`total` 必须大于 16 KiB 且不超过 64 KiB。`ASF1` 和 `0xfffffffe` 使 signaling fragment
+不能被 terminal/config reassembler 接受；每个方向同样只允许一个连续 signaling message。
 
 双方在 membership handshake 成功后各自发送 inventory。收到 inventory 的一方从同一 durable
 snapshot 建 plan 并发送 batch；接收方只有在完整 token 已验证、持久化和必要的最终 projection
@@ -1003,6 +1015,51 @@ low-S P1363 signature，并验证 client/host membership 均锚定到同一 gene
 和两份 membership token 的 hash 共同进入 ephemeral-ECDH traffic-key binding。identity
 private key 只签名、不跨算法复用为 ECDH，兼容 WebCrypto non-exportable ECDSA key。proof
 长度由 authenticator 声明，所以 Relay v0.6 的现有 wire bytes 不变。
+
+### Quick Tunnel Peer signaling
+
+Quick Tunnel 本机 gateway 只在 `GET /peer/v1/connect` 接受 WebSocket，并要求
+`Sec-WebSocket-Protocol: atterm-peer-v1`。Cloudflare 可见的首条 text message 是有界路由信封：
+
+```json
+{
+  "v": 1,
+  "kind": "open",
+  "attempt_id": "<uuid>",
+  "ticket": "<base64 32 bytes>",
+  "session_id": "<uuid>",
+  "client_peer_id": "<peer id>",
+  "client_instance_id": "<instance id>"
+}
+```
+
+`ticket` 每次连接随机生成；信封不携带 genesis、membership token、SDP/ICE、终端或配置明文。
+主机通过 `client_peer_id` 查找本地 active membership，并独立验证 genesis、client/host
+membership、host identity 归属、session scope，以及 effective permission 不超过两端 grant。
+通过后返回：
+
+```json
+{
+  "v": 1,
+  "kind": "authorized",
+  "user_id": "<space id>",
+  "host_id": "<host peer id>",
+  "permission": 2,
+  "expires_at_unix_millis": 1790000000000
+}
+```
+
+这些字段与 `attempt_id`、`ticket`、`session_id`、`client_instance_id` 一起构成现有
+Peer membership handshake 的 exact `Authorization`；authorization lifetime 是 30 秒。随后双方在
+同一 WebSocket 上交换四步 binary handshake，派生方向隔离的 XChaCha20-Poly1305 record keys。
+handshake 完成后只接受 encrypted `SIGNAL` / `SIGNAL_FRAGMENT` record，其他 record kind、text
+message、AEAD 篡改、sequence gap 或上层校验失败都会关闭 channel。
+
+`Signal.type` 只允许 `offer`、`answer`、`ice_candidate`、`ice_end`。每个方向最多一个 offer、
+一个 answer、64 个 ICE candidate 和一个 `ice_end`；offer/answer payload 最大 32 KiB，candidate
+最大 8 KiB，`ice_end.payload` 必须为空。单个序列化 signal 最大 64 KiB。当前该 endpoint 是
+Quick Tunnel transport foundation：还没有接 Desktop route lifecycle、Pion offer/answer 驱动或
+terminal/config WSS fallback。
 
 ## 重连与续传
 

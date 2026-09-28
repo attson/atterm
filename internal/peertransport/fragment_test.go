@@ -120,6 +120,37 @@ func TestConfigFragmentsAreIsolatedFromTerminalReassembly(t *testing.T) {
 	}
 }
 
+func TestSignalFragmentRoundTripIsIsolated(t *testing.T) {
+	payload := bytes.Repeat([]byte("encrypted-sdp"), 2048)
+	fragments, err := FragmentSignalMessage(37, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fragments) < 2 {
+		t.Fatal("large signaling message was not fragmented")
+	}
+	now := time.Unix(1_800_000_000, 0)
+	var signal SignalReassembler
+	var got []byte
+	for i, fragment := range fragments {
+		var complete bool
+		got, complete, err = signal.Add(fragment, now)
+		if err != nil {
+			t.Fatalf("signal fragment %d: %v", i, err)
+		}
+		if complete != (i == len(fragments)-1) {
+			t.Fatalf("signal fragment %d complete=%v", i, complete)
+		}
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("reassembled signaling message differs")
+	}
+	var config ConfigReassembler
+	if _, _, _, err := config.Add(fragments[0], now); !errors.Is(err, ErrInvalidFragment) {
+		t.Fatalf("config reassembler accepted signal fragment: %v", err)
+	}
+}
+
 func TestConfigReassemblerRejectsInterleaveWithoutPoisoningRetry(t *testing.T) {
 	payload := bytes.Repeat([]byte{0x33}, MaxRecordPlaintext*2)
 	fragments, err := FragmentConfigMessage(RecordConfigInventory, 12, payload)

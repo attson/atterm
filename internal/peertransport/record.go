@@ -41,10 +41,12 @@ const (
 	RecordConfigBatch     RecordKind = 8
 	RecordConfigAck       RecordKind = 9
 	RecordConfigFragment  RecordKind = 10
+	RecordSignal          RecordKind = 11
+	RecordSignalFragment  RecordKind = 12
 )
 
 func (k RecordKind) valid() bool {
-	return k >= RecordFrame && k <= RecordConfigFragment
+	return k >= RecordFrame && k <= RecordSignalFragment
 }
 
 func (k RecordKind) configMessage() bool {

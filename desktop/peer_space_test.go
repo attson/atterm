@@ -528,6 +528,109 @@ func TestPeerConfigReplicaPlansSafeRelayExportsUntilAcknowledged(t *testing.T) {
 	}
 }
 
+func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	enabled := true
+	cfg := appConfig{
+		TerminalTheme:        "nord",
+		NotificationsEnabled: &enabled,
+		QuickTemplates:       []QuickTemplate{{ID: "template-1", Label: "Build", Text: "go test ./..."}},
+		Profiles: []SessionProfile{
+			{ID: "profile-local-env", Name: "Local env", Env: map[string]string{"LOCAL": "creator"}},
+			{ID: "profile-shared-env", Name: "Shared env", SyncEnv: true, Env: map[string]string{"SHARED": "canonical"}},
+		},
+		DefaultProfileID: "profile-shared-env",
+		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Canonical", Host: "example.com", User: "alice", KeyID: "key-1"}},
+		SSHKeys:          []SSHKey{{ID: "key-1", Name: "Canonical key", KeyType: "ED25519"}},
+	}
+	app.cfgStore = &configStore{cfg: cfg}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	staleEnv, err := configsync.CanonicalEntityJSON("profile-local-env", profileEnvRecord{
+		ID: "profile-local-env", Env: map[string]string{"LOCAL": "stale-canonical"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleMutation, err := configsync.SetRecordMutation(configsync.PlainRecord{
+		Collection: configsync.CollectionProfileEnv, RecordID: "profile-local-env",
+		KeyClass: configsync.KeyClassVault, Value: staleEnv,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, runtime.keys[configsync.KeyClassVault], configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion,
+		Collection:    staleMutation.Collection,
+		RecordID:      staleMutation.RecordID,
+		Kind:          staleMutation.Kind,
+		Payload:       staleMutation.Payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	withoutCollections := cfg
+	withoutCollections.NotificationsEnabled = nil
+	withoutCollections.QuickTemplates = nil
+	if operations, err := runtime.appendLocalRelayKey(withoutCollections, "notifications_enabled"); err != nil || operations != 1 {
+		t.Fatalf("clear notification operations=%d err=%v", operations, err)
+	}
+	if operations, err := runtime.appendLocalRelayKey(withoutCollections, "quick_templates"); err != nil || operations != 1 {
+		t.Fatalf("clear templates operations=%d err=%v", operations, err)
+	}
+	if err := sshCredentialSlot("host-1").Save(sshCredential{Password: "local-secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled := false
+	base := appConfig{
+		TerminalTheme:        "light",
+		NotificationsEnabled: &disabled,
+		QuickTemplates:       []QuickTemplate{{ID: "old", Label: "Old", Text: "old"}},
+		Profiles: []SessionProfile{
+			{ID: "profile-local-env", Name: "Old local", Env: map[string]string{"LOCAL": "device"}},
+			{ID: "profile-shared-env", Name: "Old shared", SyncEnv: true, Env: map[string]string{"SHARED": "stale"}},
+			{ID: "local-only", Name: "Pending import", Env: map[string]string{"ONLY": "here"}},
+		},
+		DefaultProfileID: "local-only",
+		SSHHosts:         []SSHHost{{ID: "old-host", Alias: "Old", Host: "old.example.com"}},
+		SSHKeys:          []SSHKey{{ID: "old-key", Name: "Old key"}},
+	}
+	projected, projectionErrors := runtime.projectLocalConfig(base)
+	if len(projectionErrors) != 0 {
+		t.Fatalf("project canonical config: %v", projectionErrors)
+	}
+	if projected.TerminalTheme != "nord" || projected.NotificationsEnabled != nil || len(projected.QuickTemplates) != 0 {
+		t.Fatalf("projected portable config=%+v", projected)
+	}
+	if len(projected.Profiles) != 2 || projected.DefaultProfileID != "profile-shared-env" {
+		t.Fatalf("projected profiles=%+v default=%q", projected.Profiles, projected.DefaultProfileID)
+	}
+	if projected.Profiles[0].Env["LOCAL"] != "device" || projected.Profiles[1].Env["SHARED"] != "canonical" {
+		t.Fatalf("projected profile env=%+v", projected.Profiles)
+	}
+	if len(projected.SSHHosts) != 1 || projected.SSHHosts[0].Alias != "Canonical" || len(projected.SSHKeys) != 1 || projected.SSHKeys[0].Name != "Canonical key" {
+		t.Fatalf("projected SSH metadata hosts=%+v keys=%+v", projected.SSHHosts, projected.SSHKeys)
+	}
+	credential, err := sshCredentialSlot("host-1").Load()
+	if err != nil || credential.Password != "local-secret" {
+		t.Fatalf("projection changed SSH credential=%+v err=%v", credential, err)
+	}
+	if base.TerminalTheme != "light" || base.Profiles[0].Env["LOCAL"] != "device" {
+		t.Fatal("projection mutated its base snapshot")
+	}
+
+	delete(runtime.keys, configsync.KeyClassVault)
+	withoutVault, projectionErrors := runtime.projectLocalConfig(base)
+	if len(projectionErrors) != 0 {
+		t.Fatalf("project without vault capability: %v", projectionErrors)
+	}
+	if withoutVault.Profiles[1].Env["SHARED"] != "stale" {
+		t.Fatalf("projection without vault capability replaced local env: %+v", withoutVault.Profiles[1].Env)
+	}
+}
+
 func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

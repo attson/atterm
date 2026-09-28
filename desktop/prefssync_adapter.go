@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -126,118 +127,13 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 
 func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 	c := a.store.Get()
+	if handled, err := applyPortableConfigValue(&c, key, value); handled || err != nil {
+		if err != nil {
+			return err
+		}
+		return a.store.Set(c)
+	}
 	switch key {
-	case "locale_preference":
-		var s string
-		if err := json.Unmarshal(value, &s); err != nil {
-			return err
-		}
-		c.LocalePreference = s
-	case "quick_templates":
-		var t []QuickTemplate
-		if err := json.Unmarshal(value, &t); err != nil {
-			return err
-		}
-		c.QuickTemplates = t
-	case "notifications_enabled":
-		var b bool
-		if err := json.Unmarshal(value, &b); err != nil {
-			return err
-		}
-		c.NotificationsEnabled = &b
-	case "ai_notifications_only":
-		var b bool
-		if err := json.Unmarshal(value, &b); err != nil {
-			return err
-		}
-		c.AINotificationsOnly = &b
-	case "command_notify_threshold_seconds":
-		var n int
-		if err := json.Unmarshal(value, &n); err != nil {
-			return err
-		}
-		c.CommandNotifyThresholdSeconds = &n
-	case "shell_integration_enabled":
-		var b bool
-		if err := json.Unmarshal(value, &b); err != nil {
-			return err
-		}
-		c.ShellIntegrationEnabled = &b
-	case "pinned_session_ids":
-		var ids []string
-		if err := json.Unmarshal(value, &ids); err != nil {
-			return err
-		}
-		c.PinnedSessionIDs = ids
-	case "terminal_theme":
-		var s string
-		if err := json.Unmarshal(value, &s); err != nil {
-			return err
-		}
-		c.TerminalTheme = s
-	case "terminal_font_head":
-		var s string
-		if err := json.Unmarshal(value, &s); err != nil {
-			return err
-		}
-		c.TerminalFontHead = s
-	case "terminal_font_size":
-		var n int
-		if err := json.Unmarshal(value, &n); err != nil {
-			return err
-		}
-		c.TerminalFontSize = n
-	case "terminal_line_height":
-		var v float64
-		if err := json.Unmarshal(value, &v); err != nil {
-			return err
-		}
-		c.TerminalLineHeight = v
-	case "terminal_cursor_style":
-		var s string
-		if err := json.Unmarshal(value, &s); err != nil {
-			return err
-		}
-		c.TerminalCursorStyle = s
-	case "terminal_cursor_blink":
-		var b *bool
-		if err := json.Unmarshal(value, &b); err != nil {
-			return err
-		}
-		c.TerminalCursorBlink = b
-	case "terminal_scrollback":
-		var n int
-		if err := json.Unmarshal(value, &n); err != nil {
-			return err
-		}
-		c.TerminalScrollback = n
-	case "default_shell":
-		var s string
-		if err := json.Unmarshal(value, &s); err != nil {
-			return err
-		}
-		c.DefaultShell = s
-	case "shortcut_bindings":
-		var b map[string]string
-		if err := json.Unmarshal(value, &b); err != nil {
-			return err
-		}
-		// Unlike the appearance keys (clamped by their *OrDefault() readers)
-		// and default_shell (checked by os.Stat before this switch even
-		// runs), nothing downstream validates a binding string. An inbound
-		// malformed entry would silently drop the action's default keybinding
-		// in buildRoutingTable (lib/shortcutBindings.ts) and never install a
-		// working replacement. Reuse isValidShortcutBinding (the same
-		// predicate SetShortcutBindings applies to local edits) to discard
-		// invalid entries rather than reject the whole pulled map.
-		filtered := make(map[string]string, len(b))
-		for actionID, binding := range b {
-			if actionID == "" || !isValidShortcutBinding(binding) {
-				continue
-			}
-			filtered[actionID] = binding
-		}
-		c.ShortcutBindings = filtered
 	case "ssh_hosts_encrypted":
 		key := a.accountKey()
 		if len(key) == 0 {
@@ -289,6 +185,132 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 		return fmt.Errorf("unknown key %s", key)
 	}
 	return a.store.Set(c)
+}
+
+// applyPortableConfigValue applies a non-sealed compatibility value without
+// performing I/O. Relay pulls and Peer materialization share this function so
+// they cannot drift on validation or zero-value semantics.
+func applyPortableConfigValue(c *appConfig, key string, value json.RawMessage) (bool, error) {
+	if c == nil {
+		return false, errors.New("config is nil")
+	}
+	switch key {
+	case "locale_preference":
+		return true, json.Unmarshal(value, &c.LocalePreference)
+	case "quick_templates":
+		return true, json.Unmarshal(value, &c.QuickTemplates)
+	case "notifications_enabled":
+		var b bool
+		if err := json.Unmarshal(value, &b); err != nil {
+			return true, err
+		}
+		c.NotificationsEnabled = &b
+		return true, nil
+	case "ai_notifications_only":
+		var b bool
+		if err := json.Unmarshal(value, &b); err != nil {
+			return true, err
+		}
+		c.AINotificationsOnly = &b
+		return true, nil
+	case "command_notify_threshold_seconds":
+		var n int
+		if err := json.Unmarshal(value, &n); err != nil {
+			return true, err
+		}
+		c.CommandNotifyThresholdSeconds = &n
+		return true, nil
+	case "shell_integration_enabled":
+		var b bool
+		if err := json.Unmarshal(value, &b); err != nil {
+			return true, err
+		}
+		c.ShellIntegrationEnabled = &b
+		return true, nil
+	case "pinned_session_ids":
+		return true, json.Unmarshal(value, &c.PinnedSessionIDs)
+	case "terminal_theme":
+		return true, json.Unmarshal(value, &c.TerminalTheme)
+	case "terminal_font_head":
+		return true, json.Unmarshal(value, &c.TerminalFontHead)
+	case "terminal_font_size":
+		return true, json.Unmarshal(value, &c.TerminalFontSize)
+	case "terminal_line_height":
+		return true, json.Unmarshal(value, &c.TerminalLineHeight)
+	case "terminal_cursor_style":
+		return true, json.Unmarshal(value, &c.TerminalCursorStyle)
+	case "terminal_cursor_blink":
+		var b *bool
+		if err := json.Unmarshal(value, &b); err != nil {
+			return true, err
+		}
+		c.TerminalCursorBlink = b
+		return true, nil
+	case "terminal_scrollback":
+		return true, json.Unmarshal(value, &c.TerminalScrollback)
+	case "default_shell":
+		return true, json.Unmarshal(value, &c.DefaultShell)
+	case "shortcut_bindings":
+		var bindings map[string]string
+		if err := json.Unmarshal(value, &bindings); err != nil {
+			return true, err
+		}
+		// Invalid entries would suppress the action's default binding without
+		// installing a usable replacement, so keep the setter's validation.
+		filtered := make(map[string]string, len(bindings))
+		for actionID, binding := range bindings {
+			if actionID != "" && isValidShortcutBinding(binding) {
+				filtered[actionID] = binding
+			}
+		}
+		c.ShortcutBindings = filtered
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+// clearPortableConfigValue applies a canonical scalar tombstone. Collection
+// values use an encoded empty array instead, so only scalar keys belong here.
+func clearPortableConfigValue(c *appConfig, key string) bool {
+	if c == nil {
+		return false
+	}
+	switch key {
+	case "locale_preference":
+		c.LocalePreference = ""
+	case "notifications_enabled":
+		c.NotificationsEnabled = nil
+	case "ai_notifications_only":
+		c.AINotificationsOnly = nil
+	case "command_notify_threshold_seconds":
+		c.CommandNotifyThresholdSeconds = nil
+	case "shell_integration_enabled":
+		c.ShellIntegrationEnabled = nil
+	case "pinned_session_ids":
+		c.PinnedSessionIDs = nil
+	case "terminal_theme":
+		c.TerminalTheme = ""
+	case "terminal_font_head":
+		c.TerminalFontHead = ""
+	case "terminal_font_size":
+		c.TerminalFontSize = 0
+	case "terminal_line_height":
+		c.TerminalLineHeight = 0
+	case "terminal_cursor_style":
+		c.TerminalCursorStyle = ""
+	case "terminal_cursor_blink":
+		c.TerminalCursorBlink = nil
+	case "terminal_scrollback":
+		c.TerminalScrollback = 0
+	case "default_shell":
+		c.DefaultShell = ""
+	case "shortcut_bindings":
+		c.ShortcutBindings = nil
+	default:
+		return false
+	}
+	return true
 }
 
 func (a *appConfigAdapter) ReadMeta(key string) prefssync.Meta {

@@ -47,8 +47,10 @@ vault secrets into independent records. Desktop now creates signed sync/vault
 root rotations、persists their tokens in encrypted Peer Space state, stores
 opened keys in Keychain, and can
 recover missing Keychain entries from the device-bound rotation envelope.
-Config-replica bootstrap/writer migration、new-device join transport/UI and the
-actual Peer logical-channel adapter still remain.
+Desktop now also restores a per-Space durable config replica with its signing
+identity and current capability-gated epoch keys without making app startup
+depend on Peer state. Portable-config seeding/writer migration、new-device join
+transport/UI and the actual Peer logical-channel adapter still remain.
 Identity, route metadata and handshake authentication alone do not provide a
 remote connection.
 

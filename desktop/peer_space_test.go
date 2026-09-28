@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -28,7 +29,11 @@ func newTestPeerApp(t *testing.T) (*App, time.Time) {
 	})
 	now := time.Unix(1_800_000_000, 0)
 	storePath := filepath.Join(dir, "peer-space.json")
-	manager := &peerSpaceManager{now: func() time.Time { return now }, bootstrapLockPath: storePath + ".bootstrap.lock"}
+	manager := &peerSpaceManager{
+		now:               func() time.Time { return now },
+		bootstrapLockPath: storePath + ".bootstrap.lock",
+		configRoot:        filepath.Join(dir, "peer-spaces"),
+	}
 	manager.store = peerstore.New(storePath, func() ([]byte, error) {
 		key, err := peerStoreKeySlot().Load()
 		if err != nil {
@@ -47,6 +52,7 @@ func TestConcurrentPeerSpaceBootstrapKeepsOneIdentity(t *testing.T) {
 	otherManager := &peerSpaceManager{
 		now:               func() time.Time { return now },
 		bootstrapLockPath: app.peerSpace.bootstrapLockPath,
+		configRoot:        app.peerSpace.configRoot,
 	}
 	storePath := strings.TrimSuffix(app.peerSpace.bootstrapLockPath, ".bootstrap.lock")
 	otherManager.store = peerstore.New(storePath, func() ([]byte, error) {
@@ -166,6 +172,80 @@ func TestCreatePeerSpacePersistsAndRecoversInitialEpochKeys(t *testing.T) {
 		if _, err := loadPeerEpochKey(status.SpaceID, class); err != nil {
 			t.Fatalf("recovered %s key: %v", class, err)
 		}
+	}
+}
+
+func TestCreatePeerSpaceInitializesDurableConfigReplica(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	status, err := app.CreatePeerSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	if runtime == nil || runtime.replica == nil || runtime.identity == nil {
+		t.Fatal("Peer Space config replica runtime was not initialized")
+	}
+	if runtime.spaceID != status.SpaceID || runtime.identity.PeerID() != status.PeerID {
+		t.Fatalf("config runtime identity mismatch: status=%+v runtime=%+v", status, runtime)
+	}
+	syncKey, ok := runtime.keys[configsync.KeyClassSync]
+	if !ok || syncKey.Epoch != 1 {
+		t.Fatalf("sync epoch key=%+v present=%t", syncKey, ok)
+	}
+	if _, ok := runtime.keys[configsync.KeyClassVault]; !ok {
+		t.Fatal("Space creator config runtime is missing its vault epoch key")
+	}
+
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, syncKey, configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion,
+		Collection:    configsync.CollectionPreferences,
+		RecordID:      "terminal_theme",
+		Kind:          configsync.KindSet,
+		Payload:       []byte(`"dark"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replicaPath := filepath.Join(app.peerSpace.configRoot, status.SpaceID, "config-replica.json")
+	if info, err := os.Stat(replicaPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("config replica file: info=%v err=%v", info, err)
+	}
+
+	app.peerSpace.configReplica = nil
+	reopened, err := app.peerSpace.ensureConfigReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reopened.replica.Vector()[status.PeerID]; got != 1 {
+		t.Fatalf("reopened config vector counter=%d want=1", got)
+	}
+}
+
+func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	status, err := app.CreatePeerSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	syncKey := runtime.keys[configsync.KeyClassSync]
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, syncKey, configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion,
+		Collection:    configsync.CollectionPreferences,
+		RecordID:      "terminal_theme",
+		Kind:          configsync.KindSet,
+		Payload:       []byte(`"dark"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replicaPath := filepath.Join(app.peerSpace.configRoot, status.SpaceID, "config-replica.json")
+	if err := os.WriteFile(replicaPath, []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.peerSpace.configReplica = nil
+
+	app.restorePeerConfigReplica()
+	if startup := app.GetStartupError(); startup.Fatal {
+		t.Fatalf("Peer replica failure became startup-fatal: %+v", startup)
 	}
 }
 

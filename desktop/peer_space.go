@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/attson/atterm/internal/appdir"
@@ -59,7 +60,11 @@ type peerJoinResult struct {
 type peerSpaceManager struct {
 	store             *peerstore.Store
 	bootstrapLockPath string
+	configRoot        string
 	now               func() time.Time
+
+	configMu      sync.Mutex
+	configReplica *peerConfigReplica
 }
 
 func peerIdentityService() string {
@@ -92,7 +97,11 @@ func newPeerSpaceManager() (*peerSpaceManager, error) {
 		return nil, fmt.Errorf("peer space config directory: %w", err)
 	}
 	storePath := filepath.Join(dir, "peer-space.json")
-	m := &peerSpaceManager{now: time.Now, bootstrapLockPath: storePath + ".bootstrap.lock"}
+	m := &peerSpaceManager{
+		now:               time.Now,
+		bootstrapLockPath: storePath + ".bootstrap.lock",
+		configRoot:        filepath.Join(dir, "peer-spaces"),
+	}
 	m.store = peerstore.New(storePath, func() ([]byte, error) {
 		key, err := peerStoreKeySlot().Load()
 		if err != nil {
@@ -166,6 +175,9 @@ func (m *peerSpaceManager) createSpace() (PeerSpaceStatus, error) {
 		if err := m.ensureInitialEpochState(); err != nil {
 			return PeerSpaceStatus{}, err
 		}
+		if _, err := m.ensureConfigReplica(); err != nil {
+			return PeerSpaceStatus{}, err
+		}
 		return status, nil
 	} else if err != nil && !errors.Is(err, peerstore.ErrNotInitialized) {
 		return PeerSpaceStatus{}, err
@@ -194,6 +206,9 @@ func (m *peerSpaceManager) createSpace() (PeerSpaceStatus, error) {
 		return PeerSpaceStatus{}, err
 	}
 	if err := m.ensureInitialEpochState(); err != nil {
+		return PeerSpaceStatus{}, err
+	}
+	if _, err := m.ensureConfigReplica(); err != nil {
 		return PeerSpaceStatus{}, err
 	}
 	return m.status()

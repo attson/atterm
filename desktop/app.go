@@ -538,6 +538,9 @@ func (a *App) startup(ctx context.Context) {
 			return
 		}
 	}
+	// Existing Peer Spaces restore their durable config replica opportunistically.
+	// A damaged or unavailable Peer store must not block local terminals or Relay.
+	a.restorePeerConfigReplica()
 	// Restore the E2EE account_key from the OS keychain if a previous
 	// login persisted one. Failures are logged but never fatal — a
 	// missing or corrupted entry just means the user has to log in

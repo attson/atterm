@@ -15,10 +15,12 @@ import (
 )
 
 type signalDirectionState struct {
-	offer      bool
-	answer     bool
-	iceEnd     bool
-	candidates int
+	offer         bool
+	answer        bool
+	iceEnd        bool
+	fallback      bool
+	fallbackReady bool
+	candidates    int
 }
 
 type signalChannelRole byte
@@ -46,6 +48,11 @@ type SignalChannel struct {
 	handlerMu     sync.RWMutex
 	onSignal      func(*SignalChannel, Signal) error
 	bridgeBound   bool
+	fallbackMu    sync.Mutex
+	fallbackCfg   *WSSFallbackConfig
+	fallback      *WSSChannel
+	fallbackClose func()
+	fallbackDone  chan struct{}
 	closeOnce     sync.Once
 	closeDone     chan struct{}
 	closeErr      error
@@ -93,7 +100,7 @@ func newSignalChannel(conn *websocket.Conn, sealer *peertransport.RecordSealer, 
 		conn: conn, sealer: sealer, opener: opener, remoteMembership: remoteMembership,
 		onSignal: onSignal, onClosed: onClosed, role: role,
 		authorization: authorization, authenticator: authenticator,
-		closeDone: make(chan struct{}), done: make(chan struct{}),
+		closeDone: make(chan struct{}), done: make(chan struct{}), fallbackDone: make(chan struct{}),
 	}
 }
 
@@ -130,10 +137,13 @@ func (c *SignalChannel) SendSignal(ctx context.Context, signal Signal) error {
 		return errors.New("quicktunnel: closed signal channel")
 	default:
 	}
+	if c.activeWSSFallback() != nil {
+		return fmt.Errorf("%w: WSS fallback is active", peertransport.ErrDirectTransport)
+	}
 	if signal.Version == 0 {
 		signal.Version = signalVersion
 	}
-	if err := c.sendState.accept(signal); err != nil {
+	if err := c.sendState.accept(signal, c.role); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(signal)
@@ -182,6 +192,15 @@ func (c *SignalChannel) readLoop(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if fallback := c.activeWSSFallback(); fallback != nil {
+			if !kind.IsDataMessage() {
+				return fmt.Errorf("%w: record kind %d is not valid on WSS fallback", peertransport.ErrDirectTransport, kind)
+			}
+			if err := fallback.receive(kind, plaintext); err != nil {
+				return err
+			}
+			continue
+		}
 		switch kind {
 		case peertransport.RecordSignal:
 			if err := c.deliverSignal(plaintext, &receiveState); err != nil {
@@ -211,8 +230,27 @@ func (c *SignalChannel) deliverSignal(payload []byte, state *signalDirectionStat
 	if err := decodeStrictJSON(payload, &signal); err != nil {
 		return fmt.Errorf("%w: JSON", ErrInvalidSignal)
 	}
-	if err := state.accept(signal); err != nil {
+	senderRole := signalChannelHost
+	if c.role == signalChannelHost {
+		senderRole = signalChannelClient
+	}
+	if err := state.accept(signal, senderRole); err != nil {
 		return err
+	}
+	if signal.Type == SignalWSSFallback {
+		if err := c.acknowledgeWSSFallback(); err != nil {
+			return err
+		}
+		return nil
+	}
+	if signal.Type == SignalWSSReady {
+		if !c.requestedWSSFallback() {
+			return fmt.Errorf("%w: unsolicited WSS ready", ErrInvalidSignal)
+		}
+		if _, err := c.activateWSSFallback(); err != nil {
+			return err
+		}
+		return nil
 	}
 	c.handlerMu.RLock()
 	handler := c.onSignal
@@ -224,6 +262,12 @@ func (c *SignalChannel) deliverSignal(payload []byte, state *signalDirectionStat
 		return fmt.Errorf("handle encrypted signal: %w", err)
 	}
 	return nil
+}
+
+func (c *SignalChannel) requestedWSSFallback() bool {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.sendState.fallback
 }
 
 func (c *SignalChannel) reserveSignalHandler() error {
@@ -262,7 +306,7 @@ func (c *SignalChannel) installSignalHandler(handler func(*SignalChannel, Signal
 	return nil
 }
 
-func (s *signalDirectionState) accept(signal Signal) error {
+func (s *signalDirectionState) accept(signal Signal, senderRole signalChannelRole) error {
 	if signal.Version != signalVersion || !utf8.ValidString(signal.Payload) {
 		return fmt.Errorf("%w: version or encoding", ErrInvalidSignal)
 	}
@@ -287,6 +331,16 @@ func (s *signalDirectionState) accept(signal Signal) error {
 			return fmt.Errorf("%w: ICE end", ErrInvalidSignal)
 		}
 		s.iceEnd = true
+	case SignalWSSFallback:
+		if senderRole != signalChannelClient || s.fallback || signal.Payload != "" {
+			return fmt.Errorf("%w: WSS fallback", ErrInvalidSignal)
+		}
+		s.fallback = true
+	case SignalWSSReady:
+		if senderRole != signalChannelHost || s.fallbackReady || signal.Payload != "" {
+			return fmt.Errorf("%w: WSS ready", ErrInvalidSignal)
+		}
+		s.fallbackReady = true
 	default:
 		return fmt.Errorf("%w: type %q", ErrInvalidSignal, signal.Type)
 	}

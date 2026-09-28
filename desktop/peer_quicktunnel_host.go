@@ -28,6 +28,13 @@ type peerQuickTunnelManager interface {
 	Status() quicktunnel.Status
 }
 
+type peerQuickTunnelChannel interface {
+	SendRecord(context.Context, peertransport.RecordKind, []byte) error
+	SendFrame(context.Context, []byte) error
+	SendConfigMessage(context.Context, peertransport.RecordKind, []byte) error
+	RemoteMembershipToken() (string, bool)
+}
+
 // PeerQuickTunnelStatus is the Desktop-visible lifecycle state. Starting the
 // host is always explicit; constructing App never opens a public route.
 type PeerQuickTunnelStatus struct {
@@ -56,7 +63,7 @@ type peerQuickTunnelAttempt struct {
 
 	mu                sync.Mutex
 	transport         *peertransport.PionHostAttempt
-	channel           *peertransport.PionHostChannel
+	channel           peerQuickTunnelChannel
 	config            *peerConfigChannel
 	remoteMembership  string
 	streamCtx         context.Context
@@ -213,6 +220,21 @@ func (h *peerQuickTunnelHost) onAuthenticated(signal *quicktunnel.SignalChannel)
 		WebRTC: webrtc.Configuration{ICEServers: []webrtc.ICEServer{{
 			URLs: []string{"stun:stun.cloudflare.com:3478"},
 		}}},
+		WSSFallback: &quicktunnel.WSSFallbackConfig{
+			OnAuthenticated: func(channel *quicktunnel.WSSChannel) {
+				if err := attempt.start(parent, channel); err != nil {
+					logWarn("quick-tunnel", "Peer WSS fallback start failed session=%s: %v", binding.SessionID, err)
+					go h.removeAttempt(signal)
+				}
+			},
+			OnRecord: func(kind peertransport.RecordKind, payload []byte) {
+				if err := attempt.handleRecord(parent, kind, payload); err != nil {
+					logWarn("quick-tunnel", "Peer WSS record rejected session=%s: %v", binding.SessionID, err)
+					go h.removeAttempt(signal)
+				}
+			},
+			OnConfigMessage: attempt.handleConfigMessage,
+		},
 		OnAuthenticated: func(channel *peertransport.PionHostChannel) {
 			if err := attempt.start(parent, channel); err != nil {
 				logWarn("quick-tunnel", "Peer session start failed session=%s: %v", binding.SessionID, err)
@@ -226,9 +248,6 @@ func (h *peerQuickTunnelHost) onAuthenticated(signal *quicktunnel.SignalChannel)
 			}
 		},
 		OnConfigMessage: attempt.handleConfigMessage,
-		OnClosed: func(error) {
-			h.removeAttempt(signal)
-		},
 	})
 	if err != nil {
 		h.removeAttempt(signal)
@@ -259,7 +278,7 @@ func (h *peerQuickTunnelHost) takeAttempt(signal *quicktunnel.SignalChannel) *pe
 	return attempt
 }
 
-func (a *peerQuickTunnelAttempt) start(parent context.Context, channel *peertransport.PionHostChannel) error {
+func (a *peerQuickTunnelAttempt) start(parent context.Context, channel peerQuickTunnelChannel) error {
 	remoteMembership, ok := channel.RemoteMembershipToken()
 	if !ok {
 		return errors.New("Peer membership is unavailable after authentication")
@@ -302,7 +321,7 @@ func (a *peerQuickTunnelAttempt) start(parent context.Context, channel *peertran
 	return nil
 }
 
-func (a *peerQuickTunnelAttempt) stream(ctx context.Context, channel *peertransport.PionHostChannel, sub *session.Subscriber, replayToSeq uint64) {
+func (a *peerQuickTunnelAttempt) stream(ctx context.Context, channel peerQuickTunnelChannel, sub *session.Subscriber, replayToSeq uint64) {
 	for {
 		select {
 		case <-ctx.Done():

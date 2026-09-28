@@ -17,6 +17,7 @@ const pionSignalWriteTimeout = 10 * time.Second
 // signaling channel that answers an existing Pion direct attempt.
 type PionHostBridgeConfig struct {
 	WebRTC          webrtc.Configuration
+	WSSFallback     *WSSFallbackConfig
 	OnAuthenticated func(*peertransport.PionHostChannel)
 	OnRecord        func(peertransport.RecordKind, []byte)
 	OnConfigMessage func(peertransport.RecordKind, []byte) error
@@ -27,6 +28,7 @@ type PionHostBridgeConfig struct {
 // signaling channel that initiates an existing Pion direct attempt.
 type PionClientBridgeConfig struct {
 	WebRTC          webrtc.Configuration
+	WSSFallback     *WSSFallbackConfig
 	OnAuthenticated func(*peertransport.PionClientChannel)
 	OnRecord        func(peertransport.RecordKind, []byte)
 	OnConfigMessage func(peertransport.RecordKind, []byte) error
@@ -46,7 +48,12 @@ func (c *SignalChannel) BridgePionHost(parent context.Context, cfg PionHostBridg
 			c.releaseSignalHandlerReservation()
 		}
 	}()
-	link := &pionSignalLink{channel: c}
+	if cfg.WSSFallback != nil {
+		if err := c.BindWSSFallback(*cfg.WSSFallback); err != nil {
+			return nil, err
+		}
+	}
+	link := &pionSignalLink{channel: c, keepSignalForFallback: cfg.WSSFallback != nil}
 	attempt, err := peertransport.NewPionHostAttempt(parent, peertransport.PionHostConfig{
 		Authorization: c.authorization,
 		Authenticator: c.authenticator,
@@ -76,6 +83,9 @@ func (c *SignalChannel) BridgePionHost(parent context.Context, cfg PionHostBridg
 		return nil, err
 	}
 	reserved = false
+	if cfg.WSSFallback != nil {
+		c.setFallbackCloser(func() { _ = attempt.Close() })
+	}
 	link.activate()
 	c.closePionWithSignal(attempt)
 	return attempt, nil
@@ -94,7 +104,12 @@ func (c *SignalChannel) BridgePionClient(parent context.Context, cfg PionClientB
 			c.releaseSignalHandlerReservation()
 		}
 	}()
-	link := &pionSignalLink{channel: c}
+	if cfg.WSSFallback != nil {
+		if err := c.BindWSSFallback(*cfg.WSSFallback); err != nil {
+			return nil, err
+		}
+	}
+	link := &pionSignalLink{channel: c, keepSignalForFallback: cfg.WSSFallback != nil}
 	attempt, err := peertransport.NewPionClientAttempt(parent, peertransport.PionClientConfig{
 		Authorization: c.authorization,
 		Authenticator: c.authenticator,
@@ -125,6 +140,9 @@ func (c *SignalChannel) BridgePionClient(parent context.Context, cfg PionClientB
 		return nil, err
 	}
 	reserved = false
+	if cfg.WSSFallback != nil {
+		c.setFallbackCloser(func() { _ = attempt.Close() })
+	}
 	link.activate()
 	c.closePionWithSignal(attempt)
 	if err := attempt.Start(); err != nil {
@@ -175,15 +193,19 @@ func (c *SignalChannel) closePionWithSignal(attempt pionAttempt) {
 type pionSignalLink struct {
 	channel *SignalChannel
 
-	mu     sync.Mutex
-	active bool
-	closed bool
+	mu                    sync.Mutex
+	active                bool
+	closed                bool
+	keepSignalForFallback bool
 }
 
 func (l *pionSignalLink) activate() {
 	l.mu.Lock()
 	l.active = true
 	closeSignal := l.closed
+	if l.keepSignalForFallback {
+		closeSignal = false
+	}
 	l.mu.Unlock()
 	if closeSignal {
 		go func() { _ = l.channel.Close() }()
@@ -194,6 +216,9 @@ func (l *pionSignalLink) pionClosed() {
 	l.mu.Lock()
 	l.closed = true
 	closeSignal := l.active
+	if l.keepSignalForFallback {
+		closeSignal = false
+	}
 	l.mu.Unlock()
 	if closeSignal {
 		go func() { _ = l.channel.Close() }()

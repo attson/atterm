@@ -1053,19 +1053,32 @@ deny-wins revocation、client/host membership、host identity 归属、session s
 这些字段与 `attempt_id`、`ticket`、`session_id`、`client_instance_id` 一起构成现有
 Peer membership handshake 的 exact `Authorization`；authorization lifetime 是 30 秒。随后双方在
 同一 WebSocket 上交换四步 binary handshake，派生方向隔离的 XChaCha20-Poly1305 record keys。
-handshake 完成后只接受 encrypted `SIGNAL` / `SIGNAL_FRAGMENT` record，其他 record kind、text
-message、AEAD 篡改、sequence gap 或上层校验失败都会关闭 channel。
+handshake 完成后的初始 signaling 模式只接受 encrypted `SIGNAL` / `SIGNAL_FRAGMENT` record；
+text message、AEAD 篡改、sequence gap 或上层校验失败都会关闭 channel。
 
-`Signal.type` 只允许 `offer`、`answer`、`ice_candidate`、`ice_end`。每个方向最多一个 offer、
-一个 answer、64 个 ICE candidate 和一个 `ice_end`；offer/answer payload 最大 32 KiB，candidate
-最大 8 KiB，`ice_end.payload` 必须为空。单个序列化 signal 最大 64 KiB。
+WebRTC signaling 的 `Signal.type` 允许 `offer`、`answer`、`ice_candidate`、`ice_end`。每个方向
+最多一个 offer、一个 answer、64 个 ICE candidate 和一个 `ice_end`；offer/answer payload 最大
+32 KiB，candidate 最大 8 KiB，`ice_end.payload` 必须为空。单个序列化 signal 最大 64 KiB。
+客户端只有在用户允许 fallback 时才可发送一次空 payload 的 `wss_fallback`；主机确认支持后先
+回复一次空 payload 的 `wss_ready`。`wss_fallback` 只允许 client→host，`wss_ready` 只允许
+host→client。两端利用 WebSocket 的有序交付，在 ready record 收发完成后才切换模式，避免主机
+replay 早于客户端切换而被误判成 signaling record。
 
 完成 signaling handshake 后，其 exact `Authorization` 与 Peer authenticator 可以驱动现有 Pion
 host/client attempt。offer/answer 只经上述 encrypted signal record 交换；Pion DataChannel 建立后
 仍执行自己的一次四步 membership handshake，使用新的 ephemeral ECDH 和独立 record counters，
 不复用 signaling channel 的 traffic key/nonce。`SIGNAL` / `SIGNAL_FRAGMENT` 在 Pion DataChannel
-上必须拒绝，反之 signaling WebSocket 也只接受这两种 kind。任一侧 signaling channel 关闭会回收
-关联 Pion attempt；Pion 失败/关闭也会关闭 signaling channel。
+上必须拒绝。未启用 fallback 时，Pion 失败/关闭会关闭 signaling channel；启用 fallback 后保留
+该 channel，等待客户端的显式 fallback 决策。
+
+收到 `wss_ready` 后，同一 WebSocket 切换到 WSS data 模式，复用首次 signaling membership
+handshake 已派生的 traffic key、nonce counter 和 exact remote membership，不再执行第二次
+handshake。此后只接受 `FRAME`..`CONFIG_FRAGMENT`（`0x01..0x0a`），任何 signaling record
+或未知类型都 fail closed。terminal/config 的 fragmentation 与 reassembly 规则和 DataChannel
+完全相同；配置授权仍绑定 handshake 的 exact membership。WSS writer 使用有界队列，在每个
+encrypted record 边界按 `input/control > terminal output > config sync` 调度；同一 fragmented
+logical message 内保持同级连续，允许更高优先级 record 在 terminal/config 两套独立 reassembler
+之间抢占。Cloudflare 只能观察连接元数据、时序和 ciphertext size，不能读取 record plaintext。
 
 Desktop 只在显式调用 `StartPeerQuickTunnel` 后启动 `cloudflared`，不会随 app 启动自动发布
 公网入口。gateway 挂载上述 Peer handler；DataChannel 第二次 membership handshake 完成后，
@@ -1082,8 +1095,9 @@ callback，绝不创建第二个 terminal subscriber。
 由当前 active local membership 签发的 invitation 发布当前 Quick Tunnel URL；空 invitation
 生成 member reconnect bundle。URL 轮换生成新的 bundle id/route，genesis、ticket 和 durable
 membership 不变。`StopPeerQuickTunnel` 关闭 active Pion/subscriber、loopback gateway 和
-`cloudflared`，但不删除 Peer trust，可再次显式启动。当前尚未实现 terminal/config WSS
-fallback、join/bootstrap UI 或 Web/iOS client 接入。
+`cloudflared`，但不删除 Peer trust，可再次显式启动。WSS fallback 复用上述同一个 Session attach、
+权限热检查和 config anti-entropy 路径；config 仍不创建第二个 terminal subscriber。当前尚未实现
+join/bootstrap UI 或 Web/iOS client 接入，因此还没有端用户入口来触发 fallback consent。
 
 ## 重连与续传
 

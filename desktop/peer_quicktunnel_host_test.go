@@ -251,6 +251,94 @@ func TestPeerQuickTunnelHostAttachesLocalSessionAndConfigChannel(t *testing.T) {
 	}
 }
 
+func TestPeerQuickTunnelHostWSSFallbackAttachesLocalSession(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	server := httptest.NewServer(fixture.peerHost.handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	records := make(chan directClientRecord, 16)
+	configMessages := make(chan peerConfigTestRecord, 8)
+	signal, err := quicktunnel.Dial(ctx, quicktunnel.ClientConfig{
+		URL: server.URL, AllowInsecure: true, Identity: fixture.clientIdentity,
+		GenesisToken: fixture.genesisToken, ClientMembershipToken: fixture.clientMembership,
+		HostMembershipToken: fixture.hostMembership, SessionID: fixture.session.ID,
+		ClientInstanceID: "peer-wss-client",
+	})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer signal.Close()
+	if err := signal.BindWSSFallback(quicktunnel.WSSFallbackConfig{
+		OnRecord: func(kind peertransport.RecordKind, payload []byte) {
+			records <- directClientRecord{kind: kind, payload: append([]byte(nil), payload...)}
+		},
+		OnConfigMessage: func(kind peertransport.RecordKind, payload []byte) error {
+			configMessages <- peerConfigTestRecord{kind: kind, payload: append([]byte(nil), payload...)}
+			return nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := signal.StartWSSFallback(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotOutput, gotReady, gotInventory bool
+	for !gotOutput || !gotReady || !gotInventory {
+		select {
+		case record := <-records:
+			switch record.kind {
+			case peertransport.RecordDirectReady:
+				gotReady = true
+			case peertransport.RecordFrame:
+				frame, err := proto.Unmarshal(record.payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if frame.Type == proto.TypeOut {
+					gotOutput = true
+				}
+			}
+		case record := <-configMessages:
+			if record.kind == peertransport.RecordConfigInventory {
+				gotInventory = true
+			}
+		case <-ctx.Done():
+			t.Fatal("WSS terminal replay/config inventory not received")
+		}
+	}
+	if got := fixture.session.SubscriberCount(); got != 1 {
+		t.Fatalf("WSS terminal subscribers = %d, want exactly one", got)
+	}
+
+	claimPayload, _ := json.Marshal(proto.ClaimDriverPayload{ClientID: "peer-wss-client", ClientName: "Peer WSS test"})
+	if err := client.SendFrame(ctx, proto.Marshal(proto.Frame{
+		Type: proto.TypeClaimDriver, SessionID: fixture.session.ID, Payload: claimPayload,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for fixture.session.DriverClientID() != "peer-wss-client" && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if err := client.SendFrame(ctx, proto.Marshal(proto.Frame{
+		Type: proto.TypeIn, SessionID: fixture.session.ID, Payload: []byte("wss input"),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case frame := <-fixture.session.Inbound():
+		if frame.Type != proto.TypeIn || !bytes.Equal(frame.Payload, []byte("wss input")) {
+			t.Fatalf("WSS local inbound = %+v", frame)
+		}
+	case <-ctx.Done():
+		t.Fatal("WSS input did not reach local session")
+	}
+}
+
 func TestPeerQuickTunnelHostViewGrantCannotClaimDriver(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionView)
 	server := httptest.NewServer(fixture.peerHost.handler)

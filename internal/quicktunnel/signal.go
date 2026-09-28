@@ -64,6 +64,8 @@ const (
 	SignalAnswer       SignalType = "answer"
 	SignalICECandidate SignalType = "ice_candidate"
 	SignalICEEnd       SignalType = "ice_end"
+	SignalWSSFallback  SignalType = "wss_fallback"
+	SignalWSSReady     SignalType = "wss_ready"
 )
 
 // Signal is a bounded WebRTC negotiation message.

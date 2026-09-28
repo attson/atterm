@@ -131,9 +131,19 @@ reconnect ConnectionBundles for the current URL; route rotation changes only
 the bundle/route, and revoked/consumed/expired invitations cannot be published.
 Start remains explicit and restartable, while app shutdown owns cleanup. Real
 loopback WebSocket + two-stage Peer handshake + Pion + Session tests cover the
-path under the race detector. terminal/config WSS fallback、join/bootstrap UI
-and Web/iOS client wiring are still not implemented, so this slice exposes the
-host foundation but not yet a complete end-user accountless workflow.
+path under the race detector. The fourth PR 2.4 slice now adds the
+application-encrypted WSS data path on the same authenticated Quick Tunnel
+socket. An explicit client `wss_fallback`
+request and ordered host `wss_ready` acknowledgement prevent replay from racing
+the mode switch. The route reuses the signaling handshake's exact membership
+and directional record keys, then accepts only existing terminal/config record
+kinds with the same isolated reassemblers. A bounded record scheduler enforces
+control/input over terminal output over config sync while keeping fragments of
+the same logical message contiguous within a priority. Desktop routes WSS and
+Pion through the same Session、permission、driver and anti-entropy adapter, and a
+real loopback test confirms replay/input/config plus exactly one terminal
+subscriber. Join/bootstrap UI and Web/iOS client wiring remain pending, so the
+fallback consent API is not yet user reachable.
 
 ## Why Quick Tunnel Before Rendezvous
 

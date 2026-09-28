@@ -57,6 +57,18 @@ func (k RecordKind) dataChannelMessage() bool {
 	return k >= RecordFrame && k <= RecordConfigFragment
 }
 
+// IsConfigMessage reports whether a record carries one complete config
+// anti-entropy message rather than a fragment or terminal payload.
+func (k RecordKind) IsConfigMessage() bool {
+	return k.configMessage()
+}
+
+// IsDataMessage reports whether a record kind is valid on an authenticated
+// terminal/config data path, including its fragment kinds.
+func (k RecordKind) IsDataMessage() bool {
+	return k.dataChannelMessage()
+}
+
 // RecordSealer emits strictly increasing records for one direction.
 type RecordSealer struct {
 	aead           cipher.AEAD

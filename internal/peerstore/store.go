@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -22,24 +23,28 @@ import (
 )
 
 const (
-	Version                 = 4
+	Version                 = 5
 	legacyStateVersion      = 1
 	legacyRevocationVersion = 2
 	legacyEpochVersion      = 3
+	legacyPendingVersion    = 4
 	encryptedEnvelopeV1     = 1
 	maxStoreSize            = 4 << 20
 	maxPendingConfigSize    = 1 << 20
+	maxMembershipCandidates = 256
 	lockTimeout             = 5 * time.Second
 	staleLockAge            = 30 * time.Second
 )
 
 var (
-	ErrNotInitialized = errors.New("peerstore: not initialized")
-	ErrAlreadyExists  = errors.New("peerstore: space already exists")
-	ErrInviteInvalid  = errors.New("peerstore: invitation invalid")
-	ErrInviteConsumed = errors.New("peerstore: invitation already consumed")
-	ErrInviteRevoked  = errors.New("peerstore: invitation revoked")
-	ErrPendingExists  = errors.New("peerstore: pending config import already exists")
+	ErrNotInitialized  = errors.New("peerstore: not initialized")
+	ErrAlreadyExists   = errors.New("peerstore: space already exists")
+	ErrInviteInvalid   = errors.New("peerstore: invitation invalid")
+	ErrInviteConsumed  = errors.New("peerstore: invitation already consumed")
+	ErrInviteRevoked   = errors.New("peerstore: invitation revoked")
+	ErrPendingExists   = errors.New("peerstore: pending config import already exists")
+	ErrMembershipFork  = errors.New("peerstore: membership serial fork")
+	ErrMembershipLimit = errors.New("peerstore: membership candidate limit reached")
 )
 
 var storeAAD = []byte("atterm-peer-store-v1")
@@ -65,6 +70,7 @@ type State struct {
 	Version             int              `json:"version"`
 	GenesisToken        string           `json:"genesis_token"`
 	LocalMembership     string           `json:"local_membership"`
+	Memberships         []string         `json:"memberships,omitempty"`
 	Invitations         []Invitation     `json:"invitations"`
 	Revocations         []string         `json:"revocations,omitempty"`
 	EpochRotations      []string         `json:"epoch_rotations,omitempty"`
@@ -112,11 +118,45 @@ func (s *Store) Initialize(state State) error {
 		}
 		state.UpdatedAt = state.CreatedAt
 		state.Invitations = append([]Invitation(nil), state.Invitations...)
+		state.Memberships = append([]string(nil), state.Memberships...)
 		state.Revocations = append([]string(nil), state.Revocations...)
 		state.EpochRotations = append([]string(nil), state.EpochRotations...)
 		state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
 		return s.writeLocked(state)
 	})
+}
+
+// ApplyMemberships verifies and atomically retains membership certificates.
+// Exact token retries are harmless; a reused serial with different signed
+// bytes is rejected as a fork.
+func (s *Store) ApplyMemberships(tokens []string, now time.Time) (int, error) {
+	if len(tokens) == 0 || len(tokens) > maxMembershipCandidates || now.Unix() <= 0 {
+		return 0, ErrMembershipLimit
+	}
+	stored := 0
+	err := s.mutate(func(state *State) error {
+		before := make(map[string]struct{}, len(state.Memberships))
+		for _, token := range state.Memberships {
+			before[token] = struct{}{}
+		}
+		state.Memberships = append(state.Memberships, tokens...)
+		if err := materializeMemberships(state); err != nil {
+			return err
+		}
+		for _, token := range state.Memberships {
+			if _, exists := before[token]; !exists {
+				stored++
+			}
+		}
+		if stored != 0 {
+			state.UpdatedAt = now.Unix()
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return stored, nil
 }
 
 // SavePendingConfigImport stores a pre-join local snapshot exactly once. A
@@ -413,23 +453,27 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("peerstore: decrypt: %w", err)
 	}
 	var state State
-	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != legacyEpochVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
+	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != legacyEpochVersion && state.Version != legacyPendingVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
 		return State{}, fmt.Errorf("peerstore: invalid state")
 	}
 	if len(state.PendingConfigImport) > maxPendingConfigSize {
 		return State{}, fmt.Errorf("peerstore: pending config import exceeds size limit")
 	}
-	// v2 adds signed revocations, v3 adds signed epoch rotations, and v4 adds
-	// an opaque pending-config import. The
+	// v2 adds signed revocations, v3 adds signed epoch rotations, v4 adds an
+	// opaque pending-config import, and v5 adds the membership directory. The
 	// encrypted envelope and its AAD stay at v1 so existing stores migrate
 	// without decrypt-and-rewrap glue.
 	state.Version = Version
 	state.Invitations = append([]Invitation(nil), state.Invitations...)
+	state.Memberships = append([]string(nil), state.Memberships...)
 	state.Revocations = append([]string(nil), state.Revocations...)
 	state.EpochRotations = append([]string(nil), state.EpochRotations...)
 	state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
 	state.RevokedMembers = cloneMap(state.RevokedMembers)
 	state.RevokedGrantSerials = cloneMap(state.RevokedGrantSerials)
+	if err := materializeMemberships(&state); err != nil {
+		return State{}, err
+	}
 	if len(state.Revocations) != 0 {
 		genesis, set, err := buildRevocationSet(state)
 		if err != nil {
@@ -445,6 +489,9 @@ func (s *Store) loadLocked() (State, error) {
 func (s *Store) writeLocked(state State) error {
 	if len(state.PendingConfigImport) > maxPendingConfigSize {
 		return fmt.Errorf("peerstore: pending config import exceeds size limit")
+	}
+	if err := materializeMemberships(&state); err != nil {
+		return err
 	}
 	state.Version = Version
 	plaintext, err := json.Marshal(state)
@@ -498,6 +545,80 @@ func (s *Store) writeLocked(state State) error {
 		return fmt.Errorf("replace peer store: %w", err)
 	}
 	return nil
+}
+
+func materializeMemberships(state *State) error {
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		// Legacy unit fixtures predate signed Peer documents. Preserve their
+		// opaque values, but never use this compatibility path for a real Space.
+		state.Memberships = deduplicateStrings(state.Memberships)
+		return nil
+	}
+	tokens := make([]string, 0, len(state.Memberships)+len(state.Invitations)+1)
+	tokens = append(tokens, state.Memberships...)
+	tokens = append(tokens, state.LocalMembership)
+	for _, invitation := range state.Invitations {
+		if invitation.IssuedMembership != "" {
+			tokens = append(tokens, invitation.IssuedMembership)
+		}
+	}
+	byToken := make(map[string]peerproto.VerifiedGrant, len(tokens))
+	bySerial := make(map[string]string, len(tokens))
+	for len(tokens) != 0 {
+		token := tokens[0]
+		tokens = tokens[1:]
+		if _, duplicate := byToken[token]; duplicate {
+			continue
+		}
+		membership, err := peerproto.VerifyGrantAtIssuance(token, genesis)
+		if err != nil {
+			return fmt.Errorf("peerstore: verify membership: %w", err)
+		}
+		if existing, ok := bySerial[membership.Document.Serial]; ok && existing != token {
+			return ErrMembershipFork
+		}
+		if len(byToken) >= maxMembershipCandidates {
+			return ErrMembershipLimit
+		}
+		byToken[token] = membership
+		bySerial[membership.Document.Serial] = token
+		if membership.Document.IssuerMembership != "" {
+			tokens = append(tokens, membership.Document.IssuerMembership)
+		}
+	}
+	memberships := make([]peerproto.VerifiedGrant, 0, len(byToken))
+	for _, membership := range byToken {
+		memberships = append(memberships, membership)
+	}
+	sort.Slice(memberships, func(i, j int) bool {
+		left, right := memberships[i], memberships[j]
+		if left.Document.IssuedAt != right.Document.IssuedAt {
+			return left.Document.IssuedAt < right.Document.IssuedAt
+		}
+		if left.Document.Serial != right.Document.Serial {
+			return left.Document.Serial < right.Document.Serial
+		}
+		return left.Token < right.Token
+	})
+	state.Memberships = make([]string, len(memberships))
+	for index := range memberships {
+		state.Memberships[index] = memberships[index].Token
+	}
+	return nil
+}
+
+func deduplicateStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s *Store) aead() (cipher.AEAD, error) {

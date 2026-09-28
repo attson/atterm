@@ -132,6 +132,18 @@ func (r *peerConfigSyncReceiver) persistPending() error {
 	for len(r.pending) != 0 {
 		item := r.pending[0]
 		switch item.Kind {
+		case configsync.AntiEntropyMembership:
+			count := 1
+			tokens := []string{item.Token}
+			for count < len(r.pending) && r.pending[count].Kind == configsync.AntiEntropyMembership {
+				tokens = append(tokens, r.pending[count].Token)
+				count++
+			}
+			if _, err := r.manager.store.ApplyMemberships(tokens, r.manager.now()); err != nil {
+				return fmt.Errorf("apply Peer config membership: %w", err)
+			}
+			r.pending = r.pending[count:]
+			continue
 		case configsync.AntiEntropySnapshot:
 			if err := r.persistSnapshot(item.Token); err != nil {
 				return err

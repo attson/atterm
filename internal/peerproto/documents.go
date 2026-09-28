@@ -268,6 +268,20 @@ func VerifyGrant(token string, genesis VerifiedGenesis, now time.Time) (Verified
 	return verifyGrant(token, genesis, now, 0)
 }
 
+// VerifyGrantAtIssuance verifies an immutable membership at its signed issue
+// time. It is used only to retain historical directory entries; callers must
+// still use VerifyGrant with the current time before granting access.
+func VerifyGrantAtIssuance(token string, genesis VerifiedGenesis) (VerifiedGrant, error) {
+	var doc DeviceGrant
+	if _, _, err := parseDocument(membershipPrefix, token, &doc); err != nil {
+		return VerifiedGrant{}, err
+	}
+	if doc.IssuedAt <= 0 {
+		return VerifiedGrant{}, fmt.Errorf("%w: membership time", ErrInvalidDocument)
+	}
+	return verifyGrant(token, genesis, time.Unix(doc.IssuedAt, 0), 0)
+}
+
 func verifyGrant(token string, genesis VerifiedGenesis, now time.Time, chainDepth int) (VerifiedGrant, error) {
 	if chainDepth > 8 {
 		return VerifiedGrant{}, fmt.Errorf("%w: membership chain too deep", ErrInvalidDocument)
@@ -301,6 +315,9 @@ func verifyGrant(token string, genesis VerifiedGenesis, now time.Time, chainDept
 		}
 		issuer, err := verifyGrant(doc.IssuerMembership, genesis, now, chainDepth+1)
 		if err != nil {
+			if errors.Is(err, ErrExpired) {
+				return VerifiedGrant{}, fmt.Errorf("issuer membership: %w", err)
+			}
 			return VerifiedGrant{}, fmt.Errorf("%w: issuer membership: %v", ErrInvalidDocument, err)
 		}
 		if issuer.Document.SubjectPeerID != doc.IssuerPeerID {

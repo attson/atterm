@@ -73,9 +73,16 @@ keys, and returns a separate transfer cursor plus durable vector. Exact snapshot
 and completed-batch retries are idempotent. The receiver has no session/uplink
 dependency, so config exchange cannot create a PTY subscriber. The remaining
 transport work must supply the exact membership token already authenticated by
-the Peer handshake; it must not accept a caller-selected token. Multi-member
-rotations beyond locally known membership/issuer chains still require the
-planned replicated membership directory before network wiring. Relay
+the Peer handshake; it must not accept a caller-selected token. The encrypted
+Peer store now also retains a bounded, signature-verified grow-only membership
+directory with serial-fork protection and v1-v4 derivation. Anti-entropy sends
+missing membership tokens before snapshots and tail operations, so a device can
+authorize sibling actors and exact multi-member rotation recipient sets without
+a central directory. Current views choose one deterministic active grant per
+peer and apply member/grant revocation deny-wins; expired and revoked grants do
+not enter rotation recipients. This receiver/planner path remains un-wired, so
+the transport adapter must advertise and send the stored membership inventory.
+Relay
 compatibility hash/timestamp/record-ref state is persisted per Space and realm
 with cross-process transactional updates. Canonical winners can now be
 decrypted by exact epoch、grouped per legacy key and materialized back into

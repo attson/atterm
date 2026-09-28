@@ -905,6 +905,15 @@ record 原地新增 ECDH key pair，不轮换 signing key 或 `peer_id`。iOS v2
 private key 只序列化到 Keychain，运行时重新导入为 non-exportable key；v1 迁移同样只新增
 wrapping identity。
 
+Peer Space 的加密本地 state schema v5 增加 grow-only `memberships[]` 目录（最多 256 个候选）。
+新建 Space、邀请核销和读取 v1-v4 state 时，都会从 local membership、已核销 invitation 以及
+每个 token 内嵌的 issuer chain 补齐目录；真实 genesis 下每个 token 必须按签发时刻验证完整签名
+与 capability narrowing。同一 token 重放幂等，同一 membership serial 对应不同有效 token 时整批
+fail closed。历史 token 即使已经过期仍留在目录用于 anti-entropy，但当前授权和 rotation recipient
+view 会按当前时间重新验证，只选择每个 peer 的 canonical active grant（最新 `issued_at`，再按
+serial/token 确定性决胜），不会合并多个 grant 的 capability。member/grant revocation 在 canonical
+选择后执行 deny-wins；canonical grant 被撤销时不会回退到同一 peer 的旧 grant。
+
 `arv1` revocation 是不可变 grow-only governance operation，包含 `revocation_id`、Space/genesis
 锚、kind、target、actor membership 和创建时间。`member` 撤销永久拒绝 peer identity，`grant`
 撤销拒绝单个 membership serial；两者要求 actor 具有 `permission=full && can_invite=true`。
@@ -914,8 +923,9 @@ un-revoke，也不走普通配置 LWW；重复 token 幂等，同一 `revocation
 fail closed。设备保留全部 token 供后续 anti-entropy，并从中派生 member/grant deny map；本地
 redemption ledger 只把 actor membership 与本机 membership 完全一致的 batch 撤销应用到未消费
 ticket。已消费 invitation 对应的 membership 不会因 batch 撤销失效，必须显式发布 member/grant
-撤销。当前撤销日志和派生集合随加密 `peer-space.json` 原子持久化。明文 state schema 为 v2；
-读取 v1 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏已有本地 Space。
+撤销。当前 membership 目录、撤销日志和派生集合随加密 `peer-space.json` 原子持久化。明文 state
+schema 为 v5；读取 v1-v4 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏
+已有本地 Space。
 
 `akr1` rotation document 包含 `rotation_id`、`space_id`、`key_class`、
 `previous_epoch`、`previous_rotation_hash`、新 `epoch`、epoch key 的 SHA-256 commitment、
@@ -932,12 +942,14 @@ serial、membership 中的 wrapping public key 与 `ake1` envelope，缺少、�
 `ake1` 后还要核对 key commitment，防止同一 rotation 给不同 recipient 包裹不同 epoch key。
 
 配置与治理状态通过 transport-independent anti-entropy JSON 消息交换，不占用 Relay
-`proto.Type`。接收端先发送 `AntiEntropyInventory{v,space_id,vector,revocation_hashes,
-rotation_hashes}`：config history 用 contiguous version vector 摘要，grow-only `arv1`/`akr1`
-候选用排序且去重的 SHA-256 token hash 清单摘要（每类最多 4096）。发送端从同一 durable
-snapshot 生成不可变 plan，并严格按 `snapshot → config operation → revocation → rotation`
-输出。默认 batch 上限 256 KiB，可协商范围 1 KiB–16 MiB；上限按完整 JSON 编码后的实际字节数
-检查，不按 token 原始长度估算。
+`proto.Type`。接收端先发送 `AntiEntropyInventory{v,space_id,vector,membership_hashes,
+revocation_hashes,rotation_hashes}`：config history 用 contiguous version vector 摘要，grow-only
+`apm1`/`arv1`/`akr1` 候选用排序且去重的 SHA-256 token hash 清单摘要（membership 最多 256，
+revocation/rotation 每类最多 4096）。发送端从同一 durable snapshot 生成不可变 plan，并严格按
+`membership → snapshot → config operation → revocation → rotation` 输出，使接收端在校验 snapshot
+creator、operation actor 和 rotation recipients 前先原子持久化新成员目录。默认 batch 上限
+256 KiB，可协商范围 1 KiB–16 MiB；上限按完整 JSON 编码后的实际字节数检查，不按 token 原始
+长度估算。
 
 每个 batch 带 `start` cursor、可选 `next` cursor、`done`、发送端 durable ack frontier 和若干
 `{kind,token_hash,offset,total,data}` chunk。超过 batch 上限的单个 signed token（包括最大 32 MiB

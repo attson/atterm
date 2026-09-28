@@ -996,6 +996,17 @@ func TestRedeemPeerJoinRequestIsIdempotentAndRejectsReplay(t *testing.T) {
 	if !bytes.Equal(membership.WrappingPublicKey, joiningWrapping.PublicBytes()) {
 		t.Fatal("joined membership did not retain wrapping public key")
 	}
+	state, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, token := range state.Memberships {
+		found = found || token == first.MembershipToken
+	}
+	if !found {
+		t.Fatal("redeemed membership was not added to the directory")
+	}
 
 	replayIdentity, err := peercrypto.GenerateIdentity()
 	if err != nil {

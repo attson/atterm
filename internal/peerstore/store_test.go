@@ -2,6 +2,7 @@ package peerstore
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,72 @@ import (
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 )
+
+type membershipStoreFixture struct {
+	creator           *peercrypto.Identity
+	genesis           peerproto.VerifiedGenesis
+	creatorMembership peerproto.VerifiedGrant
+	childMembership   string
+	now               time.Time
+}
+
+func newMembershipStoreFixture(t *testing.T) membershipStoreFixture {
+	t.Helper()
+	now := time.Unix(1_800_000_000, 0)
+	creator, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	creatorWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesisToken, creatorToken, err := peerproto.NewSpace(creator, creatorWrapping.PublicBytes(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(genesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creatorMembership, err := peerproto.VerifyGrant(creatorToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tickets, err := peerproto.NewInvitationBatch(creator, genesis, creatorMembership, now, peerproto.InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	childWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinToken, err := peerproto.NewJoinRequest(child, childWrapping.PublicBytes(), tickets[0], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	join, err := peerproto.VerifyJoinRequest(joinToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childMembership, err := peerproto.IssueMembership(creator, genesis, creatorMembership, join, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return membershipStoreFixture{
+		creator: creator, genesis: genesis, creatorMembership: creatorMembership,
+		childMembership: childMembership, now: now,
+	}
+}
+
+func membershipDigest(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
 
 func testStore(t *testing.T) (*Store, []byte) {
 	t.Helper()
@@ -54,6 +121,145 @@ func TestEncryptedStoreAndAtomicConsumption(t *testing.T) {
 	}
 	if state.Invitations[0].ConsumedByPeerID != "consumer-peer" {
 		t.Fatalf("consumed by = %q", state.Invitations[0].ConsumedByPeerID)
+	}
+}
+
+func TestInitializeDerivesMembershipDirectoryAndIssuerChain(t *testing.T) {
+	fixture := newMembershipStoreFixture(t)
+	store, _ := testStore(t)
+	if err := store.Initialize(State{
+		GenesisToken: fixture.genesis.Token, LocalMembership: fixture.childMembership,
+		CreatedAt: fixture.now.Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		fixture.creatorMembership.Token: true,
+		fixture.childMembership:         true,
+	}
+	if len(state.Memberships) != len(want) {
+		t.Fatalf("memberships = %d, want %d: %v", len(state.Memberships), len(want), state.Memberships)
+	}
+	for _, token := range state.Memberships {
+		if !want[token] {
+			t.Fatalf("unexpected membership %q", token)
+		}
+	}
+	state.Memberships[0] = "caller-mutation"
+	again, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Memberships[0] == "caller-mutation" {
+		t.Fatal("Load returned aliased memberships")
+	}
+}
+
+func TestApplyMembershipsIsAtomicIdempotentAndRejectsSerialFork(t *testing.T) {
+	fixture := newMembershipStoreFixture(t)
+	store, _ := testStore(t)
+	if err := store.Initialize(State{
+		GenesisToken: fixture.genesis.Token, LocalMembership: fixture.creatorMembership.Token,
+		CreatedAt: fixture.now.Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := store.ApplyMemberships([]string{fixture.childMembership}, fixture.now.Add(time.Minute)); err != nil || stored != 1 {
+		t.Fatalf("first apply stored=%d err=%v", stored, err)
+	}
+	if stored, err := store.ApplyMemberships([]string{fixture.childMembership}, fixture.now.Add(2*time.Minute)); err != nil || stored != 0 {
+		t.Fatalf("duplicate apply stored=%d err=%v", stored, err)
+	}
+
+	verified, err := peerproto.VerifyGrantAtIssuance(fixture.childMembership, fixture.genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forkDoc := verified.Document
+	forkDoc.Permission = peerproto.PermissionView
+	raw, err := json.Marshal(forkDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := fixture.creator.Sign(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork := "apm1." + base64.RawURLEncoding.EncodeToString(raw) + "." + base64.RawURLEncoding.EncodeToString(signature)
+	if membershipDigest(fork) == membershipDigest(fixture.childMembership) {
+		t.Fatal("test membership fork did not change token")
+	}
+	if stored, err := store.ApplyMemberships([]string{fork}, fixture.now.Add(3*time.Minute)); !errors.Is(err, ErrMembershipFork) || stored != 0 {
+		t.Fatalf("serial fork stored=%d err=%v", stored, err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Memberships) != 2 {
+		t.Fatalf("failed apply changed directory: %v", state.Memberships)
+	}
+}
+
+func TestConcurrentMembershipAppliesMergeAcrossStoreInstances(t *testing.T) {
+	fixture := newMembershipStoreFixture(t)
+	store, key := testStore(t)
+	if err := store.Initialize(State{
+		GenesisToken: fixture.genesis.Token, LocalMembership: fixture.creatorMembership.Token,
+		CreatedAt: fixture.now.Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondFixture := newMembershipStoreFixture(t)
+	// Issue a second member in the same Space using the original creator.
+	tickets, err := peerproto.NewInvitationBatch(fixture.creator, fixture.genesis, fixture.creatorMembership, fixture.now, peerproto.InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinToken, err := peerproto.NewJoinRequest(secondFixture.creator, secondWrapping.PublicBytes(), tickets[0], fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	join, err := peerproto.VerifyJoinRequest(joinToken, fixture.genesis, fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondMembership, err := peerproto.IssueMembership(fixture.creator, fixture.genesis, fixture.creatorMembership, join, fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := New(store.path, func() ([]byte, error) { return append([]byte(nil), key...), nil })
+	tokens := []string{fixture.childMembership, secondMembership}
+	stores := []*Store{store, other}
+	errs := make([]error, len(stores))
+	var wg sync.WaitGroup
+	for index := range stores {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			_, errs[index] = stores[index].ApplyMemberships([]string{tokens[index]}, fixture.now.Add(time.Minute))
+		}(index)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Memberships) != 3 {
+		t.Fatalf("concurrent directory = %v", state.Memberships)
 	}
 }
 
@@ -278,6 +484,55 @@ func TestLegacyV1StateMigratesWithoutChangingEnvelopeAAD(t *testing.T) {
 	}
 	if state.Version != Version || len(state.Invitations) != 1 {
 		t.Fatalf("persisted migrated state=%+v", state)
+	}
+}
+
+func TestLegacyV4StateDerivesMembershipDirectory(t *testing.T) {
+	fixture := newMembershipStoreFixture(t)
+	store, _ := testStore(t)
+	legacy, err := json.Marshal(State{
+		Version: legacyPendingVersion, GenesisToken: fixture.genesis.Token,
+		LocalMembership: fixture.creatorMembership.Token,
+		Invitations:     []Invitation{{IssuedMembership: fixture.childMembership}},
+		CreatedAt:       fixture.now.Unix(), UpdatedAt: fixture.now.Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := store.aead()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := bytes.Repeat([]byte{0x31}, aead.NonceSize())
+	wrapper, err := json.Marshal(envelope{
+		Version: encryptedEnvelopeV1,
+		Nonce:   base64.RawURLEncoding.EncodeToString(nonce),
+		Ciphertext: base64.RawURLEncoding.EncodeToString(
+			aead.Seal(nil, nonce, legacy, storeAAD),
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.path, wrapper, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Version != Version || len(state.Memberships) != 2 {
+		t.Fatalf("migrated membership directory=%+v", state)
+	}
+	if err := store.ClearPendingConfigImport(fixture.now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Version != Version || !reflect.DeepEqual(persisted.Memberships, state.Memberships) {
+		t.Fatalf("persisted membership directory=%+v", persisted)
 	}
 }
 

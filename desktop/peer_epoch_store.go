@@ -134,28 +134,40 @@ func (m *peerSpaceManager) ensureInitialEpochState() error {
 }
 
 func activePeerMemberships(state peerstore.State, genesis peerproto.VerifiedGenesis, now time.Time) ([]peerproto.VerifiedGrant, error) {
-	tokens := []string{state.LocalMembership}
+	tokens := append([]string(nil), state.Memberships...)
+	tokens = append(tokens, state.LocalMembership)
 	for _, invitation := range state.Invitations {
 		if invitation.IssuedMembership != "" {
 			tokens = append(tokens, invitation.IssuedMembership)
 		}
 	}
-	memberships := make([]peerproto.VerifiedGrant, 0, len(tokens))
-	seen := make(map[string]struct{}, len(tokens))
+	byPeer := make(map[string]peerproto.VerifiedGrant, len(tokens))
+	seenTokens := make(map[string]struct{}, len(tokens))
 	for len(tokens) != 0 {
 		token := tokens[0]
 		tokens = tokens[1:]
+		if _, duplicate := seenTokens[token]; duplicate {
+			continue
+		}
+		seenTokens[token] = struct{}{}
 		membership, err := peerproto.VerifyGrant(token, genesis, now)
 		if err != nil {
+			if errors.Is(err, peerproto.ErrExpired) {
+				continue
+			}
 			return nil, fmt.Errorf("verify Peer Space member for epochs: %w", err)
 		}
-		if _, duplicate := seen[membership.Document.SubjectPeerID]; !duplicate {
-			seen[membership.Document.SubjectPeerID] = struct{}{}
-			memberships = append(memberships, membership)
+		peerID := membership.Document.SubjectPeerID
+		if current, exists := byPeer[peerID]; !exists || membershipIsCanonicalAfter(membership, current) {
+			byPeer[peerID] = membership
 		}
 		if membership.Document.IssuerMembership != "" {
 			tokens = append(tokens, membership.Document.IssuerMembership)
 		}
+	}
+	memberships := make([]peerproto.VerifiedGrant, 0, len(byPeer))
+	for _, membership := range byPeer {
+		memberships = append(memberships, membership)
 	}
 	revocations, err := peerproto.NewRevocationSet(genesis)
 	if err != nil {
@@ -167,6 +179,16 @@ func activePeerMemberships(state peerstore.State, genesis peerproto.VerifiedGene
 		}
 	}
 	return revocations.FilterActiveMemberships(memberships, now)
+}
+
+func membershipIsCanonicalAfter(candidate, current peerproto.VerifiedGrant) bool {
+	if candidate.Document.IssuedAt != current.Document.IssuedAt {
+		return candidate.Document.IssuedAt > current.Document.IssuedAt
+	}
+	if candidate.Document.Serial != current.Document.Serial {
+		return candidate.Document.Serial < current.Document.Serial
+	}
+	return candidate.Token < current.Token
 }
 
 func (m *peerSpaceManager) applyPeerEpochRotations(tokens []string) (bool, error) {

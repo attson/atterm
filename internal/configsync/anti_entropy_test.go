@@ -15,6 +15,7 @@ import (
 type antiEntropyFixture struct {
 	rotationFixture *rotationFixture
 	state           SyncState
+	membership      peerproto.VerifiedGrant
 	revocation      peerproto.VerifiedRevocation
 	rotation        VerifiedEpochRotation
 	expected        []AntiEntropyItem
@@ -77,7 +78,9 @@ func newAntiEntropyFixture(t *testing.T) antiEntropyFixture {
 	}
 	return antiEntropyFixture{
 		rotationFixture: fixture, state: state, revocation: revocation, rotation: rotation,
+		membership: fixture.creatorMembership,
 		expected: []AntiEntropyItem{
+			{Kind: AntiEntropyMembership, TokenHash: tokenDigest(fixture.creatorMembership.Token), Token: fixture.creatorMembership.Token},
 			{Kind: AntiEntropySnapshot, TokenHash: tokenDigest(snapshot), Token: snapshot},
 			{Kind: AntiEntropyOperation, TokenHash: tokenDigest(second.Token), Token: second.Token},
 			{Kind: AntiEntropyRevocation, TokenHash: revocation.Hash, Token: revocation.Token},
@@ -88,13 +91,14 @@ func newAntiEntropyFixture(t *testing.T) antiEntropyFixture {
 
 func TestAntiEntropyBatchesAreBoundedVerifiedAndRetryable(t *testing.T) {
 	fixture := newAntiEntropyFixture(t)
-	remote, err := BuildAntiEntropyInventory(fixture.rotationFixture.genesis, VersionVector{}, nil, nil)
+	remote, err := BuildAntiEntropyInventory(fixture.rotationFixture.genesis, VersionVector{}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const batchSize = 2048
 	plan, err := NewAntiEntropyPlan(
 		fixture.rotationFixture.genesis, fixture.state,
+		[]string{fixture.membership.Token},
 		[]string{fixture.revocation.Token}, []string{fixture.rotation.Token}, remote, batchSize,
 	)
 	if err != nil {
@@ -149,17 +153,19 @@ func TestAntiEntropyInventoryFiltersKnownGovernanceTokens(t *testing.T) {
 	fixture := newAntiEntropyFixture(t)
 	remote, err := BuildAntiEntropyInventory(
 		fixture.rotationFixture.genesis, VersionVector{},
+		[]string{fixture.membership.Token, fixture.membership.Token},
 		[]string{fixture.revocation.Token, fixture.revocation.Token},
 		[]string{fixture.rotation.Token, fixture.rotation.Token},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(remote.RevocationHashes) != 1 || len(remote.RotationHashes) != 1 {
+	if len(remote.MembershipHashes) != 1 || len(remote.RevocationHashes) != 1 || len(remote.RotationHashes) != 1 {
 		t.Fatalf("inventory did not deduplicate hashes: %+v", remote)
 	}
 	plan, err := NewAntiEntropyPlan(
 		fixture.rotationFixture.genesis, fixture.state,
+		[]string{fixture.membership.Token},
 		[]string{fixture.revocation.Token}, []string{fixture.rotation.Token}, remote, MaxAntiEntropyBatchSize,
 	)
 	if err != nil {
@@ -181,9 +187,10 @@ func TestAntiEntropyInventoryFiltersKnownGovernanceTokens(t *testing.T) {
 
 func TestAntiEntropyRejectsTamperAndOutOfOrder(t *testing.T) {
 	fixture := newAntiEntropyFixture(t)
-	remote, _ := BuildAntiEntropyInventory(fixture.rotationFixture.genesis, VersionVector{}, nil, nil)
+	remote, _ := BuildAntiEntropyInventory(fixture.rotationFixture.genesis, VersionVector{}, nil, nil, nil)
 	plan, err := NewAntiEntropyPlan(
 		fixture.rotationFixture.genesis, fixture.state,
+		[]string{fixture.membership.Token},
 		[]string{fixture.revocation.Token}, []string{fixture.rotation.Token}, remote, MaxAntiEntropyBatchSize,
 	)
 	if err != nil {
@@ -210,6 +217,7 @@ func TestAntiEntropyRejectsTamperAndOutOfOrder(t *testing.T) {
 
 	splitPlan, err := NewAntiEntropyPlan(
 		fixture.rotationFixture.genesis, fixture.state,
+		[]string{fixture.membership.Token},
 		[]string{fixture.revocation.Token}, []string{fixture.rotation.Token}, remote, MinAntiEntropyBatchSize,
 	)
 	if err != nil {
@@ -239,13 +247,18 @@ func TestAntiEntropyRejectsTamperAndOutOfOrder(t *testing.T) {
 
 func TestAntiEntropyRejectsNonCanonicalInventoryAndCursor(t *testing.T) {
 	fixture := newAntiEntropyFixture(t)
-	remote, _ := BuildAntiEntropyInventory(fixture.rotationFixture.genesis, VersionVector{}, nil, nil)
+	remote, _ := BuildAntiEntropyInventory(fixture.rotationFixture.genesis, VersionVector{}, nil, nil, nil)
+	remote.MembershipHashes = []string{tokenDigest(fixture.membership.Token), tokenDigest(fixture.membership.Token)}
+	if _, err := NewAntiEntropyPlan(fixture.rotationFixture.genesis, fixture.state, nil, nil, nil, remote, 0); !errors.Is(err, ErrInvalidAntiEntropy) {
+		t.Fatalf("duplicate membership inventory hash error=%v", err)
+	}
+	remote.MembershipHashes = nil
 	remote.RevocationHashes = []string{fixture.revocation.Hash, fixture.revocation.Hash}
-	if _, err := NewAntiEntropyPlan(fixture.rotationFixture.genesis, fixture.state, nil, nil, remote, 0); !errors.Is(err, ErrInvalidAntiEntropy) {
+	if _, err := NewAntiEntropyPlan(fixture.rotationFixture.genesis, fixture.state, nil, nil, nil, remote, 0); !errors.Is(err, ErrInvalidAntiEntropy) {
 		t.Fatalf("duplicate inventory hash error=%v", err)
 	}
 	remote.RevocationHashes = nil
-	plan, err := NewAntiEntropyPlan(fixture.rotationFixture.genesis, fixture.state, nil, nil, remote, 0)
+	plan, err := NewAntiEntropyPlan(fixture.rotationFixture.genesis, fixture.state, nil, nil, nil, remote, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +270,7 @@ func TestAntiEntropyRejectsNonCanonicalInventoryAndCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote.Vector = VersionVector{concurrent.PeerID(): 1}
-	if _, err := NewAntiEntropyPlan(fixture.rotationFixture.genesis, fixture.state, nil, nil, remote, 0); !errors.Is(err, ErrInvalidAntiEntropy) {
+	if _, err := NewAntiEntropyPlan(fixture.rotationFixture.genesis, fixture.state, nil, nil, nil, remote, 0); !errors.Is(err, ErrInvalidAntiEntropy) {
 		t.Fatalf("snapshot over concurrent receiver error=%v", err)
 	}
 }
@@ -274,12 +287,12 @@ func TestDurableReplicaPlansOnlyMissingTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote, err := BuildAntiEntropyInventory(
-		fixture.genesis, VersionVector{fixture.creator.PeerID(): first.Document.Counter}, nil, nil,
+		fixture.genesis, VersionVector{fixture.creator.PeerID(): first.Document.Counter}, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := store.PlanAntiEntropy(fixture.genesis, nil, nil, remote, 0)
+	plan, err := store.PlanAntiEntropy(fixture.genesis, nil, nil, nil, remote, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,5 +307,41 @@ func TestDurableReplicaPlansOnlyMissingTail(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Kind != AntiEntropyOperation || items[0].Token != second.Token {
 		t.Fatalf("planned items=%+v", items)
+	}
+}
+
+func TestAntiEntropyRejectsTamperedMembershipWithoutAdvancing(t *testing.T) {
+	fixture := newAntiEntropyFixture(t)
+	remote, err := BuildAntiEntropyInventory(fixture.rotationFixture.genesis, VersionVector{}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewAntiEntropyPlan(
+		fixture.rotationFixture.genesis, fixture.state, []string{fixture.membership.Token}, nil, nil,
+		remote, MaxAntiEntropyBatchSize,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := plan.Next(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Chunks) == 0 || batch.Chunks[0].Kind != AntiEntropyMembership {
+		t.Fatalf("membership was not first: %+v", batch.Chunks)
+	}
+	tampered := batch
+	tampered.Chunks = append([]AntiEntropyChunk(nil), batch.Chunks...)
+	tampered.Chunks[0].Data = "x" + tampered.Chunks[0].Data[1:]
+	assembler, err := NewAntiEntropyAssembler(fixture.rotationFixture.genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := assembler.Add(tampered); !errors.Is(err, ErrInvalidAntiEntropy) {
+		t.Fatalf("tampered membership error=%v", err)
+	}
+	items, err := assembler.Add(batch)
+	if err != nil || len(items) == 0 || items[0].Kind != AntiEntropyMembership {
+		t.Fatalf("valid retry items=%+v err=%v", items, err)
 	}
 }

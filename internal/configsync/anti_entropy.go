@@ -15,7 +15,8 @@ const (
 	DefaultAntiEntropyBatchSize = 256 << 10
 	MinAntiEntropyBatchSize     = 1 << 10
 	MaxAntiEntropyBatchSize     = 16 << 20
-	maxAntiEntropyItems         = 100_000 + 2*maxEpochRotationCandidates
+	maxAntiEntropyMemberships   = 256
+	maxAntiEntropyItems         = 100_000 + maxAntiEntropyMemberships + 2*maxEpochRotationCandidates
 )
 
 var (
@@ -28,6 +29,7 @@ var (
 type AntiEntropyItemKind string
 
 const (
+	AntiEntropyMembership AntiEntropyItemKind = "membership"
 	AntiEntropySnapshot   AntiEntropyItemKind = "snapshot"
 	AntiEntropyOperation  AntiEntropyItemKind = "operation"
 	AntiEntropyRevocation AntiEntropyItemKind = "revocation"
@@ -35,7 +37,7 @@ const (
 )
 
 func (kind AntiEntropyItemKind) valid() bool {
-	return kind == AntiEntropySnapshot || kind == AntiEntropyOperation || kind == AntiEntropyRevocation || kind == AntiEntropyRotation
+	return kind == AntiEntropyMembership || kind == AntiEntropySnapshot || kind == AntiEntropyOperation || kind == AntiEntropyRevocation || kind == AntiEntropyRotation
 }
 
 // AntiEntropyInventory is the compact state advertised by a receiving peer.
@@ -45,6 +47,7 @@ type AntiEntropyInventory struct {
 	V                int           `json:"v"`
 	SpaceID          string        `json:"space_id"`
 	Vector           VersionVector `json:"vector"`
+	MembershipHashes []string      `json:"membership_hashes"`
 	RevocationHashes []string      `json:"revocation_hashes"`
 	RotationHashes   []string      `json:"rotation_hashes"`
 }
@@ -102,19 +105,23 @@ type AntiEntropyPlan struct {
 
 // PlanAntiEntropy snapshots the durable config delta selected by the remote
 // vector and combines it with missing governance tokens.
-func (d *DurableReplica) PlanAntiEntropy(genesis peerproto.VerifiedGenesis, revocations, rotations []string, remote AntiEntropyInventory, maxBatchBytes int) (*AntiEntropyPlan, error) {
+func (d *DurableReplica) PlanAntiEntropy(genesis peerproto.VerifiedGenesis, memberships, revocations, rotations []string, remote AntiEntropyInventory, maxBatchBytes int) (*AntiEntropyPlan, error) {
 	if d == nil {
 		return nil, ErrInvalidAntiEntropy
 	}
-	return NewAntiEntropyPlan(genesis, d.StateForPeer(remote.Vector), revocations, rotations, remote, maxBatchBytes)
+	return NewAntiEntropyPlan(genesis, d.StateForPeer(remote.Vector), memberships, revocations, rotations, remote, maxBatchBytes)
 }
 
 // BuildAntiEntropyInventory verifies governance tokens and advertises their
 // content hashes with the local durable configuration frontier.
-func BuildAntiEntropyInventory(genesis peerproto.VerifiedGenesis, vector VersionVector, revocations, rotations []string) (AntiEntropyInventory, error) {
+func BuildAntiEntropyInventory(genesis peerproto.VerifiedGenesis, vector VersionVector, memberships, revocations, rotations []string) (AntiEntropyInventory, error) {
 	verifiedGenesis, err := peerproto.VerifyGenesis(genesis.Token)
 	if err != nil || validateAntiEntropyVector(vector) != nil {
 		return AntiEntropyInventory{}, ErrInvalidAntiEntropy
+	}
+	membershipHashes, err := verifiedTokenHashes(verifiedGenesis, AntiEntropyMembership, memberships)
+	if err != nil {
+		return AntiEntropyInventory{}, err
 	}
 	revocationHashes, err := verifiedTokenHashes(verifiedGenesis, AntiEntropyRevocation, revocations)
 	if err != nil {
@@ -126,13 +133,13 @@ func BuildAntiEntropyInventory(genesis peerproto.VerifiedGenesis, vector Version
 	}
 	return AntiEntropyInventory{
 		V: AntiEntropyVersion, SpaceID: verifiedGenesis.Document.SpaceID, Vector: vector.Clone(),
-		RevocationHashes: revocationHashes, RotationHashes: rotationHashes,
+		MembershipHashes: membershipHashes, RevocationHashes: revocationHashes, RotationHashes: rotationHashes,
 	}, nil
 }
 
 // NewAntiEntropyPlan verifies an outbound durable state and removes governance
 // tokens already named by the receiver inventory.
-func NewAntiEntropyPlan(genesis peerproto.VerifiedGenesis, state SyncState, revocations, rotations []string, remote AntiEntropyInventory, maxBatchBytes int) (*AntiEntropyPlan, error) {
+func NewAntiEntropyPlan(genesis peerproto.VerifiedGenesis, state SyncState, memberships, revocations, rotations []string, remote AntiEntropyInventory, maxBatchBytes int) (*AntiEntropyPlan, error) {
 	verifiedGenesis, err := peerproto.VerifyGenesis(genesis.Token)
 	if err != nil || validateAntiEntropyInventory(remote, verifiedGenesis.Document.SpaceID) != nil || state.Ack.SpaceID != verifiedGenesis.Document.SpaceID || validateAntiEntropyVector(state.Ack.Vector) != nil {
 		return nil, ErrInvalidAntiEntropy
@@ -143,13 +150,27 @@ func NewAntiEntropyPlan(genesis peerproto.VerifiedGenesis, state SyncState, revo
 	if maxBatchBytes < MinAntiEntropyBatchSize || maxBatchBytes > MaxAntiEntropyBatchSize {
 		return nil, ErrAntiEntropyLimit
 	}
-	if len(revocations) > maxEpochRotationCandidates || len(rotations) > maxEpochRotationCandidates {
+	if len(memberships) > maxAntiEntropyMemberships || len(revocations) > maxEpochRotationCandidates || len(rotations) > maxEpochRotationCandidates {
 		return nil, ErrAntiEntropyLimit
 	}
 	if err := validateAntiEntropySyncState(state, remote.Vector, verifiedGenesis.Document.SpaceID); err != nil {
 		return nil, err
 	}
-	items := make([]antiEntropyPlanItem, 0, len(state.Ops)+len(revocations)+len(rotations)+1)
+	items := make([]antiEntropyPlanItem, 0, len(memberships)+len(state.Ops)+len(revocations)+len(rotations)+1)
+	knownMemberships := hashSet(remote.MembershipHashes)
+	membershipItems := make([]antiEntropyPlanItem, 0, len(memberships))
+	for _, token := range memberships {
+		if _, err := peerproto.VerifyGrantAtIssuance(token, verifiedGenesis); err != nil {
+			return nil, ErrInvalidAntiEntropy
+		}
+		hash := tokenDigest(token)
+		if _, known := knownMemberships[hash]; !known {
+			membershipItems = append(membershipItems, antiEntropyPlanItem{kind: AntiEntropyMembership, hash: hash, token: token})
+			knownMemberships[hash] = struct{}{}
+		}
+	}
+	sort.Slice(membershipItems, func(i, j int) bool { return membershipItems[i].hash < membershipItems[j].hash })
+	items = append(items, membershipItems...)
 	if state.Snapshot != "" {
 		verified, err := VerifySnapshot(state.Snapshot)
 		if err != nil || verified.Document.SpaceID != verifiedGenesis.Document.SpaceID {
@@ -314,6 +335,7 @@ type AntiEntropyAssembler struct {
 	hasLastBatch bool
 	ack          *DurableAck
 	lastKindRank int
+	seenSnapshot bool
 }
 
 // NewAntiEntropyAssembler creates a receiver anchored to one Space genesis.
@@ -349,6 +371,7 @@ func (assembler *AntiEntropyAssembler) Add(batch AntiEntropyBatch) ([]AntiEntrop
 	current := cloneAntiEntropyAssembly(assembler.current)
 	emitted := make([]AntiEntropyItem, 0)
 	lastKindRank := assembler.lastKindRank
+	seenSnapshot := assembler.seenSnapshot
 	for _, chunk := range batch.Chunks {
 		if err := validateAntiEntropyChunk(chunk); err != nil {
 			return nil, err
@@ -370,8 +393,11 @@ func (assembler *AntiEntropyAssembler) Add(batch AntiEntropyBatch) ([]AntiEntrop
 				return nil, err
 			}
 			rank := antiEntropyKindRank(item.Kind)
-			if rank < lastKindRank || item.Kind == AntiEntropySnapshot && position.Item != 0 {
+			if rank < lastKindRank || item.Kind == AntiEntropySnapshot && seenSnapshot {
 				return nil, ErrAntiEntropyOrder
+			}
+			if item.Kind == AntiEntropySnapshot {
+				seenSnapshot = true
 			}
 			lastKindRank = rank
 			emitted = append(emitted, item)
@@ -397,6 +423,7 @@ func (assembler *AntiEntropyAssembler) Add(batch AntiEntropyBatch) ([]AntiEntrop
 		assembler.ack = &DurableAck{SpaceID: batch.Ack.SpaceID, Vector: batch.Ack.Vector.Clone()}
 	}
 	assembler.lastKindRank = lastKindRank
+	assembler.seenSnapshot = seenSnapshot
 	return emitted, nil
 }
 
@@ -405,6 +432,10 @@ func (assembler *AntiEntropyAssembler) verifyItem(kind AntiEntropyItemKind, expe
 		return AntiEntropyItem{}, ErrInvalidAntiEntropy
 	}
 	switch kind {
+	case AntiEntropyMembership:
+		if _, err := peerproto.VerifyGrantAtIssuance(token, assembler.genesis); err != nil {
+			return AntiEntropyItem{}, ErrInvalidAntiEntropy
+		}
 	case AntiEntropySnapshot:
 		verified, err := VerifySnapshot(token)
 		if err != nil || verified.Document.SpaceID != assembler.spaceID {
@@ -430,7 +461,11 @@ func (assembler *AntiEntropyAssembler) verifyItem(kind AntiEntropyItemKind, expe
 }
 
 func verifiedTokenHashes(genesis peerproto.VerifiedGenesis, kind AntiEntropyItemKind, tokens []string) ([]string, error) {
-	if len(tokens) > maxEpochRotationCandidates {
+	limit := maxEpochRotationCandidates
+	if kind == AntiEntropyMembership {
+		limit = maxAntiEntropyMemberships
+	}
+	if len(tokens) > limit {
 		return nil, ErrAntiEntropyLimit
 	}
 	hashes := make([]string, 0, len(tokens))
@@ -438,6 +473,11 @@ func verifiedTokenHashes(genesis peerproto.VerifiedGenesis, kind AntiEntropyItem
 	for _, token := range tokens {
 		var hash string
 		switch kind {
+		case AntiEntropyMembership:
+			if _, err := peerproto.VerifyGrantAtIssuance(token, genesis); err != nil {
+				return nil, ErrInvalidAntiEntropy
+			}
+			hash = tokenDigest(token)
 		case AntiEntropyRevocation:
 			verified, err := peerproto.VerifyRevocation(token, genesis)
 			if err != nil {
@@ -464,10 +504,10 @@ func verifiedTokenHashes(genesis peerproto.VerifiedGenesis, kind AntiEntropyItem
 }
 
 func validateAntiEntropyInventory(inventory AntiEntropyInventory, spaceID string) error {
-	if inventory.V != AntiEntropyVersion || inventory.SpaceID != spaceID || validateAntiEntropyVector(inventory.Vector) != nil || len(inventory.RevocationHashes) > maxEpochRotationCandidates || len(inventory.RotationHashes) > maxEpochRotationCandidates {
+	if inventory.V != AntiEntropyVersion || inventory.SpaceID != spaceID || validateAntiEntropyVector(inventory.Vector) != nil || len(inventory.MembershipHashes) > maxAntiEntropyMemberships || len(inventory.RevocationHashes) > maxEpochRotationCandidates || len(inventory.RotationHashes) > maxEpochRotationCandidates {
 		return ErrInvalidAntiEntropy
 	}
-	for _, hashes := range [][]string{inventory.RevocationHashes, inventory.RotationHashes} {
+	for _, hashes := range [][]string{inventory.MembershipHashes, inventory.RevocationHashes, inventory.RotationHashes} {
 		previous := ""
 		for _, hash := range hashes {
 			if validateAntiEntropyHash(hash) != nil || hash <= previous {
@@ -555,6 +595,8 @@ func validateAntiEntropyHash(value string) error {
 
 func maxAntiEntropyTokenSize(kind AntiEntropyItemKind) int {
 	switch kind {
+	case AntiEntropyMembership:
+		return 64 << 10
 	case AntiEntropySnapshot:
 		return maxSnapshotTokenBytes
 	case AntiEntropyOperation:
@@ -596,14 +638,16 @@ func cloneAntiEntropyAssembly(assembly *antiEntropyAssembly) *antiEntropyAssembl
 
 func antiEntropyKindRank(kind AntiEntropyItemKind) int {
 	switch kind {
-	case AntiEntropySnapshot:
+	case AntiEntropyMembership:
 		return 0
-	case AntiEntropyOperation:
+	case AntiEntropySnapshot:
 		return 1
-	case AntiEntropyRevocation:
+	case AntiEntropyOperation:
 		return 2
-	case AntiEntropyRotation:
+	case AntiEntropyRevocation:
 		return 3
+	case AntiEntropyRotation:
+		return 4
 	default:
 		return -1
 	}

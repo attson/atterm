@@ -167,6 +167,90 @@ func TestJoinRequestAndIssuedMembership(t *testing.T) {
 	}
 }
 
+func TestVerifyGrantAtIssuanceRetainsExpiredMembership(t *testing.T) {
+	identity, genesis, membership, now := newTestSpace(t)
+	doc := membership.Document
+	doc.ExpiresAt = now.Add(time.Hour).Unix()
+	token, err := signDocument(membershipPrefix, doc, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyGrant(token, genesis, now.Add(2*time.Hour)); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expired membership error = %v", err)
+	}
+	verified, err := VerifyGrantAtIssuance(token, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Token != token || verified.Document.ExpiresAt != doc.ExpiresAt {
+		t.Fatalf("verified historical membership = %+v", verified.Document)
+	}
+}
+
+func TestVerifyGrantPreservesExpiredIssuerClassification(t *testing.T) {
+	creator, genesis, creatorMembership, now := newTestSpace(t)
+	issuerIdentity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerTickets, err := NewInvitationBatch(creator, genesis, creatorMembership, now, InvitationOptions{Count: 1, CanInvite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerJoinToken, err := NewJoinRequest(issuerIdentity, newTestWrappingIdentity(t).PublicBytes(), issuerTickets[0], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerJoin, err := VerifyJoinRequest(issuerJoinToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerToken, err := IssueMembership(creator, genesis, creatorMembership, issuerJoin, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := VerifyGrant(issuerToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerDoc := issuer.Document
+	issuerDoc.ExpiresAt = now.Add(time.Hour).Unix()
+	issuerToken, err = signDocument(membershipPrefix, issuerDoc, creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiringIssuer, err := VerifyGrant(issuerToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tickets, err := NewInvitationBatch(issuerIdentity, genesis, expiringIssuer, now, InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinToken, err := NewJoinRequest(child, newTestWrappingIdentity(t).PublicBytes(), tickets[0], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	join, err := VerifyJoinRequest(joinToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childToken, err := IssueMembership(issuerIdentity, genesis, expiringIssuer, join, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyGrant(childToken, genesis, now.Add(2*time.Hour)); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expired issuer chain error = %v", err)
+	}
+	if _, err := VerifyGrantAtIssuance(childToken, genesis); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestJoinRequestRejectsDifferentSubjectSignature(t *testing.T) {
 	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
 	tokens, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{Count: 1})

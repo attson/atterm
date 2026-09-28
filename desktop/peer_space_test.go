@@ -631,6 +631,84 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestPendingPeerConfigIsWriteOnceCapabilityGatedAndMergeOnly(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{
+		QuickTemplates: []QuickTemplate{{ID: "peer-template", Label: "Peer", Text: "peer"}},
+	}}
+	status, err := app.CreatePeerSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingConfig := appConfig{
+		TerminalTheme:  "local-theme",
+		QuickTemplates: []QuickTemplate{{ID: "local-template", Label: "Local", Text: "local"}},
+		Profiles: []SessionProfile{{
+			ID: "local-profile", Name: "Local profile", SyncEnv: true,
+			Env: map[string]string{"TOKEN": "pending-local-secret"},
+		}},
+		DefaultProfileID: "local-profile",
+		SSHHosts:         []SSHHost{{ID: "local-host", Alias: "Local host", Host: "local.example.com"}},
+	}
+	count, captured, err := app.peerSpace.capturePendingPeerConfig(pendingConfig)
+	if err != nil || !captured || count != 6 {
+		t.Fatalf("capture pending config count=%d captured=%t err=%v", count, captured, err)
+	}
+	pending, ok, err := app.peerSpace.loadPendingPeerConfig()
+	if err != nil || !ok || len(pending.Records) != count {
+		t.Fatalf("load pending config records=%d ok=%t err=%v", len(pending.Records), ok, err)
+	}
+	storePath := strings.TrimSuffix(app.peerSpace.bootstrapLockPath, ".bootstrap.lock")
+	disk, err := os.ReadFile(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(disk, []byte("pending-local-secret")) || bytes.Contains(disk, []byte("local-theme")) {
+		t.Fatal("pending local config was written outside the encrypted Peer store")
+	}
+	if repeatedCount, repeatedCapture, err := app.peerSpace.capturePendingPeerConfig(pendingConfig); err != nil || repeatedCapture || repeatedCount != count {
+		t.Fatalf("idempotent pending capture count=%d captured=%t err=%v", repeatedCount, repeatedCapture, err)
+	}
+	replacement := pendingConfig
+	replacement.TerminalTheme = "replacement"
+	if _, _, err := app.peerSpace.capturePendingPeerConfig(replacement); !errors.Is(err, peerstore.ErrPendingExists) {
+		t.Fatalf("pending config replacement error=%v", err)
+	}
+
+	runtime := app.peerSpace.configReplica
+	vaultKey := runtime.keys[configsync.KeyClassVault]
+	delete(runtime.keys, configsync.KeyClassVault)
+	before := runtime.replica.Vector()[status.PeerID]
+	if _, err := runtime.appendPendingPeerConfig(pending.plainRecords()); err == nil {
+		t.Fatal("pending vault config imported without vault capability")
+	}
+	if got := runtime.replica.Vector()[status.PeerID]; got != before {
+		t.Fatalf("failed pending import advanced vector to %d want=%d", got, before)
+	}
+	if _, ok, err := app.peerSpace.loadPendingPeerConfig(); err != nil || !ok {
+		t.Fatalf("failed import removed pending config: ok=%t err=%v", ok, err)
+	}
+
+	runtime.keys[configsync.KeyClassVault] = vaultKey
+	operations, err := app.peerSpace.acceptPendingPeerConfig()
+	if err != nil || operations != count {
+		t.Fatalf("accept pending config operations=%d err=%v", operations, err)
+	}
+	templates := runtime.replica.Records(configsync.CollectionQuickTemplate)
+	if len(templates) != 2 {
+		t.Fatalf("pending import replaced Peer templates: %+v", templates)
+	}
+	if len(runtime.replica.Records(configsync.CollectionSSHCredential)) != 0 || len(runtime.replica.Records(configsync.CollectionSSHKeySecret)) != 0 {
+		t.Fatal("pending import included SSH secrets")
+	}
+	if _, ok, err := app.peerSpace.loadPendingPeerConfig(); err != nil || ok {
+		t.Fatalf("accepted pending config remains: ok=%t err=%v", ok, err)
+	}
+	if operations, err := app.peerSpace.acceptPendingPeerConfig(); err != nil || operations != 0 {
+		t.Fatalf("repeated pending accept operations=%d err=%v", operations, err)
+	}
+}
+
 func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

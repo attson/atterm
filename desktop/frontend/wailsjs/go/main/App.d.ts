@@ -33,6 +33,8 @@ export function ConfirmQuit():Promise<void>;
 
 export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 
+export function CreatePeerConnectionBundle(arg1:string):Promise<string>;
+
 export function CreatePeerInvitations(arg1:main.CreatePeerInvitationsReq):Promise<Array<main.PeerInvitation>>;
 
 export function CreatePeerSpace():Promise<main.PeerSpaceStatus>;
@@ -98,6 +100,8 @@ export function GetLoggingConfig():Promise<main.LoggingConfig>;
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPasteboardFileURLs():Promise<Array<string>>;
+
+export function GetPeerQuickTunnelStatus():Promise<main.PeerQuickTunnelStatus>;
 
 export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
 
@@ -341,6 +345,8 @@ export function StartForward(arg1:string,arg2:string):Promise<void>;
 
 export function StartNativeDirect(arg1:main.NativeDirectStartRequest):Promise<void>;
 
+export function StartPeerQuickTunnel():Promise<main.PeerQuickTunnelStatus>;
+
 export function StartServicePreview(arg1:main.ServicePreviewStartRequest):Promise<main.ServicePreviewStartResponse>;
 
 export function StartWidget():Promise<void>;
@@ -348,6 +354,8 @@ export function StartWidget():Promise<void>;
 export function StopForward(arg1:string,arg2:string):Promise<void>;
 
 export function StopNativeDirect(arg1:string):Promise<void>;
+
+export function StopPeerQuickTunnel():Promise<void>;
 
 export function StopServicePreview(arg1:string):Promise<void>;
 

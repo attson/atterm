@@ -893,6 +893,24 @@ export namespace main {
 	        this.revoked_at = source["revoked_at"];
 	    }
 	}
+	export class PeerQuickTunnelStatus {
+	    running: boolean;
+	    starting: boolean;
+	    public_url?: string;
+	    local_origin?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerQuickTunnelStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.starting = source["starting"];
+	        this.public_url = source["public_url"];
+	        this.local_origin = source["local_origin"];
+	    }
+	}
 	export class PeerSpaceStatus {
 	    configured: boolean;
 	    peer_id?: string;

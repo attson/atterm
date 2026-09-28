@@ -1034,8 +1034,9 @@ Quick Tunnel 本机 gateway 只在 `GET /peer/v1/connect` 接受 WebSocket，并
 ```
 
 `ticket` 每次连接随机生成；信封不携带 genesis、membership token、SDP/ICE、终端或配置明文。
-主机通过 `client_peer_id` 查找本地 active membership，并独立验证 genesis、client/host
-membership、host identity 归属、session scope，以及 effective permission 不超过两端 grant。
+主机通过 `client_peer_id` 查找本地 canonical active membership，并独立验证 genesis、
+deny-wins revocation、client/host membership、host identity 归属、session scope、本机 session
+归属，以及 effective permission 不超过 client grant、host grant 和桌面 owner policy 三者的最小值。
 通过后返回：
 
 ```json
@@ -1066,9 +1067,23 @@ host/client attempt。offer/answer 只经上述 encrypted signal record 交换�
 上必须拒绝，反之 signaling WebSocket 也只接受这两种 kind。任一侧 signaling channel 关闭会回收
 关联 Pion attempt；Pion 失败/关闭也会关闭 signaling channel。
 
-当前仍是 transport foundation：Pion bridge 已可建立双向 authenticated DataChannel 并承载
-terminal/config record，但 Desktop 尚未挂载 gateway handler、发布 route bundle 或把 channel
-接到具体 PTY；terminal/config WSS fallback 也未实现。
+Desktop 只在显式调用 `StartPeerQuickTunnel` 后启动 `cloudflared`，不会随 app 启动自动发布
+公网入口。gateway 挂载上述 Peer handler；DataChannel 第二次 membership handshake 完成后，
+Desktop 以 `WithoutAutoDrive` 订阅请求的本地 session，转发初始 scrollback/实时
+`OUT`/`META`/`CLOSE`，并在 replay end 后发送 `DIRECT_READY`。账户无关 record layer 已提供
+应用加密，所以 terminal frame 不再叠加 Relay `account_key` 信封；入站 frame 也不走 Relay
+inner-open。Desktop 在 attach、周期授权刷新和每次 config 消息边界重验当前 membership、撤销
+状态与 session scope；`CLAIM_DRIVER`、`IN` 和 `RESIZE` 的热路径继续检查实时 owner policy、
+effective permission 与 driver 身份，不在每个键入帧访问磁盘/keyring。连接期间降权或撤销会
+关闭 attempt。配置 anti-entropy 同时绑定到同一 authenticated membership，但使用独立 config
+callback，绝不创建第二个 terminal subscriber。
+
+`CreatePeerConnectionBundle(invitation)` 只为本地加密账本中仍开放、未消费、未撤销、未过期且
+由当前 active local membership 签发的 invitation 发布当前 Quick Tunnel URL；空 invitation
+生成 member reconnect bundle。URL 轮换生成新的 bundle id/route，genesis、ticket 和 durable
+membership 不变。`StopPeerQuickTunnel` 关闭 active Pion/subscriber、loopback gateway 和
+`cloudflared`，但不删除 Peer trust，可再次显式启动。当前尚未实现 terminal/config WSS
+fallback、join/bootstrap UI 或 Web/iOS client 接入。
 
 ## 重连与续传
 

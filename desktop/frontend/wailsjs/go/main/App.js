@@ -58,6 +58,10 @@ export function CreatePairingToken() {
   return window['go']['main']['App']['CreatePairingToken']();
 }
 
+export function CreatePeerConnectionBundle(arg1) {
+  return window['go']['main']['App']['CreatePeerConnectionBundle'](arg1);
+}
+
 export function CreatePeerInvitations(arg1) {
   return window['go']['main']['App']['CreatePeerInvitations'](arg1);
 }
@@ -188,6 +192,10 @@ export function GetNotificationsEnabled() {
 
 export function GetPasteboardFileURLs() {
   return window['go']['main']['App']['GetPasteboardFileURLs']();
+}
+
+export function GetPeerQuickTunnelStatus() {
+  return window['go']['main']['App']['GetPeerQuickTunnelStatus']();
 }
 
 export function GetPeerSpaceStatus() {
@@ -674,6 +682,10 @@ export function StartNativeDirect(arg1) {
   return window['go']['main']['App']['StartNativeDirect'](arg1);
 }
 
+export function StartPeerQuickTunnel() {
+  return window['go']['main']['App']['StartPeerQuickTunnel']();
+}
+
 export function StartServicePreview(arg1) {
   return window['go']['main']['App']['StartServicePreview'](arg1);
 }
@@ -688,6 +700,10 @@ export function StopForward(arg1, arg2) {
 
 export function StopNativeDirect(arg1) {
   return window['go']['main']['App']['StopNativeDirect'](arg1);
+}
+
+export function StopPeerQuickTunnel() {
+  return window['go']['main']['App']['StopPeerQuickTunnel']();
 }
 
 export function StopServicePreview(arg1) {

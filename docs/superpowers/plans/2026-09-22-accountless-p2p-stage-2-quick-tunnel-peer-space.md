@@ -105,8 +105,7 @@ only a single-label `https://<label>.trycloudflare.com` endpoint, and owns the
 30-second start / 5-second process-tree shutdown lifecycle. Desktop shutdown
 owns the lifecycle through a narrow interface. Fake-process tests cover stdout
 and stderr discovery、invalid endpoints、timeouts、forced termination and Unix
-descendant cleanup; no public tunnel is opened by tests. The gateway still has
-no handler wired by Desktop and defaults to 404. The first independently
+descendant cleanup; no public tunnel is opened by tests. The first independently
 shippable PR 2.4 slice is now implemented locally: `GET /peer/v1/connect`
 requires the `atterm-peer-v1` subprotocol、uses a bounded routing-only open
 envelope、revalidates both signed memberships/session scope/effective
@@ -119,11 +118,22 @@ channel can drive the existing Pion host/client attempts、exchange encrypted
 offer/answer、complete a separate membership handshake on the DataChannel、and
 carry bidirectional terminal/control and fragmented config records. Signal and
 DataChannel record kinds are mutually rejected, and closing either transport
-reclaims the other attempt. This is still a transport foundation only: Desktop
-does not yet mount the handler or publish the current ConnectionBundle route,
-no authenticated channel is attached to a concrete PTY, and terminal/config
-WSS fallback is not implemented. Accountless remote terminal access therefore
-remains unavailable.
+reclaims the other attempt. The third PR 2.4 slice now mounts that handler in an
+explicitly started Desktop Quick Tunnel host, resolves canonical active members
+through the deny-wins Peer Space view, intersects both grants with the live
+owner policy, and attaches the authenticated Pion channel to the requested
+local Session. Initial replay、`DIRECT_READY`、driver claim、input/resize and
+subscriber cleanup use the existing Session semantics without requiring a
+Relay `account_key`. The same authenticated channel starts config anti-entropy
+without creating another PTY subscriber; revoked membership or a live owner
+permission downgrade closes the attempt. Desktop can sign first-join and member
+reconnect ConnectionBundles for the current URL; route rotation changes only
+the bundle/route, and revoked/consumed/expired invitations cannot be published.
+Start remains explicit and restartable, while app shutdown owns cleanup. Real
+loopback WebSocket + two-stage Peer handshake + Pion + Session tests cover the
+path under the race detector. terminal/config WSS fallback、join/bootstrap UI
+and Web/iOS client wiring are still not implemented, so this slice exposes the
+host foundation but not yet a complete end-user accountless workflow.
 
 ## Why Quick Tunnel Before Rendezvous
 

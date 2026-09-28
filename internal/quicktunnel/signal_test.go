@@ -65,6 +65,14 @@ func TestPeerHandlerAuthenticatesAndEncryptsBidirectionalSignals(t *testing.T) {
 	if client.RemoteMembershipToken() != peers.hostMembership || host.RemoteMembershipToken() != peers.clientMembership {
 		t.Fatal("channel did not retain handshake-authenticated remote memberships")
 	}
+	clientBinding := client.Binding()
+	hostBinding := host.Binding()
+	if clientBinding.AttemptID == uuid.Nil || clientBinding.AttemptID != hostBinding.AttemptID ||
+		clientBinding.SessionID != peers.sessionID || hostBinding.SessionID != peers.sessionID ||
+		clientBinding.ClientInstanceID != "test-client" || hostBinding.ClientInstanceID != "test-client" ||
+		clientBinding.Permission != peertransport.PermissionControl || hostBinding.Permission != peertransport.PermissionControl {
+		t.Fatalf("channel bindings differ: client=%+v host=%+v", clientBinding, hostBinding)
+	}
 
 	offerPayload := `{"type":"offer","sdp":"` + strings.Repeat("secret-sdp-", 2400) + `"}`
 	if err := client.SendSignal(ctx, Signal{Type: SignalOffer, Payload: offerPayload}); err != nil {

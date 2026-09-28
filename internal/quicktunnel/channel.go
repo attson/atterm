@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/attson/atterm/internal/peertransport"
+	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
 
@@ -50,6 +51,16 @@ type SignalChannel struct {
 	closeErr      error
 	finishOnce    sync.Once
 	done          chan struct{}
+}
+
+// ChannelBinding exposes only the routing claims bound into both Peer
+// handshakes. The random ticket and membership documents remain internal to
+// the transport after authentication.
+type ChannelBinding struct {
+	AttemptID        uuid.UUID
+	SessionID        uuid.UUID
+	ClientInstanceID string
+	Permission       peertransport.Permission
 }
 
 func newHostSignalChannel(conn *websocket.Conn, result peertransport.HostHandshakeResult, authorization peertransport.Authorization, authenticator peertransport.HandshakeAuthenticator, remoteMembership string, onSignal func(*SignalChannel, Signal) error, onClosed func(*SignalChannel, error)) (*SignalChannel, error) {
@@ -93,6 +104,17 @@ func (c *SignalChannel) RemoteMembershipToken() string {
 		return ""
 	}
 	return c.remoteMembership
+}
+
+// Binding returns the immutable routing claims authenticated for this channel.
+func (c *SignalChannel) Binding() ChannelBinding {
+	if c == nil {
+		return ChannelBinding{}
+	}
+	return ChannelBinding{
+		AttemptID: c.authorization.AttemptID, SessionID: c.authorization.SessionID,
+		ClientInstanceID: c.authorization.ClientInstanceID, Permission: c.authorization.Permission,
+	}
 }
 
 // SendSignal validates, serializes, fragments when necessary, and encrypts a

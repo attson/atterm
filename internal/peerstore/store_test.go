@@ -87,6 +87,58 @@ func TestInitializeEpochRotationsIsWriteOnceAndDetached(t *testing.T) {
 	}
 }
 
+func TestPendingConfigImportIsEncryptedWriteOnceAndDetached(t *testing.T) {
+	store, key := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	if err := store.Initialize(State{GenesisToken: "genesis", LocalMembership: "membership", CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"version":1,"value":"local-sensitive-config"}`)
+	if err := store.SavePendingConfigImport(payload, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SavePendingConfigImport(payload, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("idempotent save error=%v", err)
+	}
+	if err := store.SavePendingConfigImport([]byte(`{"version":1,"value":"replacement"}`), now.Add(3*time.Minute)); !errors.Is(err, ErrPendingExists) {
+		t.Fatalf("replacement error=%v", err)
+	}
+	blob, err := os.ReadFile(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(blob, payload) || bytes.Contains(blob, []byte("local-sensitive-config")) {
+		t.Fatal("pending config import was stored in plaintext")
+	}
+
+	reopened := New(store.path, func() ([]byte, error) { return append([]byte(nil), key...), nil })
+	state, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(state.PendingConfigImport, payload) || state.Version != Version {
+		t.Fatalf("pending config state=%+v", state)
+	}
+	state.PendingConfigImport[0] ^= 1
+	again, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again.PendingConfigImport, payload) {
+		t.Fatal("Load returned aliased pending config payload")
+	}
+	if err := reopened.ClearPendingConfigImport(now.Add(4 * time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared.PendingConfigImport) != 0 {
+		t.Fatalf("pending config import not cleared: %q", cleared.PendingConfigImport)
+	}
+}
+
 func TestRevocationIsIdempotentAndDenyWins(t *testing.T) {
 	store, _ := testStore(t)
 	now := time.Unix(1_800_000_000, 0)

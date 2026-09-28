@@ -22,11 +22,13 @@ import (
 )
 
 const (
-	Version                 = 3
+	Version                 = 4
 	legacyStateVersion      = 1
 	legacyRevocationVersion = 2
+	legacyEpochVersion      = 3
 	encryptedEnvelopeV1     = 1
 	maxStoreSize            = 4 << 20
+	maxPendingConfigSize    = 1 << 20
 	lockTimeout             = 5 * time.Second
 	staleLockAge            = 30 * time.Second
 )
@@ -37,6 +39,7 @@ var (
 	ErrInviteInvalid  = errors.New("peerstore: invitation invalid")
 	ErrInviteConsumed = errors.New("peerstore: invitation already consumed")
 	ErrInviteRevoked  = errors.New("peerstore: invitation revoked")
+	ErrPendingExists  = errors.New("peerstore: pending config import already exists")
 )
 
 var storeAAD = []byte("atterm-peer-store-v1")
@@ -65,6 +68,7 @@ type State struct {
 	Invitations         []Invitation     `json:"invitations"`
 	Revocations         []string         `json:"revocations,omitempty"`
 	EpochRotations      []string         `json:"epoch_rotations,omitempty"`
+	PendingConfigImport []byte           `json:"pending_config_import,omitempty"`
 	RevokedMembers      map[string]int64 `json:"revoked_members,omitempty"`
 	RevokedGrantSerials map[string]int64 `json:"revoked_grant_serials,omitempty"`
 	CreatedAt           int64            `json:"created_at"`
@@ -110,7 +114,44 @@ func (s *Store) Initialize(state State) error {
 		state.Invitations = append([]Invitation(nil), state.Invitations...)
 		state.Revocations = append([]string(nil), state.Revocations...)
 		state.EpochRotations = append([]string(nil), state.EpochRotations...)
+		state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
 		return s.writeLocked(state)
+	})
+}
+
+// SavePendingConfigImport stores a pre-join local snapshot exactly once. A
+// different snapshot cannot replace it until the user explicitly imports or
+// discards the existing payload.
+func (s *Store) SavePendingConfigImport(payload []byte, now time.Time) error {
+	if len(payload) == 0 || len(payload) > maxPendingConfigSize || now.Unix() <= 0 {
+		return fmt.Errorf("peerstore: invalid pending config import")
+	}
+	return s.mutate(func(state *State) error {
+		if len(state.PendingConfigImport) != 0 {
+			if bytes.Equal(state.PendingConfigImport, payload) {
+				return nil
+			}
+			return ErrPendingExists
+		}
+		state.PendingConfigImport = append([]byte(nil), payload...)
+		state.UpdatedAt = now.Unix()
+		return nil
+	})
+}
+
+// ClearPendingConfigImport is the explicit completion boundary used after an
+// accepted snapshot is appended durably or the user chooses to discard it.
+func (s *Store) ClearPendingConfigImport(now time.Time) error {
+	if now.Unix() <= 0 {
+		return fmt.Errorf("peerstore: invalid pending config timestamp")
+	}
+	return s.mutate(func(state *State) error {
+		if len(state.PendingConfigImport) == 0 {
+			return nil
+		}
+		state.PendingConfigImport = nil
+		state.UpdatedAt = now.Unix()
+		return nil
 	})
 }
 
@@ -331,16 +372,21 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("peerstore: decrypt: %w", err)
 	}
 	var state State
-	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
+	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != legacyEpochVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
 		return State{}, fmt.Errorf("peerstore: invalid state")
 	}
-	// v2 adds signed revocations and v3 adds signed epoch rotations. The
+	if len(state.PendingConfigImport) > maxPendingConfigSize {
+		return State{}, fmt.Errorf("peerstore: pending config import exceeds size limit")
+	}
+	// v2 adds signed revocations, v3 adds signed epoch rotations, and v4 adds
+	// an opaque pending-config import. The
 	// encrypted envelope and its AAD stay at v1 so existing stores migrate
 	// without decrypt-and-rewrap glue.
 	state.Version = Version
 	state.Invitations = append([]Invitation(nil), state.Invitations...)
 	state.Revocations = append([]string(nil), state.Revocations...)
 	state.EpochRotations = append([]string(nil), state.EpochRotations...)
+	state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
 	state.RevokedMembers = cloneMap(state.RevokedMembers)
 	state.RevokedGrantSerials = cloneMap(state.RevokedGrantSerials)
 	if len(state.Revocations) != 0 {
@@ -356,6 +402,9 @@ func (s *Store) loadLocked() (State, error) {
 }
 
 func (s *Store) writeLocked(state State) error {
+	if len(state.PendingConfigImport) > maxPendingConfigSize {
+		return fmt.Errorf("peerstore: pending config import exceeds size limit")
+	}
 	state.Version = Version
 	plaintext, err := json.Marshal(state)
 	if err != nil {

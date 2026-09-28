@@ -441,6 +441,47 @@ func TestPeerConfigReplicaRelayImportFiltersSecretsAndCapabilities(t *testing.T)
 	}
 }
 
+func TestPeerConfigReplicaPersistsRelayImportAcknowledgement(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	store, err := app.peerSpace.relayCompatibilityStore("realm-import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := []configsync.RelayValue{
+		{Key: "terminal_theme", Value: json.RawMessage(`"dark"`), UpdatedAt: 100},
+		{Key: "terminal_font_size", Value: json.RawMessage(`18`), UpdatedAt: 101},
+	}
+	operations, importErrors, err := runtime.importRelayValues(store, values, nil)
+	if err != nil || len(importErrors) != 0 || operations != 2 {
+		t.Fatalf("first Relay import operations=%d errors=%v err=%v", operations, importErrors, err)
+	}
+	operations, importErrors, err = runtime.importRelayValues(store, values, nil)
+	if err != nil || len(importErrors) != 0 || operations != 0 {
+		t.Fatalf("Relay echo import operations=%d errors=%v err=%v", operations, importErrors, err)
+	}
+
+	reopened, err := app.peerSpace.relayCompatibilityStore("realm-import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatibility, err := reopened.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := compatibility.State()
+	for _, value := range values {
+		entry := state.Keys[value.Key]
+		if entry.RelayUpdatedAt != value.UpdatedAt || entry.RelayValueHash == "" || len(entry.RelayRecords) != 1 {
+			t.Fatalf("persisted Relay state for %s=%+v", value.Key, entry)
+		}
+	}
+}
+
 func TestCorruptPeerConfigReplicaDoesNotSetStartupFatal(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

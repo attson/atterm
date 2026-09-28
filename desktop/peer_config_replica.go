@@ -219,6 +219,32 @@ func (r *peerConfigReplica) appendRelayValue(value configsync.RelayValue, previo
 	return filteredRefs, operations, nil
 }
 
+// importRelayValues persists compatibility hashes only after each accepted
+// Relay value has reached the durable canonical replica. Per-key validation
+// failures do not roll back successful siblings in the same Relay response.
+func (r *peerConfigReplica) importRelayValues(store *configsync.DurableRelayCompatibility, values []configsync.RelayValue, codec configsync.SealedRelayCodec) (int, []error, error) {
+	if store == nil {
+		return 0, nil, configsync.ErrInvalidRelayState
+	}
+	operations := 0
+	var importErrors []error
+	_, err := store.Update(func(compatibility *configsync.RelayCompatibility) error {
+		importErrors = compatibility.Import(values, func(value configsync.RelayValue, previous []configsync.RecordRef) ([]configsync.RecordRef, error) {
+			refs, count, err := r.appendRelayValue(value, previous, codec)
+			if err != nil {
+				return nil, err
+			}
+			operations += count
+			return refs, nil
+		})
+		return nil
+	})
+	if err != nil {
+		return operations, importErrors, err
+	}
+	return operations, importErrors, nil
+}
+
 func (r *peerConfigReplica) canImportRelayRecord(relayKey, collection string, class configsync.KeyClass) bool {
 	if relayKey == "ssh_hosts_encrypted" && (collection == configsync.CollectionSSHCredential || collection == configsync.CollectionSSHKeySecret) {
 		return false

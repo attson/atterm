@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"sync"
 
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/rendezvous"
@@ -35,7 +36,10 @@ type PresenceConfig struct {
 // PresenceConnection is one registered WebSocket. Reconnect policy and Peer
 // transport signaling are intentionally owned by the higher-level adapter.
 type PresenceConnection struct {
-	conn *websocket.Conn
+	conn       *websocket.Conn
+	writeMu    sync.Mutex
+	topic      string
+	presenceID string
 }
 
 // DialPresence registers with a fresh challenge identity and returns the
@@ -68,7 +72,7 @@ func DialPresence(ctx context.Context, cfg PresenceConfig) (*PresenceConnection,
 		}
 		return nil, nil, fmt.Errorf("rendezvous client: dial: %w", err)
 	}
-	connection := &PresenceConnection{conn: conn}
+	connection := &PresenceConnection{conn: conn, topic: cfg.Topic, presenceID: cfg.PresenceID}
 	fail := func(err error) (*PresenceConnection, []rendezvous.Presence, error) {
 		conn.CloseNow()
 		return nil, nil, err
@@ -149,11 +153,60 @@ func (c *PresenceConnection) CloseNow() {
 	}
 }
 
+// Publish sends opaque application ciphertext to one presence. The returned
+// random message ID is used to correlate the later ack without exposing any
+// application routing data.
+func (c *PresenceConnection) Publish(ctx context.Context, to string, payload []byte) (string, error) {
+	if c == nil || c.conn == nil || validateOpaqueID(to, 32) != nil || to == c.presenceID ||
+		len(payload) == 0 || len(payload) > rendezvous.MaxPayloadBytes {
+		return "", errors.New("rendezvous client: invalid publish")
+	}
+	messageID, err := newSignalMessageID()
+	if err != nil {
+		return "", fmt.Errorf("rendezvous client: create message id: %w", err)
+	}
+	if err := c.publishWithID(ctx, to, messageID, payload); err != nil {
+		return "", err
+	}
+	return messageID, nil
+}
+
+func (c *PresenceConnection) publishWithID(ctx context.Context, to, messageID string, payload []byte) error {
+	if c == nil || c.conn == nil || validateOpaqueID(to, 32) != nil || to == c.presenceID ||
+		validateOpaqueID(messageID, 16) != nil || len(payload) == 0 || len(payload) > rendezvous.MaxPayloadBytes {
+		return errors.New("rendezvous client: invalid publish")
+	}
+	request := rendezvous.PublishMessage{
+		Version: rendezvous.Version, Kind: rendezvous.KindPublish, MessageID: messageID,
+		To: to, Payload: base64.RawURLEncoding.EncodeToString(payload),
+	}
+	if err := c.writeJSON(ctx, request); err != nil {
+		return fmt.Errorf("%w: publish: %v", ErrServiceUnavailable, err)
+	}
+	return nil
+}
+
+func (c *PresenceConnection) Topic() string {
+	if c == nil {
+		return ""
+	}
+	return c.topic
+}
+
+func (c *PresenceConnection) PresenceID() string {
+	if c == nil {
+		return ""
+	}
+	return c.presenceID
+}
+
 func (c *PresenceConnection) writeJSON(ctx context.Context, value any) error {
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return c.conn.Write(ctx, websocket.MessageText, payload)
 }
 

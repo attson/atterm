@@ -54,7 +54,11 @@ func (a *App) SetPeerRendezvousConfig(req SetPeerRendezvousConfigReq) error {
 	cfg.PeerRendezvousURL = resolved.BaseURL
 	cfg.PeerSTUNMode = string(resolved.STUNMode)
 	cfg.PeerSTUNURLs = append([]string(nil), resolved.STUNURLs...)
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.reconcilePeerRendezvous(cfg)
+	return nil
 }
 
 func resolvePeerRendezvousConfig(cfg rendezvousclient.Config) (PeerRendezvousConfig, error) {

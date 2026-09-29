@@ -7,12 +7,68 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/attson/atterm/internal/rendezvous"
 	"nhooyr.io/websocket"
 )
+
+func TestPresenceConnectionPublishesOpaquePayloadAndReceivesAck(t *testing.T) {
+	handler, err := rendezvous.New(rendezvous.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	topic := encodedID(20, 32)
+	recipientID := encodedID(21, 32)
+	senderID := encodedID(22, 32)
+	recipient, _, err := DialPresence(ctx, PresenceConfig{
+		ServiceURL: server.URL, AllowInsecureLoopback: true,
+		Topic: topic, PresenceID: recipientID, Role: rendezvous.RoleHost,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recipient.CloseNow()
+	sender, _, err := DialPresence(ctx, PresenceConfig{
+		ServiceURL: server.URL, AllowInsecureLoopback: true,
+		Topic: topic, PresenceID: senderID, Role: rendezvous.RoleMember,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.CloseNow()
+
+	messageID, err := sender.Publish(ctx, recipientID, []byte("ciphertext-only"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signal, err := recipient.ReadEvent(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signal.Kind == rendezvous.KindPresence {
+		signal, err = recipient.ReadEvent(ctx)
+	}
+	if err != nil || signal.Kind != rendezvous.KindSignal || signal.MessageID != messageID || signal.From != senderID {
+		t.Fatalf("signal=%+v err=%v", signal, err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(signal.Payload)
+	if err != nil || string(decoded) != "ciphertext-only" || strings.Contains(signal.Payload, "ciphertext-only") {
+		t.Fatalf("opaque payload=%q decoded=%q err=%v", signal.Payload, decoded, err)
+	}
+	ack, err := sender.ReadEvent(ctx)
+	if err != nil || ack.Kind != rendezvous.KindAck || ack.MessageID != messageID || ack.State != rendezvous.DeliveryDelivered {
+		t.Fatalf("ack=%+v err=%v", ack, err)
+	}
+}
 
 func TestDialPresenceObservesSnapshotAndOnlineOfflineEvents(t *testing.T) {
 	handler, err := rendezvous.New(rendezvous.Config{})

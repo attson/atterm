@@ -1127,15 +1127,17 @@ effective permission 与 driver 身份，不在每个键入帧访问磁盘/keyri
 关闭 attempt。配置 anti-entropy 同时绑定到同一 authenticated membership，但使用独立 config
 callback，绝不创建第二个 terminal subscriber。
 
-`CreatePeerConnectionBundle(invitation)` 只为本地加密账本中仍开放、未消费、未撤销、未过期且
-由当前 active local membership 签发的 invitation 发布当前 Quick Tunnel URL；空 invitation
-生成 member reconnect bundle。URL 轮换生成新的 bundle id/route，genesis、ticket 和 durable
-membership 不变。`StopPeerQuickTunnel` 关闭 active Pion/subscriber、loopback gateway 和
-`cloudflared`，但不删除 Peer trust，可再次显式启动。WSS fallback 复用上述同一个 Session attach、
-权限热检查和 config anti-entropy 路径；config 仍不创建第二个 terminal subscriber。Desktop
-Settings 已提供 join/bootstrap 确认、独立于 Relay 登录设备的 Peer member directory、不可逆成员撤销，
-以及 Quick Tunnel start/stop、member reconnect bundle 复制入口；
-Web/iOS Peer client 接入与端用户 fallback consent 仍未实现。
+`CreatePeerConnectionBundle(invitation)` 只接受本地加密账本中仍开放、未消费、未撤销、未过期且
+由当前 active local membership 签发的 invitation；首次加入的 bundle 必须发布当前 Quick Tunnel
+URL，也可以附带 Rendezvous hint。空 invitation 生成 member reconnect bundle，可发布 Quick
+Tunnel + Rendezvous 或仅 Rendezvous route。route/presence 轮换只生成新的 bundle id/route，
+genesis、ticket 和 durable membership 不变。`StopPeerQuickTunnel` 关闭 active Pion/subscriber、
+loopback gateway 和 `cloudflared`，但不删除 Peer trust，可再次显式启动。WSS fallback 与
+Rendezvous Pion route 都复用上述同一个 Session attach、权限热检查和 config anti-entropy 路径；
+config 仍不创建第二个 terminal subscriber。Desktop Settings 已提供 join/bootstrap 确认、独立于
+Relay 登录设备的 Peer member directory、不可逆成员撤销，以及 Quick Tunnel start/stop、member
+reconnect bundle 复制入口；Web/iOS Peer client 接入、最终用户侧 Rendezvous attach 入口与
+fallback consent 仍未实现。
 
 ### Rendezvous v1 discovery and signaling
 
@@ -1235,6 +1237,43 @@ presence。客户端也只把 snapshot/online/offline 保存到内存 reachabili
 结果但不重复投递。进程重启、容量淘汰或 TTL 到期都不会持久化，客户端必须把信令视为可重试的
 短期消息。
 
+每对 active Peer 用双方 membership 中已签名的 wrapping key 做静态 P-256 ECDH，再从当前
+`sync` epoch 派生独立信令密钥。令 `peer_lo` / `peer_hi` 为两个 `peer_id` 的字典序排序结果：
+
+```text
+K_signal = HKDF-SHA256(
+  IKM = P-256-ECDH(local_wrapping_private, remote_wrapping_public),
+  salt = K_sync_epoch,
+  info = LP("atterm-peer-rendezvous-signal-key-v1") || LP(space_id) ||
+         LP(peer_lo) || LP(peer_hi) || LP(u64be(epoch)),
+  length = 32)
+```
+
+信令信封为 `version(0x01) || nonce(24B) || XChaCha20-Poly1305 ciphertext+tag`。每条消息的
+AAD 为：
+
+```text
+LP("atterm-peer-rendezvous-signal-aad-v1") || LP(topic) ||
+LP(from_presence_id) || LP(to_presence_id) || LP(message_id)
+```
+
+因此同 Space 的第三个成员即使持有 epoch key，也不能解开另外两个成员的 SDP/ICE；Rendezvous
+也不能把 ciphertext 替换到另一个 topic、方向或 message id。客户端对
+`(from_presence_id, message_id)` 使用 2048 条有界 replay window。
+
+解密后的 route message 只有四种：`open`、`authorized`、`signal`、`error`。`open` 携带短期
+attempt ticket、目标 session 和 client identity；`authorized` 只返回该 attempt 的有效期与
+effective permission；`signal` 携带 Pion offer/answer/ICE；`error` 只返回稳定类别。上述字段全部
+位于加密信封内。Genesis、membership token、revocation/config operation 和 terminal frame
+从不发给 Rendezvous；双方仍必须在 Pion DataChannel 上完成现有
+`PeerMembershipAuthenticator` 握手，握手通过后才允许创建 terminal subscriber 和
+`peerConfigChannel`。
+
+发送 `open` 后，Rendezvous ACK 为 `queued` 映射 `peer offline`；连接、写入、ACK 超时或 host
+容量问题映射 `service unavailable`；Pion ICE/transport 建链失败映射 `ICE failed`；membership、
+session scope、permission 或 attempt 校验失败映射 `authentication failed`。这些类别用于调用方
+决定是否退避或尝试已启用的 Quick Tunnel；Rendezvous 本身不提供 data fallback。
+
 稳定错误码为 `unauthorized`、`invalid_message`、`message_too_large`、
 `presence_conflict`、`topic_capacity`、`mailbox_capacity`、`rate_limited` 和
 `server_capacity`。默认上限是全局 1024 连接、每 IP 32 连接、每 topic 32 presence、每 topic
@@ -1262,6 +1301,11 @@ context、`crypto.subtle` 与 `RTCPeerConnection`，并映射成稳定状态
 `insecure_context`、`webcrypto_unavailable`、`webrtc_unavailable`。独立黑盒验收入口
 `cmd/atterm-rendezvous-contract` 只依赖 service origin/Origin，官方和自建实例必须通过同一套
 health、challenge、presence、delivery、mailbox、dedupe、size limit 与 metrics privacy 检查。
+
+Desktop 启用 Rendezvous 且已有 Peer Space 时会注册 host presence；失败按 500 ms 到 8 s
+指数退避，连接断开或进入下一个 15 分钟 presence slot 时重新注册。成员重连的
+`ConnectionBundle` 可同时携带 Quick Tunnel 与 Rendezvous，也可以只携带 Rendezvous；首次邀请
+核销仍必须包含可用 Quick Tunnel route，Rendezvous 不承担 bootstrap secret 交换。
 
 ## 重连与续传
 

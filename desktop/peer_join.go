@@ -69,7 +69,11 @@ func (a *App) JoinPeerSpace(req JoinPeerSpaceReq) (PeerSpaceStatus, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, peerJoinTimeout)
 	defer cancel()
-	return manager.joinSpace(ctx, req)
+	status, err := manager.joinSpace(ctx, req)
+	if err == nil && a.cfgStore != nil {
+		a.reconcilePeerRendezvous(a.cfgStore.Get())
+	}
+	return status, err
 }
 
 func (m *peerSpaceManager) inspectConnectionBundle(raw string) (peerproto.VerifiedConnectionBundle, PeerConnectionPreview, error) {

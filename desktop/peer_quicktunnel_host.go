@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/proto"
@@ -33,6 +34,7 @@ type peerQuickTunnelChannel interface {
 	SendFrame(context.Context, []byte) error
 	SendConfigMessage(context.Context, peertransport.RecordKind, []byte) error
 	RemoteMembershipToken() (string, bool)
+	Close() error
 }
 
 // PeerQuickTunnelStatus is the Desktop-visible lifecycle state. Starting the
@@ -47,16 +49,25 @@ type PeerQuickTunnelStatus struct {
 type peerQuickTunnelHost struct {
 	app     *App
 	host    *relayHost
+	runtime *peerHostRuntime
 	handler http.Handler
 	tunnel  peerQuickTunnelManager
 
 	mu       sync.Mutex
-	attempts map[*quicktunnel.SignalChannel]*peerQuickTunnelAttempt
+	attempts map[*quicktunnel.SignalChannel]*peerHostAttempt
 }
 
-type peerQuickTunnelAttempt struct {
-	host             *peerQuickTunnelHost
+// peerHostRuntime owns the transport-independent authorization and local
+// session attachment rules shared by Quick Tunnel and Rendezvous signaling.
+type peerHostRuntime struct {
+	app  *App
+	host *relayHost
+}
+
+type peerHostAttempt struct {
+	host             *peerHostRuntime
 	signal           *quicktunnel.SignalChannel
+	remove           func()
 	sessionID        uuid.UUID
 	permission       string
 	clientInstanceID string
@@ -79,7 +90,8 @@ func newPeerQuickTunnelHost(app *App, host *relayHost) (*peerQuickTunnelHost, er
 		return nil, errors.New("Quick Tunnel Peer host is unavailable")
 	}
 	peerHost := &peerQuickTunnelHost{
-		app: app, host: host, attempts: make(map[*quicktunnel.SignalChannel]*peerQuickTunnelAttempt),
+		app: app, host: host, runtime: &peerHostRuntime{app: app, host: host},
+		attempts: make(map[*quicktunnel.SignalChannel]*peerHostAttempt),
 	}
 	handler, err := quicktunnel.NewPeerHandler(quicktunnel.HostConfig{
 		Authorize: peerHost.authorize,
@@ -136,52 +148,72 @@ func (h *peerQuickTunnelHost) authorize(ctx context.Context, request quicktunnel
 	if err := ctx.Err(); err != nil {
 		return quicktunnel.HostAuthorization{}, err
 	}
-	manager, err := h.app.peerManager()
+	authorization, err := h.runtime.authorize(request.ClientPeerID, request.SessionID)
 	if err != nil {
 		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+	}
+	return quicktunnel.HostAuthorization{
+		Identity: authorization.Identity, GenesisToken: authorization.GenesisToken,
+		ClientMembershipToken: authorization.ClientMembershipToken,
+		HostMembershipToken:   authorization.HostMembershipToken,
+		Permission:            authorization.Permission,
+	}, nil
+}
+
+type peerHostAuthorization struct {
+	Identity              *peercrypto.Identity
+	GenesisToken          string
+	ClientMembershipToken string
+	HostMembershipToken   string
+	Permission            peertransport.Permission
+}
+
+func (h *peerHostRuntime) authorize(clientPeerID string, sessionID uuid.UUID) (peerHostAuthorization, error) {
+	manager, err := h.app.peerManager()
+	if err != nil {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
 	state, err := manager.store.Load()
 	if err != nil {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
 	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
 	if err != nil {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
 	identity, err := manager.loadIdentity()
 	if err != nil {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
 	active, err := activePeerMemberships(state, genesis, time.Now())
 	if err != nil {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
-	client := membershipForPeerID(active, request.ClientPeerID)
+	client := membershipForPeerID(active, clientPeerID)
 	local := membershipForPeerID(active, identity.PeerID())
 	if client == nil || local == nil {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
-	sess, ok := h.host.server.Registry().Get(request.SessionID)
-	if !ok || sess.Info().HostID != h.host.hostID {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+	sess, ok := h.host.server.Registry().Get(sessionID)
+	if !ok || sess.Info().HostID != h.host.hostID || !peerMembershipAllowsSession(*client, sessionID) || !peerMembershipAllowsSession(*local, sessionID) {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
 	ownerPermission, ok := directTransportPermission(h.app.cfgStore.Get().RemotePermissionOrDefault())
 	if !ok {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
 	clientPermission, ok := peerPermission(client.Document.Permission)
 	if !ok {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
 	localPermission, ok := peerPermission(local.Document.Permission)
 	if !ok {
-		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
-	effective := minimumPeerTransportPermission(ownerPermission, clientPermission, localPermission)
-	return quicktunnel.HostAuthorization{
+	return peerHostAuthorization{
 		Identity: identity, GenesisToken: state.GenesisToken,
 		ClientMembershipToken: client.Token, HostMembershipToken: local.Token,
-		Permission: effective,
+		Permission: minimumPeerTransportPermission(ownerPermission, clientPermission, localPermission),
 	}, nil
 }
 
@@ -237,10 +269,11 @@ func (h *peerQuickTunnelHost) onAuthenticated(signal *quicktunnel.SignalChannel)
 		_ = signal.Close()
 		return
 	}
-	attempt := &peerQuickTunnelAttempt{
-		host: h, signal: signal, sessionID: binding.SessionID,
+	attempt := &peerHostAttempt{
+		host: h.runtime, signal: signal, sessionID: binding.SessionID,
 		permission: permission, clientInstanceID: binding.ClientInstanceID,
 	}
+	attempt.remove = func() { h.removeAttempt(signal) }
 	h.mu.Lock()
 	if _, exists := h.attempts[signal]; exists {
 		h.mu.Unlock()
@@ -308,7 +341,7 @@ func (h *peerQuickTunnelHost) removeAttempt(signal *quicktunnel.SignalChannel) {
 	}
 }
 
-func (h *peerQuickTunnelHost) takeAttempt(signal *quicktunnel.SignalChannel) *peerQuickTunnelAttempt {
+func (h *peerQuickTunnelHost) takeAttempt(signal *quicktunnel.SignalChannel) *peerHostAttempt {
 	h.mu.Lock()
 	attempt := h.attempts[signal]
 	delete(h.attempts, signal)
@@ -316,7 +349,7 @@ func (h *peerQuickTunnelHost) takeAttempt(signal *quicktunnel.SignalChannel) *pe
 	return attempt
 }
 
-func (a *peerQuickTunnelAttempt) start(parent context.Context, channel peerQuickTunnelChannel) error {
+func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelChannel) error {
 	remoteMembership, ok := channel.RemoteMembershipToken()
 	if !ok {
 		return errors.New("Peer membership is unavailable after authentication")
@@ -359,30 +392,30 @@ func (a *peerQuickTunnelAttempt) start(parent context.Context, channel peerQuick
 	return nil
 }
 
-func (a *peerQuickTunnelAttempt) stream(ctx context.Context, channel peerQuickTunnelChannel, sub *session.Subscriber, replayToSeq uint64) {
+func (a *peerHostAttempt) stream(ctx context.Context, channel peerQuickTunnelChannel, sub *session.Subscriber, replayToSeq uint64) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-sub.Done():
-			a.host.removeAttempt(a.signal)
+			a.removeSelf()
 			return
 		case frame, open := <-sub.Out():
 			if !open {
-				a.host.removeAttempt(a.signal)
+				a.removeSelf()
 				return
 			}
 			if frame.Type == proto.TypeReplayProgress {
 				var progress proto.ReplayProgressPayload
 				if json.Unmarshal(frame.Payload, &progress) == nil && progress.Phase == proto.ReplayProgressEnd {
 					if progress.Seq != replayToSeq {
-						a.host.removeAttempt(a.signal)
+						a.removeSelf()
 						return
 					}
 					ready := make([]byte, 8)
 					binary.BigEndian.PutUint64(ready, replayToSeq)
 					if err := channel.SendRecord(ctx, peertransport.RecordDirectReady, ready); err != nil {
-						a.host.removeAttempt(a.signal)
+						a.removeSelf()
 						return
 					}
 				}
@@ -393,14 +426,14 @@ func (a *peerQuickTunnelAttempt) stream(ctx context.Context, channel peerQuickTu
 				continue
 			}
 			if err := channel.SendFrame(ctx, proto.Marshal(prepared)); err != nil {
-				a.host.removeAttempt(a.signal)
+				a.removeSelf()
 				return
 			}
 		}
 	}
 }
 
-func (a *peerQuickTunnelAttempt) handleRecord(ctx context.Context, kind peertransport.RecordKind, payload []byte) error {
+func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.RecordKind, payload []byte) error {
 	switch kind {
 	case peertransport.RecordPing:
 		if len(payload) != 8 {
@@ -418,7 +451,7 @@ func (a *peerQuickTunnelAttempt) handleRecord(ctx context.Context, kind peertran
 		}
 		return channel.SendRecord(ctx, peertransport.RecordPong, payload)
 	case peertransport.RecordClose:
-		go a.host.removeAttempt(a.signal)
+		go a.removeSelf()
 		return nil
 	case peertransport.RecordFrame:
 		currentPermission, err := a.host.currentOwnerPermission()
@@ -470,7 +503,7 @@ func (a *peerQuickTunnelAttempt) handleRecord(ctx context.Context, kind peertran
 	}
 }
 
-func (a *peerQuickTunnelAttempt) handleConfigMessage(kind peertransport.RecordKind, payload []byte) error {
+func (a *peerHostAttempt) handleConfigMessage(kind peertransport.RecordKind, payload []byte) error {
 	a.mu.Lock()
 	config := a.config
 	remoteMembership := a.remoteMembership
@@ -488,7 +521,7 @@ func (a *peerQuickTunnelAttempt) handleConfigMessage(kind peertransport.RecordKi
 	return a.validateCurrentAuthorization(remoteMembership)
 }
 
-func (a *peerQuickTunnelAttempt) watchAuthorization(ctx context.Context) {
+func (a *peerHostAttempt) watchAuthorization(ctx context.Context) {
 	ticker := time.NewTicker(peerQuickTunnelAuthorizationRefresh)
 	defer ticker.Stop()
 	for {
@@ -500,14 +533,14 @@ func (a *peerQuickTunnelAttempt) watchAuthorization(ctx context.Context) {
 			remoteMembership := a.remoteMembership
 			a.mu.Unlock()
 			if err := a.validateCurrentAuthorization(remoteMembership); err != nil {
-				a.host.removeAttempt(a.signal)
+				a.removeSelf()
 				return
 			}
 		}
 	}
 }
 
-func (a *peerQuickTunnelAttempt) validateCurrentAuthorization(remoteMembership string) error {
+func (a *peerHostAttempt) validateCurrentAuthorization(remoteMembership string) error {
 	currentPermission, err := a.host.currentPermission(remoteMembership, a.sessionID)
 	if err != nil || permissionRankName(currentPermission) < permissionRankName(a.permission) {
 		return errors.New("Peer authorization is no longer active")
@@ -515,7 +548,7 @@ func (a *peerQuickTunnelAttempt) validateCurrentAuthorization(remoteMembership s
 	return nil
 }
 
-func (a *peerQuickTunnelAttempt) setTransport(transport *peertransport.PionHostAttempt) bool {
+func (a *peerHostAttempt) setTransport(transport *peertransport.PionHostAttempt) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -525,7 +558,7 @@ func (a *peerQuickTunnelAttempt) setTransport(transport *peertransport.PionHostA
 	return true
 }
 
-func (a *peerQuickTunnelAttempt) close(closeSignal bool) {
+func (a *peerHostAttempt) close(closeSignal bool) {
 	a.closeOnce.Do(func() {
 		a.mu.Lock()
 		a.closed = true
@@ -533,6 +566,7 @@ func (a *peerQuickTunnelAttempt) close(closeSignal bool) {
 		sub := a.sub
 		sess := a.subscribedSession
 		transport := a.transport
+		channel := a.channel
 		signal := a.signal
 		a.streamCancel = nil
 		a.sub = nil
@@ -551,13 +585,22 @@ func (a *peerQuickTunnelAttempt) close(closeSignal bool) {
 		if transport != nil {
 			_ = transport.Close()
 		}
+		if channel != nil {
+			_ = channel.Close()
+		}
 		if closeSignal && signal != nil {
 			_ = signal.Close()
 		}
 	})
 }
 
-func (h *peerQuickTunnelHost) currentPermission(remoteMembership string, sessionID uuid.UUID) (string, error) {
+func (a *peerHostAttempt) removeSelf() {
+	if a != nil && a.remove != nil {
+		a.remove()
+	}
+}
+
+func (h *peerHostRuntime) currentPermission(remoteMembership string, sessionID uuid.UUID) (string, error) {
 	if remoteMembership == "" {
 		return "", quicktunnel.ErrUnauthorized
 	}
@@ -628,7 +671,7 @@ func peerMembershipAllowsSession(membership peerproto.VerifiedGrant, sessionID u
 	return false
 }
 
-func (h *peerQuickTunnelHost) currentOwnerPermission() (string, error) {
+func (h *peerHostRuntime) currentOwnerPermission() (string, error) {
 	permission := h.app.cfgStore.Get().RemotePermissionOrDefault()
 	if _, ok := directTransportPermission(permission); !ok {
 		return "", quicktunnel.ErrUnauthorized
@@ -697,9 +740,6 @@ func publicPeerQuickTunnelStatus(status quicktunnel.Status) PeerQuickTunnelStatu
 
 func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, error) {
 	status := h.tunnel.Status()
-	if !status.Running || status.PublicURL == "" {
-		return "", errors.New("Quick Tunnel has no published route")
-	}
 	manager, err := h.app.peerManager()
 	if err != nil {
 		return "", err
@@ -725,8 +765,23 @@ func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, 
 	if local == nil {
 		return "", errors.New("local Peer membership is not active")
 	}
-	routes := []peerproto.ConnectionRoute{{Kind: peerproto.RouteQuickTunnel, URL: status.PublicURL}}
+	routes := make([]peerproto.ConnectionRoute, 0, 2)
+	if status.Running && status.PublicURL != "" {
+		routes = append(routes, peerproto.ConnectionRoute{Kind: peerproto.RouteQuickTunnel, URL: status.PublicURL})
+	}
+	h.app.peerRendezvousMu.Lock()
+	rendezvousLifecycle := h.app.peerRendezvous
+	h.app.peerRendezvousMu.Unlock()
+	if route, ok := rendezvousLifecycle.connectionRoute(); ok {
+		routes = append(routes, route)
+	}
+	if len(routes) == 0 {
+		return "", errors.New("Peer connection has no published route")
+	}
 	if invitationToken != "" {
+		if !status.Running || status.PublicURL == "" {
+			return "", errors.New("first Peer join still requires a published Quick Tunnel route")
+		}
 		open := false
 		for _, invitation := range state.Invitations {
 			if invitation.Token == invitationToken && invitation.ConsumedAt == 0 && invitation.RevokedAt == 0 && now.Unix() < invitation.ExpiresAt {
@@ -748,7 +803,7 @@ func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, 
 
 func (h *peerQuickTunnelHost) Stop() error {
 	h.mu.Lock()
-	attempts := make([]*peerQuickTunnelAttempt, 0, len(h.attempts))
+	attempts := make([]*peerHostAttempt, 0, len(h.attempts))
 	for signal, attempt := range h.attempts {
 		delete(h.attempts, signal)
 		attempts = append(attempts, attempt)
@@ -768,7 +823,7 @@ func (h *peerQuickTunnelHost) Stop() error {
 
 func (h *peerQuickTunnelHost) revalidateAttempts() {
 	h.mu.Lock()
-	attempts := make([]*peerQuickTunnelAttempt, 0, len(h.attempts))
+	attempts := make([]*peerHostAttempt, 0, len(h.attempts))
 	for _, attempt := range h.attempts {
 		attempts = append(attempts, attempt)
 	}

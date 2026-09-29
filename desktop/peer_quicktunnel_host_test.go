@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ type peerQuickTunnelFixture struct {
 	peerHost         *peerQuickTunnelHost
 	session          *session.Session
 	clientIdentity   *peercrypto.Identity
+	clientWrapping   *peercrypto.WrappingIdentity
 	genesisToken     string
 	clientMembership string
 	hostMembership   string
@@ -111,7 +113,7 @@ func newPeerQuickTunnelFixture(t *testing.T, permission peerproto.Permission) pe
 	t.Cleanup(func() { _ = peerHost.Stop() })
 	return peerQuickTunnelFixture{
 		app: app, host: host, peerHost: peerHost, session: sess,
-		clientIdentity: clientIdentity, genesisToken: state.GenesisToken,
+		clientIdentity: clientIdentity, clientWrapping: clientWrapping, genesisToken: state.GenesisToken,
 		clientMembership: clientMembership, hostMembership: state.LocalMembership,
 	}
 }
@@ -455,8 +457,8 @@ func TestPeerQuickTunnelAuthorizationRejectsUnknownRevokedAndWrongSession(t *tes
 func TestRevokePeerMemberImmediatelyRemovesQuickTunnelAttempt(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	signal := &quicktunnel.SignalChannel{}
-	attempt := &peerQuickTunnelAttempt{
-		host: fixture.peerHost, signal: signal, sessionID: fixture.session.ID,
+	attempt := &peerHostAttempt{
+		host: fixture.peerHost.runtime, signal: signal, sessionID: fixture.session.ID,
 		permission: proto.RemotePermissionControl, remoteMembership: fixture.clientMembership,
 	}
 	// This focused lifecycle test does not construct a signaling socket. Mark
@@ -535,6 +537,40 @@ func TestPeerQuickTunnelConnectionBundleRotatesOnlyRoute(t *testing.T) {
 	}
 	if _, err := fixture.app.CreatePeerConnectionBundle(invitations[0].Token); err == nil {
 		t.Fatal("revoked invitation received a published route")
+	}
+}
+
+func TestPeerConnectionBundleCarriesRendezvousAndQuickTunnelHints(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	fixture.peerHost.tunnel = &fakePeerQuickTunnelManager{status: quicktunnel.Status{
+		Running: true, PublicURL: "https://dual-route.trycloudflare.com",
+	}}
+	fixture.app.quickTunnel = fixture.peerHost
+	fixture.app.peerRendezvous = &peerRendezvousLifecycle{active: &peerRendezvousHost{
+		serviceURL: "https://rendezvous.example", topic: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)),
+	}}
+
+	token, err := fixture.app.CreatePeerConnectionBundle("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := peerproto.VerifyConnectionBundle(token, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verified.Document.Routes) != 2 || verified.Document.Routes[0].Kind != peerproto.RouteQuickTunnel ||
+		verified.Document.Routes[1].Kind != peerproto.RouteRendezvous || verified.Document.Routes[1].Topic == "" {
+		t.Fatalf("mixed routes=%+v", verified.Document.Routes)
+	}
+
+	fixture.peerHost.tunnel = &fakePeerQuickTunnelManager{}
+	rendezvousOnly, err := fixture.app.CreatePeerConnectionBundle("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err = peerproto.VerifyConnectionBundle(rendezvousOnly, time.Now())
+	if err != nil || len(verified.Document.Routes) != 1 || verified.Document.Routes[0].Kind != peerproto.RouteRendezvous {
+		t.Fatalf("Rendezvous-only routes=%+v err=%v", verified.Document.Routes, err)
 	}
 }
 

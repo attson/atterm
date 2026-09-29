@@ -63,6 +63,13 @@ in PR 3.4, so the Stage A/B/C network convergence exit gate is not claimed yet.
 
 ## PR 3.4 - Client route integration
 
+Implementation status: the pairwise-encrypted signaling adapter, multiplexed Pion attempts,
+stable route failure categories, Desktop host registration/reconnect/rotation lifecycle, shared
+Quick Tunnel/Rendezvous terminal attachment runtime, and mixed or Rendezvous-only member reconnect
+bundles are implemented. First invitation redemption remains Quick Tunnel-only. The transport API
+is covered with real in-memory Rendezvous + Pion tests; end-user route selection/status presentation
+remains PR 3.5, so the Stage exit gate is not claimed here.
+
 - Add Rendezvous signaling adapter to the transport established in Stage 1。
 - Existing membership authenticator from Stage 2 handles the connection。
 - ConnectionBundle can carry Rendezvous and Quick Tunnel hints without changing CapabilityTicket。

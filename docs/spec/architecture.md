@@ -393,9 +393,22 @@ Rendezvous snapshot/online/offline 只能进入内存 reachability directory。D
 最多 4 个，按本地 operation lag、last exchange 和 slot 轮换排序。由此 A/B/C 等小拓扑不需要
 指定中心节点，大拓扑也不会让每个前台客户端同时拨所有成员。
 
-这个层只产出 config-sync target，不建立 Pion route、不发送 SDP/ICE，也不创建 terminal
-subscriber。Rendezvous signaling → Pion transport、重试/退避和前后台生命周期属于下一层 route
-adapter；无论该层是否可用，本地 terminal、Relay 和 Quick Tunnel 路径都不依赖它。
+discovery planner 本身只产出 config-sync target，不建立 Pion route，也不创建 terminal
+subscriber。其上层 `internal/rendezvousclient/route.go` 在单条 presence WebSocket 上复用多个
+attempt，把 `open/authorized/offer/answer/ICE/error` 放入按 Peer pair 派生的 XChaCha20-Poly1305
+信封，再接入 Stage 1 的 Pion transport。Rendezvous 只能看到 opaque topic/presence/message id
+和 ciphertext；membership token 只进入 DataChannel 内的第二次身份握手。
+
+Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
+registration：注册失败以 500 ms 到 8 s 退避，连接断开和 15 分钟 presence 轮换都会重建。
+`peer_rendezvous_route.go` 只把 active membership 解析出的 presence 交给 route adapter，并与
+Quick Tunnel 共用 `peerHostRuntime`，所以 session scope、effective permission、周期撤销检查、
+单 terminal subscriber 和 `peerConfigChannel` 的规则完全相同。成员撤销会先更新 governance/
+epoch，再重建 registration，使旧 topic/presence 与既有 attempt 一起失效。
+
+Rendezvous 生命周期是附加能力：启动或重连失败不阻塞桌面启动，本地 terminal、Relay 与 Quick
+Tunnel 不读取它的状态。成员 reconnect bundle 可发布 Quick Tunnel + Rendezvous 或仅
+Rendezvous route；首次 invitation redemption 仍固定经 Quick Tunnel。
 
 ## Relay 多实例架构
 

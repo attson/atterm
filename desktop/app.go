@@ -388,8 +388,11 @@ type App struct {
 
 	// peerSpace is initialized lazily because most existing installations use
 	// only Relay mode and should not create Peer identity or keyring entries.
-	peerSpaceMu sync.Mutex
-	peerSpace   *peerSpaceManager
+	peerSpaceMu               sync.Mutex
+	peerSpace                 *peerSpaceManager
+	peerRendezvousReconcileMu sync.Mutex
+	peerRendezvousMu          sync.Mutex
+	peerRendezvous            *peerRendezvousLifecycle
 
 	startupFatalMu sync.RWMutex
 	startupFatal   StartupError
@@ -613,6 +616,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Feishu integration: choose mode based on relay login state.
 	a.startFeishu(ctx, cfg)
+	a.reconcilePeerRendezvous(cfg)
 }
 
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
@@ -623,6 +627,7 @@ func (a *App) shutdown(ctx context.Context) {
 			logWarn("quick-tunnel", "stop on app shutdown: %v", err)
 		}
 	}
+	a.stopPeerRendezvous()
 	a.stopNativeDirectClients()
 	a.mu.Lock()
 	if a.uplinkCancel != nil {

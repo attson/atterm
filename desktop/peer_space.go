@@ -176,6 +176,9 @@ func (a *App) CreatePeerSpace() (PeerSpaceStatus, error) {
 	if _, _, err := a.bootstrapPeerConfig(manager); err != nil {
 		return status, err
 	}
+	if a.cfgStore != nil {
+		a.reconcilePeerRendezvous(a.cfgStore.Get())
+	}
 	return status, nil
 }
 

@@ -33,6 +33,10 @@ import {
   RevokePeerInvitationBatch,
   PreviewPeerConnectionBundle,
   JoinPeerSpace,
+  GetPeerQuickTunnelStatus,
+  StartPeerQuickTunnel,
+  StopPeerQuickTunnel,
+  CreatePeerConnectionBundle,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -278,6 +282,10 @@ export function createWailsPlatform(): Platform {
       listInvitations: () => ListPeerInvitations(),
       revokeInvitation: (inviteID) => RevokePeerInvitation(inviteID),
       revokeInvitationBatch: (batchID) => RevokePeerInvitationBatch(batchID),
+      getQuickTunnelStatus: () => GetPeerQuickTunnelStatus(),
+      startQuickTunnel: () => StartPeerQuickTunnel(),
+      stopQuickTunnel: () => StopPeerQuickTunnel(),
+      createConnectionBundle: (invitationToken) => CreatePeerConnectionBundle(invitationToken),
     },
     updater: {
       getState: api.getUpdateState,

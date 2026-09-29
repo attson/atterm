@@ -53,6 +53,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   RevokePeerInvitationBatch: vi.fn().mockResolvedValue(undefined),
   PreviewPeerConnectionBundle: vi.fn().mockResolvedValue({ fingerprint: 'SHA256:space' }),
   JoinPeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-2', space_id: 'space-1' }),
+  GetPeerQuickTunnelStatus: vi.fn().mockResolvedValue({ running: false, starting: false }),
+  StartPeerQuickTunnel: vi.fn().mockResolvedValue({ running: true, starting: false, public_url: 'https://route.trycloudflare.com' }),
+  StopPeerQuickTunnel: vi.fn().mockResolvedValue(undefined),
+  CreatePeerConnectionBundle: vi.fn().mockResolvedValue('atc1.member-route.signature'),
 }))
 
 vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
@@ -65,7 +69,19 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 
 import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
-import { CreatePeerInvitations, GetPluginConfig, JoinPeerSpace, PreviewPeerConnectionBundle, SetPluginConfig, GetAppVersion, StartServicePreview } from '../../../wailsjs/go/main/App'
+import {
+  CreatePeerConnectionBundle,
+  CreatePeerInvitations,
+  GetPeerQuickTunnelStatus,
+  GetPluginConfig,
+  JoinPeerSpace,
+  PreviewPeerConnectionBundle,
+  SetPluginConfig,
+  GetAppVersion,
+  StartPeerQuickTunnel,
+  StartServicePreview,
+  StopPeerQuickTunnel,
+} from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import {
   fetchRelayMe,
@@ -243,6 +259,25 @@ describe('createWailsPlatform', () => {
       connection_bundle: 'atc1.bundle.signature',
       expected_fingerprint: 'SHA256:space',
     }))
+  })
+
+  it('peer bridge exposes Quick Tunnel host lifecycle and member route bundles', async () => {
+    const p = createWailsPlatform()
+
+    expect(await p.peer!.getQuickTunnelStatus!()).toEqual({ running: false, starting: false })
+    expect(GetPeerQuickTunnelStatus).toHaveBeenCalledOnce()
+
+    expect(await p.peer!.startQuickTunnel!()).toEqual(expect.objectContaining({
+      running: true,
+      public_url: 'https://route.trycloudflare.com',
+    }))
+    expect(StartPeerQuickTunnel).toHaveBeenCalledOnce()
+
+    expect(await p.peer!.createConnectionBundle!('')).toBe('atc1.member-route.signature')
+    expect(CreatePeerConnectionBundle).toHaveBeenCalledWith('')
+
+    await p.peer!.stopQuickTunnel!()
+    expect(StopPeerQuickTunnel).toHaveBeenCalledOnce()
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {

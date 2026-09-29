@@ -1117,8 +1117,9 @@ callback，绝不创建第二个 terminal subscriber。
 生成 member reconnect bundle。URL 轮换生成新的 bundle id/route，genesis、ticket 和 durable
 membership 不变。`StopPeerQuickTunnel` 关闭 active Pion/subscriber、loopback gateway 和
 `cloudflared`，但不删除 Peer trust，可再次显式启动。WSS fallback 复用上述同一个 Session attach、
-权限热检查和 config anti-entropy 路径；config 仍不创建第二个 terminal subscriber。当前尚未实现
-join/bootstrap UI 或 Web/iOS client 接入，因此还没有端用户入口来触发 fallback consent。
+权限热检查和 config anti-entropy 路径；config 仍不创建第二个 terminal subscriber。Desktop
+Settings 已提供 join/bootstrap 确认以及 Quick Tunnel start/stop、member reconnect bundle 复制入口；
+Web/iOS Peer client 接入与端用户 fallback consent 仍未实现。
 
 ## 重连与续传
 

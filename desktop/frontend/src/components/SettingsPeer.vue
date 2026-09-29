@@ -1,10 +1,11 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from 'vue'
-import { Check, QrCode, Search, ShieldCheck } from 'lucide-vue-next'
+import { Check, Copy, Play, QrCode, Search, ShieldCheck, Square } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
+import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
 import { QRScanner } from '../platform/qrScanner'
-import type { PeerConnectionPreview, PeerSpaceStatus } from '../platform/types'
+import type { PeerConnectionPreview, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
 
 const { t } = useI18n()
 const platform = usePlatform()
@@ -13,13 +14,23 @@ const loading = ref(true)
 const previewing = ref(false)
 const joining = ref(false)
 const scanning = ref(false)
+const tunnelBusy = ref(false)
+const routeCopying = ref(false)
+const routeCopied = ref(false)
 const error = ref('')
 const status = ref<PeerSpaceStatus | null>(null)
+const tunnelStatus = ref<PeerQuickTunnelStatus | null>(null)
 const bundleInput = ref('')
 const previewedBundle = ref('')
 const preview = ref<PeerConnectionPreview | null>(null)
 
 const canPreview = computed(() => bundleInput.value.trim() !== '' && !previewing.value && !joining.value)
+const hasQuickTunnelHost = computed(() => Boolean(
+  platform.peer?.getQuickTunnelStatus
+  && platform.peer.startQuickTunnel
+  && platform.peer.stopQuickTunnel
+  && platform.peer.createConnectionBundle,
+))
 const fingerprint = computed(() => {
   const hash = status.value?.genesis_hash?.trim()
   if (!hash) return ''
@@ -34,6 +45,9 @@ onMounted(async () => {
   }
   try {
     status.value = await platform.peer.status()
+    if (status.value.configured && platform.peer.getQuickTunnelStatus) {
+      tunnelStatus.value = await platform.peer.getQuickTunnelStatus()
+    }
   } catch {
     error.value = t('settings.peer.errors.status')
   } finally {
@@ -45,6 +59,57 @@ function onBundleInput(): void {
   preview.value = null
   previewedBundle.value = ''
   error.value = ''
+}
+
+async function startQuickTunnel(): Promise<void> {
+  const start = platform.peer?.startQuickTunnel
+  if (!start || tunnelBusy.value) return
+  error.value = ''
+  routeCopied.value = false
+  tunnelBusy.value = true
+  try {
+    tunnelStatus.value = await start()
+  } catch {
+    error.value = t('settings.peer.errors.tunnelStart')
+  } finally {
+    tunnelBusy.value = false
+  }
+}
+
+async function stopQuickTunnel(): Promise<void> {
+  const stop = platform.peer?.stopQuickTunnel
+  if (!stop || tunnelBusy.value) return
+  error.value = ''
+  routeCopied.value = false
+  tunnelBusy.value = true
+  try {
+    await stop()
+    tunnelStatus.value = { running: false, starting: false }
+  } catch {
+    error.value = t('settings.peer.errors.tunnelStop')
+  } finally {
+    tunnelBusy.value = false
+  }
+}
+
+async function copyMemberRoute(): Promise<void> {
+  const createBundle = platform.peer?.createConnectionBundle
+  if (!createBundle || !tunnelStatus.value?.running || routeCopying.value) return
+  error.value = ''
+  routeCopied.value = false
+  routeCopying.value = true
+  try {
+    const bundle = await createBundle('')
+    const nativeClipboard = platform.system.setClipboardText
+      ? { writeText: (text: string) => platform.system.setClipboardText!(text) }
+      : undefined
+    if (!await copyTextToClipboard(bundle, nativeClipboard)) throw new Error('clipboard unavailable')
+    routeCopied.value = true
+  } catch {
+    error.value = t('settings.peer.errors.routeCopy')
+  } finally {
+    routeCopying.value = false
+  }
 }
 
 function describePeerError(value: unknown, phase: 'preview' | 'join'): string {
@@ -172,6 +237,72 @@ function permissionLabel(permission: string): string {
             <dd>{{ formatTime(status.created_at) }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section v-if="hasQuickTunnelHost" class="peer-section" data-testid="peer-tunnel-section">
+        <div>
+          <h3>{{ t('settings.peer.tunnel.title') }}</h3>
+          <p class="hint">{{ t('settings.peer.tunnel.hint') }}</p>
+        </div>
+        <div class="tunnel-status-row" data-testid="peer-tunnel-status">
+          <span
+            class="status-dot"
+            :class="{ active: tunnelStatus?.running, starting: tunnelStatus?.starting }"
+            aria-hidden="true"
+          />
+          <span>
+            {{ tunnelStatus?.running
+              ? t('settings.peer.tunnel.running')
+              : tunnelStatus?.starting
+                ? t('settings.peer.tunnel.starting')
+                : t('settings.peer.tunnel.stopped') }}
+          </span>
+        </div>
+        <code
+          v-if="tunnelStatus?.running && tunnelStatus.public_url"
+          class="route-url published-route"
+          data-testid="peer-tunnel-url"
+        >{{ tunnelStatus.public_url }}</code>
+        <div class="actions">
+          <button
+            v-if="!tunnelStatus?.running"
+            type="button"
+            class="primary-action"
+            data-testid="peer-tunnel-start"
+            :disabled="tunnelBusy"
+            @click="startQuickTunnel"
+          >
+            <Play :size="15" aria-hidden="true" />
+            {{ tunnelBusy ? t('settings.peer.tunnel.starting') : t('settings.peer.tunnel.start') }}
+          </button>
+          <template v-else>
+            <button
+              type="button"
+              class="primary-action"
+              data-testid="peer-tunnel-copy-route"
+              :disabled="routeCopying || tunnelBusy"
+              @click="copyMemberRoute"
+            >
+              <Copy :size="15" aria-hidden="true" />
+              {{ routeCopied
+                ? t('settings.peer.tunnel.copied')
+                : routeCopying
+                  ? t('settings.peer.tunnel.copying')
+                  : t('settings.peer.tunnel.copyRoute') }}
+            </button>
+            <button
+              type="button"
+              class="secondary-action"
+              data-testid="peer-tunnel-stop"
+              :disabled="tunnelBusy || routeCopying"
+              @click="stopQuickTunnel"
+            >
+              <Square :size="14" aria-hidden="true" />
+              {{ tunnelBusy ? t('settings.peer.tunnel.stopping') : t('settings.peer.tunnel.stop') }}
+            </button>
+          </template>
+        </div>
+        <p v-if="tunnelStatus?.running" class="hint">{{ t('settings.peer.tunnel.shareHint') }}</p>
       </section>
 
       <section class="peer-section">
@@ -374,6 +505,34 @@ textarea:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.tunnel-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--fg-dim);
+}
+.status-dot.active {
+  background: var(--good);
+}
+.status-dot.starting {
+  background: var(--warn);
+}
+.published-route {
+  display: block;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
 }
 button {
   display: inline-flex;

@@ -299,6 +299,13 @@ export interface CreatePeerInvitationsRequest {
   can_sync_secrets: boolean
 }
 
+export interface PeerQuickTunnelStatus {
+  running: boolean
+  starting: boolean
+  public_url?: string
+  local_origin?: string
+}
+
 // Peer trust is optional until each platform has its required secure identity
 // backend. Components must gate on platform.peer rather than importing Wails
 // bindings or silently falling back to Relay credentials.
@@ -311,6 +318,11 @@ export interface PeerBridge {
   listInvitations(): Promise<PeerInvitation[]>
   revokeInvitation(inviteID: string): Promise<void>
   revokeInvitationBatch(batchID: string): Promise<void>
+  /** Desktop host controls. Clients without a local gateway leave these absent. */
+  getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
+  startQuickTunnel?(): Promise<PeerQuickTunnelStatus>
+  stopQuickTunnel?(): Promise<void>
+  createConnectionBundle?(invitationToken: string): Promise<string>
 }
 
 // WidgetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the

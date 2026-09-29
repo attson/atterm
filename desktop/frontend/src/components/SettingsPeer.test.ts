@@ -13,10 +13,17 @@ vi.mock('../i18n/useI18n', () => ({
 const { fakePlatform, qrScanner } = vi.hoisted(() => ({
   fakePlatform: {
     caps: { capacitor: false },
+    system: {
+      setClipboardText: vi.fn(),
+    },
     peer: {
       status: vi.fn(),
       previewConnectionBundle: vi.fn(),
       joinSpace: vi.fn(),
+      getQuickTunnelStatus: vi.fn(),
+      startQuickTunnel: vi.fn(),
+      stopQuickTunnel: vi.fn(),
+      createConnectionBundle: vi.fn(),
     },
   },
   qrScanner: {
@@ -75,6 +82,15 @@ beforeEach(() => {
   fakePlatform.peer.status.mockResolvedValue(emptyStatus)
   fakePlatform.peer.previewConnectionBundle.mockResolvedValue(preview)
   fakePlatform.peer.joinSpace.mockResolvedValue(configuredStatus)
+  fakePlatform.peer.getQuickTunnelStatus.mockResolvedValue({ running: false, starting: false })
+  fakePlatform.peer.startQuickTunnel.mockResolvedValue({
+    running: true,
+    starting: false,
+    public_url: 'https://route.trycloudflare.com',
+  })
+  fakePlatform.peer.stopQuickTunnel.mockResolvedValue(undefined)
+  fakePlatform.peer.createConnectionBundle.mockResolvedValue('atc1.member-route.signature')
+  fakePlatform.system.setClipboardText.mockResolvedValue(undefined)
   qrScanner.requestPermissions.mockResolvedValue({ camera: 'granted' })
   qrScanner.scan.mockResolvedValue({ cancelled: false, rawValue: 'atc1.scanned-token' })
 })
@@ -173,5 +189,44 @@ describe('SettingsPeer', () => {
 
     expect(wrapper.get('[data-testid="peer-configured"]').text()).toContain(configuredStatus.space_id)
     expect(wrapper.find('[data-testid="peer-bundle-input"]').exists()).toBe(false)
+  })
+
+  it('starts Quick Tunnel and copies a ticketless member reconnect bundle', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const wrapper = await mountReady()
+
+    expect(fakePlatform.peer.getQuickTunnelStatus).toHaveBeenCalledOnce()
+    expect(wrapper.get('[data-testid="peer-tunnel-status"]').text()).toContain('settings.peer.tunnel.stopped')
+
+    await wrapper.get('[data-testid="peer-tunnel-start"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.startQuickTunnel).toHaveBeenCalledOnce()
+    expect(wrapper.get('[data-testid="peer-tunnel-status"]').text()).toContain('settings.peer.tunnel.running')
+    expect(wrapper.get('[data-testid="peer-tunnel-url"]').text()).toContain('https://route.trycloudflare.com')
+
+    await wrapper.get('[data-testid="peer-tunnel-copy-route"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.createConnectionBundle).toHaveBeenCalledWith('')
+    expect(fakePlatform.system.setClipboardText).toHaveBeenCalledWith('atc1.member-route.signature')
+    expect(wrapper.get('[data-testid="peer-tunnel-copy-route"]').text()).toContain('settings.peer.tunnel.copied')
+  })
+
+  it('stops Quick Tunnel and removes the share action', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getQuickTunnelStatus.mockResolvedValue({
+      running: true,
+      starting: false,
+      public_url: 'https://route.trycloudflare.com',
+    })
+    const wrapper = await mountReady()
+
+    await wrapper.get('[data-testid="peer-tunnel-stop"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.stopQuickTunnel).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-testid="peer-tunnel-copy-route"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="peer-tunnel-status"]').text()).toContain('settings.peer.tunnel.stopped')
   })
 })

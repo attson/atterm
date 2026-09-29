@@ -152,7 +152,10 @@ The shared Settings join UI now accepts pasted tokens and fragment deep links,
 shows the authenticated fingerprint/capabilities/route, and requires explicit
 confirmation before redemption. It exposes QR scanning only when both a Peer
 bridge and Capacitor camera capability are present. Web/iOS Peer bridge wiring
-and the end-user fallback consent flow remain pending.
+and the end-user fallback consent flow remain pending. Desktop Settings now
+also exposes the explicit Quick Tunnel start/stop lifecycle and copies a
+ticketless member reconnect bundle for the current route. Regenerating that
+bundle after URL rotation does not mint or replace durable membership.
 
 ## Why Quick Tunnel Before Rendezvous
 

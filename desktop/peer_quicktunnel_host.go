@@ -600,6 +600,21 @@ func (a *peerHostAttempt) removeSelf() {
 	}
 }
 
+func (a *peerHostAttempt) syncConfigNow() (bool, error) {
+	if a == nil {
+		return false, nil
+	}
+	a.mu.Lock()
+	config := a.config
+	ctx := a.streamCtx
+	closed := a.closed
+	a.mu.Unlock()
+	if closed || config == nil || ctx == nil || ctx.Err() != nil {
+		return false, nil
+	}
+	return true, config.Start(ctx)
+}
+
 func (h *peerHostRuntime) currentPermission(remoteMembership string, sessionID uuid.UUID) (string, error) {
 	if remoteMembership == "" {
 		return "", quicktunnel.ErrUnauthorized
@@ -836,6 +851,30 @@ func (h *peerQuickTunnelHost) revalidateAttempts() {
 			h.removeAttempt(attempt.signal)
 		}
 	}
+}
+
+func (h *peerQuickTunnelHost) syncConfigNow() (int, error) {
+	if h == nil {
+		return 0, nil
+	}
+	h.mu.Lock()
+	attempts := make([]*peerHostAttempt, 0, len(h.attempts))
+	for _, attempt := range h.attempts {
+		attempts = append(attempts, attempt)
+	}
+	h.mu.Unlock()
+	sent := 0
+	var syncErr error
+	for _, attempt := range attempts {
+		active, err := attempt.syncConfigNow()
+		if active {
+			sent++
+		}
+		if err != nil {
+			syncErr = errors.Join(syncErr, err)
+		}
+	}
+	return sent, syncErr
 }
 
 func (a *App) revalidatePeerQuickTunnelAttempts() {

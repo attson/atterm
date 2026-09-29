@@ -8,6 +8,8 @@ import (
 	"github.com/attson/atterm/internal/peerstore"
 )
 
+var errNoAuthenticatedPeerConfig = errors.New("no authenticated Peer connection is available")
+
 // PeerConfigSyncStatus is a token-free projection of local durable config
 // state. PendingOperations counts operations not acknowledged by any active
 // remote member; it does not imply storage on a central service.
@@ -31,6 +33,41 @@ func (a *App) GetPeerConfigSyncStatus() (PeerConfigSyncStatus, error) {
 		return PeerConfigSyncStatus{}, err
 	}
 	return manager.configSyncStatus()
+}
+
+// SyncPeerConfigNow re-advertises the local durable frontier over every
+// currently authenticated Peer config channel. It never opens a terminal
+// subscriber or creates a new network route.
+func (a *App) SyncPeerConfigNow() (PeerConfigSyncStatus, error) {
+	if a == nil {
+		return PeerConfigSyncStatus{}, errNoAuthenticatedPeerConfig
+	}
+	a.mu.Lock()
+	quickTunnel, _ := a.quickTunnel.(*peerQuickTunnelHost)
+	a.mu.Unlock()
+	a.peerRendezvousMu.Lock()
+	rendezvous := a.peerRendezvous
+	a.peerRendezvousMu.Unlock()
+
+	sent := 0
+	var syncErr error
+	if quickTunnel != nil {
+		count, err := quickTunnel.syncConfigNow()
+		sent += count
+		syncErr = errors.Join(syncErr, err)
+	}
+	if rendezvous != nil {
+		count, err := rendezvous.syncConfigNow()
+		sent += count
+		syncErr = errors.Join(syncErr, err)
+	}
+	if sent == 0 {
+		return PeerConfigSyncStatus{}, errNoAuthenticatedPeerConfig
+	}
+	if syncErr != nil {
+		return PeerConfigSyncStatus{}, syncErr
+	}
+	return a.GetPeerConfigSyncStatus()
 }
 
 func (m *peerSpaceManager) configSyncStatus() (PeerConfigSyncStatus, error) {

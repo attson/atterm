@@ -105,7 +105,12 @@ func DialPresence(ctx context.Context, cfg PresenceConfig) (*PresenceConnection,
 		return fail(fmt.Errorf("rendezvous client: read registration result: %w", err))
 	}
 	if registered.Kind == rendezvous.KindError {
-		return fail(fmt.Errorf("rendezvous client: registration rejected: %s", registered.Code))
+		switch registered.Code {
+		case rendezvous.CodeUnauthorized:
+			return fail(fmt.Errorf("%w: registration rejected", ErrAuthentication))
+		default:
+			return fail(fmt.Errorf("%w: registration rejected: %s", ErrServiceUnavailable, registered.Code))
+		}
 	}
 	if registered.Kind != rendezvous.KindRegistered {
 		return fail(errors.New("rendezvous client: registration was not acknowledged"))

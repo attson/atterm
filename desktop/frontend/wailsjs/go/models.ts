@@ -347,6 +347,30 @@ export namespace main {
 	        this.can_sync_secrets = source["can_sync_secrets"];
 	    }
 	}
+	export class RendezvousDiagnostics {
+	    mode: string;
+	    service_origin: string;
+	    state: string;
+	    last_registered_at?: number;
+	    registration_ms?: number;
+	    reachable_peers: number;
+	    last_error_code?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RendezvousDiagnostics(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.service_origin = source["service_origin"];
+	        this.state = source["state"];
+	        this.last_registered_at = source["last_registered_at"];
+	        this.registration_ms = source["registration_ms"];
+	        this.reachable_peers = source["reachable_peers"];
+	        this.last_error_code = source["last_error_code"];
+	    }
+	}
 	export class RelayErrorEntry {
 	    timestamp: string;
 	    message: string;
@@ -376,6 +400,7 @@ export namespace main {
 	    remote_permission: string;
 	    uplink_paused: boolean;
 	    recent_relay_errors: RelayErrorEntry[];
+	    rendezvous: RendezvousDiagnostics;
 	    config: ConfigSummary;
 	
 	    static createFrom(source: any = {}) {
@@ -398,6 +423,7 @@ export namespace main {
 	        this.remote_permission = source["remote_permission"];
 	        this.uplink_paused = source["uplink_paused"];
 	        this.recent_relay_errors = this.convertValues(source["recent_relay_errors"], RelayErrorEntry);
+	        this.rendezvous = this.convertValues(source["rendezvous"], RendezvousDiagnostics);
 	        this.config = this.convertValues(source["config"], ConfigSummary);
 	    }
 	
@@ -993,6 +1019,7 @@ export namespace main {
 	    status: string;
 	    local: boolean;
 	    can_revoke: boolean;
+	    last_exchange_at?: number;
 
 
 	    static createFrom(source: any = {}) {
@@ -1015,6 +1042,7 @@ export namespace main {
 	        this.status = source["status"];
 	        this.local = source["local"];
 	        this.can_revoke = source["can_revoke"];
+	        this.last_exchange_at = source["last_exchange_at"];
 	    }
 	}
 	export class PeerQuickTunnelStatus {
@@ -1057,6 +1085,32 @@ export namespace main {
 	        this.health_url = source["health_url"];
 	        this.stun_mode = source["stun_mode"];
 	        this.stun_urls = source["stun_urls"];
+	    }
+	}
+	export class PeerRendezvousStatus {
+	    mode: string;
+	    state: string;
+	    url?: string;
+	    last_registered_at?: number;
+	    registration_ms?: number;
+	    reachable_peers: number;
+	    last_error_code?: string;
+	    next_retry_at?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerRendezvousStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.state = source["state"];
+	        this.url = source["url"];
+	        this.last_registered_at = source["last_registered_at"];
+	        this.registration_ms = source["registration_ms"];
+	        this.reachable_peers = source["reachable_peers"];
+	        this.last_error_code = source["last_error_code"];
+	        this.next_retry_at = source["next_retry_at"];
 	    }
 	}
 	export class PeerSpaceStatus {

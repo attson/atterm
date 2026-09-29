@@ -111,6 +111,8 @@ export function GetPeerQuickTunnelStatus():Promise<main.PeerQuickTunnelStatus>;
 
 export function GetPeerRendezvousConfig():Promise<main.PeerRendezvousConfig>;
 
+export function GetPeerRendezvousStatus():Promise<main.PeerRendezvousStatus>;
+
 export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
 
 export function GetPinnedSessionIds():Promise<Array<string>>;
@@ -234,6 +236,8 @@ export function ReceivedFilesDelete(arg1:string,arg2:string):Promise<void>;
 export function ReceivedFilesList():Promise<main.ReceivedFilesSummary>;
 
 export function ReceivedFilesOpenDir():Promise<void>;
+
+export function ReconnectPeerRendezvous():Promise<main.PeerRendezvousStatus>;
 
 export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
@@ -380,6 +384,8 @@ export function StopServicePreview(arg1:string):Promise<void>;
 export function StopWidget():Promise<void>;
 
 export function SyncNow():Promise<void>;
+
+export function SyncPeerConfigNow():Promise<main.PeerConfigSyncStatus>;
 
 export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main.TranslateHTTPResponse>;
 

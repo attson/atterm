@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -179,6 +180,53 @@ func TestDialPresenceUsesFreshChallengeIdentityForEveryConnection(t *testing.T) 
 	got := []string{<-publicKeys, <-publicKeys}
 	if got[0] == "" || got[1] == "" || reflect.DeepEqual(got[0], got[1]) {
 		t.Fatalf("challenge identities were reused: %v", got)
+	}
+}
+
+func TestDialPresenceClassifiesRegistrationRejections(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		code string
+		want error
+	}{
+		{name: "authentication", code: rendezvous.CodeUnauthorized, want: ErrAuthentication},
+		{name: "capacity", code: rendezvous.CodeServerCapacity, want: ErrServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{Subprotocols: []string{rendezvous.Subprotocol}})
+				if err != nil {
+					return
+				}
+				defer conn.CloseNow()
+				ctx := request.Context()
+				challenge, _ := json.Marshal(rendezvous.EventMessage{
+					Version: rendezvous.Version, Kind: rendezvous.KindChallenge,
+					Challenge: encodedID(9, 32), ExpiresAt: time.Now().Add(time.Minute).Unix(),
+				})
+				if conn.Write(ctx, websocket.MessageText, challenge) != nil {
+					return
+				}
+				if _, _, err := conn.Read(ctx); err != nil {
+					return
+				}
+				rejected, _ := json.Marshal(rendezvous.EventMessage{
+					Version: rendezvous.Version, Kind: rendezvous.KindError, Code: test.code,
+				})
+				_ = conn.Write(ctx, websocket.MessageText, rejected)
+			}))
+			defer server.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _, err := DialPresence(ctx, PresenceConfig{
+				ServiceURL: server.URL, AllowInsecureLoopback: true,
+				Topic: encodedID(1, 32), PresenceID: encodedID(2, 32), Role: rendezvous.RoleMember,
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("registration error=%v want category %v", err, test.want)
+			}
+		})
 	}
 }
 

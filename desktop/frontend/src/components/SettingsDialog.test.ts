@@ -321,6 +321,9 @@ describe("SettingsDialog caps gating", () => {
       revokeMember: vi.fn(),
       getRendezvousConfig: vi.fn(),
       setRendezvousConfig: vi.fn(),
+      getRendezvousStatus: vi.fn(),
+      reconnectRendezvous: vi.fn(),
+      syncConfigNow: vi.fn(),
     };
     __setPlatformForTests(platform);
     const w = mountDialog();

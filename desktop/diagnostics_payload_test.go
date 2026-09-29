@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/attson/atterm/internal/rendezvousclient"
 )
 
 func TestCollectDiagnostics_NotConfigured(t *testing.T) {
@@ -67,12 +69,43 @@ func TestCollectDiagnostics_ConfiguredRelay_RedactedFields(t *testing.T) {
 	}
 }
 
+func TestCollectDiagnostics_RendezvousSummaryOmitsRoutingIdentifiers(t *testing.T) {
+	a := newRelayTestApp(t)
+	if err := a.cfgStore.Set(appConfig{
+		PeerRendezvousMode: "custom",
+		PeerRendezvousURL:  "https://rendezvous.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a.peerRendezvous = &peerRendezvousLifecycle{
+		resolved: rendezvousclient.ResolvedConfig{Mode: rendezvousclient.ModeCustom, BaseURL: "https://rendezvous.example.com"},
+		state: peerRendezvousRuntimeState{
+			State: "online", LastRegisteredAt: 1_797_900_000, RegistrationMS: 42,
+		},
+		active: &peerRendezvousHost{topic: "must-not-appear", serviceURL: "https://rendezvous.example.com"},
+	}
+
+	got := collectDiagnostics(a, "")
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Rendezvous.Mode != "custom" || got.Rendezvous.ServiceOrigin != "https://rendezvous.example.com" ||
+		got.Rendezvous.State != "online" || got.Rendezvous.RegistrationMS != 42 {
+		t.Fatalf("rendezvous diagnostics=%+v", got.Rendezvous)
+	}
+	if strings.Contains(string(encoded), "must-not-appear") {
+		t.Fatalf("diagnostics exposed Rendezvous routing identifier: %s", encoded)
+	}
+}
+
 func TestDiagnosticsPayload_JSONFieldsStable(t *testing.T) {
 	want := []string{
 		"app_version", "arch", "config", "generated_at",
 		"allow_insecure_relay",
 		"os", "os_version",
 		"recent_relay_errors",
+		"rendezvous",
 		"relay_status", "relay_token_redacted", "relay_url",
 		"remote_permission",
 		"uplink_paused",

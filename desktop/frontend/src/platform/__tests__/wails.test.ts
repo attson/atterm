@@ -63,6 +63,9 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
     stun_urls: ['stun:stun.cloudflare.com:3478'],
   }),
   SetPeerRendezvousConfig: vi.fn().mockResolvedValue(undefined),
+  GetPeerRendezvousStatus: vi.fn().mockResolvedValue({ mode: 'disabled', state: 'disabled', reachable_peers: 0 }),
+  ReconnectPeerRendezvous: vi.fn().mockResolvedValue({ mode: 'official', state: 'connecting', reachable_peers: 0 }),
+  SyncPeerConfigNow: vi.fn().mockResolvedValue({ configured: true, pending_operations: 1 }),
   GetPeerQuickTunnelStatus: vi.fn().mockResolvedValue({ running: false, starting: false }),
   StartPeerQuickTunnel: vi.fn().mockResolvedValue({ running: true, starting: false, public_url: 'https://route.trycloudflare.com' }),
   StopPeerQuickTunnel: vi.fn().mockResolvedValue(undefined),
@@ -84,6 +87,7 @@ import {
   CreatePeerConnectionBundle,
   CreatePeerInvitations,
   GetPeerRendezvousConfig,
+  GetPeerRendezvousStatus,
   GetPeerQuickTunnelStatus,
   GetPeerConfigSyncStatus,
   GetPluginConfig,
@@ -92,6 +96,8 @@ import {
   PreviewPeerConnectionBundle,
   RevokePeerMember,
   SetPeerRendezvousConfig,
+  ReconnectPeerRendezvous,
+  SyncPeerConfigNow,
   DiscardPendingPeerConfig,
   SetPluginConfig,
   GetAppVersion,
@@ -307,6 +313,13 @@ describe('createWailsPlatform', () => {
       mode: 'official', url: '', stun_mode: 'default', stun_urls: [],
     })
     expect(SetPeerRendezvousConfig).toHaveBeenCalledWith(expect.objectContaining({ mode: 'official' }))
+
+    expect(await p.peer!.getRendezvousStatus()).toEqual(expect.objectContaining({ state: 'disabled' }))
+    expect(GetPeerRendezvousStatus).toHaveBeenCalledOnce()
+    expect(await p.peer!.reconnectRendezvous()).toEqual(expect.objectContaining({ state: 'connecting' }))
+    expect(ReconnectPeerRendezvous).toHaveBeenCalledOnce()
+    expect(await p.peer!.syncConfigNow()).toEqual(expect.objectContaining({ pending_operations: 1 }))
+    expect(SyncPeerConfigNow).toHaveBeenCalledOnce()
   })
 
   it('peer bridge lists and revokes Peer members independently of Relay sessions', async () => {

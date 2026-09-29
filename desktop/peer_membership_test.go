@@ -187,6 +187,10 @@ func TestPeerMemberDirectoryAndRevocationRotateEpochs(t *testing.T) {
 	if _, err := app.peerSpace.store.ApplyMemberships([]string{remoteMembership.Token}, now); err != nil {
 		t.Fatal(err)
 	}
+	exchangedAt := now.Add(time.Minute)
+	if err := app.peerSpace.store.RecordConfigExchange(remote.PeerID(), nil, exchangedAt); err != nil {
+		t.Fatal(err)
+	}
 
 	members, err := app.ListPeerMembers()
 	if err != nil {
@@ -195,7 +199,8 @@ func TestPeerMemberDirectoryAndRevocationRotateEpochs(t *testing.T) {
 	if len(members) != 2 || !members[0].Local || members[0].PeerID != status.PeerID || members[0].CanRevoke {
 		t.Fatalf("member directory=%+v", members)
 	}
-	if members[1].PeerID != remote.PeerID() || members[1].Status != "active" || !members[1].CanRevoke || members[1].GrantSerial == "" {
+	if members[1].PeerID != remote.PeerID() || members[1].Status != "active" || !members[1].CanRevoke ||
+		members[1].GrantSerial == "" || members[1].LastExchangeAt != exchangedAt.Unix() {
 		t.Fatalf("remote directory entry=%+v", members[1])
 	}
 	publicJSON, err := json.Marshal(members)

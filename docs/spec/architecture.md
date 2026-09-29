@@ -400,7 +400,10 @@ attempt，把 `open/authorized/offer/answer/ICE/error` 放入按 Peer pair 派�
 和 ciphertext；membership token 只进入 DataChannel 内的第二次身份握手。
 
 Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
-registration：注册失败以 500 ms 到 8 s 退避，连接断开和 15 分钟 presence 轮换都会重建。
+registration：单次注册最多等待 10 秒，失败以 500 ms 到 8 s 退避，连接断开和 15 分钟
+presence 轮换都会重建。运行状态只向 renderer 投影 mode、service origin、状态、最近注册时间、
+注册耗时、opaque presence 数量和稳定错误码；topic、presence id、Peer id 与信令 payload 不进入
+Settings 或诊断导出。
 `peer_rendezvous_route.go` 只把 active membership 解析出的 presence 交给 route adapter，并与
 Quick Tunnel 共用 `peerHostRuntime`，所以 session scope、effective permission、周期撤销检查、
 单 terminal subscriber 和 `peerConfigChannel` 的规则完全相同。成员撤销会先更新 governance/
@@ -408,7 +411,10 @@ epoch，再重建 registration，使旧 topic/presence 与既有 attempt 一起�
 
 Rendezvous 生命周期是附加能力：启动或重连失败不阻塞桌面启动，本地 terminal、Relay 与 Quick
 Tunnel 不读取它的状态。成员 reconnect bundle 可发布 Quick Tunnel + Rendezvous 或仅
-Rendezvous route；首次 invitation redemption 仍固定经 Quick Tunnel。
+Rendezvous route；首次 invitation redemption 仍固定经 Quick Tunnel。Settings 的手动同步只在
+当前已完成 membership handshake 的 Peer config channel 上重新发送 inventory；无认证通道时明确
+失败，不为同步新建 terminal subscriber 或隐藏的中心上传路径。成员目录中的“最近直连交换”来自
+各设备持久化的 `ConfigSyncPeers.LastExchangeAt`，不是 Rendezvous 提供的在线/last-seen 权威状态。
 
 ## Relay 多实例架构
 

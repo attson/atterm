@@ -22,6 +22,12 @@ function formatTime(unixSeconds: number | undefined): string {
   return new Date(unixSeconds * 1000).toLocaleString()
 }
 
+function formatLastExchange(member: PeerMember): string {
+  if (member.local) return t('settings.peer.members.thisDevice')
+  if (!member.last_exchange_at) return t('settings.peer.members.neverExchanged')
+  return new Date(member.last_exchange_at * 1000).toLocaleString()
+}
+
 function permissionLabel(permission: string): string {
   if (permission === 'view') return t('settings.peer.permission.view')
   if (permission === 'control') return t('settings.peer.permission.control')
@@ -94,6 +100,10 @@ function confirmRevocation(member: PeerMember): void {
           <div>
             <dt>{{ t('settings.peer.members.expires') }}</dt>
             <dd>{{ formatTime(member.expires_at) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('settings.peer.members.lastDirectExchange') }}</dt>
+            <dd>{{ formatLastExchange(member) }}</dd>
           </div>
           <div class="scope-detail">
             <dt>{{ t('settings.peer.sessionScope') }}</dt>

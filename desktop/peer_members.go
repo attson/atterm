@@ -28,6 +28,7 @@ type PeerMember struct {
 	Status            string   `json:"status"`
 	Local             bool     `json:"local"`
 	CanRevoke         bool     `json:"can_revoke"`
+	LastExchangeAt    int64    `json:"last_exchange_at,omitempty"`
 }
 
 // ListPeerMembers returns signed grant metadata without returning any grant,
@@ -114,6 +115,9 @@ func (m *peerSpaceManager) listMembers() ([]PeerMember, error) {
 			member.Status = "expired"
 		}
 		member.CanRevoke = localCanRevoke && !member.Local && member.Status == "active"
+		if exchange, ok := state.ConfigSyncPeers[doc.SubjectPeerID]; ok {
+			member.LastExchangeAt = exchange.LastExchangeAt
+		}
 		members = append(members, member)
 	}
 	sort.Slice(members, func(i, j int) bool {

@@ -1,11 +1,11 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref } from 'vue'
-import { Check, Copy, Database, Play, Plus, QrCode, RefreshCw, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Check, Copy, Database, Play, Plus, QrCode, RadioTower, RefreshCw, Save, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
 import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
 import { QRScanner } from '../platform/qrScanner'
-import type { PeerConfigSyncStatus, PeerConnectionPreview, PeerInvitation, PeerMember, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
+import type { PeerConfigSyncStatus, PeerConnectionPreview, PeerInvitation, PeerMember, PeerQuickTunnelStatus, PeerRendezvousConfig, PeerRendezvousStatus, PeerSpaceStatus } from '../platform/types'
 import PeerMembersSection from './PeerMembersSection.vue'
 import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
 
@@ -26,7 +26,8 @@ const invitationActionID = ref('')
 const membersLoading = ref(false)
 const memberActionID = ref('')
 const configSyncLoading = ref(false)
-const configSyncAction = ref<'accept' | 'discard' | ''>('')
+const configSyncAction = ref<'accept' | 'discard' | 'sync' | ''>('')
+const rendezvousBusy = ref<'save' | 'reconnect' | ''>('')
 const discardPendingConfirming = ref(false)
 const copiedInvitationID = ref('')
 const error = ref('')
@@ -35,6 +36,13 @@ const tunnelStatus = ref<PeerQuickTunnelStatus | null>(null)
 const invitations = ref<PeerInvitation[]>([])
 const members = ref<PeerMember[]>([])
 const configSyncStatus = ref<PeerConfigSyncStatus | null>(null)
+const rendezvousStatus = ref<PeerRendezvousStatus | null>(null)
+const rendezvousMode = ref<'disabled' | 'official' | 'custom'>('disabled')
+const rendezvousURL = ref('')
+const rendezvousSTUNMode = ref<'default' | 'custom' | 'disabled'>('default')
+const rendezvousSTUNURLs = ref('')
+let rendezvousStatusPoll: ReturnType<typeof setInterval> | undefined
+let rendezvousStatusPolling = false
 const bundleInput = ref('')
 const previewedBundle = ref('')
 const preview = ref<PeerConnectionPreview | null>(null)
@@ -46,6 +54,9 @@ const inviteCanSyncSecrets = ref(false)
 const inviteSessionScope = ref('')
 
 const canPreview = computed(() => bundleInput.value.trim() !== '' && !previewing.value && !joining.value)
+const hasPublishedMemberRoute = computed(() => Boolean(
+  tunnelStatus.value?.running || rendezvousStatus.value?.state === 'online',
+))
 const hasQuickTunnelHost = computed(() => Boolean(
   platform.peer?.getQuickTunnelStatus
   && platform.peer.startQuickTunnel
@@ -67,6 +78,16 @@ const permissionOptions = computed<SelectOption[]>(() => [
   { value: 'control', label: t('settings.peer.permission.control') },
   { value: 'full', label: t('settings.peer.permission.full') },
 ])
+const rendezvousModeOptions = computed<SelectOption[]>(() => [
+  { value: 'disabled', label: t('settings.peer.rendezvous.mode.disabled') },
+  { value: 'official', label: t('settings.peer.rendezvous.mode.official') },
+  { value: 'custom', label: t('settings.peer.rendezvous.mode.custom') },
+])
+const rendezvousSTUNOptions = computed<SelectOption[]>(() => [
+  { value: 'default', label: t('settings.peer.rendezvous.stun.default') },
+  { value: 'custom', label: t('settings.peer.rendezvous.stun.custom') },
+  { value: 'disabled', label: t('settings.peer.rendezvous.stun.disabled') },
+])
 
 onMounted(async () => {
   if (!platform.peer) {
@@ -76,7 +97,9 @@ onMounted(async () => {
   }
   try {
     status.value = await platform.peer.status()
-    if (status.value.configured) await loadConfiguredPeerData()
+    if (status.value.configured) {
+      await loadConfiguredPeerData()
+    }
   } catch {
     error.value = t('settings.peer.errors.status')
   } finally {
@@ -84,17 +107,43 @@ onMounted(async () => {
   }
 })
 
+onBeforeUnmount(() => {
+  if (rendezvousStatusPoll) clearInterval(rendezvousStatusPoll)
+  rendezvousStatusPoll = undefined
+})
+
+function ensureRendezvousStatusPolling(): void {
+  if (rendezvousStatusPoll) return
+  rendezvousStatusPoll = setInterval(() => void refreshRendezvousStatus(), 2000)
+}
+
+async function refreshRendezvousStatus(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || rendezvousStatusPolling || rendezvousBusy.value) return
+  rendezvousStatusPolling = true
+  try {
+    rendezvousStatus.value = await peer.getRendezvousStatus()
+  } catch {
+    error.value = t('settings.peer.errors.rendezvousStatus')
+  } finally {
+    rendezvousStatusPolling = false
+  }
+}
+
 async function loadConfiguredPeerData(): Promise<void> {
   const peer = platform.peer
   if (!peer) return
+  ensureRendezvousStatusPolling()
   invitationsLoading.value = true
   membersLoading.value = true
   configSyncLoading.value = true
-  const [tunnelResult, invitationResult, memberResult, configSyncResult] = await Promise.allSettled([
+  const [tunnelResult, invitationResult, memberResult, configSyncResult, rendezvousConfigResult, rendezvousStatusResult] = await Promise.allSettled([
     peer.getQuickTunnelStatus?.() ?? Promise.resolve(null),
     peer.listInvitations(),
     peer.listMembers(),
     peer.configSyncStatus(),
+    peer.getRendezvousConfig(),
+    peer.getRendezvousStatus(),
   ])
   if (tunnelResult.status === 'fulfilled') {
     tunnelStatus.value = tunnelResult.value
@@ -119,6 +168,97 @@ async function loadConfiguredPeerData(): Promise<void> {
     error.value = t('settings.peer.errors.syncStatus')
   }
   configSyncLoading.value = false
+  if (rendezvousConfigResult.status === 'fulfilled') {
+    applyRendezvousConfig(rendezvousConfigResult.value)
+  } else {
+    error.value = t('settings.peer.errors.rendezvousStatus')
+  }
+  if (rendezvousStatusResult.status === 'fulfilled') {
+    rendezvousStatus.value = rendezvousStatusResult.value
+  } else {
+    error.value = t('settings.peer.errors.rendezvousStatus')
+  }
+}
+
+function applyRendezvousConfig(config: PeerRendezvousConfig): void {
+  rendezvousMode.value = config.mode as typeof rendezvousMode.value
+  rendezvousURL.value = config.url || ''
+  rendezvousSTUNMode.value = config.stun_mode as typeof rendezvousSTUNMode.value
+  rendezvousSTUNURLs.value = (config.stun_urls || []).join('\n')
+}
+
+function parseSTUNURLs(value: string): string[] {
+  return value.split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
+}
+
+async function saveRendezvousConfig(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || rendezvousBusy.value) return
+  error.value = ''
+  rendezvousBusy.value = 'save'
+  try {
+    await peer.setRendezvousConfig({
+      mode: rendezvousMode.value,
+      url: rendezvousURL.value.trim(),
+      stun_mode: rendezvousSTUNMode.value,
+      stun_urls: rendezvousSTUNMode.value === 'custom' ? parseSTUNURLs(rendezvousSTUNURLs.value) : [],
+    })
+    const [config, nextStatus] = await Promise.all([
+      peer.getRendezvousConfig(),
+      peer.getRendezvousStatus(),
+    ])
+    applyRendezvousConfig(config)
+    rendezvousStatus.value = nextStatus
+    routeCopied.value = false
+  } catch {
+    error.value = t('settings.peer.errors.rendezvousSave')
+  } finally {
+    rendezvousBusy.value = ''
+  }
+}
+
+async function reconnectRendezvous(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || rendezvousBusy.value || rendezvousMode.value === 'disabled') return
+  error.value = ''
+  rendezvousBusy.value = 'reconnect'
+  try {
+    rendezvousStatus.value = await peer.reconnectRendezvous()
+    routeCopied.value = false
+  } catch {
+    error.value = t('settings.peer.errors.rendezvousReconnect')
+  } finally {
+    rendezvousBusy.value = ''
+  }
+}
+
+async function syncConfigNow(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || configSyncAction.value || configSyncLoading.value) return
+  error.value = ''
+  configSyncAction.value = 'sync'
+  try {
+    configSyncStatus.value = await peer.syncConfigNow()
+  } catch {
+    error.value = t('settings.peer.errors.syncNow')
+  } finally {
+    configSyncAction.value = ''
+  }
+}
+
+function rendezvousStateLabel(state: string | undefined): string {
+  if (state === 'online') return t('settings.peer.rendezvous.state.online')
+  if (state === 'connecting') return t('settings.peer.rendezvous.state.connecting')
+  if (state === 'waiting') return t('settings.peer.rendezvous.state.waiting')
+  if (state === 'error') return t('settings.peer.rendezvous.state.error')
+  return t('settings.peer.rendezvous.state.disabled')
+}
+
+function rendezvousErrorLabel(code: string | undefined): string {
+  if (code === 'registration_timeout') return t('settings.peer.rendezvous.error.registrationTimeout')
+  if (code === 'authentication_failed') return t('settings.peer.rendezvous.error.authenticationFailed')
+  if (code === 'invalid_config') return t('settings.peer.rendezvous.error.invalidConfig')
+  return t('settings.peer.rendezvous.error.serviceUnavailable')
 }
 
 async function refreshConfigSyncStatus(): Promise<void> {
@@ -213,7 +353,7 @@ async function stopQuickTunnel(): Promise<void> {
 
 async function copyMemberRoute(): Promise<void> {
   const createBundle = platform.peer?.createConnectionBundle
-  if (!createBundle || !tunnelStatus.value?.running || routeCopying.value || invitationActionID.value) return
+  if (!createBundle || !hasPublishedMemberRoute.value || routeCopying.value || invitationActionID.value) return
   error.value = ''
   routeCopied.value = false
   routeCopying.value = true
@@ -499,6 +639,118 @@ function permissionLabel(permission: string): string {
         </dl>
       </section>
 
+      <section class="peer-section" data-testid="peer-rendezvous-section">
+        <div class="section-heading">
+          <RadioTower :size="17" aria-hidden="true" />
+          <div>
+            <h3>{{ t('settings.peer.rendezvous.title') }}</h3>
+            <p class="hint">{{ t('settings.peer.rendezvous.hint') }}</p>
+          </div>
+        </div>
+        <div class="rendezvous-form-grid">
+          <div class="form-field" data-testid="peer-rendezvous-mode">
+            <label class="field-label">{{ t('settings.peer.rendezvous.modeLabel') }}</label>
+            <SelectDropdown
+              v-model="rendezvousMode"
+              :options="rendezvousModeOptions"
+              :disabled="Boolean(rendezvousBusy)"
+              :aria-label="t('settings.peer.rendezvous.modeLabel')"
+            />
+          </div>
+          <div class="form-field" data-testid="peer-rendezvous-stun-mode">
+            <label class="field-label">{{ t('settings.peer.rendezvous.stunLabel') }}</label>
+            <SelectDropdown
+              v-model="rendezvousSTUNMode"
+              :options="rendezvousSTUNOptions"
+              :disabled="Boolean(rendezvousBusy)"
+              :aria-label="t('settings.peer.rendezvous.stunLabel')"
+            />
+          </div>
+        </div>
+        <div v-if="rendezvousMode === 'custom'" class="form-field">
+          <label class="field-label" for="peer-rendezvous-url">{{ t('settings.peer.rendezvous.customURL') }}</label>
+          <input
+            id="peer-rendezvous-url"
+            v-model="rendezvousURL"
+            data-testid="peer-rendezvous-url"
+            type="url"
+            placeholder="https://rendezvous.example.com"
+            :disabled="Boolean(rendezvousBusy)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="hint">{{ t('settings.peer.rendezvous.customURLHint') }}</p>
+        </div>
+        <div v-if="rendezvousSTUNMode === 'custom'" class="form-field">
+          <label class="field-label" for="peer-rendezvous-stun-urls">{{ t('settings.peer.rendezvous.customSTUN') }}</label>
+          <textarea
+            id="peer-rendezvous-stun-urls"
+            v-model="rendezvousSTUNURLs"
+            data-testid="peer-rendezvous-stun-urls"
+            rows="2"
+            placeholder="stun:stun.example.com:3478"
+            :disabled="Boolean(rendezvousBusy)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="actions rendezvous-actions">
+          <button
+            type="button"
+            class="primary-action"
+            data-testid="peer-rendezvous-save"
+            :disabled="Boolean(rendezvousBusy)"
+            @click="saveRendezvousConfig"
+          >
+            <Save :size="15" aria-hidden="true" />
+            {{ rendezvousBusy === 'save' ? t('settings.peer.rendezvous.saving') : t('settings.peer.rendezvous.save') }}
+          </button>
+          <button
+            v-if="rendezvousMode !== 'disabled'"
+            type="button"
+            class="icon-action"
+            data-testid="peer-rendezvous-reconnect"
+            :disabled="Boolean(rendezvousBusy)"
+            :aria-label="t('settings.peer.rendezvous.reconnect')"
+            :title="t('settings.peer.rendezvous.reconnect')"
+            @click="reconnectRendezvous"
+          >
+            <RefreshCw :size="15" :class="{ spinning: rendezvousBusy === 'reconnect' }" aria-hidden="true" />
+          </button>
+        </div>
+        <div class="tunnel-status-row" data-testid="peer-rendezvous-status">
+          <span
+            class="status-dot"
+            :class="{
+              active: rendezvousStatus?.state === 'online',
+              starting: rendezvousStatus?.state === 'connecting' || rendezvousStatus?.state === 'waiting',
+              failed: rendezvousStatus?.state === 'error',
+            }"
+            aria-hidden="true"
+          />
+          <span>{{ rendezvousStateLabel(rendezvousStatus?.state) }}</span>
+        </div>
+        <code v-if="rendezvousStatus?.url" class="route-url published-route">{{ rendezvousStatus.url }}</code>
+        <div v-if="rendezvousMode !== 'disabled'" class="sync-metrics" data-testid="peer-rendezvous-metrics">
+          <div>
+            <span>{{ t('settings.peer.rendezvous.registrationLatency') }}</span>
+            <strong>{{ rendezvousStatus?.registration_ms ? `${rendezvousStatus.registration_ms} ms` : t('common.unknown') }}</strong>
+          </div>
+          <div>
+            <span>{{ t('settings.peer.rendezvous.lastRegistration') }}</span>
+            <strong>{{ formatTime(rendezvousStatus?.last_registered_at) }}</strong>
+          </div>
+          <div>
+            <span>{{ t('settings.peer.rendezvous.reachablePeers') }}</span>
+            <strong>{{ rendezvousStatus?.reachable_peers ?? 0 }}</strong>
+          </div>
+        </div>
+        <p v-if="rendezvousStatus?.last_error_code" class="inline-error">
+          {{ rendezvousErrorLabel(rendezvousStatus.last_error_code) }}
+        </p>
+        <p class="hint privacy-note">{{ t('settings.peer.rendezvous.privacy') }}</p>
+      </section>
+
       <section class="peer-section" data-testid="peer-config-sync">
         <div class="sync-heading">
           <div class="section-heading sync-title">
@@ -508,6 +760,17 @@ function permissionLabel(permission: string): string {
               <p class="hint">{{ t('settings.peer.sync.hint') }}</p>
             </div>
           </div>
+          <button
+            type="button"
+            class="icon-action"
+            data-testid="peer-sync-now"
+            :disabled="configSyncLoading || Boolean(configSyncAction)"
+            :aria-label="t('settings.peer.sync.syncNow')"
+            :title="t('settings.peer.sync.syncNow')"
+            @click="syncConfigNow"
+          >
+            <Database :size="15" :class="{ spinning: configSyncAction === 'sync' }" aria-hidden="true" />
+          </button>
           <button
             type="button"
             class="icon-action"
@@ -666,21 +929,22 @@ function permissionLabel(permission: string): string {
             <Play :size="15" aria-hidden="true" />
             {{ tunnelBusy ? t('settings.peer.tunnel.starting') : t('settings.peer.tunnel.start') }}
           </button>
-          <template v-else>
-            <button
-              type="button"
-              class="primary-action"
-              data-testid="peer-tunnel-copy-route"
-              :disabled="routeCopying || tunnelBusy || Boolean(invitationActionID)"
-              @click="copyMemberRoute"
-            >
-              <Copy :size="15" aria-hidden="true" />
-              {{ routeCopied
-                ? t('settings.peer.tunnel.copied')
-                : routeCopying
-                  ? t('settings.peer.tunnel.copying')
-                  : t('settings.peer.tunnel.copyRoute') }}
-            </button>
+          <button
+            v-if="hasPublishedMemberRoute"
+            type="button"
+            class="primary-action"
+            data-testid="peer-tunnel-copy-route"
+            :disabled="routeCopying || tunnelBusy || Boolean(invitationActionID)"
+            @click="copyMemberRoute"
+          >
+            <Copy :size="15" aria-hidden="true" />
+            {{ routeCopied
+              ? t('settings.peer.tunnel.copied')
+              : routeCopying
+                ? t('settings.peer.tunnel.copying')
+                : t('settings.peer.tunnel.copyRoute') }}
+          </button>
+          <template v-if="tunnelStatus?.running">
             <button
               type="button"
               class="secondary-action"
@@ -1106,7 +1370,8 @@ function permissionLabel(permission: string): string {
   text-transform: uppercase;
 }
 textarea,
-input[type="number"] {
+input[type="number"],
+input[type="url"] {
   box-sizing: border-box;
   width: 100%;
   padding: 9px 10px;
@@ -1122,16 +1387,19 @@ textarea {
   min-height: 88px;
   resize: vertical;
 }
-input[type="number"] {
+input[type="number"],
+input[type="url"] {
   height: 32px;
   padding-block: 6px;
 }
 textarea:focus,
-input[type="number"]:focus {
+input[type="number"]:focus,
+input[type="url"]:focus {
   box-shadow: 0 0 0 2px var(--accent);
 }
 textarea:disabled,
-input[type="number"]:disabled {
+input[type="number"]:disabled,
+input[type="url"]:disabled {
   opacity: 0.6;
 }
 .actions {
@@ -1159,6 +1427,21 @@ input[type="number"]:disabled {
 }
 .status-dot.starting {
   background: var(--warn);
+}
+.status-dot.failed {
+  background: var(--bad);
+}
+.rendezvous-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.rendezvous-actions {
+  align-items: center;
+}
+.privacy-note {
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
 }
 .published-route {
   display: block;
@@ -1399,6 +1682,7 @@ button:disabled {
     grid-template-columns: minmax(0, 1fr);
   }
   .invitation-form-grid,
+  .rendezvous-form-grid,
   .capability-options {
     grid-template-columns: minmax(0, 1fr);
   }

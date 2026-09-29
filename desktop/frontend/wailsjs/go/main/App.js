@@ -214,6 +214,10 @@ export function GetPeerRendezvousConfig() {
   return window['go']['main']['App']['GetPeerRendezvousConfig']();
 }
 
+export function GetPeerRendezvousStatus() {
+  return window['go']['main']['App']['GetPeerRendezvousStatus']();
+}
+
 export function GetPeerSpaceStatus() {
   return window['go']['main']['App']['GetPeerSpaceStatus']();
 }
@@ -460,6 +464,10 @@ export function ReceivedFilesList() {
 
 export function ReceivedFilesOpenDir() {
   return window['go']['main']['App']['ReceivedFilesOpenDir']();
+}
+
+export function ReconnectPeerRendezvous() {
+  return window['go']['main']['App']['ReconnectPeerRendezvous']();
 }
 
 export function RegisterRemoteRelay(arg1, arg2, arg3, arg4, arg5) {
@@ -752,6 +760,10 @@ export function StopWidget() {
 
 export function SyncNow() {
   return window['go']['main']['App']['SyncNow']();
+}
+
+export function SyncPeerConfigNow() {
+  return window['go']['main']['App']['SyncPeerConfigNow']();
 }
 
 export function TranslateOpenAIChat(arg1) {

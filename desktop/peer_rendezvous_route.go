@@ -28,8 +28,15 @@ type peerRendezvousHost struct {
 }
 
 func newPeerRendezvousHost(ctx context.Context, app *App, host *relayHost, presence rendezvousclient.PresenceConfig, webRTC webrtc.Configuration) (*peerRendezvousHost, error) {
+	return newPeerRendezvousHostWithRegistrationContext(ctx, ctx, app, host, presence, webRTC)
+}
+
+func newPeerRendezvousHostWithRegistrationContext(ctx, registrationCtx context.Context, app *App, host *relayHost, presence rendezvousclient.PresenceConfig, webRTC webrtc.Configuration) (*peerRendezvousHost, error) {
 	if ctx == nil || app == nil || host == nil || host.server == nil {
 		return nil, errors.New("Rendezvous Peer host is unavailable")
+	}
+	if registrationCtx == nil {
+		return nil, errors.New("Rendezvous registration context is unavailable")
 	}
 	manager, err := app.peerManager()
 	if err != nil {
@@ -53,7 +60,7 @@ func newPeerRendezvousHost(ctx context.Context, app *App, host *relayHost, prese
 	if presence.Role == "" {
 		presence.Role = rendezvous.RoleHost
 	}
-	connection, snapshot, err := rendezvousclient.DialPresence(ctx, presence)
+	connection, snapshot, err := rendezvousclient.DialPresence(registrationCtx, presence)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +90,13 @@ func newPeerRendezvousHost(ctx context.Context, app *App, host *relayHost, prese
 	}
 	peerHost.route = route
 	return peerHost, nil
+}
+
+func (h *peerRendezvousHost) reachablePeers() int {
+	if h == nil || h.route == nil {
+		return 0
+	}
+	return h.route.OnlinePeerCount()
 }
 
 func (h *peerRendezvousHost) authorize(ctx context.Context, request rendezvousclient.PeerOpenRequest) (rendezvousclient.HostAuthorization, rendezvousclient.HostCallbacks, error) {
@@ -143,6 +157,30 @@ func (h *peerRendezvousHost) removeAttempt(id uuid.UUID) {
 	if attempt != nil {
 		attempt.close(false)
 	}
+}
+
+func (h *peerRendezvousHost) syncConfigNow() (int, error) {
+	if h == nil {
+		return 0, nil
+	}
+	h.mu.Lock()
+	attempts := make([]*peerHostAttempt, 0, len(h.attempts))
+	for _, attempt := range h.attempts {
+		attempts = append(attempts, attempt)
+	}
+	h.mu.Unlock()
+	sent := 0
+	var syncErr error
+	for _, attempt := range attempts {
+		active, err := attempt.syncConfigNow()
+		if active {
+			sent++
+		}
+		if err != nil {
+			syncErr = errors.Join(syncErr, err)
+		}
+	}
+	return sent, syncErr
 }
 
 func (h *peerRendezvousHost) Close() {

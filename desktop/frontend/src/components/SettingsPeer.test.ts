@@ -29,6 +29,11 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
       listMembers: vi.fn(),
       revokeInvitation: vi.fn(),
       revokeMember: vi.fn(),
+      getRendezvousConfig: vi.fn(),
+      setRendezvousConfig: vi.fn(),
+      getRendezvousStatus: vi.fn(),
+      reconnectRendezvous: vi.fn(),
+      syncConfigNow: vi.fn(),
       getQuickTunnelStatus: vi.fn(),
       startQuickTunnel: vi.fn(),
       stopQuickTunnel: vi.fn(),
@@ -119,6 +124,18 @@ beforeEach(() => {
   fakePlatform.peer.listMembers.mockResolvedValue([])
   fakePlatform.peer.revokeInvitation.mockResolvedValue(undefined)
   fakePlatform.peer.revokeMember.mockResolvedValue(undefined)
+  fakePlatform.peer.getRendezvousConfig.mockResolvedValue({
+    mode: 'disabled', url: '', websocket_url: '', health_url: '',
+    stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+  })
+  fakePlatform.peer.setRendezvousConfig.mockResolvedValue(undefined)
+  fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
+    mode: 'disabled', state: 'disabled', reachable_peers: 0,
+  })
+  fakePlatform.peer.reconnectRendezvous.mockResolvedValue({
+    mode: 'official', state: 'connecting', url: 'https://rendezvous.atterm.dev', reachable_peers: 0,
+  })
+  fakePlatform.peer.syncConfigNow.mockResolvedValue(pendingSyncStatus)
   fakePlatform.system.setClipboardText.mockResolvedValue(undefined)
   qrScanner.requestPermissions.mockResolvedValue({ camera: 'granted' })
   qrScanner.scan.mockResolvedValue({ cancelled: false, rawValue: 'atc1.scanned-token' })
@@ -221,6 +238,7 @@ describe('SettingsPeer', () => {
   })
 
   it('creates a new Peer Space and loads host controls', async () => {
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
     const wrapper = await mountReady()
 
     await wrapper.get('[data-testid="peer-create-space"]').trigger('click')
@@ -231,7 +249,9 @@ describe('SettingsPeer', () => {
     expect(fakePlatform.peer.listInvitations).toHaveBeenCalledOnce()
     expect(fakePlatform.peer.listMembers).toHaveBeenCalledOnce()
     expect(fakePlatform.peer.configSyncStatus).toHaveBeenCalledOnce()
+    expect(setIntervalSpy).toHaveBeenCalledOnce()
     expect(wrapper.get('[data-testid="peer-configured"]').text()).toContain(configuredStatus.space_id)
+    wrapper.unmount()
   })
 
   it('shows durable pending sync without implying central cloud storage', async () => {
@@ -249,6 +269,71 @@ describe('SettingsPeer', () => {
 
     expect(wrapper.get('[data-testid="peer-sync-state"]').text()).toContain('settings.peer.sync.synced')
     expect(fakePlatform.peer.configSyncStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('loads Rendezvous operational status and exposes only aggregate reachability', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getRendezvousConfig.mockResolvedValue({
+      mode: 'official', url: 'https://rendezvous.atterm.dev',
+      websocket_url: 'wss://rendezvous.atterm.dev/v1/connect',
+      health_url: 'https://rendezvous.atterm.dev/healthz',
+      stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+    })
+    fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
+      mode: 'official', state: 'online', url: 'https://rendezvous.atterm.dev',
+      last_registered_at: 1_797_900_000, registration_ms: 38, reachable_peers: 2,
+    })
+
+    const wrapper = await mountReady()
+
+    expect(fakePlatform.peer.getRendezvousConfig).toHaveBeenCalledOnce()
+    expect(fakePlatform.peer.getRendezvousStatus).toHaveBeenCalledOnce()
+    expect(wrapper.get('[data-testid="peer-rendezvous-status"]').text()).toContain('settings.peer.rendezvous.state.online')
+    expect(wrapper.get('[data-testid="peer-rendezvous-metrics"]').text()).toContain('38 ms')
+    expect(wrapper.get('[data-testid="peer-rendezvous-metrics"]').text()).toContain('2')
+  })
+
+  it('validates and saves a custom Rendezvous origin with custom STUN servers', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const wrapper = await mountReady()
+
+    const mode = wrapper.get('[data-testid="peer-rendezvous-mode"]')
+    await mode.get('[data-testid="select-trigger"]').trigger('click')
+    await mode.findAll('[data-testid="select-option"]')[2].trigger('click')
+    await wrapper.get('[data-testid="peer-rendezvous-url"]').setValue('https://rv.example.com')
+    const stun = wrapper.get('[data-testid="peer-rendezvous-stun-mode"]')
+    await stun.get('[data-testid="select-trigger"]').trigger('click')
+    await stun.findAll('[data-testid="select-option"]')[1].trigger('click')
+    await wrapper.get('[data-testid="peer-rendezvous-stun-urls"]').setValue('stun:one.example.com:3478\nstuns:two.example.com:5349')
+    await wrapper.get('[data-testid="peer-rendezvous-save"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.setRendezvousConfig).toHaveBeenCalledWith({
+      mode: 'custom', url: 'https://rv.example.com', stun_mode: 'custom',
+      stun_urls: ['stun:one.example.com:3478', 'stuns:two.example.com:5349'],
+    })
+  })
+
+  it('reconnects Rendezvous and requests config sync through authenticated peers', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getRendezvousConfig.mockResolvedValue({
+      mode: 'official', url: 'https://rendezvous.atterm.dev', websocket_url: '', health_url: '',
+      stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+    })
+    fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
+      mode: 'official', state: 'error', url: 'https://rendezvous.atterm.dev',
+      reachable_peers: 0, last_error_code: 'service_unavailable',
+    })
+    const wrapper = await mountReady()
+
+    await wrapper.get('[data-testid="peer-rendezvous-reconnect"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.reconnectRendezvous).toHaveBeenCalledOnce()
+    expect(wrapper.get('[data-testid="peer-rendezvous-status"]').text()).toContain('settings.peer.rendezvous.state.connecting')
+
+    await wrapper.get('[data-testid="peer-sync-now"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.syncConfigNow).toHaveBeenCalledOnce()
   })
 
   it('merges or explicitly discards preserved pre-join settings', async () => {
@@ -292,6 +377,7 @@ describe('SettingsPeer', () => {
       peer_id: 'peer_remote_789', grant_serial: 'grant-remote', issuer_peer_id: 'peer_local_123',
       permission: 'control', allowed_session_ids: ['session-one'], can_invite: false, can_sync_secrets: false,
       issued_at: 1_797_897_700, expires_at: 1_898_156_800, status: 'active', local: false, can_revoke: true,
+      last_exchange_at: 1_797_900_000,
     }
     fakePlatform.peer.listMembers
       .mockResolvedValueOnce([local, remote])
@@ -301,6 +387,7 @@ describe('SettingsPeer', () => {
     expect(wrapper.findAll('[data-testid="peer-member-row"]')).toHaveLength(2)
     expect(wrapper.text()).toContain('peer_remote_789')
     expect(wrapper.text()).toContain('settings.peer.permission.control')
+    expect(wrapper.text()).toContain('settings.peer.members.lastDirectExchange')
     expect(fakePlatform.peer.revokeMember).not.toHaveBeenCalled()
 
     await wrapper.get('[data-testid="peer-member-revoke-open"]').trigger('click')
@@ -416,6 +503,39 @@ describe('SettingsPeer', () => {
     expect(fakePlatform.peer.createConnectionBundle).toHaveBeenCalledWith('')
     expect(fakePlatform.system.setClipboardText).toHaveBeenCalledWith('atc1.member-route.signature')
     expect(wrapper.get('[data-testid="peer-tunnel-copy-route"]').text()).toContain('settings.peer.tunnel.copied')
+  })
+
+  it('keeps first-join invitation bundles Quick Tunnel-only when Rendezvous is online', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
+      mode: 'official', state: 'online', url: 'https://rendezvous.atterm.dev', reachable_peers: 1,
+    })
+    fakePlatform.peer.listInvitations.mockResolvedValue([{
+      invite_id: 'invite-1', batch_id: 'batch-1', token: 'atp1.secret-ticket', expires_at: 1_898_156_800,
+    }])
+    const wrapper = await mountReady()
+    const copy = wrapper.get('[data-testid="peer-copy-invitation"]')
+
+    expect(copy.attributes('disabled')).toBeDefined()
+    expect(copy.attributes('title')).toBe('settings.peer.invitations.startTunnelFirst')
+    await copy.trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.createConnectionBundle).not.toHaveBeenCalled()
+  })
+
+  it('copies a member reconnect bundle when Rendezvous is online without Quick Tunnel', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
+      mode: 'official', state: 'online', url: 'https://rendezvous.atterm.dev', reachable_peers: 1,
+    })
+    const wrapper = await mountReady()
+
+    expect(wrapper.get('[data-testid="peer-tunnel-status"]').text()).toContain('settings.peer.tunnel.stopped')
+    await wrapper.get('[data-testid="peer-tunnel-copy-route"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.createConnectionBundle).toHaveBeenCalledWith('')
+    expect(fakePlatform.system.setClipboardText).toHaveBeenCalledWith('atc1.member-route.signature')
   })
 
   it('stops Quick Tunnel and removes the share action', async () => {

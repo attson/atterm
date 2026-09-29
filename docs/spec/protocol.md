@@ -1136,7 +1136,8 @@ loopback gateway 和 `cloudflared`，但不删除 Peer trust，可再次显式�
 Rendezvous Pion route 都复用上述同一个 Session attach、权限热检查和 config anti-entropy 路径；
 config 仍不创建第二个 terminal subscriber。Desktop Settings 已提供 join/bootstrap 确认、独立于
 Relay 登录设备的 Peer member directory、不可逆成员撤销，以及 Quick Tunnel start/stop、member
-reconnect bundle 复制入口；Web/iOS Peer client 接入、最终用户侧 Rendezvous attach 入口与
+reconnect bundle 复制入口和 official/custom/disabled Rendezvous 运维状态；Web/iOS Peer client
+接入、最终用户侧 Rendezvous session discovery/attach 入口与
 fallback consent 仍未实现。
 
 ### Rendezvous v1 discovery and signaling
@@ -1302,8 +1303,12 @@ context、`crypto.subtle` 与 `RTCPeerConnection`，并映射成稳定状态
 `cmd/atterm-rendezvous-contract` 只依赖 service origin/Origin，官方和自建实例必须通过同一套
 health、challenge、presence、delivery、mailbox、dedupe、size limit 与 metrics privacy 检查。
 
-Desktop 启用 Rendezvous 且已有 Peer Space 时会注册 host presence；失败按 500 ms 到 8 s
-指数退避，连接断开或进入下一个 15 分钟 presence slot 时重新注册。成员重连的
+Desktop 启用 Rendezvous 且已有 Peer Space 时会注册 host presence；单次注册超时为 10 秒，失败
+按 500 ms 到 8 s 指数退避，连接断开或进入下一个 15 分钟 presence slot 时重新注册。Settings
+运行状态使用 `disabled | waiting | connecting | online | error`，错误只暴露
+`invalid_config | registration_timeout | authentication_failed | service_unavailable |
+registration_failed` 稳定码。诊断导出只包含 service origin 与聚合状态，不包含 topic、presence id、
+Peer id、SDP/ICE 或 payload。成员重连的
 `ConnectionBundle` 可同时携带 Quick Tunnel 与 Rendezvous，也可以只携带 Rendezvous；首次邀请
 核销仍必须包含可用 Quick Tunnel route，Rendezvous 不承担 bootstrap secret 交换。
 

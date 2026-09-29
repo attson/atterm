@@ -674,6 +674,17 @@ func (r *Route) Done() <-chan struct{} {
 	return r.ctx.Done()
 }
 
+// OnlinePeerCount returns the current opaque presence count without exposing
+// any Rendezvous routing identifier to callers or diagnostics.
+func (r *Route) OnlinePeerCount() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.online)
+}
+
 func (r *Route) finish(reason error) {
 	r.closeOnce.Do(func() {
 		r.cancel()

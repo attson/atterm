@@ -78,6 +78,15 @@ remains PR 3.5, so the Stage exit gate is not claimed here.
 
 ## PR 3.5 - Settings and operational UX
 
+Implementation status: Desktop Settings now exposes official/custom/disabled Rendezvous and
+default/custom/disabled STUN selection, validates and persists local-only endpoints, reports
+registration state/latency/time/reachable presence count with stable error codes, and provides
+manual reconnect plus authenticated-channel config sync. The Peer directory reports each member's
+last direct config exchange, member reconnect bundles can be copied with Rendezvous alone online,
+first-join bundles remain Quick Tunnel-only, and diagnostics include only a redaction-safe aggregate
+Rendezvous summary. End-user accountless session discovery/attach still needs a separate protocol,
+so the Stage exit gate is not claimed by this PR.
+
 `Peer 连接` gains:
 
 - Official/custom/disabled Rendezvous selection。

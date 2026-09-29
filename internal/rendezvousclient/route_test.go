@@ -153,6 +153,35 @@ func TestRouteIgnoresMalformedPresenceEvents(t *testing.T) {
 	}
 }
 
+func TestRouteOnlinePeerCountTracksPresenceWithoutExposingIdentifiers(t *testing.T) {
+	route := &Route{
+		cfg:    RouteConfig{Connection: &PresenceConnection{presenceID: encodedID(1, 32)}},
+		online: make(map[string]rendezvous.Role),
+	}
+	first := encodedID(2, 32)
+	second := encodedID(3, 32)
+
+	route.handlePresence(rendezvous.EventMessage{
+		Kind: rendezvous.KindPresence, Event: rendezvous.PresenceOnline,
+		PresenceID: first, Role: rendezvous.RoleHost,
+	})
+	route.handlePresence(rendezvous.EventMessage{
+		Kind: rendezvous.KindPresence, Event: rendezvous.PresenceOnline,
+		PresenceID: second, Role: rendezvous.RoleMember,
+	})
+	if got := route.OnlinePeerCount(); got != 2 {
+		t.Fatalf("online peer count=%d want=2", got)
+	}
+
+	route.handlePresence(rendezvous.EventMessage{
+		Kind: rendezvous.KindPresence, Event: rendezvous.PresenceOffline,
+		PresenceID: first, Role: rendezvous.RoleHost,
+	})
+	if got := route.OnlinePeerCount(); got != 1 {
+		t.Fatalf("online peer count after offline=%d want=1", got)
+	}
+}
+
 func TestRouteReleasesAuthorizedHostCallbackWhenAuthorizationDocumentsFail(t *testing.T) {
 	fixture := newRouteFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -32,6 +32,7 @@ export type PeerInvitation = _Models.PeerInvitation
 export type PeerMember = _Models.PeerMember
 export type PeerConnectionPreview = _Models.PeerConnectionPreview
 export type PeerRendezvousConfig = _Models.PeerRendezvousConfig
+export type PeerRendezvousStatus = _Models.PeerRendezvousStatus
 
 export interface EnvironmentInfo {
   buildType: string
@@ -333,6 +334,9 @@ export interface PeerBridge {
     stun_mode: 'default' | 'custom' | 'disabled'
     stun_urls: string[]
   }): Promise<void>
+  getRendezvousStatus(): Promise<PeerRendezvousStatus>
+  reconnectRendezvous(): Promise<PeerRendezvousStatus>
+  syncConfigNow(): Promise<PeerConfigSyncStatus>
   /** Desktop host controls. Clients without a local gateway leave these absent. */
   getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
   startQuickTunnel?(): Promise<PeerQuickTunnelStatus>

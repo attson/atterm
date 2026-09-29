@@ -1,11 +1,12 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from 'vue'
-import { Check, Copy, Play, QrCode, Search, ShieldCheck, Square } from 'lucide-vue-next'
+import { Check, Copy, Play, Plus, QrCode, Search, ShieldCheck, Square, Trash2 } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
 import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
 import { QRScanner } from '../platform/qrScanner'
-import type { PeerConnectionPreview, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
+import type { PeerConnectionPreview, PeerInvitation, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
+import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
 
 const { t } = useI18n()
 const platform = usePlatform()
@@ -17,12 +18,24 @@ const scanning = ref(false)
 const tunnelBusy = ref(false)
 const routeCopying = ref(false)
 const routeCopied = ref(false)
+const creatingSpace = ref(false)
+const invitationsLoading = ref(false)
+const invitationCreating = ref(false)
+const invitationActionID = ref('')
+const copiedInvitationID = ref('')
 const error = ref('')
 const status = ref<PeerSpaceStatus | null>(null)
 const tunnelStatus = ref<PeerQuickTunnelStatus | null>(null)
+const invitations = ref<PeerInvitation[]>([])
 const bundleInput = ref('')
 const previewedBundle = ref('')
 const preview = ref<PeerConnectionPreview | null>(null)
+const inviteCount = ref(1)
+const inviteValidFor = ref('24')
+const invitePermission = ref<'view' | 'control' | 'full'>('control')
+const inviteCanInvite = ref(false)
+const inviteCanSyncSecrets = ref(false)
+const inviteSessionScope = ref('')
 
 const canPreview = computed(() => bundleInput.value.trim() !== '' && !previewing.value && !joining.value)
 const hasQuickTunnelHost = computed(() => Boolean(
@@ -36,6 +49,16 @@ const fingerprint = computed(() => {
   if (!hash) return ''
   return hash.startsWith('SHA256:') ? hash : `SHA256:${hash}`
 })
+const validityOptions = computed<SelectOption[]>(() => [
+  { value: '24', label: t('settings.peer.invitations.validity24') },
+  { value: '168', label: t('settings.peer.invitations.validity168') },
+  { value: '720', label: t('settings.peer.invitations.validity720') },
+])
+const permissionOptions = computed<SelectOption[]>(() => [
+  { value: 'view', label: t('settings.peer.permission.view') },
+  { value: 'control', label: t('settings.peer.permission.control') },
+  { value: 'full', label: t('settings.peer.permission.full') },
+])
 
 onMounted(async () => {
   if (!platform.peer) {
@@ -45,15 +68,41 @@ onMounted(async () => {
   }
   try {
     status.value = await platform.peer.status()
-    if (status.value.configured && platform.peer.getQuickTunnelStatus) {
-      tunnelStatus.value = await platform.peer.getQuickTunnelStatus()
-    }
+    if (status.value.configured) await loadConfiguredPeerData()
   } catch {
     error.value = t('settings.peer.errors.status')
   } finally {
     loading.value = false
   }
 })
+
+async function loadConfiguredPeerData(): Promise<void> {
+  const peer = platform.peer
+  if (!peer) return
+  invitationsLoading.value = true
+  const [tunnelResult, invitationResult] = await Promise.allSettled([
+    peer.getQuickTunnelStatus?.() ?? Promise.resolve(null),
+    peer.listInvitations(),
+  ])
+  if (tunnelResult.status === 'fulfilled') {
+    tunnelStatus.value = tunnelResult.value
+  } else {
+    error.value = t('settings.peer.errors.status')
+  }
+  if (invitationResult.status === 'fulfilled') {
+    invitations.value = invitationResult.value
+  } else {
+    error.value = t('settings.peer.errors.invitationLoad')
+  }
+  invitationsLoading.value = false
+}
+
+async function writeClipboard(value: string): Promise<boolean> {
+  const nativeClipboard = platform.system.setClipboardText
+    ? { writeText: (text: string) => platform.system.setClipboardText!(text) }
+    : undefined
+  return copyTextToClipboard(value, nativeClipboard)
+}
 
 function onBundleInput(): void {
   preview.value = null
@@ -66,6 +115,7 @@ async function startQuickTunnel(): Promise<void> {
   if (!start || tunnelBusy.value) return
   error.value = ''
   routeCopied.value = false
+  copiedInvitationID.value = ''
   tunnelBusy.value = true
   try {
     tunnelStatus.value = await start()
@@ -81,6 +131,7 @@ async function stopQuickTunnel(): Promise<void> {
   if (!stop || tunnelBusy.value) return
   error.value = ''
   routeCopied.value = false
+  copiedInvitationID.value = ''
   tunnelBusy.value = true
   try {
     await stop()
@@ -94,21 +145,141 @@ async function stopQuickTunnel(): Promise<void> {
 
 async function copyMemberRoute(): Promise<void> {
   const createBundle = platform.peer?.createConnectionBundle
-  if (!createBundle || !tunnelStatus.value?.running || routeCopying.value) return
+  if (!createBundle || !tunnelStatus.value?.running || routeCopying.value || invitationActionID.value) return
   error.value = ''
   routeCopied.value = false
   routeCopying.value = true
   try {
     const bundle = await createBundle('')
-    const nativeClipboard = platform.system.setClipboardText
-      ? { writeText: (text: string) => platform.system.setClipboardText!(text) }
-      : undefined
-    if (!await copyTextToClipboard(bundle, nativeClipboard)) throw new Error('clipboard unavailable')
+    if (!await writeClipboard(bundle)) throw new Error('clipboard unavailable')
     routeCopied.value = true
   } catch {
     error.value = t('settings.peer.errors.routeCopy')
   } finally {
     routeCopying.value = false
+  }
+}
+
+async function createPeerSpace(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || creatingSpace.value) return
+  error.value = ''
+  creatingSpace.value = true
+  try {
+    status.value = await peer.createSpace()
+    bundleInput.value = ''
+    previewedBundle.value = ''
+    preview.value = null
+    await loadConfiguredPeerData()
+  } catch {
+    error.value = t('settings.peer.errors.createSpace')
+  } finally {
+    creatingSpace.value = false
+  }
+}
+
+function parseSessionScope(value: string): string[] {
+  const seen = new Set<string>()
+  return value.split(/[\s,]+/).filter((sessionID) => {
+    if (!sessionID || seen.has(sessionID)) return false
+    seen.add(sessionID)
+    return true
+  })
+}
+
+async function refreshInvitationState(): Promise<void> {
+  const peer = platform.peer
+  if (!peer) return
+  invitationsLoading.value = true
+  try {
+    const [nextStatus, nextInvitations] = await Promise.all([
+      peer.status(),
+      peer.listInvitations(),
+    ])
+    status.value = nextStatus
+    invitations.value = nextInvitations
+  } catch {
+    error.value = t('settings.peer.errors.invitationLoad')
+  } finally {
+    invitationsLoading.value = false
+  }
+}
+
+async function createInvitationBatch(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || invitationCreating.value || invitationActionID.value) return
+  error.value = ''
+  copiedInvitationID.value = ''
+  invitationCreating.value = true
+  const count = Math.min(100, Math.max(1, Math.trunc(Number(inviteCount.value) || 1)))
+  inviteCount.value = count
+  try {
+    try {
+      await peer.createInvitations({
+        count,
+        valid_for_hours: Number(inviteValidFor.value),
+        permission: invitePermission.value,
+        allowed_session_ids: parseSessionScope(inviteSessionScope.value),
+        can_invite: inviteCanInvite.value,
+        can_sync_secrets: inviteCanSyncSecrets.value,
+      })
+    } catch {
+      error.value = t('settings.peer.errors.invitationCreate')
+      return
+    }
+    await refreshInvitationState()
+  } finally {
+    invitationCreating.value = false
+  }
+}
+
+function invitationState(invitation: PeerInvitation): 'open' | 'used' | 'revoked' | 'expired' {
+  if (invitation.revoked_at) return 'revoked'
+  if (invitation.consumed_at) return 'used'
+  if (invitation.expires_at <= Date.now() / 1000) return 'expired'
+  return 'open'
+}
+
+async function copyInvitationRoute(invitation: PeerInvitation): Promise<void> {
+  const createBundle = platform.peer?.createConnectionBundle
+  if (
+    !createBundle
+    || !tunnelStatus.value?.running
+    || tunnelBusy.value
+    || !invitation.token
+    || invitationState(invitation) !== 'open'
+    || invitationActionID.value
+  ) return
+  error.value = ''
+  copiedInvitationID.value = ''
+  invitationActionID.value = invitation.invite_id
+  try {
+    const bundle = await createBundle(invitation.token)
+    if (!await writeClipboard(bundle)) throw new Error('clipboard unavailable')
+    copiedInvitationID.value = invitation.invite_id
+  } catch {
+    error.value = t('settings.peer.errors.invitationCopy')
+  } finally {
+    invitationActionID.value = ''
+  }
+}
+
+async function revokeInvitation(invitation: PeerInvitation): Promise<void> {
+  const peer = platform.peer
+  if (!peer || invitationState(invitation) !== 'open' || invitationActionID.value) return
+  error.value = ''
+  copiedInvitationID.value = ''
+  invitationActionID.value = invitation.invite_id
+  try {
+    try {
+      await peer.revokeInvitation(invitation.invite_id)
+    } catch {
+      error.value = t('settings.peer.errors.invitationRevoke')
+      return
+    }
+    await refreshInvitationState()
+  } finally {
+    invitationActionID.value = ''
   }
 }
 
@@ -280,7 +451,7 @@ function permissionLabel(permission: string): string {
               type="button"
               class="primary-action"
               data-testid="peer-tunnel-copy-route"
-              :disabled="routeCopying || tunnelBusy"
+              :disabled="routeCopying || tunnelBusy || Boolean(invitationActionID)"
               @click="copyMemberRoute"
             >
               <Copy :size="15" aria-hidden="true" />
@@ -294,7 +465,7 @@ function permissionLabel(permission: string): string {
               type="button"
               class="secondary-action"
               data-testid="peer-tunnel-stop"
-              :disabled="tunnelBusy || routeCopying"
+              :disabled="tunnelBusy || routeCopying || Boolean(invitationActionID)"
               @click="stopQuickTunnel"
             >
               <Square :size="14" aria-hidden="true" />
@@ -314,9 +485,167 @@ function permissionLabel(permission: string): string {
           <div><strong>{{ status.expired_invitations }}</strong><span>{{ t('settings.peer.invitationExpired') }}</span></div>
         </div>
       </section>
+
+      <section class="peer-section" data-testid="peer-invitations-section">
+        <div>
+          <h3>{{ t('settings.peer.invitations.title') }}</h3>
+          <p class="hint">{{ t('settings.peer.invitations.hint') }}</p>
+        </div>
+        <div class="invitation-form-grid">
+          <div class="form-field compact-field">
+            <label class="field-label" for="peer-invite-count">{{ t('settings.peer.invitations.count') }}</label>
+            <input
+              id="peer-invite-count"
+              v-model.number="inviteCount"
+              data-testid="peer-invite-count"
+              type="number"
+              min="1"
+              max="100"
+              step="1"
+              :disabled="invitationCreating"
+            />
+          </div>
+          <div class="form-field">
+            <label class="field-label">{{ t('settings.peer.invitations.validity') }}</label>
+            <SelectDropdown
+              v-model="inviteValidFor"
+              :options="validityOptions"
+              :disabled="invitationCreating"
+              :aria-label="t('settings.peer.invitations.validity')"
+            />
+          </div>
+          <div class="form-field">
+            <label class="field-label">{{ t('settings.peer.permissionLabel') }}</label>
+            <SelectDropdown
+              v-model="invitePermission"
+              :options="permissionOptions"
+              :disabled="invitationCreating"
+              :aria-label="t('settings.peer.permissionLabel')"
+            />
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="field-label" for="peer-session-scope-input">{{ t('settings.peer.invitations.sessionScope') }}</label>
+          <textarea
+            id="peer-session-scope-input"
+            v-model="inviteSessionScope"
+            data-testid="peer-session-scope-input"
+            rows="2"
+            :placeholder="t('settings.peer.invitations.sessionScopePlaceholder')"
+            :disabled="invitationCreating"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="hint">{{ t('settings.peer.invitations.sessionScopeHint') }}</p>
+        </div>
+        <div class="capability-options">
+          <label class="checkbox-row">
+            <input
+              v-model="inviteCanInvite"
+              data-testid="peer-can-invite"
+              type="checkbox"
+              :disabled="invitationCreating"
+            />
+            <span>
+              <strong>{{ t('settings.peer.canInvite') }}</strong>
+              <small>{{ t('settings.peer.invitations.canInviteHint') }}</small>
+            </span>
+          </label>
+          <label class="checkbox-row">
+            <input
+              v-model="inviteCanSyncSecrets"
+              data-testid="peer-can-sync-secrets"
+              type="checkbox"
+              :disabled="invitationCreating"
+            />
+            <span>
+              <strong>{{ t('settings.peer.canSyncSecrets') }}</strong>
+              <small>{{ t('settings.peer.invitations.canSyncSecretsHint') }}</small>
+            </span>
+          </label>
+        </div>
+        <button
+          type="button"
+          class="primary-action create-invitations"
+          data-testid="peer-create-invitations"
+          :disabled="invitationCreating || Boolean(invitationActionID)"
+          @click="createInvitationBatch"
+        >
+          <Plus :size="15" aria-hidden="true" />
+          {{ invitationCreating
+            ? t('settings.peer.invitations.creating')
+            : t('settings.peer.invitations.create') }}
+        </button>
+
+        <p v-if="invitationsLoading" class="hint">{{ t('common.loading') }}</p>
+        <p v-else-if="invitations.length === 0" class="hint">{{ t('settings.peer.invitations.empty') }}</p>
+        <div v-else class="invitation-list">
+          <div
+            v-for="invitation in invitations"
+            :key="invitation.invite_id"
+            class="invitation-row"
+            data-testid="peer-invitation-row"
+          >
+            <div class="invitation-info">
+              <div class="invitation-title-row">
+                <code>{{ invitation.invite_id }}</code>
+                <span class="invitation-state" :class="`state-${invitationState(invitation)}`">
+                  {{ t(`settings.peer.invitations.${invitationState(invitation)}`) }}
+                </span>
+              </div>
+              <span class="hint">
+                {{ t('settings.peer.invitations.expiresAt', { time: formatTime(invitation.expires_at) }) }}
+              </span>
+            </div>
+            <div v-if="invitationState(invitation) === 'open'" class="invitation-actions">
+              <button
+                type="button"
+                class="secondary-action"
+                data-testid="peer-copy-invitation"
+                :disabled="!tunnelStatus?.running || !invitation.token || tunnelBusy || Boolean(invitationActionID)"
+                :title="!tunnelStatus?.running ? t('settings.peer.invitations.startTunnelFirst') : undefined"
+                @click="copyInvitationRoute(invitation)"
+              >
+                <Copy :size="14" aria-hidden="true" />
+                {{ copiedInvitationID === invitation.invite_id
+                  ? t('settings.peer.invitations.copied')
+                  : invitationActionID === invitation.invite_id
+                    ? t('settings.peer.invitations.copying')
+                    : t('settings.peer.invitations.copy') }}
+              </button>
+              <button
+                type="button"
+                class="icon-action danger-action"
+                data-testid="peer-revoke-invitation"
+                :disabled="Boolean(invitationActionID)"
+                :aria-label="t('settings.peer.invitations.revoke')"
+                :title="t('settings.peer.invitations.revoke')"
+                @click="revokeInvitation(invitation)"
+              >
+                <Trash2 :size="15" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
     </template>
 
     <template v-else>
+      <section class="peer-section create-space-section">
+        <h3>{{ t('settings.peer.create.title') }}</h3>
+        <p class="hint">{{ t('settings.peer.create.hint') }}</p>
+        <button
+          type="button"
+          class="secondary-action create-space-action"
+          data-testid="peer-create-space"
+          :disabled="creatingSpace || joining"
+          @click="createPeerSpace"
+        >
+          <Plus :size="15" aria-hidden="true" />
+          {{ creatingSpace ? t('settings.peer.create.creating') : t('settings.peer.create.action') }}
+        </button>
+      </section>
+
       <section class="peer-section">
         <h3>{{ t('settings.peer.joinTitle') }}</h3>
         <p class="hint">{{ t('settings.peer.joinHint') }}</p>
@@ -481,11 +810,10 @@ function permissionLabel(permission: string): string {
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-textarea {
+textarea,
+input[type="number"] {
   box-sizing: border-box;
   width: 100%;
-  min-height: 88px;
-  resize: vertical;
   padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -495,10 +823,20 @@ textarea {
   font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   overflow-wrap: anywhere;
 }
-textarea:focus {
+textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+input[type="number"] {
+  height: 32px;
+  padding-block: 6px;
+}
+textarea:focus,
+input[type="number"]:focus {
   box-shadow: 0 0 0 2px var(--accent);
 }
-textarea:disabled {
+textarea:disabled,
+input[type="number"]:disabled {
   opacity: 0.6;
 }
 .actions {
@@ -614,6 +952,126 @@ button:disabled {
 .join-action {
   align-self: flex-start;
 }
+.create-space-action,
+.create-invitations {
+  align-self: flex-start;
+}
+.invitation-form-grid {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.peer-section .form-field textarea {
+  min-height: 58px;
+}
+.capability-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px 16px;
+}
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+.checkbox-row input {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+}
+.checkbox-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.checkbox-row strong {
+  font-weight: 500;
+}
+.checkbox-row small {
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.invitation-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+.invitation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.invitation-row:last-child {
+  border-bottom: 0;
+}
+.invitation-info {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.invitation-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.invitation-title-row code {
+  min-width: 0;
+  color: var(--fg);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.invitation-state {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 1.3;
+}
+.invitation-state.state-open {
+  border-color: color-mix(in srgb, var(--good) 45%, var(--border));
+  color: var(--good);
+}
+.invitation-state.state-revoked,
+.invitation-state.state-expired {
+  color: var(--bad);
+}
+.invitation-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+.icon-action {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  background: transparent;
+  color: var(--fg-dim);
+}
+.danger-action:hover:not(:disabled) {
+  border-color: var(--bad);
+  color: var(--bad);
+}
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -645,12 +1103,25 @@ button:disabled {
   .detail-list {
     grid-template-columns: minmax(0, 1fr);
   }
+  .invitation-form-grid,
+  .capability-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .actions button,
-  .join-action {
+  .join-action,
+  .create-space-action,
+  .create-invitations {
     width: 100%;
+  }
+  .invitation-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .invitation-actions .secondary-action {
+    flex: 1 1 auto;
   }
 }
 </style>

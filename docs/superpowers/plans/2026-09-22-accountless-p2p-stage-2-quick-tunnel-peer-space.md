@@ -155,7 +155,12 @@ bridge and Capacitor camera capability are present. Web/iOS Peer bridge wiring
 and the end-user fallback consent flow remain pending. Desktop Settings now
 also exposes the explicit Quick Tunnel start/stop lifecycle and copies a
 ticketless member reconnect bundle for the current route. Regenerating that
-bundle after URL rotation does not mint or replace durable membership.
+bundle after URL rotation does not mint or replace durable membership. The
+Desktop host flow can now create a new Space, pre-sign constrained invitation
+batches, list their lifecycle without rendering invitation tokens, publish an
+open invitation through the current Quick Tunnel route, and revoke it. Host UI
+tests cover creation, stable session-scope deduplication, first-join bundle
+copying, token non-disclosure and revocation.
 
 ## Why Quick Tunnel Before Rendezvous
 

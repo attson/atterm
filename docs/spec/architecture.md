@@ -379,6 +379,24 @@ wire 契约、默认限额和隐私边界见 [protocol.md](./protocol.md) §Rend
 官方/自建部署步骤与统一 contract runner 见
 [部署 Rendezvous](../../site/docs/guide/deploy-rendezvous.md)。
 
+## Rendezvous 发现与配置同步规划
+
+`internal/peerdiscovery` 是 Rendezvous 与 Peer trust 之间的纯本地边界。它用当前 sync epoch key
+派生 epoch 级 opaque topic 和 15 分钟轮换 presence，且只对当前 active memberships 的
+current/previous/next slot 做反解。`internal/rendezvousclient` 每次 WebSocket 注册使用新的临时
+P-256 challenge identity，因此服务看到的 registration public key 不是 durable Peer identity。
+
+Rendezvous snapshot/online/offline 只能进入内存 reachability directory。Desktop 在
+`desktop/peer_rendezvous_discovery.go` 规划拨号前重新读取 signed membership/revocation state 和
+当前 epoch key，再把可达 peer 与 `peerstore.ConfigSyncPeers` 的 durable acknowledgement vector
+连接起来。小 Space（active members <= 8）对全部可达 peer 做 anti-entropy；大 Space 每轮默认
+最多 4 个，按本地 operation lag、last exchange 和 slot 轮换排序。由此 A/B/C 等小拓扑不需要
+指定中心节点，大拓扑也不会让每个前台客户端同时拨所有成员。
+
+这个层只产出 config-sync target，不建立 Pion route、不发送 SDP/ICE，也不创建 terminal
+subscriber。Rendezvous signaling → Pion transport、重试/退避和前后台生命周期属于下一层 route
+adapter；无论该层是否可用，本地 terminal、Relay 和 Quick Tunnel 路径都不依赖它。
+
 ## Relay 多实例架构
 
 跨机 HA / 就近节点路由通过 realm identity + instance registry 实现（v0.3.x，全部合入

@@ -1152,7 +1152,8 @@ TLS 证书与显式 Origin allowlist；TLS 终止反代模式只允许监听 loo
 {"v":1,"kind":"challenge","challenge":"<base64url 32 bytes>","expires_at":1800000010}
 ```
 
-客户端用本设备 Peer P-256 signing identity 回复：
+客户端为每次连接生成一个临时 P-256 challenge identity 并回复（不复用 durable Peer signing
+identity，避免 Rendezvous 通过 public key 跨 presence 时隙关联同一设备）：
 
 ```json
 {
@@ -1179,6 +1180,24 @@ public key / peer id，也不把签名成功解释成 Space membership。`topic`
 客户端从 Space material 派生为不可关联的高熵值；后续 Peer transport handshake 仍须独立验证
 双方 membership、撤销状态和 capability。
 
+客户端从当前 `sync` epoch key 派生 routing coordinates。`LP(x)` 表示 `big-endian u32(len(x))
+|| x`，`epoch` / `slot` 都编码为 big-endian u64，`slot = floor(unix_seconds / 900)`：
+
+```text
+topic = HMAC-SHA256(K_sync_epoch,
+  LP("atterm-peer-rendezvous-topic-v1") || LP(space_id) || LP(epoch))
+
+presence_id = HMAC-SHA256(K_sync_epoch,
+  LP("atterm-peer-rendezvous-presence-v1") || LP(space_id) || LP(epoch) ||
+  LP(peer_id) || LP(slot))
+```
+
+两者在 wire 上都使用 raw base64url 32-byte digest。`topic` 在一个 sync epoch 内稳定，让同一
+Space 的在线成员能相遇；`presence_id` 每 15 分钟轮换。解析 presence 时只枚举当前 active
+membership，并接受本地 current/previous/next 三个 slot 以容忍时钟偏差。成员撤销会先旋转
+sync epoch key，因此旧 topic/presence 立即不能被剩余成员解析。派生值不写入 Peer store、Relay
+prefs 或配置副本。
+
 注册成功返回当前已激活的同 topic presence：
 
 ```json
@@ -1187,7 +1206,15 @@ public key / peer id，也不把签名成功解释成 Space membership。`topic`
 
 之后 presence 上下线以 `{"v":1,"kind":"presence","event":"online|offline",...}` 通知。
 这些事件只代表当前进程观察到的可达性，不是成员目录或授权真相源；进程重启会立即丢失全部
-presence。
+presence。客户端也只把 snapshot/online/offline 保存到内存 reachability directory；连接关闭、
+时隙轮换或本地 expiry 清理只删除可达路由，不删除 membership、grant、revocation、epoch key
+或 config operation。
+
+配置同步拨号以 active member directory 为白名单，再把可达路由与本地持久化的
+`ConfigSyncPeers[peer_id].Acknowledged` 合并。active member 总数不超过 8 时选择全部可达远端；
+更大的 Space 每轮默认最多选择 4 个，优先选择缺少本地 operation 更多的 peer，再选择从未同步或
+更久未同步的 peer。同优先级 peer 按 15 分钟 slot 确定性轮换，避免形成永久 hub。这个结果只是
+现有 authenticated Peer config channel 的拨号计划，不能绕过第二次 membership handshake。
 
 发送方用 16-byte message id 投递 ciphertext：
 

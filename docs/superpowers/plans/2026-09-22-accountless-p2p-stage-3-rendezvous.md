@@ -48,6 +48,13 @@ are implemented. Settings presentation and connection lifecycle remain in PR 3.4
 
 ## PR 3.3 - Stable member discovery and sync dialing
 
+Implementation status: sync-epoch-derived opaque topics, 15-minute rotating member presence,
+adjacent-slot resolution, ephemeral registration challenge identities, an in-memory reachability
+directory, and deterministic all-peer/bounded-fanout config-sync planning are implemented. The
+Desktop planner revalidates active membership and joins reachability only to durable peer
+acknowledgement vectors. Pion signaling, automatic reconnect/backoff, and actual route dialing remain
+in PR 3.4, so the Stage A/B/C network convergence exit gate is not claimed yet.
+
 - Space members register rotating presence identifiers derived from Space material, not email/account ids。
 - Small Spaces attempt anti-entropy with all reachable peers; larger Spaces use bounded fanout based on vector lag。
 - A/B/C config propagation does not require one permanent hub。

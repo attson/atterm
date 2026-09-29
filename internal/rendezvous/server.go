@@ -294,6 +294,10 @@ func (s *Server) authenticate(parent context.Context, conn *websocket.Conn, ip s
 		s.rejectWebSocket(handshakeCtx, conn, code)
 		return nil, nil, errors.New("rendezvous: registration capacity rejected")
 	}
+	// registered is the client-visible barrier for discoverability. Activate
+	// first so a second connection cannot receive an empty snapshot after the
+	// first has already observed its acknowledgement.
+	pending := s.broker.activate(client, existing)
 	if err := writeEvent(handshakeCtx, conn, EventMessage{
 		Version: Version, Kind: KindRegistered, Presence: existing,
 	}); err != nil {
@@ -301,7 +305,6 @@ func (s *Server) authenticate(parent context.Context, conn *websocket.Conn, ip s
 		s.broker.unregister(client)
 		return nil, nil, err
 	}
-	pending := s.broker.activate(client, existing)
 	return client, pending, nil
 }
 

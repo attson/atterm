@@ -153,8 +153,6 @@ export function GetUpdateGHProxyURL():Promise<string>;
 
 export function GetUpdateState():Promise<main.UpdateState>;
 
-export function JoinPeerSpace(arg1:main.JoinPeerSpaceReq):Promise<main.PeerSpaceStatus>;
-
 export function GetUplinkHealth():Promise<connhealth.Snapshot>;
 
 export function GetUserHomeDir():Promise<string>;
@@ -167,11 +165,15 @@ export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 
 export function InstallUpdate():Promise<void>;
 
+export function JoinPeerSpace(arg1:main.JoinPeerSpaceReq):Promise<main.PeerSpaceStatus>;
+
 export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
 
 export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
+
+export function ListPeerMembers():Promise<Array<main.PeerMember>>;
 
 export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
 
@@ -236,6 +238,8 @@ export function RevealSSHKey(arg1:string):Promise<main.SSHKeySecret>;
 export function RevokePeerInvitation(arg1:string):Promise<void>;
 
 export function RevokePeerInvitationBatch(arg1:string):Promise<void>;
+
+export function RevokePeerMember(arg1:string):Promise<void>;
 
 export function RevokeRelaySession(arg1:string):Promise<void>;
 

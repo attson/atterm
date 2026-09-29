@@ -766,6 +766,32 @@ func (h *peerQuickTunnelHost) Stop() error {
 	return h.tunnel.Stop()
 }
 
+func (h *peerQuickTunnelHost) revalidateAttempts() {
+	h.mu.Lock()
+	attempts := make([]*peerQuickTunnelAttempt, 0, len(h.attempts))
+	for _, attempt := range h.attempts {
+		attempts = append(attempts, attempt)
+	}
+	h.mu.Unlock()
+	for _, attempt := range attempts {
+		attempt.mu.Lock()
+		remoteMembership := attempt.remoteMembership
+		attempt.mu.Unlock()
+		if remoteMembership != "" && attempt.validateCurrentAuthorization(remoteMembership) != nil {
+			h.removeAttempt(attempt.signal)
+		}
+	}
+}
+
+func (a *App) revalidatePeerQuickTunnelAttempts() {
+	a.mu.Lock()
+	host, _ := a.quickTunnel.(*peerQuickTunnelHost)
+	a.mu.Unlock()
+	if host != nil {
+		host.revalidateAttempts()
+	}
+}
+
 func (a *App) ensurePeerQuickTunnelHost() (*peerQuickTunnelHost, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

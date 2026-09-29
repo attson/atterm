@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/configsync"
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 )
@@ -162,4 +166,90 @@ func membershipForPeer(memberships []peerproto.VerifiedGrant, peerID string) *pe
 		}
 	}
 	return nil
+}
+
+func TestPeerMemberDirectoryAndRevocationRotateEpochs(t *testing.T) {
+	app, now := newTestPeerApp(t)
+	status, err := app.CreatePeerSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, _ := peerproto.VerifyGenesis(state.GenesisToken)
+	creator, _ := app.peerSpace.loadIdentity()
+	creatorMembership, _ := peerproto.VerifyGrant(state.LocalMembership, genesis, now)
+	remote, _ := peercrypto.GenerateIdentity()
+	remoteWrapping, _ := peercrypto.GenerateWrappingIdentity()
+	remoteMembership := issueTestPeerMembership(t, creator, genesis, creatorMembership, remote, remoteWrapping, now)
+	if _, err := app.peerSpace.store.ApplyMemberships([]string{remoteMembership.Token}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	members, err := app.ListPeerMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 2 || !members[0].Local || members[0].PeerID != status.PeerID || members[0].CanRevoke {
+		t.Fatalf("member directory=%+v", members)
+	}
+	if members[1].PeerID != remote.PeerID() || members[1].Status != "active" || !members[1].CanRevoke || members[1].GrantSerial == "" {
+		t.Fatalf("remote directory entry=%+v", members[1])
+	}
+	publicJSON, err := json.Marshal(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secretPrefix := range []string{"apm1.", "arv1.", "akr1."} {
+		if strings.Contains(string(publicJSON), secretPrefix) {
+			t.Fatalf("member directory exposed %s token", secretPrefix)
+		}
+	}
+	if err := app.RevokePeerMember(status.PeerID); !errors.Is(err, errCannotRevokeLocalPeer) {
+		t.Fatalf("local revoke error=%v", err)
+	}
+
+	before, _ := currentEpochRotations(state.EpochRotations, genesis)
+	if err := app.RevokePeerMember(remote.PeerID()); err != nil {
+		t.Fatal(err)
+	}
+	afterState, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := currentEpochRotations(afterState.EpochRotations, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, class := range []configsync.KeyClass{configsync.KeyClassSync, configsync.KeyClassVault} {
+		if after[class].Document.Epoch != before[class].Document.Epoch+1 {
+			t.Fatalf("%s epoch=%d want=%d", class, after[class].Document.Epoch, before[class].Document.Epoch+1)
+		}
+		if len(after[class].Document.Recipients) != 1 || after[class].Document.Recipients[0].PeerID != status.PeerID {
+			t.Fatalf("%s recipients=%+v", class, after[class].Document.Recipients)
+		}
+		key, err := loadPeerEpochKey(status.SpaceID, class)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key.Epoch != after[class].Document.Epoch || bytes.Equal(key.Bytes(), make([]byte, configsync.EpochKeySize)) {
+			t.Fatalf("saved %s key epoch=%d", class, key.Epoch)
+		}
+	}
+	members, err = app.ListPeerMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if members[1].Status != "revoked" || members[1].RevokedAt == 0 || members[1].CanRevoke {
+		t.Fatalf("revoked directory entry=%+v", members[1])
+	}
+	if err := app.RevokePeerMember(remote.PeerID()); err != nil {
+		t.Fatal(err)
+	}
+	idempotent, _ := app.peerSpace.store.Load()
+	if len(idempotent.Revocations) != 1 || len(idempotent.EpochRotations) != len(afterState.EpochRotations) {
+		t.Fatalf("idempotent revoke changed governance state")
+	}
 }

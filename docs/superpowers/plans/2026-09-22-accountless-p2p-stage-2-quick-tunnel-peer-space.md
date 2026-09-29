@@ -160,7 +160,14 @@ Desktop host flow can now create a new Space, pre-sign constrained invitation
 batches, list their lifecycle without rendering invitation tokens, publish an
 open invitation through the current Quick Tunnel route, and revoke it. Host UI
 tests cover creation, stable session-scope deduplication, first-join bundle
-copying, token non-disclosure and revocation.
+copying, token non-disclosure and revocation. Desktop Settings now also lists
+the canonical Peer member directory separately from Relay account devices. An
+authorized local admin can irreversibly revoke a remote member through an
+explicit confirmation; the signed revocation and successor sync/vault epoch
+rotations commit atomically, exclude the target from future recipients, and
+immediately close that member's active Quick Tunnel attempts. The renderer sees
+only non-secret member metadata and never receives membership, revocation, or
+epoch tokens.
 
 ## Why Quick Tunnel Before Rendezvous
 

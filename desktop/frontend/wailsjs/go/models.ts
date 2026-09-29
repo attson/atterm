@@ -331,9 +331,11 @@ export namespace main {
 	    can_invite: boolean;
 	    can_sync_secrets: boolean;
 
+
 	    static createFrom(source: any = {}) {
 	        return new CreatePeerInvitationsReq(source);
 	    }
+
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
@@ -343,20 +345,6 @@ export namespace main {
 	        this.allowed_session_ids = source["allowed_session_ids"];
 	        this.can_invite = source["can_invite"];
 	        this.can_sync_secrets = source["can_sync_secrets"];
-	    }
-	}
-	export class JoinPeerSpaceReq {
-	    connection_bundle: string;
-	    expected_fingerprint: string;
-
-	    static createFrom(source: any = {}) {
-	        return new JoinPeerSpaceReq(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.connection_bundle = source["connection_bundle"];
-	        this.expected_fingerprint = source["expected_fingerprint"];
 	    }
 	}
 	export class RelayErrorEntry {
@@ -705,6 +693,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class JoinPeerSpaceReq {
+	    connection_bundle: string;
+	    expected_fingerprint: string;
+
+
+	    static createFrom(source: any = {}) {
+	        return new JoinPeerSpaceReq(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.connection_bundle = source["connection_bundle"];
+	        this.expected_fingerprint = source["expected_fingerprint"];
+	    }
+	}
 	export class KnownHostEntry {
 	    host: string;
 	    fingerprint: string;
@@ -763,9 +767,11 @@ export namespace main {
 	    since_seq: number;
 	    client_instance_id: string;
 
+
 	    static createFrom(source: any = {}) {
 	        return new NativeDirectStartRequest(source);
 	    }
+
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
@@ -883,30 +889,6 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class PeerInvitation {
-	    invite_id: string;
-	    batch_id: string;
-	    token: string;
-	    expires_at: number;
-	    consumed_at?: number;
-	    consumed_by_peer_id?: string;
-	    revoked_at?: number;
-
-	    static createFrom(source: any = {}) {
-	        return new PeerInvitation(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.invite_id = source["invite_id"];
-	        this.batch_id = source["batch_id"];
-	        this.token = source["token"];
-	        this.expires_at = source["expires_at"];
-	        this.consumed_at = source["consumed_at"];
-	        this.consumed_by_peer_id = source["consumed_by_peer_id"];
-	        this.revoked_at = source["revoked_at"];
-	    }
-	}
 	export class PeerConnectionPreview {
 	    space_id: string;
 	    fingerprint: string;
@@ -920,9 +902,11 @@ export namespace main {
 	    route_kind: string;
 	    route_url: string;
 
+
 	    static createFrom(source: any = {}) {
 	        return new PeerConnectionPreview(source);
 	    }
+
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
@@ -939,15 +923,81 @@ export namespace main {
 	        this.route_url = source["route_url"];
 	    }
 	}
+	export class PeerInvitation {
+	    invite_id: string;
+	    batch_id: string;
+	    token: string;
+	    expires_at: number;
+	    consumed_at?: number;
+	    consumed_by_peer_id?: string;
+	    revoked_at?: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerInvitation(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.invite_id = source["invite_id"];
+	        this.batch_id = source["batch_id"];
+	        this.token = source["token"];
+	        this.expires_at = source["expires_at"];
+	        this.consumed_at = source["consumed_at"];
+	        this.consumed_by_peer_id = source["consumed_by_peer_id"];
+	        this.revoked_at = source["revoked_at"];
+	    }
+	}
+	export class PeerMember {
+	    peer_id: string;
+	    grant_serial: string;
+	    issuer_peer_id: string;
+	    permission: string;
+	    allowed_session_ids: string[];
+	    can_invite: boolean;
+	    can_sync_secrets: boolean;
+	    issued_at: number;
+	    expires_at?: number;
+	    revoked_at?: number;
+	    status: string;
+	    local: boolean;
+	    can_revoke: boolean;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerMember(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.peer_id = source["peer_id"];
+	        this.grant_serial = source["grant_serial"];
+	        this.issuer_peer_id = source["issuer_peer_id"];
+	        this.permission = source["permission"];
+	        this.allowed_session_ids = source["allowed_session_ids"];
+	        this.can_invite = source["can_invite"];
+	        this.can_sync_secrets = source["can_sync_secrets"];
+	        this.issued_at = source["issued_at"];
+	        this.expires_at = source["expires_at"];
+	        this.revoked_at = source["revoked_at"];
+	        this.status = source["status"];
+	        this.local = source["local"];
+	        this.can_revoke = source["can_revoke"];
+	    }
+	}
 	export class PeerQuickTunnelStatus {
 	    running: boolean;
 	    starting: boolean;
 	    public_url?: string;
 	    local_origin?: string;
 
+
 	    static createFrom(source: any = {}) {
 	        return new PeerQuickTunnelStatus(source);
 	    }
+
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
@@ -968,9 +1018,11 @@ export namespace main {
 	    revoked_invitations: number;
 	    expired_invitations: number;
 
+
 	    static createFrom(source: any = {}) {
 	        return new PeerSpaceStatus(source);
 	    }
+
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);

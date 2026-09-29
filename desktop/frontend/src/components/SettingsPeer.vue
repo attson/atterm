@@ -5,7 +5,8 @@ import { useI18n } from '../i18n/useI18n'
 import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
 import { QRScanner } from '../platform/qrScanner'
-import type { PeerConnectionPreview, PeerInvitation, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
+import type { PeerConnectionPreview, PeerInvitation, PeerMember, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
+import PeerMembersSection from './PeerMembersSection.vue'
 import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
 
 const { t } = useI18n()
@@ -22,11 +23,14 @@ const creatingSpace = ref(false)
 const invitationsLoading = ref(false)
 const invitationCreating = ref(false)
 const invitationActionID = ref('')
+const membersLoading = ref(false)
+const memberActionID = ref('')
 const copiedInvitationID = ref('')
 const error = ref('')
 const status = ref<PeerSpaceStatus | null>(null)
 const tunnelStatus = ref<PeerQuickTunnelStatus | null>(null)
 const invitations = ref<PeerInvitation[]>([])
+const members = ref<PeerMember[]>([])
 const bundleInput = ref('')
 const previewedBundle = ref('')
 const preview = ref<PeerConnectionPreview | null>(null)
@@ -80,9 +84,11 @@ async function loadConfiguredPeerData(): Promise<void> {
   const peer = platform.peer
   if (!peer) return
   invitationsLoading.value = true
-  const [tunnelResult, invitationResult] = await Promise.allSettled([
+  membersLoading.value = true
+  const [tunnelResult, invitationResult, memberResult] = await Promise.allSettled([
     peer.getQuickTunnelStatus?.() ?? Promise.resolve(null),
     peer.listInvitations(),
+    peer.listMembers(),
   ])
   if (tunnelResult.status === 'fulfilled') {
     tunnelStatus.value = tunnelResult.value
@@ -95,6 +101,12 @@ async function loadConfiguredPeerData(): Promise<void> {
     error.value = t('settings.peer.errors.invitationLoad')
   }
   invitationsLoading.value = false
+  if (memberResult.status === 'fulfilled') {
+    members.value = memberResult.value
+  } else {
+    error.value = t('settings.peer.errors.memberLoad')
+  }
+  membersLoading.value = false
 }
 
 async function writeClipboard(value: string): Promise<boolean> {
@@ -283,6 +295,21 @@ async function revokeInvitation(invitation: PeerInvitation): Promise<void> {
   }
 }
 
+async function revokeMember(member: PeerMember): Promise<void> {
+  const peer = platform.peer
+  if (!peer || !member.can_revoke || memberActionID.value) return
+  error.value = ''
+  memberActionID.value = member.peer_id
+  try {
+    await peer.revokeMember(member.peer_id)
+    members.value = await peer.listMembers()
+  } catch {
+    error.value = t('settings.peer.errors.memberRevoke')
+  } finally {
+    memberActionID.value = ''
+  }
+}
+
 function describePeerError(value: unknown, phase: 'preview' | 'join'): string {
   const message = value instanceof Error ? value.message : String(value)
   if (/fingerprint.*does not match/i.test(message)) return t('settings.peer.errors.fingerprintMismatch')
@@ -329,6 +356,7 @@ async function joinSpace(): Promise<void> {
     bundleInput.value = ''
     previewedBundle.value = ''
     preview.value = null
+    await loadConfiguredPeerData()
   } catch (e) {
     error.value = describePeerError(e, 'join')
   } finally {
@@ -409,6 +437,13 @@ function permissionLabel(permission: string): string {
           </div>
         </dl>
       </section>
+
+      <PeerMembersSection
+        :members="members"
+        :loading="membersLoading"
+        :busy-peer-id="memberActionID"
+        @revoke="revokeMember"
+      />
 
       <section v-if="hasQuickTunnelHost" class="peer-section" data-testid="peer-tunnel-section">
         <div>

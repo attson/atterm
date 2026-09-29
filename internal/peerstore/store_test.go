@@ -836,3 +836,56 @@ func TestApplyRevocationsIsAtomicOnInvalidToken(t *testing.T) {
 		t.Fatalf("partial revocation transaction persisted: %+v", state)
 	}
 }
+
+func TestApplyGovernanceChangeIsAtomicWithEpochRotations(t *testing.T) {
+	store, _ := testStore(t)
+	fixture := newMembershipStoreFixture(t)
+	if err := store.Initialize(State{
+		GenesisToken: fixture.genesis.Token, LocalMembership: fixture.creatorMembership.Token,
+		Memberships: []string{fixture.childMembership}, EpochRotations: []string{"old-sync", "old-vault"},
+		CreatedAt: fixture.now.Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := peerproto.VerifyGrant(fixture.childMembership, fixture.genesis, fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revocation, err := peerproto.NewRevocation(
+		fixture.creator, fixture.genesis, fixture.creatorMembership,
+		peerproto.RevocationMember, child.Document.SubjectPeerID, fixture.now.Add(time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantErr := errors.New("rotation failed")
+	if revoked, rotated, err := store.ApplyGovernanceChange([]string{revocation.Token}, fixture.now.Add(time.Minute), func(state State) ([]string, error) {
+		if state.RevokedMembers[child.Document.SubjectPeerID] == 0 {
+			t.Fatal("rotation builder did not observe the applied revocation")
+		}
+		return nil, wantErr
+	}); !errors.Is(err, wantErr) || revoked != 0 || rotated != 0 {
+		t.Fatalf("failed governance result revoked=%d rotated=%d err=%v", revoked, rotated, err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Revocations) != 0 || !reflect.DeepEqual(state.EpochRotations, []string{"old-sync", "old-vault"}) {
+		t.Fatalf("failed governance transaction persisted partial state: %+v", state)
+	}
+
+	if revoked, rotated, err := store.ApplyGovernanceChange([]string{revocation.Token}, fixture.now.Add(2*time.Minute), func(State) ([]string, error) {
+		return []string{"new-sync", "new-vault"}, nil
+	}); err != nil || revoked != 1 || rotated != 2 {
+		t.Fatalf("governance result revoked=%d rotated=%d err=%v", revoked, rotated, err)
+	}
+	state, err = store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Revocations) != 1 || state.RevokedMembers[child.Document.SubjectPeerID] == 0 || !reflect.DeepEqual(state.EpochRotations, []string{"old-sync", "old-vault", "new-sync", "new-vault"}) {
+		t.Fatalf("governance state=%+v", state)
+	}
+}

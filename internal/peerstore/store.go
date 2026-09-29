@@ -387,6 +387,68 @@ func (s *Store) ApplyRevocations(tokens []string, now time.Time) (int, error) {
 	return stored, nil
 }
 
+// ApplyGovernanceChange persists revocations and the epoch rotations they
+// require in one file transaction. buildRotations observes the post-revocation
+// state while the cross-process lock is held, so its recipient set cannot race
+// a concurrent membership or governance update.
+func (s *Store) ApplyGovernanceChange(revocationTokens []string, now time.Time, buildRotations func(State) ([]string, error)) (int, int, error) {
+	if len(revocationTokens) == 0 || now.Unix() <= 0 || buildRotations == nil {
+		return 0, 0, ErrInviteInvalid
+	}
+	revocationsStored := 0
+	rotationsStored := 0
+	err := s.mutate(func(state *State) error {
+		genesis, set, err := buildRevocationSet(*state)
+		if err != nil {
+			return err
+		}
+		for _, token := range revocationTokens {
+			result, err := set.Apply(token)
+			if err != nil {
+				return err
+			}
+			if result.Stored {
+				revocationsStored++
+			}
+		}
+		if revocationsStored == 0 {
+			return nil
+		}
+		state.Revocations = set.Tokens()
+		if err := materializeRevocations(state, genesis, set); err != nil {
+			return err
+		}
+		rotations, err := buildRotations(*state)
+		if err != nil {
+			return err
+		}
+		if len(rotations) == 0 {
+			return fmt.Errorf("peerstore: governance change requires epoch rotations")
+		}
+		seen := make(map[string]struct{}, len(state.EpochRotations)+len(rotations))
+		for _, token := range state.EpochRotations {
+			seen[token] = struct{}{}
+		}
+		for _, token := range rotations {
+			if token == "" {
+				return fmt.Errorf("peerstore: invalid governance epoch rotation")
+			}
+			if _, duplicate := seen[token]; duplicate {
+				return fmt.Errorf("peerstore: duplicate governance epoch rotation")
+			}
+			seen[token] = struct{}{}
+		}
+		state.EpochRotations = append(state.EpochRotations, rotations...)
+		rotationsStored = len(rotations)
+		state.UpdatedAt = now.Unix()
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return revocationsStored, rotationsStored, nil
+}
+
 func (s *Store) revoke(match func(Invitation) bool, now time.Time) error {
 	return s.mutate(func(state *State) error {
 		found := false

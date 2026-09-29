@@ -949,6 +949,12 @@ ticket。已消费 invitation 对应的 membership 不会因 batch 撤销失效�
 schema 为 v6；读取 v1-v5 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏
 已有本地 Space。
 
+Desktop 发起 `member` 撤销时，必须在同一个 Peer store 文件事务内持久化 `arv1`，并基于已应用
+该撤销后的 active membership view 同时生成、校验和追加 sync/vault 两条后继 `akr1`。任一 rotation
+构造或授权失败时整个事务回滚，不能留下“成员已撤销但未来数据仍使用旧 epoch key”的状态。成功
+提交后本机从新 rotation envelope 恢复两类 key、失效 config runtime，并立即重验当前 Quick Tunnel
+attempt；目标成员的现有连接关闭，后续握手仍由 deny-wins member view 拒绝。
+
 `akr1` rotation document 包含 `rotation_id`、`space_id`、`key_class`、
 `previous_epoch`、`previous_rotation_hash`、新 `epoch`、epoch key 的 SHA-256 commitment、
 actor membership、按 `peer_id` 排序的 recipient envelopes 和创建时间。actor 必须持有当前有效的
@@ -1118,7 +1124,8 @@ callback，绝不创建第二个 terminal subscriber。
 membership 不变。`StopPeerQuickTunnel` 关闭 active Pion/subscriber、loopback gateway 和
 `cloudflared`，但不删除 Peer trust，可再次显式启动。WSS fallback 复用上述同一个 Session attach、
 权限热检查和 config anti-entropy 路径；config 仍不创建第二个 terminal subscriber。Desktop
-Settings 已提供 join/bootstrap 确认以及 Quick Tunnel start/stop、member reconnect bundle 复制入口；
+Settings 已提供 join/bootstrap 确认、独立于 Relay 登录设备的 Peer member directory、不可逆成员撤销，
+以及 Quick Tunnel start/stop、member reconnect bundle 复制入口；
 Web/iOS Peer client 接入与端用户 fallback consent 仍未实现。
 
 ## 重连与续传

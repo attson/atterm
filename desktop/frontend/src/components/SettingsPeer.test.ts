@@ -23,7 +23,9 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
       joinSpace: vi.fn(),
       createInvitations: vi.fn(),
       listInvitations: vi.fn(),
+      listMembers: vi.fn(),
       revokeInvitation: vi.fn(),
+      revokeMember: vi.fn(),
       getQuickTunnelStatus: vi.fn(),
       startQuickTunnel: vi.fn(),
       stopQuickTunnel: vi.fn(),
@@ -97,7 +99,9 @@ beforeEach(() => {
   fakePlatform.peer.createConnectionBundle.mockResolvedValue('atc1.member-route.signature')
   fakePlatform.peer.createInvitations.mockResolvedValue([])
   fakePlatform.peer.listInvitations.mockResolvedValue([])
+  fakePlatform.peer.listMembers.mockResolvedValue([])
   fakePlatform.peer.revokeInvitation.mockResolvedValue(undefined)
+  fakePlatform.peer.revokeMember.mockResolvedValue(undefined)
   fakePlatform.system.setClipboardText.mockResolvedValue(undefined)
   qrScanner.requestPermissions.mockResolvedValue({ camera: 'granted' })
   qrScanner.scan.mockResolvedValue({ cancelled: false, rawValue: 'atc1.scanned-token' })
@@ -208,7 +212,42 @@ describe('SettingsPeer', () => {
     expect(fakePlatform.peer.createSpace).toHaveBeenCalledOnce()
     expect(fakePlatform.peer.getQuickTunnelStatus).toHaveBeenCalledOnce()
     expect(fakePlatform.peer.listInvitations).toHaveBeenCalledOnce()
+    expect(fakePlatform.peer.listMembers).toHaveBeenCalledOnce()
     expect(wrapper.get('[data-testid="peer-configured"]').text()).toContain(configuredStatus.space_id)
+  })
+
+  it('lists Peer members separately and requires confirmation before revocation', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const local = {
+      peer_id: 'peer_local_123', grant_serial: 'grant-local', issuer_peer_id: 'peer_local_123',
+      permission: 'full', allowed_session_ids: [], can_invite: true, can_sync_secrets: true,
+      issued_at: 1_797_897_600, status: 'active', local: true, can_revoke: false,
+    }
+    const remote = {
+      peer_id: 'peer_remote_789', grant_serial: 'grant-remote', issuer_peer_id: 'peer_local_123',
+      permission: 'control', allowed_session_ids: ['session-one'], can_invite: false, can_sync_secrets: false,
+      issued_at: 1_797_897_700, expires_at: 1_898_156_800, status: 'active', local: false, can_revoke: true,
+    }
+    fakePlatform.peer.listMembers
+      .mockResolvedValueOnce([local, remote])
+      .mockResolvedValueOnce([local, { ...remote, status: 'revoked', revoked_at: 1_797_900_000, can_revoke: false }])
+    const wrapper = await mountReady()
+
+    expect(wrapper.findAll('[data-testid="peer-member-row"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('peer_remote_789')
+    expect(wrapper.text()).toContain('settings.peer.permission.control')
+    expect(fakePlatform.peer.revokeMember).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-testid="peer-member-revoke-open"]').trigger('click')
+    expect(wrapper.find('[data-testid="peer-member-revoke-confirm"]').exists()).toBe(true)
+    expect(fakePlatform.peer.revokeMember).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-testid="peer-member-revoke-confirm-button"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.revokeMember).toHaveBeenCalledWith('peer_remote_789')
+    expect(wrapper.text()).toContain('settings.peer.members.status.revoked')
+    expect(wrapper.find('[data-testid="peer-member-revoke-open"]').exists()).toBe(false)
   })
 
   it('pre-signs invitation batches with the selected constraints', async () => {

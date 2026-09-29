@@ -452,6 +452,37 @@ func TestPeerQuickTunnelAuthorizationRejectsUnknownRevokedAndWrongSession(t *tes
 	}
 }
 
+func TestRevokePeerMemberImmediatelyRemovesQuickTunnelAttempt(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	signal := &quicktunnel.SignalChannel{}
+	attempt := &peerQuickTunnelAttempt{
+		host: fixture.peerHost, signal: signal, sessionID: fixture.session.ID,
+		permission: proto.RemotePermissionControl, remoteMembership: fixture.clientMembership,
+	}
+	// This focused lifecycle test does not construct a signaling socket. Mark
+	// cleanup complete so removal only exercises authorization and registry state.
+	attempt.closeOnce.Do(func() {})
+	fixture.peerHost.attempts[signal] = attempt
+	fixture.app.quickTunnel = fixture.peerHost
+
+	if err := fixture.app.RevokePeerMember(fixture.clientIdentity.PeerID()); err != nil {
+		t.Fatal(err)
+	}
+	fixture.peerHost.mu.Lock()
+	remaining := len(fixture.peerHost.attempts)
+	fixture.peerHost.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("Quick Tunnel attempts after member revocation = %d, want 0", remaining)
+	}
+	request := quicktunnel.OpenRequest{
+		Version: 1, AttemptID: uuid.New(), Ticket: bytes.Repeat([]byte{1}, 32),
+		SessionID: fixture.session.ID, ClientPeerID: fixture.clientIdentity.PeerID(), ClientInstanceID: "peer-client",
+	}
+	if _, err := fixture.peerHost.authorize(context.Background(), request); !errors.Is(err, quicktunnel.ErrUnauthorized) {
+		t.Fatalf("revoked member reconnect error = %v", err)
+	}
+}
+
 func TestPeerQuickTunnelConnectionBundleRotatesOnlyRoute(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	invitations, err := fixture.app.CreatePeerInvitations(CreatePeerInvitationsReq{Count: 1, Permission: proto.RemotePermissionControl})

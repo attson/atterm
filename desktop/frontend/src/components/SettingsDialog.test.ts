@@ -314,6 +314,8 @@ describe("SettingsDialog caps gating", () => {
       listInvitations: vi.fn(),
       revokeInvitation: vi.fn(),
       revokeInvitationBatch: vi.fn(),
+      listMembers: vi.fn().mockResolvedValue([]),
+      revokeMember: vi.fn(),
     };
     __setPlatformForTests(platform);
     const w = mountDialog();

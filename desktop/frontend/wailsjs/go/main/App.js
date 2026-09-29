@@ -298,10 +298,6 @@ export function GetUpdateState() {
   return window['go']['main']['App']['GetUpdateState']();
 }
 
-export function JoinPeerSpace(arg1) {
-  return window['go']['main']['App']['JoinPeerSpace'](arg1);
-}
-
 export function GetUplinkHealth() {
   return window['go']['main']['App']['GetUplinkHealth']();
 }
@@ -326,6 +322,10 @@ export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
 
+export function JoinPeerSpace(arg1) {
+  return window['go']['main']['App']['JoinPeerSpace'](arg1);
+}
+
 export function ListActiveForwards() {
   return window['go']['main']['App']['ListActiveForwards']();
 }
@@ -336,6 +336,10 @@ export function ListKnownHosts() {
 
 export function ListPeerInvitations() {
   return window['go']['main']['App']['ListPeerInvitations']();
+}
+
+export function ListPeerMembers() {
+  return window['go']['main']['App']['ListPeerMembers']();
 }
 
 export function ListRelaySessions() {
@@ -464,6 +468,10 @@ export function RevokePeerInvitation(arg1) {
 
 export function RevokePeerInvitationBatch(arg1) {
   return window['go']['main']['App']['RevokePeerInvitationBatch'](arg1);
+}
+
+export function RevokePeerMember(arg1) {
+  return window['go']['main']['App']['RevokePeerMember'](arg1);
 }
 
 export function RevokeRelaySession(arg1) {

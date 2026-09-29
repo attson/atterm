@@ -49,8 +49,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   CreatePeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-1', space_id: 'space-1' }),
   CreatePeerInvitations: vi.fn().mockResolvedValue([{ invite_id: 'invite-1', batch_id: 'batch-1', token: 'atp1.x.y', expires_at: 10 }]),
   ListPeerInvitations: vi.fn().mockResolvedValue([]),
+  ListPeerMembers: vi.fn().mockResolvedValue([{ peer_id: 'peer-1', local: true, status: 'active' }]),
   RevokePeerInvitation: vi.fn().mockResolvedValue(undefined),
   RevokePeerInvitationBatch: vi.fn().mockResolvedValue(undefined),
+  RevokePeerMember: vi.fn().mockResolvedValue(undefined),
   PreviewPeerConnectionBundle: vi.fn().mockResolvedValue({ fingerprint: 'SHA256:space' }),
   JoinPeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-2', space_id: 'space-1' }),
   GetPeerQuickTunnelStatus: vi.fn().mockResolvedValue({ running: false, starting: false }),
@@ -75,7 +77,9 @@ import {
   GetPeerQuickTunnelStatus,
   GetPluginConfig,
   JoinPeerSpace,
+  ListPeerMembers,
   PreviewPeerConnectionBundle,
+  RevokePeerMember,
   SetPluginConfig,
   GetAppVersion,
   StartPeerQuickTunnel,
@@ -278,6 +282,18 @@ describe('createWailsPlatform', () => {
 
     await p.peer!.stopQuickTunnel!()
     expect(StopPeerQuickTunnel).toHaveBeenCalledOnce()
+  })
+
+  it('peer bridge lists and revokes Peer members independently of Relay sessions', async () => {
+    const p = createWailsPlatform()
+
+    expect(await p.peer!.listMembers()).toEqual([
+      expect.objectContaining({ peer_id: 'peer-1', local: true, status: 'active' }),
+    ])
+    expect(ListPeerMembers).toHaveBeenCalledOnce()
+
+    await p.peer!.revokeMember('peer-2')
+    expect(RevokePeerMember).toHaveBeenCalledWith('peer-2')
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {

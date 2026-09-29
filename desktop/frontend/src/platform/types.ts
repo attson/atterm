@@ -28,6 +28,7 @@ export type FileContent = _Models.FileContent
 export type FileMetaInfo = _Models.FileMetaInfo
 export type PeerSpaceStatus = _Models.PeerSpaceStatus
 export type PeerInvitation = _Models.PeerInvitation
+export type PeerMember = _Models.PeerMember
 export type PeerConnectionPreview = _Models.PeerConnectionPreview
 
 export interface EnvironmentInfo {
@@ -318,6 +319,8 @@ export interface PeerBridge {
   listInvitations(): Promise<PeerInvitation[]>
   revokeInvitation(inviteID: string): Promise<void>
   revokeInvitationBatch(batchID: string): Promise<void>
+  listMembers(): Promise<PeerMember[]>
+  revokeMember(peerID: string): Promise<void>
   /** Desktop host controls. Clients without a local gateway leave these absent. */
   getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
   startQuickTunnel?(): Promise<PeerQuickTunnelStatus>

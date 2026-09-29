@@ -18,6 +18,9 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
     },
     peer: {
       status: vi.fn(),
+      configSyncStatus: vi.fn(),
+      acceptPendingConfig: vi.fn(),
+      discardPendingConfig: vi.fn(),
       createSpace: vi.fn(),
       previewConnectionBundle: vi.fn(),
       joinSpace: vi.fn(),
@@ -68,6 +71,17 @@ const configuredStatus = {
   expired_invitations: 4,
 }
 
+const pendingSyncStatus = {
+  configured: true,
+  local_operations: 7,
+  pending_operations: 3,
+  replica_devices: 2,
+  active_remote_members: 1,
+  acknowledging_peers: 1,
+  last_exchange_at: 1_797_900_000,
+  pending_import_records: 0,
+}
+
 const preview = {
   space_id: 'space_family_456',
   fingerprint: 'SHA256:ABCDEF0123456789',
@@ -86,6 +100,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   fakePlatform.caps.capacitor = false
   fakePlatform.peer.status.mockResolvedValue(emptyStatus)
+  fakePlatform.peer.configSyncStatus.mockResolvedValue(pendingSyncStatus)
+  fakePlatform.peer.acceptPendingConfig.mockResolvedValue({ ...pendingSyncStatus, pending_import_records: 0 })
+  fakePlatform.peer.discardPendingConfig.mockResolvedValue({ ...pendingSyncStatus, pending_import_records: 0 })
   fakePlatform.peer.createSpace.mockResolvedValue(configuredStatus)
   fakePlatform.peer.previewConnectionBundle.mockResolvedValue(preview)
   fakePlatform.peer.joinSpace.mockResolvedValue(configuredStatus)
@@ -213,7 +230,55 @@ describe('SettingsPeer', () => {
     expect(fakePlatform.peer.getQuickTunnelStatus).toHaveBeenCalledOnce()
     expect(fakePlatform.peer.listInvitations).toHaveBeenCalledOnce()
     expect(fakePlatform.peer.listMembers).toHaveBeenCalledOnce()
+    expect(fakePlatform.peer.configSyncStatus).toHaveBeenCalledOnce()
     expect(wrapper.get('[data-testid="peer-configured"]').text()).toContain(configuredStatus.space_id)
+  })
+
+  it('shows durable pending sync without implying central cloud storage', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const wrapper = await mountReady()
+
+    expect(wrapper.get('[data-testid="peer-sync-state"]').text()).toContain('settings.peer.sync.pending[count=3]')
+    expect(wrapper.get('[data-testid="peer-sync-storage-note"]').text()).toContain('settings.peer.sync.pendingHint')
+    expect(wrapper.get('[data-testid="peer-config-sync"]').text()).toContain('7')
+    expect(wrapper.get('[data-testid="peer-config-sync"]').text()).toContain('settings.peer.sync.lastExchange')
+
+    fakePlatform.peer.configSyncStatus.mockResolvedValue({ ...pendingSyncStatus, pending_operations: 0 })
+    await wrapper.get('[data-testid="peer-sync-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="peer-sync-state"]').text()).toContain('settings.peer.sync.synced')
+    expect(fakePlatform.peer.configSyncStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('merges or explicitly discards preserved pre-join settings', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.configSyncStatus.mockResolvedValue({
+      ...pendingSyncStatus,
+      pending_import_records: 4,
+      pending_import_captured_at: 1_797_899_000,
+    })
+    const wrapper = await mountReady()
+
+    expect(wrapper.get('[data-testid="peer-pending-import"]').text()).toContain(
+      'settings.peer.sync.pendingImportTitle[count=4]',
+    )
+    await wrapper.get('[data-testid="peer-pending-discard-open"]').trigger('click')
+    expect(wrapper.find('[data-testid="peer-pending-discard-confirm"]').exists()).toBe(true)
+    expect(fakePlatform.peer.discardPendingConfig).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="peer-pending-discard-confirm-button"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.discardPendingConfig).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-testid="peer-pending-import"]').exists()).toBe(false)
+
+    fakePlatform.peer.configSyncStatus.mockResolvedValue({ ...pendingSyncStatus, pending_import_records: 2 })
+    fakePlatform.peer.acceptPendingConfig.mockResolvedValue({ ...pendingSyncStatus, pending_import_records: 0 })
+    await wrapper.get('[data-testid="peer-sync-refresh"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="peer-pending-accept"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.acceptPendingConfig).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-testid="peer-pending-import"]').exists()).toBe(false)
   })
 
   it('lists Peer members separately and requires confirmation before revocation', async () => {

@@ -1035,6 +1035,14 @@ ack；丢 ack 时重发原始 batch JSON，依赖 assembler 的 exact-replay ide
 ack。transport adapter 只从完成 Peer handshake 的 channel 读取远端 membership token，不能由
 调用者另传一个 token 替换认证身份。
 
+完整 inbound batch 的 durable ack 成功发出，或 outbound plan 的 `done` ack 被严格校验后，设备才把
+该认证成员的 `peer_id`、其确认的 version vector 和成功时间写入加密的本地 Peer store。该状态
+不含 membership/config/epoch token，也不上 wire 之外的服务。Settings 中“待同步”操作数定义为：
+当前本机 durable vector 中，尚未被任一**当前有效远端成员**的确认向量覆盖的 counter 总和；多个
+有效成员的确认向量按 actor 取最大值合并。成员过期或 deny-wins 撤销后，其旧确认立即不再计入，
+因此 UI 不会把仅存在于失去信任设备上的副本误报为已有可用备份。没有在线 Peer 时，操作继续
+保存在本机并显示 pending，不上传到隐藏的中心存储。
+
 Peer DataChannel 复用 Stage 1 的四步 handshake、ECDH traffic key、record 和 fragment
 codec，只替换 `HandshakeAuthenticator`。Relay account authenticator 的 proof 继续是 32-byte
 HMAC；Peer membership authenticator 对相同 transcript 使用设备 P-256 identity 产生 64-byte

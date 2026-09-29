@@ -5,6 +5,8 @@ import {hookinstall} from '../models';
 import {connhealth} from '../models';
 import {feishu} from '../models';
 
+export function AcceptPendingPeerConfig():Promise<main.PeerConfigSyncStatus>;
+
 export function AddSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<main.SSHHost>;
 
 export function AddSSHKey(arg1:string,arg2:string,arg3:string):Promise<main.SSHKey>;
@@ -44,6 +46,8 @@ export function DeleteFeishuBinding():Promise<void>;
 export function DeleteSSHHost(arg1:string):Promise<void>;
 
 export function DeleteSSHKey(arg1:string):Promise<void>;
+
+export function DiscardPendingPeerConfig():Promise<main.PeerConfigSyncStatus>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
 
@@ -100,6 +104,8 @@ export function GetLoggingConfig():Promise<main.LoggingConfig>;
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPasteboardFileURLs():Promise<Array<string>>;
+
+export function GetPeerConfigSyncStatus():Promise<main.PeerConfigSyncStatus>;
 
 export function GetPeerQuickTunnelStatus():Promise<main.PeerQuickTunnelStatus>;
 

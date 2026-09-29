@@ -46,6 +46,9 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   StartServicePreview: vi.fn().mockResolvedValue({ id: 'preview-1', url: 'http://127.0.0.1:49000/' }),
   StopServicePreview: vi.fn().mockResolvedValue(undefined),
   GetPeerSpaceStatus: vi.fn().mockResolvedValue({ configured: false }),
+  GetPeerConfigSyncStatus: vi.fn().mockResolvedValue({ configured: true, pending_operations: 2 }),
+  AcceptPendingPeerConfig: vi.fn().mockResolvedValue({ configured: true, pending_operations: 3, pending_import_records: 0 }),
+  DiscardPendingPeerConfig: vi.fn().mockResolvedValue({ configured: true, pending_operations: 2, pending_import_records: 0 }),
   CreatePeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-1', space_id: 'space-1' }),
   CreatePeerInvitations: vi.fn().mockResolvedValue([{ invite_id: 'invite-1', batch_id: 'batch-1', token: 'atp1.x.y', expires_at: 10 }]),
   ListPeerInvitations: vi.fn().mockResolvedValue([]),
@@ -72,14 +75,17 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
 import {
+  AcceptPendingPeerConfig,
   CreatePeerConnectionBundle,
   CreatePeerInvitations,
   GetPeerQuickTunnelStatus,
+  GetPeerConfigSyncStatus,
   GetPluginConfig,
   JoinPeerSpace,
   ListPeerMembers,
   PreviewPeerConnectionBundle,
   RevokePeerMember,
+  DiscardPendingPeerConfig,
   SetPluginConfig,
   GetAppVersion,
   StartPeerQuickTunnel,
@@ -294,6 +300,17 @@ describe('createWailsPlatform', () => {
 
     await p.peer!.revokeMember('peer-2')
     expect(RevokePeerMember).toHaveBeenCalledWith('peer-2')
+  })
+
+  it('peer bridge exposes token-free config sync status and pending import actions', async () => {
+    const p = createWailsPlatform()
+
+    expect(await p.peer!.configSyncStatus()).toEqual(expect.objectContaining({ pending_operations: 2 }))
+    expect(GetPeerConfigSyncStatus).toHaveBeenCalledOnce()
+    expect(await p.peer!.acceptPendingConfig()).toEqual(expect.objectContaining({ pending_import_records: 0 }))
+    expect(AcceptPendingPeerConfig).toHaveBeenCalledOnce()
+    expect(await p.peer!.discardPendingConfig()).toEqual(expect.objectContaining({ pending_import_records: 0 }))
+    expect(DiscardPendingPeerConfig).toHaveBeenCalledOnce()
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {

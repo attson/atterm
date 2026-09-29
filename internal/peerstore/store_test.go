@@ -124,6 +124,39 @@ func TestEncryptedStoreAndAtomicConsumption(t *testing.T) {
 	}
 }
 
+func TestRecordConfigExchangeMergesDurableAcknowledgements(t *testing.T) {
+	store, _ := testStore(t)
+	now := time.Unix(1_800_000_000, 0)
+	if err := store.Initialize(State{GenesisToken: "genesis-secret", LocalMembership: "membership-secret", CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordConfigExchange("peer-remote", map[string]uint64{"actor-a": 3, "actor-b": 1}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordConfigExchange("peer-remote", map[string]uint64{"actor-a": 2, "actor-b": 4}, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := state.ConfigSyncPeers["peer-remote"]
+	if got.LastExchangeAt != now.Add(2*time.Minute).Unix() || !reflect.DeepEqual(got.Acknowledged, map[string]uint64{"actor-a": 3, "actor-b": 4}) {
+		t.Fatalf("config sync peer=%+v", got)
+	}
+	got.Acknowledged["actor-a"] = 99
+	again, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ConfigSyncPeers["peer-remote"].Acknowledged["actor-a"] != 3 {
+		t.Fatal("Load returned aliased config sync acknowledgement")
+	}
+	if err := store.RecordConfigExchange("peer-remote", map[string]uint64{"": 1}, now); err == nil {
+		t.Fatal("accepted acknowledgement with an empty actor")
+	}
+}
+
 func TestInitializeDerivesMembershipDirectoryAndIssuerChain(t *testing.T) {
 	fixture := newMembershipStoreFixture(t)
 	store, _ := testStore(t)

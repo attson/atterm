@@ -167,7 +167,12 @@ explicit confirmation; the signed revocation and successor sync/vault epoch
 rotations commit atomically, exclude the target from future recipients, and
 immediately close that member's active Quick Tunnel attempts. The renderer sees
 only non-secret member metadata and never receives membership, revocation, or
-epoch tokens.
+epoch tokens. Settings now also exposes the durable decentralized config-sync
+state: local/pending operation counts, active replica sources, the last
+authenticated exchange and explicit merge/discard actions for encrypted
+pre-join customizations. A remote acknowledgement counts only while that member
+remains active; no signed operation, membership, epoch or pending value enters
+the renderer.
 
 ## Why Quick Tunnel Before Rendezvous
 

@@ -116,6 +116,28 @@ func TestPeerConfigChannelRetriesDurableMultiBatchSyncWithoutSubscriber(t *testi
 	if got := destination.cfgStore.Get().TerminalFontSize; got != 19 {
 		t.Fatalf("second config round projected font size=%d", got)
 	}
+	remotePeerID := source.peerSpace.configReplica.identity.PeerID()
+	sourcePersisted, err := source.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceExchange, ok := sourcePersisted.ConfigSyncPeers[remotePeerID]
+	if !ok || sourceExchange.LastExchangeAt != source.peerSpace.now().Unix() {
+		t.Fatalf("source config exchange=%+v present=%v", sourceExchange, ok)
+	}
+	for actor, counter := range source.peerSpace.configReplica.replica.Vector() {
+		if sourceExchange.Acknowledged[actor] != counter {
+			t.Fatalf("source acknowledgement actor=%q got=%d want=%d", actor, sourceExchange.Acknowledged[actor], counter)
+		}
+	}
+	destinationPersisted, err := destination.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationExchange, ok := destinationPersisted.ConfigSyncPeers[remotePeerID]
+	if !ok || destinationExchange.LastExchangeAt != destination.peerSpace.now().Unix() {
+		t.Fatalf("destination config exchange=%+v present=%v", destinationExchange, ok)
+	}
 	if firstSubscribers.Load() != 0 || lastSubscribers.Load() != 0 || model.SubscriberCount() != 0 {
 		t.Fatalf("config sync touched terminal subscribers: first=%d last=%d active=%d", firstSubscribers.Load(), lastSubscribers.Load(), model.SubscriberCount())
 	}

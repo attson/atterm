@@ -23,12 +23,13 @@ import (
 )
 
 const (
-	Version                 = 6
+	Version                 = 7
 	legacyStateVersion      = 1
 	legacyRevocationVersion = 2
 	legacyEpochVersion      = 3
 	legacyPendingVersion    = 4
 	legacyMembershipVersion = 5
+	legacyEnvelopeVersion   = 6
 	encryptedEnvelopeV1     = 1
 	maxStoreSize            = 4 << 20
 	maxPendingConfigSize    = 1 << 20
@@ -64,23 +65,31 @@ type Invitation struct {
 	RevokedAt        int64  `json:"revoked_at,omitempty"`
 }
 
+// ConfigSyncPeer records only durable anti-entropy acknowledgement metadata.
+// It deliberately excludes membership tokens and encrypted config payloads.
+type ConfigSyncPeer struct {
+	Acknowledged   map[string]uint64 `json:"acknowledged,omitempty"`
+	LastExchangeAt int64             `json:"last_exchange_at"`
+}
+
 // State contains the local replica needed before config replication exists.
 // Revocation maps use timestamps so later signed governance operations can be
 // imported without changing the disk schema.
 type State struct {
-	Version             int              `json:"version"`
-	GenesisToken        string           `json:"genesis_token"`
-	LocalMembership     string           `json:"local_membership"`
-	Memberships         []string         `json:"memberships,omitempty"`
-	Invitations         []Invitation     `json:"invitations"`
-	Revocations         []string         `json:"revocations,omitempty"`
-	EpochRotations      []string         `json:"epoch_rotations,omitempty"`
-	EpochEnvelopes      []string         `json:"epoch_envelopes,omitempty"`
-	PendingConfigImport []byte           `json:"pending_config_import,omitempty"`
-	RevokedMembers      map[string]int64 `json:"revoked_members,omitempty"`
-	RevokedGrantSerials map[string]int64 `json:"revoked_grant_serials,omitempty"`
-	CreatedAt           int64            `json:"created_at"`
-	UpdatedAt           int64            `json:"updated_at"`
+	Version             int                       `json:"version"`
+	GenesisToken        string                    `json:"genesis_token"`
+	LocalMembership     string                    `json:"local_membership"`
+	Memberships         []string                  `json:"memberships,omitempty"`
+	Invitations         []Invitation              `json:"invitations"`
+	Revocations         []string                  `json:"revocations,omitempty"`
+	EpochRotations      []string                  `json:"epoch_rotations,omitempty"`
+	EpochEnvelopes      []string                  `json:"epoch_envelopes,omitempty"`
+	PendingConfigImport []byte                    `json:"pending_config_import,omitempty"`
+	ConfigSyncPeers     map[string]ConfigSyncPeer `json:"config_sync_peers,omitempty"`
+	RevokedMembers      map[string]int64          `json:"revoked_members,omitempty"`
+	RevokedGrantSerials map[string]int64          `json:"revoked_grant_serials,omitempty"`
+	CreatedAt           int64                     `json:"created_at"`
+	UpdatedAt           int64                     `json:"updated_at"`
 }
 
 type envelope struct {
@@ -125,7 +134,41 @@ func (s *Store) Initialize(state State) error {
 		state.EpochRotations = append([]string(nil), state.EpochRotations...)
 		state.EpochEnvelopes = append([]string(nil), state.EpochEnvelopes...)
 		state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
+		state.ConfigSyncPeers = cloneConfigSyncPeers(state.ConfigSyncPeers)
 		return s.writeLocked(state)
+	})
+}
+
+// RecordConfigExchange persists the authenticated peer's durable frontier.
+// Empty acknowledged vectors are valid for a completed inbound-only exchange.
+func (s *Store) RecordConfigExchange(peerID string, acknowledged map[string]uint64, now time.Time) error {
+	if peerID == "" || now.Unix() <= 0 || len(acknowledged) > maxMembershipCandidates {
+		return fmt.Errorf("peerstore: invalid config sync acknowledgement")
+	}
+	for actor, counter := range acknowledged {
+		if actor == "" || counter == 0 {
+			return fmt.Errorf("peerstore: invalid config sync acknowledgement")
+		}
+	}
+	return s.mutate(func(state *State) error {
+		if state.ConfigSyncPeers == nil {
+			state.ConfigSyncPeers = make(map[string]ConfigSyncPeer)
+		}
+		entry := state.ConfigSyncPeers[peerID]
+		if entry.Acknowledged == nil {
+			entry.Acknowledged = make(map[string]uint64)
+		}
+		for actor, counter := range acknowledged {
+			if counter > entry.Acknowledged[actor] {
+				entry.Acknowledged[actor] = counter
+			}
+		}
+		if now.Unix() > entry.LastExchangeAt {
+			entry.LastExchangeAt = now.Unix()
+		}
+		state.ConfigSyncPeers[peerID] = entry
+		state.UpdatedAt = now.Unix()
+		return nil
 	})
 }
 
@@ -518,15 +561,16 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("peerstore: decrypt: %w", err)
 	}
 	var state State
-	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != legacyEpochVersion && state.Version != legacyPendingVersion && state.Version != legacyMembershipVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
+	if err := strictJSON(plaintext, &state); err != nil || (state.Version != legacyStateVersion && state.Version != legacyRevocationVersion && state.Version != legacyEpochVersion && state.Version != legacyPendingVersion && state.Version != legacyMembershipVersion && state.Version != legacyEnvelopeVersion && state.Version != Version) || state.GenesisToken == "" || state.LocalMembership == "" {
 		return State{}, fmt.Errorf("peerstore: invalid state")
 	}
 	if len(state.PendingConfigImport) > maxPendingConfigSize {
 		return State{}, fmt.Errorf("peerstore: pending config import exceeds size limit")
 	}
 	// v2 adds signed revocations, v3 adds signed epoch rotations, v4 adds an
-	// opaque pending-config import, v5 adds the membership directory, and v6
-	// adds recipient-bound bootstrap epoch envelopes. The
+	// opaque pending-config import, v5 adds the membership directory, v6 adds
+	// recipient-bound bootstrap epoch envelopes, and v7 adds per-peer config
+	// acknowledgement metadata. The
 	// encrypted envelope and its AAD stay at v1 so existing stores migrate
 	// without decrypt-and-rewrap glue.
 	state.Version = Version
@@ -536,6 +580,10 @@ func (s *Store) loadLocked() (State, error) {
 	state.EpochRotations = append([]string(nil), state.EpochRotations...)
 	state.EpochEnvelopes = append([]string(nil), state.EpochEnvelopes...)
 	state.PendingConfigImport = append([]byte(nil), state.PendingConfigImport...)
+	state.ConfigSyncPeers = cloneConfigSyncPeers(state.ConfigSyncPeers)
+	if err := validateConfigSyncPeers(state.ConfigSyncPeers); err != nil {
+		return State{}, err
+	}
 	state.RevokedMembers = cloneMap(state.RevokedMembers)
 	state.RevokedGrantSerials = cloneMap(state.RevokedGrantSerials)
 	if err := materializeMemberships(&state); err != nil {
@@ -556,6 +604,9 @@ func (s *Store) loadLocked() (State, error) {
 func (s *Store) writeLocked(state State) error {
 	if len(state.PendingConfigImport) > maxPendingConfigSize {
 		return fmt.Errorf("peerstore: pending config import exceeds size limit")
+	}
+	if err := validateConfigSyncPeers(state.ConfigSyncPeers); err != nil {
+		return err
 	}
 	if err := materializeMemberships(&state); err != nil {
 		return err
@@ -686,6 +737,39 @@ func deduplicateStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func cloneConfigSyncPeers(values map[string]ConfigSyncPeer) map[string]ConfigSyncPeer {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]ConfigSyncPeer, len(values))
+	for peerID, value := range values {
+		acknowledged := make(map[string]uint64, len(value.Acknowledged))
+		for actor, counter := range value.Acknowledged {
+			acknowledged[actor] = counter
+		}
+		value.Acknowledged = acknowledged
+		out[peerID] = value
+	}
+	return out
+}
+
+func validateConfigSyncPeers(values map[string]ConfigSyncPeer) error {
+	if len(values) > maxMembershipCandidates {
+		return fmt.Errorf("peerstore: config sync peer limit exceeded")
+	}
+	for peerID, value := range values {
+		if peerID == "" || value.LastExchangeAt <= 0 || len(value.Acknowledged) > maxMembershipCandidates {
+			return fmt.Errorf("peerstore: invalid config sync peer")
+		}
+		for actor, counter := range value.Acknowledged {
+			if actor == "" || counter == 0 {
+				return fmt.Errorf("peerstore: invalid config sync acknowledgement")
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) aead() (cipher.AEAD, error) {

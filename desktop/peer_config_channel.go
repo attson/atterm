@@ -32,9 +32,10 @@ type peerConfigWireAck struct {
 // peerConfigChannel drives bidirectional anti-entropy over an authenticated
 // Peer transport. It has no terminal/session dependency by construction.
 type peerConfigChannel struct {
-	app       *App
-	transport peerConfigTransport
-	receiver  *peerConfigSyncReceiver
+	app          *App
+	transport    peerConfigTransport
+	receiver     *peerConfigSyncReceiver
+	remotePeerID string
 
 	mu              sync.Mutex
 	maxBatchBytes   int
@@ -57,6 +58,7 @@ func newPeerConfigChannel(app *App, transport peerConfigTransport) (*peerConfigC
 	}
 	return &peerConfigChannel{
 		app: app, transport: transport, receiver: receiver,
+		remotePeerID:  receiver.remote.Document.SubjectPeerID,
 		maxBatchBytes: configsync.DefaultAntiEntropyBatchSize,
 	}, nil
 }
@@ -169,7 +171,13 @@ func (c *peerConfigChannel) handleBatch(ctx context.Context, batch configsync.An
 	if err != nil {
 		return fmt.Errorf("encode Peer config ack: %w", err)
 	}
-	return c.transport.SendConfigMessage(ctx, peertransport.RecordConfigAck, payload)
+	if err := c.transport.SendConfigMessage(ctx, peertransport.RecordConfigAck, payload); err != nil {
+		return err
+	}
+	if accepted.Done {
+		return c.recordExchange(nil)
+	}
+	return nil
 }
 
 func (c *peerConfigChannel) handleAck(ctx context.Context, ack peerConfigWireAck) error {
@@ -186,7 +194,7 @@ func (c *peerConfigChannel) handleAck(ctx context.Context, ack peerConfigWireAck
 		c.outstanding = configsync.AntiEntropyBatch{}
 		c.outstandingJSON = nil
 		c.mu.Unlock()
-		return nil
+		return c.recordExchange(ack.Durable.Vector)
 	}
 	next, err := c.outboundPlan.Next(&ack.Cursor)
 	if err != nil {
@@ -202,6 +210,14 @@ func (c *peerConfigChannel) handleAck(ctx context.Context, ack peerConfigWireAck
 	c.outstandingJSON = append(c.outstandingJSON[:0], payload...)
 	c.mu.Unlock()
 	return c.transport.SendConfigMessage(ctx, peertransport.RecordConfigBatch, payload)
+}
+
+func (c *peerConfigChannel) recordExchange(acknowledged configsync.VersionVector) error {
+	manager, err := c.app.peerManager()
+	if err != nil {
+		return err
+	}
+	return manager.store.RecordConfigExchange(c.remotePeerID, acknowledged.Clone(), manager.now())
 }
 
 func (c *peerConfigChannel) localInventory() (configsync.AntiEntropyInventory, error) {

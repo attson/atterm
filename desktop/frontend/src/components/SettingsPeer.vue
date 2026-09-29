@@ -1,11 +1,11 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from 'vue'
-import { Check, Copy, Play, Plus, QrCode, Search, ShieldCheck, Square, Trash2 } from 'lucide-vue-next'
+import { Check, Copy, Database, Play, Plus, QrCode, RefreshCw, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
 import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
 import { QRScanner } from '../platform/qrScanner'
-import type { PeerConnectionPreview, PeerInvitation, PeerMember, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
+import type { PeerConfigSyncStatus, PeerConnectionPreview, PeerInvitation, PeerMember, PeerQuickTunnelStatus, PeerSpaceStatus } from '../platform/types'
 import PeerMembersSection from './PeerMembersSection.vue'
 import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
 
@@ -25,12 +25,16 @@ const invitationCreating = ref(false)
 const invitationActionID = ref('')
 const membersLoading = ref(false)
 const memberActionID = ref('')
+const configSyncLoading = ref(false)
+const configSyncAction = ref<'accept' | 'discard' | ''>('')
+const discardPendingConfirming = ref(false)
 const copiedInvitationID = ref('')
 const error = ref('')
 const status = ref<PeerSpaceStatus | null>(null)
 const tunnelStatus = ref<PeerQuickTunnelStatus | null>(null)
 const invitations = ref<PeerInvitation[]>([])
 const members = ref<PeerMember[]>([])
+const configSyncStatus = ref<PeerConfigSyncStatus | null>(null)
 const bundleInput = ref('')
 const previewedBundle = ref('')
 const preview = ref<PeerConnectionPreview | null>(null)
@@ -85,10 +89,12 @@ async function loadConfiguredPeerData(): Promise<void> {
   if (!peer) return
   invitationsLoading.value = true
   membersLoading.value = true
-  const [tunnelResult, invitationResult, memberResult] = await Promise.allSettled([
+  configSyncLoading.value = true
+  const [tunnelResult, invitationResult, memberResult, configSyncResult] = await Promise.allSettled([
     peer.getQuickTunnelStatus?.() ?? Promise.resolve(null),
     peer.listInvitations(),
     peer.listMembers(),
+    peer.configSyncStatus(),
   ])
   if (tunnelResult.status === 'fulfilled') {
     tunnelStatus.value = tunnelResult.value
@@ -107,6 +113,56 @@ async function loadConfiguredPeerData(): Promise<void> {
     error.value = t('settings.peer.errors.memberLoad')
   }
   membersLoading.value = false
+  if (configSyncResult.status === 'fulfilled') {
+    configSyncStatus.value = configSyncResult.value
+  } else {
+    error.value = t('settings.peer.errors.syncStatus')
+  }
+  configSyncLoading.value = false
+}
+
+async function refreshConfigSyncStatus(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || configSyncLoading.value || configSyncAction.value) return
+  error.value = ''
+  configSyncLoading.value = true
+  try {
+    configSyncStatus.value = await peer.configSyncStatus()
+  } catch {
+    error.value = t('settings.peer.errors.syncStatus')
+  } finally {
+    configSyncLoading.value = false
+  }
+}
+
+async function acceptPendingConfig(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || configSyncAction.value) return
+  error.value = ''
+  configSyncAction.value = 'accept'
+  try {
+    configSyncStatus.value = await peer.acceptPendingConfig()
+    discardPendingConfirming.value = false
+  } catch {
+    error.value = t('settings.peer.errors.pendingAccept')
+  } finally {
+    configSyncAction.value = ''
+  }
+}
+
+async function discardPendingConfig(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || configSyncAction.value) return
+  error.value = ''
+  configSyncAction.value = 'discard'
+  try {
+    configSyncStatus.value = await peer.discardPendingConfig()
+    discardPendingConfirming.value = false
+  } catch {
+    error.value = t('settings.peer.errors.pendingDiscard')
+  } finally {
+    configSyncAction.value = ''
+  }
 }
 
 async function writeClipboard(value: string): Promise<boolean> {
@@ -302,7 +358,12 @@ async function revokeMember(member: PeerMember): Promise<void> {
   memberActionID.value = member.peer_id
   try {
     await peer.revokeMember(member.peer_id)
-    members.value = await peer.listMembers()
+    const [nextMembers, nextSyncStatus] = await Promise.all([
+      peer.listMembers(),
+      peer.configSyncStatus(),
+    ])
+    members.value = nextMembers
+    configSyncStatus.value = nextSyncStatus
   } catch {
     error.value = t('settings.peer.errors.memberRevoke')
   } finally {
@@ -436,6 +497,130 @@ function permissionLabel(permission: string): string {
             <dd>{{ formatTime(status.created_at) }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section class="peer-section" data-testid="peer-config-sync">
+        <div class="sync-heading">
+          <div class="section-heading sync-title">
+            <Database :size="17" aria-hidden="true" />
+            <div>
+              <h3>{{ t('settings.peer.sync.title') }}</h3>
+              <p class="hint">{{ t('settings.peer.sync.hint') }}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="icon-action"
+            data-testid="peer-sync-refresh"
+            :disabled="configSyncLoading || Boolean(configSyncAction)"
+            :aria-label="t('settings.peer.sync.refresh')"
+            :title="t('settings.peer.sync.refresh')"
+            @click="refreshConfigSyncStatus"
+          >
+            <RefreshCw :size="15" :class="{ spinning: configSyncLoading }" aria-hidden="true" />
+          </button>
+        </div>
+        <p v-if="configSyncLoading && !configSyncStatus" class="hint">{{ t('common.loading') }}</p>
+        <template v-else-if="configSyncStatus">
+          <div
+            class="sync-state"
+            :class="{ pending: configSyncStatus.pending_operations > 0 || configSyncStatus.pending_import_records > 0 }"
+            data-testid="peer-sync-state"
+          >
+            <span
+              class="status-dot"
+              :class="{ active: configSyncStatus.pending_operations === 0 && configSyncStatus.last_exchange_at }"
+              aria-hidden="true"
+            />
+            <span v-if="configSyncStatus.pending_operations > 0">
+              {{ t('settings.peer.sync.pending', { count: configSyncStatus.pending_operations }) }}
+            </span>
+            <span v-else-if="configSyncStatus.last_exchange_at">{{ t('settings.peer.sync.synced') }}</span>
+            <span v-else>{{ t('settings.peer.sync.localOnly') }}</span>
+          </div>
+          <div class="sync-metrics">
+            <div>
+              <span>{{ t('settings.peer.sync.localChanges') }}</span>
+              <strong>{{ configSyncStatus.local_operations }}</strong>
+            </div>
+            <div>
+              <span>{{ t('settings.peer.sync.replicaDevices') }}</span>
+              <strong>{{ configSyncStatus.replica_devices }}</strong>
+            </div>
+            <div>
+              <span>{{ t('settings.peer.sync.activePeers') }}</span>
+              <strong>{{ configSyncStatus.active_remote_members }}</strong>
+            </div>
+            <div>
+              <span>{{ t('settings.peer.sync.lastExchange') }}</span>
+              <strong>{{ formatTime(configSyncStatus.last_exchange_at) }}</strong>
+            </div>
+          </div>
+          <p class="hint" data-testid="peer-sync-storage-note">
+            {{ configSyncStatus.pending_operations > 0
+              ? t('settings.peer.sync.pendingHint')
+              : t('settings.peer.sync.storageHint') }}
+          </p>
+          <div
+            v-if="configSyncStatus.pending_import_records > 0"
+            class="pending-import"
+            data-testid="peer-pending-import"
+          >
+            <div>
+              <strong>{{ t('settings.peer.sync.pendingImportTitle', { count: configSyncStatus.pending_import_records }) }}</strong>
+              <p class="hint">
+                {{ t('settings.peer.sync.pendingImportHint', { time: formatTime(configSyncStatus.pending_import_captured_at) }) }}
+              </p>
+            </div>
+            <div v-if="!discardPendingConfirming" class="actions">
+              <button
+                type="button"
+                class="primary-action"
+                data-testid="peer-pending-accept"
+                :disabled="Boolean(configSyncAction)"
+                @click="acceptPendingConfig"
+              >
+                <Check :size="15" aria-hidden="true" />
+                {{ configSyncAction === 'accept' ? t('settings.peer.sync.accepting') : t('settings.peer.sync.accept') }}
+              </button>
+              <button
+                type="button"
+                class="secondary-action"
+                data-testid="peer-pending-discard-open"
+                :disabled="Boolean(configSyncAction)"
+                @click="discardPendingConfirming = true"
+              >
+                <Trash2 :size="14" aria-hidden="true" />
+                {{ t('settings.peer.sync.discard') }}
+              </button>
+            </div>
+            <div v-else class="discard-confirm" data-testid="peer-pending-discard-confirm">
+              <p>{{ t('settings.peer.sync.discardConfirm') }}</p>
+              <div class="actions">
+                <button
+                  type="button"
+                  class="danger-confirm"
+                  data-testid="peer-pending-discard-confirm-button"
+                  :disabled="Boolean(configSyncAction)"
+                  @click="discardPendingConfig"
+                >
+                  <Trash2 :size="14" aria-hidden="true" />
+                  {{ configSyncAction === 'discard' ? t('settings.peer.sync.discarding') : t('settings.peer.sync.confirmDiscard') }}
+                </button>
+                <button
+                  type="button"
+                  class="icon-action"
+                  :disabled="Boolean(configSyncAction)"
+                  :aria-label="t('common.cancel')"
+                  :title="t('common.cancel')"
+                  @click="discardPendingConfirming = false"
+                >
+                  <X :size="15" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
       </section>
 
       <PeerMembersSection
@@ -831,6 +1016,81 @@ function permissionLabel(permission: string): string {
 .section-heading > div {
   min-width: 0;
 }
+.sync-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sync-title {
+  color: var(--fg);
+}
+.sync-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.sync-state.pending .status-dot {
+  background: var(--warn);
+}
+.sync-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+.sync-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.sync-metrics span {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.sync-metrics strong {
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.pending-import {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  border-left: 2px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+}
+.pending-import > div:first-child > strong {
+  color: var(--fg);
+  font-size: 12px;
+}
+.discard-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.discard-confirm p {
+  margin: 0;
+  color: var(--bad);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.danger-confirm {
+  border-color: var(--bad);
+  background: var(--bad);
+  color: #fff;
+}
+.spinning {
+  animation: peer-spin 0.8s linear infinite;
+}
+@keyframes peer-spin {
+  to { transform: rotate(360deg); }
+}
 .hint {
   margin: 0;
   color: var(--fg-dim);
@@ -1144,6 +1404,13 @@ button:disabled {
   }
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sync-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .discard-confirm {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .actions button,
   .join-action,

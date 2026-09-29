@@ -889,6 +889,36 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class PeerConfigSyncStatus {
+	    configured: boolean;
+	    local_operations: number;
+	    pending_operations: number;
+	    replica_devices: number;
+	    active_remote_members: number;
+	    acknowledging_peers: number;
+	    last_exchange_at?: number;
+	    pending_import_records: number;
+	    pending_import_captured_at?: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerConfigSyncStatus(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.configured = source["configured"];
+	        this.local_operations = source["local_operations"];
+	        this.pending_operations = source["pending_operations"];
+	        this.replica_devices = source["replica_devices"];
+	        this.active_remote_members = source["active_remote_members"];
+	        this.acknowledging_peers = source["acknowledging_peers"];
+	        this.last_exchange_at = source["last_exchange_at"];
+	        this.pending_import_records = source["pending_import_records"];
+	        this.pending_import_captured_at = source["pending_import_captured_at"];
+	    }
+	}
 	export class PeerConnectionPreview {
 	    space_id: string;
 	    fingerprint: string;

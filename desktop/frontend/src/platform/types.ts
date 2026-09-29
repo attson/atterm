@@ -27,6 +27,7 @@ export type DirEntry = _Models.DirEntry
 export type FileContent = _Models.FileContent
 export type FileMetaInfo = _Models.FileMetaInfo
 export type PeerSpaceStatus = _Models.PeerSpaceStatus
+export type PeerConfigSyncStatus = _Models.PeerConfigSyncStatus
 export type PeerInvitation = _Models.PeerInvitation
 export type PeerMember = _Models.PeerMember
 export type PeerConnectionPreview = _Models.PeerConnectionPreview
@@ -312,6 +313,9 @@ export interface PeerQuickTunnelStatus {
 // bindings or silently falling back to Relay credentials.
 export interface PeerBridge {
   status(): Promise<PeerSpaceStatus>
+  configSyncStatus(): Promise<PeerConfigSyncStatus>
+  acceptPendingConfig(): Promise<PeerConfigSyncStatus>
+  discardPendingConfig(): Promise<PeerConfigSyncStatus>
   createSpace(): Promise<PeerSpaceStatus>
   previewConnectionBundle(raw: string): Promise<PeerConnectionPreview>
   joinSpace(req: { connection_bundle: string; expected_fingerprint: string }): Promise<PeerSpaceStatus>

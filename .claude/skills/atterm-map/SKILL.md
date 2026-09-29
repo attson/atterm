@@ -84,6 +84,13 @@ description: atterm 仓库导航——某个功能/场景要改哪些文件，�
 - `ATTERM_DIRECT_P2P`：桌面端启用 v0.6 beta 直连 host rollout；默认关闭，当前开发阶段仅作灰度开关，正式用户偏好和 client 接入在后续 Stage 1 版本加入
 
 其它：
+- `ATTERM_RENDEZVOUS_ADDR`：独立 Rendezvous 监听地址（默认 `:8443`）
+- `ATTERM_RENDEZVOUS_ORIGINS`：浏览器 Origin 精确 allowlist，生产必填
+- `ATTERM_RENDEZVOUS_TLS_CERT` / `ATTERM_RENDEZVOUS_TLS_KEY`：独立 Rendezvous 真证书；生产直连必填。TLS 反代后端改用 `--behind-tls-proxy` 且只能监听 loopback
+- `ATTERM_RENDEZVOUS_MAX_CONNECTIONS` / `_PER_IP` / `_PER_TOPIC`：Rendezvous 全局、每 IP、每 opaque topic 连接上限；`0` 使用默认值
+- `ATTERM_RENDEZVOUS_MAX_MAILBOX_PER_TOPIC` / `_GLOBAL`：120 秒易失 mailbox 上限；`0` 使用默认值
+- `ATTERM_RENDEZVOUS_MAX_RECENT_MESSAGES` / `_MAX_MESSAGES_PER_MINUTE_PER_IP`：publish retry 去重表与每 IP 速率上限；`0` 使用默认值
+- `ATTERM_RENDEZVOUS_LOG_LEVEL`：独立 Rendezvous stderr 级别 `DEBUG|INFO|WARN|ERROR`
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
 - `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：GitHub prod environment secret；base64 Ed25519 公钥，release 构建时注入桌面 app

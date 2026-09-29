@@ -16,6 +16,10 @@
 
 ## PR 3.1 - Minimal Rendezvous service
 
+Implementation status: the standalone stateless service, v1 challenge/register/publish protocol,
+120-second bounded mailbox, retry dedupe, exact Origin enforcement, TLS/loopback-proxy startup gates,
+and payload-free health/metrics are implemented. Client route integration remains in PR 3.3/3.4.
+
 Create:
 
 - `internal/rendezvous/`

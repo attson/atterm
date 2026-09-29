@@ -1136,6 +1136,88 @@ Settings 已提供 join/bootstrap 确认、独立于 Relay 登录设备的 Peer 
 以及 Quick Tunnel start/stop、member reconnect bundle 复制入口；
 Web/iOS Peer client 接入与端用户 fallback consent 仍未实现。
 
+### Rendezvous v1 discovery and signaling
+
+Rendezvous 是独立的无账户、无数据库服务，只提供短期 presence、discovery 和 opaque
+signaling mailbox。外部入口是 `WSS /v1/connect`，必须协商
+`Sec-WebSocket-Protocol: atterm-rendezvous-v1`。它不接受 Relay token、membership token、
+config op 或 terminal `proto.Frame`，也不提供 TURN/WSS data fallback。生产二进制默认要求
+TLS 证书与显式 Origin allowlist；TLS 终止反代模式只允许监听 loopback，明文公网监听只能通过
+显式 `--dev-insecure` 开启。
+
+连接建立后服务端首先发送一次 10 秒有效的 challenge：
+
+```json
+{"v":1,"kind":"challenge","challenge":"<base64url 32 bytes>","expires_at":1800000010}
+```
+
+客户端用本设备 Peer P-256 signing identity 回复：
+
+```json
+{
+  "v": 1,
+  "kind": "register",
+  "topic": "<base64url 32 bytes>",
+  "presence_id": "<base64url 32 bytes>",
+  "role": "host",
+  "public_key": "<base64url 65-byte SEC1 P-256 key>",
+  "signature": "<base64url 64-byte low-S P1363 signature>"
+}
+```
+
+`role` 只允许 `host` / `member`。签名 plaintext 按以下顺序拼接，每段前置一个
+big-endian u32 长度：
+
+```text
+"atterm-rendezvous-register-v1" || challenge(32B) || topic(32B) ||
+presence_id(32B) || role
+```
+
+服务验证 challenge freshness、固定长度、canonical raw base64url、公钥合法性和签名；它不保留
+public key / peer id，也不把签名成功解释成 Space membership。`topic` 和 `presence_id` 都必须由
+客户端从 Space material 派生为不可关联的高熵值；后续 Peer transport handshake 仍须独立验证
+双方 membership、撤销状态和 capability。
+
+注册成功返回当前已激活的同 topic presence：
+
+```json
+{"v":1,"kind":"registered","presence":[{"presence_id":"<opaque id>","role":"member"}]}
+```
+
+之后 presence 上下线以 `{"v":1,"kind":"presence","event":"online|offline",...}` 通知。
+这些事件只代表当前进程观察到的可达性，不是成员目录或授权真相源；进程重启会立即丢失全部
+presence。
+
+发送方用 16-byte message id 投递 ciphertext：
+
+```json
+{
+  "v": 1,
+  "kind": "publish",
+  "message_id": "<base64url 16 bytes>",
+  "to": "<target presence_id>",
+  "payload": "<base64url ciphertext, decoded max 64 KiB>"
+}
+```
+
+在线目标收到 `kind=signal`，包含原 `message_id`、opaque `from`、`payload` 和
+`stored_at`；发送方收到 `kind=ack`，`state` 为 `delivered` 或 `queued`。`payload` 必须由 Peer
+客户端在投递前完成端到端加密，服务只验证 canonical base64url 和大小，不解析 SDP/ICE。
+离线 mailbox 与 `(topic, from, message_id)` 去重记录都只保留 120 秒；相同 id 的重试返回第一次
+结果但不重复投递。进程重启、容量淘汰或 TTL 到期都不会持久化，客户端必须把信令视为可重试的
+短期消息。
+
+稳定错误码为 `unauthorized`、`invalid_message`、`message_too_large`、
+`presence_conflict`、`topic_capacity`、`mailbox_capacity`、`rate_limited` 和
+`server_capacity`。默认上限是全局 1024 连接、每 IP 32 连接、每 topic 32 presence、每 topic
+128 条 mailbox、全局 4096 条 mailbox、全局 8192 条近期去重记录，以及每 IP 每分钟 240 次
+publish。慢目标的 writer queue 满时消息转入相同的有界 mailbox，不允许无界阻塞。
+
+`GET /healthz` 只返回 `status` 与 `protocol_version`；`GET /metrics` 只返回无 label 的连接、
+presence、mailbox、accept/reject/forward/queue/expire 计数。两者以及服务日志都不得输出 topic、
+presence id、public key、message id 或 payload。实现位于 `internal/rendezvous/`，独立入口是
+`cmd/atterm-rendezvous/`。
+
 ## 重连与续传
 
 ### Agent 短线重连

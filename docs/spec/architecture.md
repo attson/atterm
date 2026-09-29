@@ -9,7 +9,7 @@ v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identit
 
 ## 一句话总览
 
-atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独立 server）+ **任意 web/桌面客户端**。三者通过统一的二进制 WebSocket 帧协议通信。本地体验永远独立、可用；远程能力是叠加的，按需启动。
+atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独立 server）+ **可选无账户 Rendezvous**（独立 stateless server）+ **任意 web/桌面客户端**。本地体验永远独立、可用；远程能力是叠加的，按需启动。Relay 承载账户路径，Rendezvous 只承载 Peer Space 的短期发现和加密信令。
 
 ## 组件全图
 
@@ -70,6 +70,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子；AI 会话的 `task_state` 由客户端 hook 驱动（`hookDriven` 闩锁关闭静默启发式，OSC 133 D 解锁） | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
+| `rendezvous` | `internal/rendezvous/` + `cmd/atterm-rendezvous/` | 无账户 WSS presence、opaque topic discovery、120 秒加密信令 mailbox、无敏感 label 的 health/metrics | 不保存 membership/config，不解析 SDP/ICE，不转发 terminal frame，不提供 TURN |
 | `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webpush subscriptions / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）；历史 `webhooks` 表已由 migration 删除 | 不知道 HTTP / 不依赖 relay |
 | 多实例 | `internal/relay/node_home.go` + `config_refresh.go` + `internal/userstore/relay_instances.go` | 多实例心跳缓存（`relay_instances` 表）、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
@@ -350,6 +351,30 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 `internal/relay.NewServer(relay.Config{})` 作为库仍保留”不鉴权”语义（当 Resolver 和
 Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
 的生产默认行为。
+
+## Rendezvous 启动安全
+
+`cmd/atterm-rendezvous` 与 Relay 是两个独立进程和信任边界。它没有用户数据库，也不读取
+Relay 配置：
+
+- 直接公网监听必须提供 `ATTERM_RENDEZVOUS_TLS_CERT`、
+  `ATTERM_RENDEZVOUS_TLS_KEY` 和 `ATTERM_RENDEZVOUS_ORIGINS`，TLS 最低版本为 1.3；
+- TLS 终止反代使用 `--behind-tls-proxy`，此模式强制 `--addr` 为 loopback，防止明文后端被
+  意外暴露；
+- `--dev-insecure` 是唯一允许无证书、无 Origin allowlist 的模式；
+- Origin 按完整 `scheme://host[:port]` 精确匹配，不信任 query/header 中的 token；无 Origin
+  的原生客户端仍需完成设备 challenge；
+- IP 只取 TCP remote address，不默认信任 `X-Forwarded-For`。反代部署需在反代层另做公网
+  per-IP 限流，服务自身的 per-IP limit 此时是后端保护而非最终用户限流；
+- shutdown 主动中止所有 WebSocket，且不落盘 presence、mailbox 或近期去重记录。
+
+本机开发：
+
+```bash
+go run ./cmd/atterm-rendezvous --addr 127.0.0.1:8081 --dev-insecure
+```
+
+wire 契约、默认限额和隐私边界见 [protocol.md](./protocol.md) §Rendezvous v1。
 
 ## Relay 多实例架构
 

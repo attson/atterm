@@ -87,6 +87,12 @@ type appConfig struct {
 	// the existing "has URL → connect" behavior, so old config.json files
 	// deserialize correctly without any migration code.
 	RelayPaused bool `json:"relay_paused,omitempty"`
+	// Peer Rendezvous and STUN are local reachability preferences. They are
+	// never included in Relay preferences, Peer config replication, or export.
+	PeerRendezvousMode string   `json:"peer_rendezvous_mode,omitempty"`
+	PeerRendezvousURL  string   `json:"peer_rendezvous_url,omitempty"`
+	PeerSTUNMode       string   `json:"peer_stun_mode,omitempty"`
+	PeerSTUNURLs       []string `json:"peer_stun_urls,omitempty"`
 	// LocalePreference controls UI language. Empty means "system" so older
 	// configs keep following the OS/browser language after upgrade.
 	LocalePreference string `json:"locale_preference,omitempty"`
@@ -684,7 +690,8 @@ func loadConfig() *configStore {
 	return s
 }
 
-// detachMaps returns a copy of c whose map fields are freshly allocated.
+// detachMaps returns a copy of c whose reference-backed fields are freshly
+// allocated.
 //
 // appConfig is copied by value everywhere, but a struct copy duplicates a map
 // header, not its backing table — so a plain copy leaves PrefsMeta and
@@ -695,8 +702,11 @@ func loadConfig() *configStore {
 // background prefssync Push, and the relay prefs-watch Pull — which in Go is
 // a fatal "concurrent map writes" or a silently corrupted hash table.
 // Detaching on both Get and Set makes the store properly value-semantic, so
-// the only mutations of the stored maps happen under the lock.
+// the only mutations of stored maps and slices happen under the lock.
 func detachMaps(c appConfig) appConfig {
+	if c.PeerSTUNURLs != nil {
+		c.PeerSTUNURLs = append([]string(nil), c.PeerSTUNURLs...)
+	}
 	if c.PrefsMeta != nil {
 		m := make(map[string]prefsMetaEntry, len(c.PrefsMeta))
 		for k, v := range c.PrefsMeta {

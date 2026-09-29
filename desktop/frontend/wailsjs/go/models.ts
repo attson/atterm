@@ -1037,6 +1037,28 @@ export namespace main {
 	        this.local_origin = source["local_origin"];
 	    }
 	}
+	export class PeerRendezvousConfig {
+	    mode: string;
+	    url: string;
+	    websocket_url: string;
+	    health_url: string;
+	    stun_mode: string;
+	    stun_urls: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new PeerRendezvousConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.url = source["url"];
+	        this.websocket_url = source["websocket_url"];
+	        this.health_url = source["health_url"];
+	        this.stun_mode = source["stun_mode"];
+	        this.stun_urls = source["stun_urls"];
+	    }
+	}
 	export class PeerSpaceStatus {
 	    configured: boolean;
 	    peer_id?: string;
@@ -1742,7 +1764,25 @@ export namespace main {
 	        this.sync_env = source["sync_env"];
 	    }
 	}
-	
+	export class SetPeerRendezvousConfigReq {
+	    mode: string;
+	    url: string;
+	    stun_mode: string;
+	    stun_urls: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new SetPeerRendezvousConfigReq(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.url = source["url"];
+	        this.stun_mode = source["stun_mode"];
+	        this.stun_urls = source["stun_urls"];
+	    }
+	}
+
 	export class SignOutOthersResult {
 	    deleted: number;
 	

@@ -210,6 +210,10 @@ export function GetPeerQuickTunnelStatus() {
   return window['go']['main']['App']['GetPeerQuickTunnelStatus']();
 }
 
+export function GetPeerRendezvousConfig() {
+  return window['go']['main']['App']['GetPeerRendezvousConfig']();
+}
+
 export function GetPeerSpaceStatus() {
   return window['go']['main']['App']['GetPeerSpaceStatus']();
 }
@@ -592,6 +596,10 @@ export function SetLoggingConfig(arg1) {
 
 export function SetNotificationsEnabled(arg1) {
   return window['go']['main']['App']['SetNotificationsEnabled'](arg1);
+}
+
+export function SetPeerRendezvousConfig(arg1) {
+  return window['go']['main']['App']['SetPeerRendezvousConfig'](arg1);
 }
 
 export function SetPinnedSessionIds(arg1) {

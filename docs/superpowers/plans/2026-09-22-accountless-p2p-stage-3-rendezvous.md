@@ -36,6 +36,10 @@ Implement:
 
 ## PR 3.2 - Official/self-hosted contract
 
+Implementation status: canonical official/custom/disabled endpoint and STUN configuration,
+browser capability preflight, self-host container/docs, and the shared black-box contract runner
+are implemented. Settings presentation and connection lifecycle remain in PR 3.4/3.5.
+
 - Publish one protocol and contract suite for both deployments。
 - Official/custom/disabled URL configuration。
 - Self-host docs for TLS、origins、rate limits and reverse proxy。

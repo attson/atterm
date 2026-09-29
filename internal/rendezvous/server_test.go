@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -267,35 +266,37 @@ func TestServerCloseDisconnectsUnauthenticatedWebSockets(t *testing.T) {
 	}
 }
 
-func TestExternalServiceContract(t *testing.T) {
-	serverURL := strings.TrimSpace(os.Getenv("ATTERM_RENDEZVOUS_TEST_URL"))
-	if serverURL == "" {
-		t.Skip("ATTERM_RENDEZVOUS_TEST_URL is not set")
+func TestBrokerActivationCatchesUpPresenceRegisteredDuringReadyWindow(t *testing.T) {
+	server, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	topic := opaqueID(41)
-	hostPresence := opaqueID(42)
-	memberPresence := opaqueID(43)
-	hostIdentity, _ := peercrypto.GenerateIdentity()
-	memberIdentity, _ := peercrypto.GenerateIdentity()
-	host := dialRegistered(t, serverURL, "", topic, hostPresence, RoleHost, hostIdentity)
-	defer host.Close(websocket.StatusNormalClosure, "")
-	member := dialRegistered(t, serverURL, "", topic, memberPresence, RoleMember, memberIdentity)
-	defer member.Close(websocket.StatusNormalClosure, "")
-	_ = readUntilKind(t, host, KindPresence)
+	defer server.Close()
 
-	payload := base64.RawURLEncoding.EncodeToString([]byte("external-contract-ciphertext"))
-	writeJSON(t, member, PublishMessage{
-		Version: Version, Kind: KindPublish, MessageID: opaqueMessageID(44),
-		To: hostPresence, Payload: payload,
-	})
-	if got := readUntilKind(t, host, KindSignal); got.Payload != payload || got.From != memberPresence {
-		t.Fatalf("external signal=%+v", got)
+	newClient := func(presenceID string) *peerClient {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		return &peerClient{
+			ctx: ctx, cancel: cancel, topic: opaqueID(50), presenceID: presenceID,
+			role: RoleMember, send: make(chan []byte, clientSendQueueSize),
+		}
 	}
-	if ack := readUntilKind(t, member, KindAck); ack.State != DeliveryDelivered {
-		t.Fatalf("external ack=%+v", ack)
+	first := newClient(opaqueID(51))
+	second := newClient(opaqueID(52))
+	firstAnnounced, code := server.broker.register(first)
+	if code != "" {
+		t.Fatal(code)
 	}
-	if health := getBody(t, serverURL+HealthPath); health != `{"status":"ok","protocol_version":1}`+"\n" {
-		t.Fatalf("external health=%q", health)
+	secondAnnounced, code := server.broker.register(second)
+	if code != "" {
+		t.Fatal(code)
+	}
+	_ = server.broker.activate(second, secondAnnounced)
+	events := server.broker.activate(first, firstAnnounced)
+
+	if len(events) != 1 || events[0].Kind != KindPresence ||
+		events[0].Event != PresenceOnline || events[0].PresenceID != second.presenceID {
+		t.Fatalf("first activation did not catch up second presence: %+v", events)
 	}
 }
 

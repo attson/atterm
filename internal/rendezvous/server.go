@@ -301,7 +301,7 @@ func (s *Server) authenticate(parent context.Context, conn *websocket.Conn, ip s
 		s.broker.unregister(client)
 		return nil, nil, err
 	}
-	pending := s.broker.activate(client)
+	pending := s.broker.activate(client, existing)
 	return client, pending, nil
 }
 
@@ -428,7 +428,7 @@ func (b *broker) register(client *peerClient) ([]Presence, string) {
 	return existing, ""
 }
 
-func (b *broker) activate(client *peerClient) []EventMessage {
+func (b *broker) activate(client *peerClient, announced []Presence) []EventMessage {
 	b.mu.Lock()
 	peers := b.topics[client.topic]
 	if peers == nil || peers[client.presenceID] != client || client.ready {
@@ -436,13 +436,25 @@ func (b *broker) activate(client *peerClient) []EventMessage {
 		return nil
 	}
 	client.ready = true
-	pending := b.takeMailboxLocked(client.topic, client.presenceID)
+	mailbox := b.takeMailboxLocked(client.topic, client.presenceID)
+	announcedIDs := make(map[string]struct{}, len(announced))
+	for _, presence := range announced {
+		announcedIDs[presence.PresenceID] = struct{}{}
+	}
+	pending := make([]EventMessage, 0, len(mailbox)+len(peers))
 	recipients := make([]*peerClient, 0, len(peers))
 	for _, peer := range peers {
 		if peer != client && peer.ready {
 			recipients = append(recipients, peer)
+			if _, alreadyAnnounced := announcedIDs[peer.presenceID]; !alreadyAnnounced {
+				pending = append(pending, EventMessage{
+					Version: Version, Kind: KindPresence, Event: PresenceOnline,
+					PresenceID: peer.presenceID, Role: peer.role,
+				})
+			}
 		}
 	}
+	pending = append(pending, mailbox...)
 	b.metrics.registeredPeers.Add(1)
 	b.mu.Unlock()
 

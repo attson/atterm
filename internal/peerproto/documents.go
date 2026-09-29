@@ -809,7 +809,9 @@ func validateConnectionRoutes(routes []ConnectionRoute) error {
 				return fmt.Errorf("%w: Quick Tunnel route", ErrInvalidDocument)
 			}
 		case RouteRendezvous:
-			if parsed.Scheme != "https" && parsed.Scheme != "wss" {
+			if parsed.Scheme != "https" && parsed.Scheme != "wss" ||
+				parsed.Hostname() == "" ||
+				parsed.Path != "" && parsed.Path != "/" || parsed.RawPath != "" || parsed.ForceQuery {
 				return fmt.Errorf("%w: Rendezvous route", ErrInvalidDocument)
 			}
 			if _, err := decodeSized(route.Topic, 32, "Rendezvous topic"); err != nil {

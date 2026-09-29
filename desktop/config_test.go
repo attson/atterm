@@ -101,6 +101,7 @@ func TestConfigStore_GetReturnsIndependentMaps(t *testing.T) {
 	c := store.Get()
 	c.PrefsMeta = map[string]prefsMetaEntry{"pinned_session_ids": {UpdatedAtLocal: 1, Dirty: true}}
 	c.PrefsSeedMarkers = map[string]bool{"user-1": true}
+	c.PeerSTUNURLs = []string{"stun:one.example:3478"}
 	if err := store.Set(c); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -109,6 +110,7 @@ func TestConfigStore_GetReturnsIndependentMaps(t *testing.T) {
 	snap := store.Get()
 	snap.PrefsMeta["pinned_session_ids"] = prefsMetaEntry{UpdatedAtLocal: 999}
 	snap.PrefsSeedMarkers["user-1"] = false
+	snap.PeerSTUNURLs[0] = "stun:mutated.example:3478"
 
 	got := store.Get()
 	if e := got.PrefsMeta["pinned_session_ids"]; e.UpdatedAtLocal != 1 || !e.Dirty {
@@ -116,6 +118,9 @@ func TestConfigStore_GetReturnsIndependentMaps(t *testing.T) {
 	}
 	if !got.PrefsSeedMarkers["user-1"] {
 		t.Fatal("snapshot mutation leaked into PrefsSeedMarkers")
+	}
+	if got.PeerSTUNURLs[0] != "stun:one.example:3478" {
+		t.Fatal("snapshot mutation leaked into PeerSTUNURLs")
 	}
 }
 

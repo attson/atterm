@@ -58,6 +58,11 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   RevokePeerMember: vi.fn().mockResolvedValue(undefined),
   PreviewPeerConnectionBundle: vi.fn().mockResolvedValue({ fingerprint: 'SHA256:space' }),
   JoinPeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-2', space_id: 'space-1' }),
+  GetPeerRendezvousConfig: vi.fn().mockResolvedValue({
+    mode: 'disabled', url: '', websocket_url: '', health_url: '', stun_mode: 'default',
+    stun_urls: ['stun:stun.cloudflare.com:3478'],
+  }),
+  SetPeerRendezvousConfig: vi.fn().mockResolvedValue(undefined),
   GetPeerQuickTunnelStatus: vi.fn().mockResolvedValue({ running: false, starting: false }),
   StartPeerQuickTunnel: vi.fn().mockResolvedValue({ running: true, starting: false, public_url: 'https://route.trycloudflare.com' }),
   StopPeerQuickTunnel: vi.fn().mockResolvedValue(undefined),
@@ -78,6 +83,7 @@ import {
   AcceptPendingPeerConfig,
   CreatePeerConnectionBundle,
   CreatePeerInvitations,
+  GetPeerRendezvousConfig,
   GetPeerQuickTunnelStatus,
   GetPeerConfigSyncStatus,
   GetPluginConfig,
@@ -85,6 +91,7 @@ import {
   ListPeerMembers,
   PreviewPeerConnectionBundle,
   RevokePeerMember,
+  SetPeerRendezvousConfig,
   DiscardPendingPeerConfig,
   SetPluginConfig,
   GetAppVersion,
@@ -288,6 +295,18 @@ describe('createWailsPlatform', () => {
 
     await p.peer!.stopQuickTunnel!()
     expect(StopPeerQuickTunnel).toHaveBeenCalledOnce()
+  })
+
+  it('peer bridge persists local Rendezvous configuration through typed Wails bindings', async () => {
+    const p = createWailsPlatform()
+
+    expect(await p.peer!.getRendezvousConfig()).toEqual(expect.objectContaining({ mode: 'disabled' }))
+    expect(GetPeerRendezvousConfig).toHaveBeenCalledOnce()
+
+    await p.peer!.setRendezvousConfig({
+      mode: 'official', url: '', stun_mode: 'default', stun_urls: [],
+    })
+    expect(SetPeerRendezvousConfig).toHaveBeenCalledWith(expect.objectContaining({ mode: 'official' }))
   })
 
   it('peer bridge lists and revokes Peer members independently of Relay sessions', async () => {

@@ -376,6 +376,8 @@ func TestConnectionBundleRejectsInsecureOrMutatedRoutes(t *testing.T) {
 		{Kind: RouteQuickTunnel, URL: "https://unsafe.trycloudflare.com#fragment"},
 		{Kind: RouteQuickTunnel, URL: "https://*.trycloudflare.com"},
 		{Kind: RouteRendezvous, URL: "https://rendezvous.example", Topic: "short"},
+		{Kind: RouteRendezvous, URL: "https://:443", Topic: encode(make([]byte, 32))},
+		{Kind: RouteRendezvous, URL: "https://rendezvous.example/v1", Topic: encode(make([]byte, 32))},
 	} {
 		if _, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{route}, now, 0); err == nil {
 			t.Fatalf("accepted invalid route: %+v", route)

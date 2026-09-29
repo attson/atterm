@@ -884,8 +884,9 @@ client 仍须在 handshake 证明自己的有效 membership。因此 invitation 
 小时，且绝不超过 invitation 到期时间。当前 route kind 是 `quick_tunnel` 与
 `rendezvous`：Quick Tunnel 只接受无 userinfo/port/query/fragment、root path 且 hostname
 恰为单个合法 DNS label 的 `https://<label>.trycloudflare.com`；Rendezvous 只接受
-`https`/`wss` 且必须携带 32-byte opaque
-topic。URL 轮换只创建新的 `atc1`，不创建 invitation 或 membership。
+`https`/`wss` service origin（只含 scheme + host + 可选 port，root path）且必须携带 32-byte
+opaque topic。客户端统一从 origin 派生 `/v1/connect`，不允许 route 自带 API path。URL 轮换只
+创建新的 `atc1`，不创建 invitation 或 membership。
 
 新设备生成自己的 P-256 signing identity 和独立 P-256 ECDH wrapping identity 后，将完整
 `atp1` invitation、subject peer/signing public key、wrapping public key、32-byte nonce 和创建
@@ -1217,6 +1218,23 @@ publish。慢目标的 writer queue 满时消息转入相同的有界 mailbox，
 presence、mailbox、accept/reject/forward/queue/expire 计数。两者以及服务日志都不得输出 topic、
 presence id、public key、message id 或 payload。实现位于 `internal/rendezvous/`，独立入口是
 `cmd/atterm-rendezvous/`。
+
+客户端配置模式是 `disabled | official | custom`。`official` 当前解析为
+`https://rendezvous.atterm.dev`，`custom` 必须是同样只含 scheme/host/port 的 HTTPS/WSS origin；
+HTTP/WS 只允许测试工具显式选择 loopback development。服务域名不进入 registration crypto
+transcript，官方和自建部署使用完全相同的签名与 wire 契约。
+
+STUN 配置模式是 `default | custom | disabled`。默认值为
+`stun:stun.cloudflare.com:3478`；custom 只接受最多 8 个无 credentials/query 的
+`stun:`/`stuns:` URL。当前不接受 `turn:`/`turns:`，也不把 Rendezvous 描述为 TURN。STUN
+服务可观察来源 IP/时序，WebRTC 对端会获得建连所需的 candidate 地址；这些披露在启用前必须
+由客户端 UI 明示。
+
+Browser/WebView 在生成 Peer identity 或创建 `RTCPeerConnection` 前必须依次验证 secure
+context、`crypto.subtle` 与 `RTCPeerConnection`，并映射成稳定状态
+`insecure_context`、`webcrypto_unavailable`、`webrtc_unavailable`。独立黑盒验收入口
+`cmd/atterm-rendezvous-contract` 只依赖 service origin/Origin，官方和自建实例必须通过同一套
+health、challenge、presence、delivery、mailbox、dedupe、size limit 与 metrics privacy 检查。
 
 ## 重连与续传
 

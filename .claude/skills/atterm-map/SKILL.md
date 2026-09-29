@@ -91,6 +91,7 @@ description: atterm 仓库导航——某个功能/场景要改哪些文件，�
 - `ATTERM_RENDEZVOUS_MAX_MAILBOX_PER_TOPIC` / `_GLOBAL`：120 秒易失 mailbox 上限；`0` 使用默认值
 - `ATTERM_RENDEZVOUS_MAX_RECENT_MESSAGES` / `_MAX_MESSAGES_PER_MINUTE_PER_IP`：publish retry 去重表与每 IP 速率上限；`0` 使用默认值
 - `ATTERM_RENDEZVOUS_LOG_LEVEL`：独立 Rendezvous stderr 级别 `DEBUG|INFO|WARN|ERROR`
+- `ATTERM_RENDEZVOUS_TEST_URL` / `ATTERM_RENDEZVOUS_TEST_ORIGIN`：黑盒 contract runner 的部署 origin 与浏览器 Origin；仅测试输入，不被服务进程读取
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
 - `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：GitHub prod environment secret；base64 Ed25519 公钥，release 构建时注入桌面 app

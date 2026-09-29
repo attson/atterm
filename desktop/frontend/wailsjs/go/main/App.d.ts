@@ -109,6 +109,8 @@ export function GetPeerConfigSyncStatus():Promise<main.PeerConfigSyncStatus>;
 
 export function GetPeerQuickTunnelStatus():Promise<main.PeerQuickTunnelStatus>;
 
+export function GetPeerRendezvousConfig():Promise<main.PeerRendezvousConfig>;
+
 export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
 
 export function GetPinnedSessionIds():Promise<Array<string>>;
@@ -300,6 +302,8 @@ export function SetLocalePreference(arg1:string):Promise<void>;
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
+
+export function SetPeerRendezvousConfig(arg1:main.SetPeerRendezvousConfigReq):Promise<void>;
 
 export function SetPinnedSessionIds(arg1:Array<string>):Promise<void>;
 

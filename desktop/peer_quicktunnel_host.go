@@ -7,14 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/quicktunnel"
+	"github.com/attson/atterm/internal/rendezvousclient"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
@@ -215,6 +218,85 @@ func (h *peerHostRuntime) authorize(clientPeerID string, sessionID uuid.UUID) (p
 		ClientMembershipToken: client.Token, HostMembershipToken: local.Token,
 		Permission: minimumPeerTransportPermission(ownerPermission, clientPermission, localPermission),
 	}, nil
+}
+
+func (h *peerHostRuntime) catalog(clientPeerID string) ([]rendezvousclient.PeerSession, error) {
+	manager, err := h.app.peerManager()
+	if err != nil {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	state, err := manager.store.Load()
+	if err != nil {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	identity, err := manager.loadIdentity()
+	if err != nil {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	active, err := activePeerMemberships(state, genesis, time.Now())
+	if err != nil {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	client := membershipForPeerID(active, clientPeerID)
+	local := membershipForPeerID(active, identity.PeerID())
+	if client == nil || local == nil {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	ownerPermission, ok := directTransportPermission(h.app.cfgStore.Get().RemotePermissionOrDefault())
+	if !ok {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	clientPermission, ok := peerPermission(client.Document.Permission)
+	if !ok {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	localPermission, ok := peerPermission(local.Document.Permission)
+	if !ok {
+		return nil, quicktunnel.ErrUnauthorized
+	}
+	effective := minimumPeerTransportPermission(ownerPermission, clientPermission, localPermission)
+	result := make([]rendezvousclient.PeerSession, 0)
+	h.host.server.Registry().ForEach(func(sess *session.Session) bool {
+		if sess.Info().HostID != h.host.hostID || !peerMembershipAllowsSession(*client, sess.ID) ||
+			!peerMembershipAllowsSession(*local, sess.ID) {
+			return true
+		}
+		result = append(result, peerCatalogSession(sess.Info(), effective))
+		return true
+	})
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
+}
+
+func peerCatalogSession(info proto.SessionInfo, permission peertransport.Permission) rendezvousclient.PeerSession {
+	return rendezvousclient.PeerSession{
+		ID: truncatePeerCatalogText(info.ID), Command: truncatePeerCatalogText(info.Command),
+		Cwd: truncatePeerCatalogText(info.Cwd), Title: truncatePeerCatalogText(info.Title),
+		Cols: info.Cols, Rows: info.Rows, StartedAt: info.StartedAt,
+		HostID: truncatePeerCatalogText(info.HostID), Host: truncatePeerCatalogText(info.Host),
+		User: truncatePeerCatalogText(info.User), SSHHostID: truncatePeerCatalogText(info.SSHHostID),
+		Permission: permission, TaskState: truncatePeerCatalogText(info.TaskState),
+		CurrentCommand: truncatePeerCatalogText(info.CurrentCommand), CommandStartedAt: info.CommandStartedAt,
+		CommandEndedAt: info.CommandEndedAt, CommandDurationMS: info.CommandDurationMS,
+		CommandExitCode: info.CommandExitCode, LastOutputAt: info.LastOutputAt,
+		Type: truncatePeerCatalogText(info.Type), AttentionAt: info.AttentionAt,
+	}
+}
+
+func truncatePeerCatalogText(value string) string {
+	const limit = 1024
+	if len(value) <= limit {
+		return value
+	}
+	value = value[:limit]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 func membershipForPeerID(memberships []peerproto.VerifiedGrant, peerID string) *peerproto.VerifiedGrant {

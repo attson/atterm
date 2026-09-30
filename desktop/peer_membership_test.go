@@ -199,6 +199,11 @@ func TestPeerMemberDirectoryAndRevocationRotateEpochs(t *testing.T) {
 	if len(members) != 2 || !members[0].Local || members[0].PeerID != status.PeerID || members[0].CanRevoke {
 		t.Fatalf("member directory=%+v", members)
 	}
+	for _, member := range members {
+		if member.AllowedSessionIDs == nil {
+			t.Fatalf("member %s allowed_session_ids is nil; Wails would serialize it as null", member.PeerID)
+		}
+	}
 	if members[1].PeerID != remote.PeerID() || members[1].Status != "active" || !members[1].CanRevoke ||
 		members[1].GrantSerial == "" || members[1].LastExchangeAt != exchangedAt.Unix() {
 		t.Fatalf("remote directory entry=%+v", members[1])
@@ -206,6 +211,9 @@ func TestPeerMemberDirectoryAndRevocationRotateEpochs(t *testing.T) {
 	publicJSON, err := json.Marshal(members)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Contains(publicJSON, []byte(`"allowed_session_ids":[]`)) {
+		t.Fatalf("member directory must encode empty session scopes as arrays: %s", publicJSON)
 	}
 	for _, secretPrefix := range []string{"apm1.", "arv1.", "akr1."} {
 		if strings.Contains(string(publicJSON), secretPrefix) {

@@ -1262,13 +1262,23 @@ LP(from_presence_id) || LP(to_presence_id) || LP(message_id)
 也不能把 ciphertext 替换到另一个 topic、方向或 message id。客户端对
 `(from_presence_id, message_id)` 使用 2048 条有界 replay window。
 
-解密后的 route message 只有四种：`open`、`authorized`、`signal`、`error`。`open` 携带短期
-attempt ticket、目标 session 和 client identity；`authorized` 只返回该 attempt 的有效期与
-effective permission；`signal` 携带 Pion offer/answer/ICE；`error` 只返回稳定类别。上述字段全部
-位于加密信封内。Genesis、membership token、revocation/config operation 和 terminal frame
-从不发给 Rendezvous；双方仍必须在 Pion DataChannel 上完成现有
+解密后的 route message 有六种：`catalog_request`、`catalog_response`、`open`、`authorized`、
+`signal`、`error`。`open` 携带短期 attempt ticket、目标 session 和 client identity；`authorized`
+只返回该 attempt 的有效期与 effective permission；`signal` 携带 Pion offer/answer/ICE；`error`
+只返回稳定类别。上述字段全部位于加密信封内。Genesis、membership token、
+revocation/config operation 和 terminal frame 从不发给 Rendezvous；双方仍必须在 Pion
+DataChannel 上完成现有
 `PeerMembershipAuthenticator` 握手，握手通过后才允许创建 terminal subscriber 和
 `peerConfigChannel`。
+
+`catalog_request` 用独立 request UUID 和从 0 开始的 offset 请求目标 host 当前可见的 session。
+host 每次请求都重新读取 signed membership/revocation、双方 session scope、双方 permission ceiling
+和 owner `remote_permission`，只在 `catalog_response` 返回交集内的 metadata 与 effective
+permission。响应每页最多 16 条、总计最多 512 条；单个 UTF-8 metadata 字段最多 1024 bytes。
+每页都绑定 request UUID、请求 offset、目标 Peer route 和 pairwise signal envelope；Rendezvous
+只能看到 64 KiB 以内的 ciphertext。catalog 不创建 Pion attempt、terminal subscriber 或 config
+channel，也不进入 `ConnectionBundle`。只有用户选择某条 session 后才发送 `open` 并建立现有
+Pion/DataChannel 路径，host 在 attach 时再次执行完整授权检查。
 
 发送 `open` 后，Rendezvous ACK 为 `queued` 映射 `peer offline`；连接、写入、ACK 超时或 host
 容量问题映射 `service unavailable`；Pion ICE/transport 建链失败映射 `ICE failed`；membership、

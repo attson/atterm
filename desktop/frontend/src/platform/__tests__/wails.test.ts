@@ -70,6 +70,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   StartPeerQuickTunnel: vi.fn().mockResolvedValue({ running: true, starting: false, public_url: 'https://route.trycloudflare.com' }),
   StopPeerQuickTunnel: vi.fn().mockResolvedValue(undefined),
   CreatePeerConnectionBundle: vi.fn().mockResolvedValue('atc1.member-route.signature'),
+  ListPeerSessions: vi.fn().mockResolvedValue(JSON.stringify([{ id: 'peer-session-1', host_id: 'peer-host' }])),
+  StartPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
+  SendPeerNativeDirectFrame: vi.fn().mockResolvedValue(undefined),
+  StopPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
@@ -92,6 +96,7 @@ import {
   GetPeerConfigSyncStatus,
   GetPluginConfig,
   JoinPeerSpace,
+  ListPeerSessions,
   ListPeerMembers,
   PreviewPeerConnectionBundle,
   RevokePeerMember,
@@ -102,7 +107,9 @@ import {
   SetPluginConfig,
   GetAppVersion,
   StartPeerQuickTunnel,
+  StartPeerNativeDirect,
   StartServicePreview,
+  StopPeerNativeDirect,
   StopPeerQuickTunnel,
 } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
@@ -320,6 +327,44 @@ describe('createWailsPlatform', () => {
     expect(ReconnectPeerRendezvous).toHaveBeenCalledOnce()
     expect(await p.peer!.syncConfigNow()).toEqual(expect.objectContaining({ pending_operations: 1 }))
     expect(SyncPeerConfigNow).toHaveBeenCalledOnce()
+  })
+
+  it('peer bridge adapts encrypted catalog entries for the shared sidebar model', async () => {
+    const p = createWailsPlatform()
+
+    expect(await p.peer!.listSessions!()).toEqual([
+      expect.objectContaining({
+        id: 'peer-session-1',
+        session_id: 'peer-session-1',
+        peer_direct: true,
+      }),
+    ])
+    expect(ListPeerSessions).toHaveBeenCalledOnce()
+  })
+
+  it('peer transport uses an isolated native event namespace', () => {
+    const p = createWailsPlatform()
+    const transport = p.peer!.createSessionTransport!({
+      signalURL: '',
+      sessionId: '11111111-2222-3333-4444-555555555555',
+      sinceSeq: 7,
+      clientInstanceId: 'peer-client',
+      callbacks: { onFrame: vi.fn(), onReady: vi.fn(), onFailure: vi.fn() },
+    })
+
+    transport.start()
+    expect(EventsOn).toHaveBeenCalledWith(
+      expect.stringMatching(/^peer-native-direct:event:/),
+      expect.any(Function),
+    )
+    expect(StartPeerNativeDirect).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: '11111111-2222-3333-4444-555555555555',
+      since_seq: 7,
+      client_instance_id: 'peer-client',
+    }))
+
+    transport.close()
+    expect(StopPeerNativeDirect).toHaveBeenCalledOnce()
   })
 
   it('peer bridge lists and revokes Peer members independently of Relay sessions', async () => {

@@ -19,6 +19,9 @@ export interface Pane {
   // after a close).
   sessionId: string | null;
   remote: boolean;
+  // Accountless Desktop attachment discovered through Rendezvous. It is
+  // remote but has no Relay endpoint or fallback.
+  peerDirect?: boolean;
   // lastSeenInfo carries the most recent SessionInfo we saw for this pane
   // before sweepMissingSessions nulled sessionId. Used so the TabBar can
   // still show a meaningful title ("C:\\Users\\xianj — disconnected")

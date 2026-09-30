@@ -1526,8 +1526,9 @@ describe("PaneGrid preview badge layout", () => {
     expect(paneSource).not.toContain(".remote-badge.has-preview");
     expect(paneSource).not.toContain("servicePreviewActive.has(pane.sessionId)");
     expect(paneSource).toContain('class="service-preview-controls-slot"');
-    // Antenna trigger + host label are unconditional (only gated on availability).
-    expect(paneSource).toContain('v-if="servicePreviewAvailable"');
+    // The host label remains unconditional, while the antenna is unavailable
+    // on direct-only Peer panes because that route has no service protocol.
+    expect(paneSource).toContain('v-if="servicePreviewAvailable && !pane.peerDirect"');
     expect(paneSource).toContain('<span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>');
   });
 

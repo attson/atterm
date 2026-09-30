@@ -100,7 +100,7 @@ func (m *peerSpaceManager) listMembers() ([]PeerMember, error) {
 		doc := membership.Document
 		member := PeerMember{
 			PeerID: doc.SubjectPeerID, GrantSerial: doc.Serial, IssuerPeerID: doc.IssuerPeerID,
-			Permission: string(doc.Permission), AllowedSessionIDs: append([]string(nil), doc.AllowedSessionIDs...),
+			Permission: string(doc.Permission), AllowedSessionIDs: append([]string{}, doc.AllowedSessionIDs...),
 			CanInvite: doc.CanInvite, CanSyncSecrets: doc.CanSyncSecrets,
 			IssuedAt: doc.IssuedAt, ExpiresAt: doc.ExpiresAt,
 			Local: doc.SubjectPeerID == identity.PeerID(),

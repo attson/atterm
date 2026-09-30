@@ -385,6 +385,8 @@ type App struct {
 	// remains in use on Web/Capacitor; desktop attempts never depend on WebKit.
 	nativeDirectMu sync.Mutex
 	nativeDirect   map[string]*nativeDirectClient
+	peerNativeMu   sync.Mutex
+	peerNative     map[string]*peerNativeDirectClient
 
 	// peerSpace is initialized lazily because most existing installations use
 	// only Relay mode and should not create Peer identity or keyring entries.
@@ -629,6 +631,7 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	a.stopPeerRendezvous()
 	a.stopNativeDirectClients()
+	a.stopPeerNativeDirectClients()
 	a.mu.Lock()
 	if a.uplinkCancel != nil {
 		a.uplinkCancel()

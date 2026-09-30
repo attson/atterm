@@ -47,6 +47,10 @@ import {
   StartPeerQuickTunnel,
   StopPeerQuickTunnel,
   CreatePeerConnectionBundle,
+  ListPeerSessions,
+  StartPeerNativeDirect,
+  SendPeerNativeDirectFrame,
+  StopPeerNativeDirect,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -306,6 +310,20 @@ export function createWailsPlatform(): Platform {
       startQuickTunnel: () => StartPeerQuickTunnel(),
       stopQuickTunnel: () => StopPeerQuickTunnel(),
       createConnectionBundle: (invitationToken) => CreatePeerConnectionBundle(invitationToken),
+      listSessions: async () => {
+        const parsed = JSON.parse(await ListPeerSessions()) as RemoteSession[] | null
+        return (parsed ?? []).map((session) => ({
+          ...session,
+          session_id: session.session_id || (session as unknown as { id?: string }).id || '',
+          peer_direct: true,
+        }))
+      },
+      createSessionTransport: (options) => new NativeDirectClientTransport(options, {
+        on: (event, handler) => EventsOn(event, handler as (...data: unknown[]) => void),
+        start: (req) => StartPeerNativeDirect(req),
+        send: (id, frame) => SendPeerNativeDirectFrame(id, frame),
+        stop: (id) => StopPeerNativeDirect(id),
+      }, 'peer-native-direct:event:'),
     },
     updater: {
       getState: api.getUpdateState,

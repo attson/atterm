@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,6 +34,10 @@ type peerJoinFixture struct {
 const peerJoinSessionID = "00000000-0000-4000-8000-000000000001"
 
 func newPeerJoinFixture(t *testing.T) peerJoinFixture {
+	return newPeerJoinFixtureWithSessionScope(t, []string{peerJoinSessionID})
+}
+
+func newPeerJoinFixtureWithSessionScope(t *testing.T, allowedSessionIDs []string) peerJoinFixture {
 	t.Helper()
 	source, now := newTestPeerApp(t)
 	if _, err := source.CreatePeerSpace(); err != nil {
@@ -39,7 +45,7 @@ func newPeerJoinFixture(t *testing.T) peerJoinFixture {
 	}
 	invitations, err := source.CreatePeerInvitations(CreatePeerInvitationsReq{
 		Count: 1, Permission: string(peerproto.PermissionControl),
-		AllowedSessionIDs: []string{peerJoinSessionID}, CanSyncSecrets: true,
+		AllowedSessionIDs: allowedSessionIDs, CanSyncSecrets: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,6 +143,24 @@ func TestPreviewPeerConnectionBundleNormalizesTokenAndFragment(t *testing.T) {
 	}
 	if _, err := fixture.destination.PreviewPeerConnectionBundle("atterm://peer/join?bundle=" + fixture.bundle); err == nil {
 		t.Fatal("query-carried invitation was accepted")
+	}
+}
+
+func TestPreviewPeerConnectionBundleEncodesEmptySessionScopeAsArray(t *testing.T) {
+	fixture := newPeerJoinFixtureWithSessionScope(t, nil)
+	preview, err := fixture.destination.PreviewPeerConnectionBundle(fixture.bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.AllowedSessionIDs == nil {
+		t.Fatal("preview allowed_session_ids is nil; Wails would serialize it as null")
+	}
+	encoded, err := json.Marshal(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"allowed_session_ids":[]`)) {
+		t.Fatalf("preview must encode an empty session scope as an array: %s", encoded)
 	}
 }
 

@@ -399,6 +399,16 @@ attempt，把 `open/authorized/offer/answer/ICE/error` 放入按 Peer pair 派�
 信封，再接入 Stage 1 的 Pion transport。Rendezvous 只能看到 opaque topic/presence/message id
 和 ciphertext；membership token 只进入 DataChannel 内的第二次身份握手。
 
+同一条加密 route 还承载分页的 `catalog_request/catalog_response`。host 在每次目录请求时重新按
+active membership、撤销、双方 session scope、双方 permission ceiling 和 owner
+`remote_permission` 过滤本机会话；目录查询不创建 Pion attempt 或 terminal subscriber。
+Desktop 每 3 秒向当前可解析的 host presence 拉取目录，把成功结果缓存为
+`session_id -> Peer route`，并以 session id 为权威和 Relay 会话合并到侧栏；同一 session 同时存在
+时 Relay 条目覆盖 Peer 条目。用户点开 Peer-only 条目后，renderer 只把 session id、replay cursor
+和 client instance id 交给 Go，Go 从缓存取 route、从 Peer store 重读 identity/membership/scope，
+再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback、文件浏览、
+文件/图片粘贴或 service preview。
+
 Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
 registration：单次注册最多等待 10 秒，失败以 500 ms 到 8 s 退避，连接断开和 15 分钟
 presence 轮换都会重建。运行状态只向 renderer 投影 mode、service origin、状态、最近注册时间、

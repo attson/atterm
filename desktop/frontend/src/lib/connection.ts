@@ -1558,6 +1558,7 @@ export interface SessionInfo {
    *  so a client MUST run decryptSessionFields to recover them. Empty/absent
    *  for sessions whose agent had no unlocked account_key. */
   sealed?: string;
+  peer_direct?: boolean;
 }
 
 export type TaskState =

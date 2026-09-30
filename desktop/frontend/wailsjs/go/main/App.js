@@ -362,6 +362,10 @@ export function ListPeerMembers() {
   return window['go']['main']['App']['ListPeerMembers']();
 }
 
+export function ListPeerSessions() {
+  return window['go']['main']['App']['ListPeerSessions']();
+}
+
 export function ListRelaySessions() {
   return window['go']['main']['App']['ListRelaySessions']();
 }
@@ -554,6 +558,10 @@ export function SendNativeDirectFrame(arg1, arg2) {
   return window['go']['main']['App']['SendNativeDirectFrame'](arg1, arg2);
 }
 
+export function SendPeerNativeDirectFrame(arg1, arg2) {
+  return window['go']['main']['App']['SendPeerNativeDirectFrame'](arg1, arg2);
+}
+
 export function SetAINotificationsOnly(arg1) {
   return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
 }
@@ -726,6 +734,10 @@ export function StartNativeDirect(arg1) {
   return window['go']['main']['App']['StartNativeDirect'](arg1);
 }
 
+export function StartPeerNativeDirect(arg1) {
+  return window['go']['main']['App']['StartPeerNativeDirect'](arg1);
+}
+
 export function StartPeerQuickTunnel() {
   return window['go']['main']['App']['StartPeerQuickTunnel']();
 }
@@ -744,6 +756,10 @@ export function StopForward(arg1, arg2) {
 
 export function StopNativeDirect(arg1) {
   return window['go']['main']['App']['StopNativeDirect'](arg1);
+}
+
+export function StopPeerNativeDirect(arg1) {
+  return window['go']['main']['App']['StopPeerNativeDirect'](arg1);
 }
 
 export function StopPeerQuickTunnel() {

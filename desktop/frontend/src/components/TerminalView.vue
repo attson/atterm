@@ -7,7 +7,8 @@ import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "xterm-addon-webgl";
 import { SearchAddon } from "xterm-addon-search";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-import { SessionConnection, type DirectFallbackReason, type SessionRouteDiagnostics, type Status } from "../lib/connection";
+import { SessionConnection, type ConnectionHandlers, type DirectFallbackReason, type SessionRouteDiagnostics, type Status } from "../lib/connection";
+import { PeerSessionConnection } from "../lib/peerSessionConnection";
 import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
@@ -66,7 +67,7 @@ import TerminalSearchBar from "./TerminalSearchBar.vue";
 
 const props = withDefaults(
   defineProps<{
-    endpoint: Endpoint;
+    endpoint?: Endpoint | null;
     directEndpoint?: Endpoint | null;
     preferDirect?: boolean;
     sessionId: string;
@@ -86,6 +87,7 @@ const props = withDefaults(
     theme: ITheme;
     commandNotifyThresholdSec?: number;
     isLocalSession?: boolean;
+    peerDirect?: boolean;
     // True when this pane shares its tab with others, so "move to its own tab"
     // is a meaningful action. A single-pane tab already is that tab.
     canDetach?: boolean;
@@ -310,7 +312,7 @@ const searchOpen = ref(false);
 const searchFocusSeq = ref(0);
 const searchResultIndex = ref(-1);
 const searchResultCount = ref(0);
-let conn: SessionConnection | null = null;
+let conn: SessionConnection | PeerSessionConnection | null = null;
 let pluginInputSender: ((text: string) => void) | null = null;
 let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
@@ -453,11 +455,12 @@ const auxKeysCanSend = computed(() =>
   isDriver.value && isPasteAllowed(status.value, props.remotePermission)
 );
 const pasteBlobCanSend = computed(() =>
-  auxKeysCanSend.value && effectiveRemotePermission(props.remotePermission) === "full"
+  !props.peerDirect && auxKeysCanSend.value && effectiveRemotePermission(props.remotePermission) === "full"
 );
 const canOpenPreview = computed(() =>
   Boolean(
     platform.servicePreview &&
+    !props.peerDirect &&
     !props.isLocalSession &&
     isDriver.value &&
     status.value === "attached" &&
@@ -2214,60 +2217,76 @@ function startConnection() {
     conn.attach();
     return;
   }
-  conn = markRaw(new SessionConnection(
-    props.endpoint,
-    props.sessionId,
-    {
-      onOutput: (data) => term?.write(data),
-      onClose: (info) => {
-        term?.write(
-          `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`
-        );
-      },
-      onStatus: (s) => {
-        status.value = s;
-        if (s !== "attached" && previews.value.length) void stopAllPreviews();
-      },
-      onReplayProgress: (progress) => {
-        replayProgress.value = progress.phase === "end" ? null : progress;
-        if (progress.phase === "start" || progress.phase === "chunk") {
-          replayInputGuard.onProgress(progress.phase);
-        } else {
-          replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(release));
-        }
-      },
-      onRouteChange: (diagnostics) => {
-        routeDiagnostics.value = diagnostics;
-      },
-      onMeta: (meta) => {
-        if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
-        if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
-        applyViewerSize();
-      },
-      onDriverChange: (_driverID, isMe, driverName) => {
-        const wasDriver = isDriver.value;
-        isDriver.value = isMe;
-        driverHostname.value = isMe ? "" : driverName;
-        syncTerminalInputMode();
-        applyViewerSize();
-        if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
-        if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
-        if (!isMe && previews.value.length) void stopAllPreviews();
-        if (wasDriver !== isMe) {
-          emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
-        }
-      },
+  const handlers: ConnectionHandlers = {
+    onOutput: (data) => term?.write(data),
+    onClose: (info) => {
+      term?.write(
+        `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`,
+      );
     },
-    {
-      clientName: localHostname.value,
-      remote: !props.isLocalSession,
-      preferDirect: props.preferDirect,
-      directEndpoint: props.directEndpoint,
-      directTransportFactory: platform.directConnection.createTransport,
+    onStatus: (s) => {
+      status.value = s;
+      if (s !== "attached" && previews.value.length) void stopAllPreviews();
+    },
+    onReplayProgress: (progress) => {
+      replayProgress.value = progress.phase === "end" ? null : progress;
+      if (progress.phase === "start" || progress.phase === "chunk") {
+        replayInputGuard.onProgress(progress.phase);
+      } else {
+        replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(release));
+      }
+    },
+    onRouteChange: (diagnostics) => {
+      routeDiagnostics.value = diagnostics;
+    },
+    onMeta: (meta) => {
+      if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
+      if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
+      applyViewerSize();
+    },
+    onDriverChange: (_driverID, isMe, driverName) => {
+      const wasDriver = isDriver.value;
+      isDriver.value = isMe;
+      driverHostname.value = isMe ? "" : driverName;
+      syncTerminalInputMode();
+      applyViewerSize();
+      if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
+      if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
+      if (!isMe && previews.value.length) void stopAllPreviews();
+      if (wasDriver !== isMe) {
+        emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
+      }
+    },
+  };
+  if (props.peerDirect) {
+    const factory = platform.peer?.createSessionTransport;
+    if (!factory) {
+      status.value = "error";
+      return;
     }
-  ));
+    conn = markRaw(
+      new PeerSessionConnection(props.sessionId, handlers, {
+        clientName: localHostname.value,
+        transportFactory: factory,
+      }),
+    );
+  } else {
+    if (!props.endpoint) {
+      status.value = "error";
+      return;
+    }
+    conn = markRaw(
+      new SessionConnection(props.endpoint, props.sessionId, handlers, {
+        clientName: localHostname.value,
+        remote: !props.isLocalSession,
+        preferDirect: props.preferDirect,
+        directEndpoint: props.directEndpoint,
+        directTransportFactory: platform.directConnection.createTransport,
+      }),
+    );
+  }
   conn.attach();
-  pluginSessionConnections?.set(props.sessionId, conn);
+  if (conn instanceof SessionConnection) pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins
   // (Quick Input) can pipe text through this same driver connection.
   // A fresh SessionConnection would attach as a viewer and have its

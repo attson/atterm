@@ -182,6 +182,174 @@ func TestRouteOnlinePeerCountTracksPresenceWithoutExposingIdentifiers(t *testing
 	}
 }
 
+func TestRouteCatalogReturnsAuthorizedSessionsWithoutOpeningTerminalAttempt(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	requests := make(chan PeerCatalogRequest, 2)
+	hostRoute, err := NewRoute(ctx, RouteConfig{
+		Connection: fixture.hostConnection, InitialPresence: fixture.hostSnapshot,
+		SpaceID: fixture.spaceID, EpochKey: fixture.epoch, LocalPeerID: fixture.hostIdentity.PeerID(),
+		LocalWrappingIdentity: fixture.hostWrapping,
+		ResolvePeer: func(presenceID string) (PeerRoute, bool) {
+			peer := fixture.clientPeer()
+			return peer, presenceID == peer.PresenceID
+		},
+		CatalogHost: func(_ context.Context, request PeerCatalogRequest) ([]PeerSession, error) {
+			requests <- request
+			result := make([]PeerSession, routeCatalogPageSize+1)
+			for index := range result {
+				result[index] = PeerSession{
+					ID: uuid.NewString(), Command: "zsh", Cwd: "/tmp", Title: "terminal",
+					Cols: 80, Rows: 24, HostID: fixture.hostIdentity.PeerID(),
+					Permission: peertransport.PermissionControl,
+				}
+			}
+			return result, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	sessions, err := clientRoute.Catalog(ctx, fixture.hostPeer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != routeCatalogPageSize+1 || sessions[0].Permission != peertransport.PermissionControl {
+		t.Fatalf("catalog=%+v", sessions)
+	}
+	select {
+	case request := <-requests:
+		if request.ClientPeerID != fixture.clientIdentity.PeerID() {
+			t.Fatalf("catalog client=%q", request.ClientPeerID)
+		}
+	default:
+		t.Fatal("host catalog callback was not called")
+	}
+	hostRoute.mu.Lock()
+	attempts := len(hostRoute.hosts)
+	hostRoute.mu.Unlock()
+	if attempts != 0 {
+		t.Fatalf("catalog created %d terminal attempts", attempts)
+	}
+}
+
+func TestRouteCatalogRejectsUnauthorizedAndOversizedResponses(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hostRoute, err := NewRoute(ctx, RouteConfig{
+		Connection: fixture.hostConnection, InitialPresence: fixture.hostSnapshot,
+		SpaceID: fixture.spaceID, EpochKey: fixture.epoch, LocalPeerID: fixture.hostIdentity.PeerID(),
+		LocalWrappingIdentity: fixture.hostWrapping,
+		ResolvePeer: func(presenceID string) (PeerRoute, bool) {
+			peer := fixture.clientPeer()
+			return peer, presenceID == peer.PresenceID
+		},
+		CatalogHost: func(context.Context, PeerCatalogRequest) ([]PeerSession, error) {
+			return []PeerSession{{
+				ID: uuid.NewString(), Title: string(bytes.Repeat([]byte("x"), routeMaxMetadataSize+1)),
+				Cols: 80, Rows: 24, HostID: fixture.hostIdentity.PeerID(), Permission: peertransport.PermissionView,
+			}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	if _, err := clientRoute.Catalog(ctx, fixture.hostPeer()); !errors.Is(err, ErrAuthentication) {
+		t.Fatalf("oversized catalog error=%v", err)
+	}
+}
+
+func TestRouteCatalogShrinksMaximalMetadataPagesToFitEncryptedEnvelope(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	maximal := string(bytes.Repeat([]byte("x"), routeMaxMetadataSize))
+	hostRoute, err := NewRoute(ctx, RouteConfig{
+		Connection: fixture.hostConnection, InitialPresence: fixture.hostSnapshot,
+		SpaceID: fixture.spaceID, EpochKey: fixture.epoch, LocalPeerID: fixture.hostIdentity.PeerID(),
+		LocalWrappingIdentity: fixture.hostWrapping,
+		ResolvePeer: func(presenceID string) (PeerRoute, bool) {
+			peer := fixture.clientPeer()
+			return peer, presenceID == peer.PresenceID
+		},
+		CatalogHost: func(context.Context, PeerCatalogRequest) ([]PeerSession, error) {
+			result := make([]PeerSession, routeCatalogPageSize)
+			for index := range result {
+				result[index] = PeerSession{
+					ID: uuid.NewString(), Command: maximal, Cwd: maximal, Title: maximal,
+					Cols: 80, Rows: 24, HostID: fixture.hostIdentity.PeerID(), Host: maximal,
+					User: maximal, SSHHostID: maximal, Permission: peertransport.PermissionView,
+					TaskState: maximal, CurrentCommand: maximal, Type: maximal,
+				}
+			}
+			return result, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	sessions, err := clientRoute.Catalog(ctx, fixture.hostPeer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != routeCatalogPageSize {
+		t.Fatalf("catalog entries=%d want=%d", len(sessions), routeCatalogPageSize)
+	}
+}
+
+func TestRouteCatalogCapsHostSnapshotAtMaximumEntries(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hostRoute, err := NewRoute(ctx, RouteConfig{
+		Connection: fixture.hostConnection, InitialPresence: fixture.hostSnapshot,
+		SpaceID: fixture.spaceID, EpochKey: fixture.epoch, LocalPeerID: fixture.hostIdentity.PeerID(),
+		LocalWrappingIdentity: fixture.hostWrapping,
+		ResolvePeer: func(presenceID string) (PeerRoute, bool) {
+			peer := fixture.clientPeer()
+			return peer, presenceID == peer.PresenceID
+		},
+		CatalogHost: func(context.Context, PeerCatalogRequest) ([]PeerSession, error) {
+			result := make([]PeerSession, routeMaxCatalogEntries+1)
+			for index := range result {
+				result[index] = PeerSession{
+					ID: uuid.NewString(), Cols: 80, Rows: 24,
+					HostID: fixture.hostIdentity.PeerID(), Permission: peertransport.PermissionView,
+				}
+			}
+			return result, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	sessions, err := clientRoute.Catalog(ctx, fixture.hostPeer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != routeMaxCatalogEntries {
+		t.Fatalf("catalog entries=%d want=%d", len(sessions), routeMaxCatalogEntries)
+	}
+}
+
 func TestRouteReleasesAuthorizedHostCallbackWhenAuthorizationDocumentsFail(t *testing.T) {
 	fixture := newRouteFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

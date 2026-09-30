@@ -136,6 +136,8 @@ export interface RemoteSession {
    *  have an unlocked account_key. See @lib/opaque openSessionFields
    *  for the decrypt path. */
   sealed?: string
+  /** Desktop-only accountless route discovered through encrypted Rendezvous. */
+  peer_direct?: boolean
 }
 
 export interface SessionBridge {
@@ -279,6 +281,7 @@ export interface TemplateBridge {
 
 import type { AuxKey } from '../lib/auxKeys'
 import type { DirectClientOptions } from '../lib/directClient'
+import type { NativeDirectClientOptions } from '../lib/nativeDirectClient'
 import type { DirectTransport } from '../lib/connection'
 
 export interface AuxKeyBridge {
@@ -337,6 +340,8 @@ export interface PeerBridge {
   getRendezvousStatus(): Promise<PeerRendezvousStatus>
   reconnectRendezvous(): Promise<PeerRendezvousStatus>
   syncConfigNow(): Promise<PeerConfigSyncStatus>
+  listSessions?(): Promise<RemoteSession[]>
+  createSessionTransport?: (options: NativeDirectClientOptions) => DirectTransport
   /** Desktop host controls. Clients without a local gateway leave these absent. */
   getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
   startQuickTunnel?(): Promise<PeerQuickTunnelStatus>

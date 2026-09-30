@@ -99,7 +99,7 @@ func (m *peerSpaceManager) inspectConnectionBundle(raw string) (peerproto.Verifi
 	return bundle, PeerConnectionPreview{
 		SpaceID: bundle.Genesis.Document.SpaceID, Fingerprint: peerGenesisFingerprint(bundle.Genesis),
 		IssuerPeerID: bundle.Document.IssuerPeerID, Permission: string(ticket.Permission),
-		AllowedSessionIDs: append([]string(nil), ticket.AllowedSessionIDs...),
+		AllowedSessionIDs: append([]string{}, ticket.AllowedSessionIDs...),
 		CanInvite:         ticket.CanInvite, CanSyncSecrets: ticket.CanSyncSecrets,
 		InvitationExpiresAt: ticket.ExpiresAt, BundleExpiresAt: bundle.Document.ExpiresAt,
 		RouteKind: string(route.Kind), RouteURL: route.URL,

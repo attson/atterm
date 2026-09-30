@@ -95,13 +95,32 @@ so the Stage exit gate is not claimed by this PR.
 - Per-device last seen/sync state without implying server-side authority。
 - Manual reconnect/sync actions and diagnostic export。
 
+## PR 3.6 - Desktop session discovery and attach
+
+Implementation status: Desktop now requests a bounded, paginated session catalog over the existing
+pairwise-encrypted Rendezvous route, while the host revalidates active membership, revocation,
+session scope and permission ceilings for every request. Catalog reads create no terminal subscriber
+or Pion attempt. The Desktop sidebar merges discovered Peer sessions by authoritative session id,
+prefers a Relay entry when both exist, and opens Peer-only sessions through the native Go/Pion client
+without a Relay `/client` WebSocket. Attach re-reads durable Peer state and reuses the existing
+membership handshake, host permission enforcement, periodic revocation check and config channel.
+Automated in-memory catalog/Pion tests and frontend direct-only connection tests are implemented;
+the real two-Desktop flow has also passed local acceptance: discovery, control, restart without a
+new Quick Tunnel URL, view-only enforcement, member revocation and Rendezvous failure isolation.
+
+- Discover only sessions authorized by both members' scopes and effective permission ceilings。
+- Keep session metadata, SDP/ICE, membership material and terminal bytes opaque to Rendezvous。
+- Cache route identity only in Go; renderer receives no membership token or Peer route secret。
+- Reconnect a selected session through native Pion with replay de-duplication and no Relay fallback。
+- Keep local terminal, Relay and Quick Tunnel lifecycle independent from Rendezvous discovery failure。
+
 ## Stage Exit Gate
 
-- [ ] A trusted client reconnects after desktop restart without receiving a new Quick Tunnel URL.
+- [x] A trusted client reconnects after desktop restart without receiving a new Quick Tunnel URL.
 - [ ] Official and self-hosted services pass the same contract suite.
 - [ ] Rendezvous restart only drops ephemeral presence/signaling.
 - [ ] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
-- [ ] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
+- [x] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
 - [ ] A/B/C sync converges through rotating online peers without a designated hub.
 - [ ] Restrictive NAT is reported honestly; Rendezvous alone is not called a data relay.
 

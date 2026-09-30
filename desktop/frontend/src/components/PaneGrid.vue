@@ -220,8 +220,8 @@ function requestServicePreview(pane: Pane): void {
     >
       <div class="term-host">
         <TerminalView
-          v-if="pane.sessionId && endpointFor(pane)"
-          :endpoint="endpointFor(pane)!"
+          v-if="pane.sessionId && (endpointFor(pane) || pane.peerDirect)"
+          :endpoint="endpointFor(pane)"
           :direct-endpoint="pane.remote ? directEndpoint : null"
           :prefer-direct="pane.remote && preferDirect"
           :session-id="pane.sessionId"
@@ -234,6 +234,7 @@ function requestServicePreview(pane: Pane): void {
           :avoid-top-right-badge="pane.remote || (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
           :theme="terminalTheme"
           :is-local-session="!pane.remote"
+          :peer-direct="pane.peerDirect === true"
           :command-notify-threshold-sec="commandNotifyThresholdSec"
           :resize-suspended="dragging"
           :search-request-seq="searchRequestSeq"
@@ -262,7 +263,7 @@ function requestServicePreview(pane: Pane): void {
              badge so opening a preview never replaces the remote-terminal badge.
              TerminalView teleports its switcher / add-form into this slot. -->
         <span
-          v-if="pane.sessionId && pane.remote && servicePreviewAvailable"
+          v-if="pane.sessionId && pane.remote && !pane.peerDirect && servicePreviewAvailable"
           class="service-preview-controls-slot"
           :id="`service-preview-controls-${pane.sessionId}`"
           aria-live="polite"
@@ -278,7 +279,7 @@ function requestServicePreview(pane: Pane): void {
           "
         >
           <button
-            v-if="servicePreviewAvailable"
+            v-if="servicePreviewAvailable && !pane.peerDirect"
             type="button"
             class="remote-preview-trigger"
             data-testid="remote-preview-trigger"

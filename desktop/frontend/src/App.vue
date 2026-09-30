@@ -166,6 +166,9 @@ const selectedProfileId = ref<string>("");
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
 const remoteRawList = ref<SessionInfo[]>([]);
+const peerRawList = ref<SessionInfo[]>([]);
+let peerPollHandle: number | null = null;
+let peerPollBusy = false;
 const REMOTE_STALE_TAB_GRACE_MS = 60_000;
 const remoteMissingSince = new Map<string, number>();
 // IDs of local sessions we just spawned (spawnLocalShell / executeRestore) but
@@ -215,7 +218,7 @@ async function setSidebarCollapsedAndPersist(v: boolean) {
 }
 
 function onSidebarOpen(s: RemoteSession) {
-  openRemoteAsTab(s.session_id);
+  openRemoteAsTab(s.session_id, true, s.peer_direct === true);
 }
 
 // A session dragged out of the sidebar onto a pane. Placement rules live in
@@ -296,7 +299,7 @@ function onDetachSessionToTab(sessionId: string) {
   const src = tabs.value.find((tt) => tt.id === plan.tabId);
   if (!src) return;
   closePaneAt(src, plan.paneIdx, { detachOnly: true });
-  openRemoteAsTab(sessionId, plan.pane.remote);
+  openRemoteAsTab(sessionId, plan.pane.remote, plan.pane.peerDirect === true);
 }
 
 // Vacates the pane the dragged session was showing in, if any. detachOnly is
@@ -701,7 +704,15 @@ const allUsedSessionIds = computed(() => {
 const openSessionIds = computed(() => Array.from(allUsedSessionIds.value));
 
 function endpointFor(pane: Pane): Endpoint | null {
+  if (pane.peerDirect) return null;
   return pane.remote ? remoteEndpoint.value : localEndpoint.value;
+}
+
+function isPeerSession(sessionId: string): boolean {
+  return (
+    peerRawList.value.some((session) => session.id === sessionId) &&
+    !remoteRawList.value.some((session) => session.id === sessionId)
+  );
 }
 
 function paneSessionInfo(pane: Pane): SessionInfo | null {
@@ -747,7 +758,7 @@ function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
         // (covers the case where two consecutive sweeps fire before the host
         // comes back).
         const lastSeenInfo = snapshot?.get(p.sessionId) ?? p.lastSeenInfo;
-        t.panes[i] = { sessionId: null, remote: p.remote, lastSeenInfo };
+        t.panes[i] = { sessionId: null, remote: p.remote, peerDirect: p.peerDirect, lastSeenInfo };
         clearedHere = true;
       }
     }
@@ -767,7 +778,10 @@ function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
 
 function refreshVisibleRemoteSessions() {
   const localIds = new Set(localList.value.map((s) => s.id));
-  remoteList.value = remoteRawList.value.filter((s) => !localIds.has(s.id));
+  const merged = new Map<string, SessionInfo>();
+  for (const session of peerRawList.value) merged.set(session.id, { ...session, peer_direct: true });
+  for (const session of remoteRawList.value) merged.set(session.id, session);
+  remoteList.value = Array.from(merged.values()).filter((s) => !localIds.has(s.id));
 }
 
 function applyLocalSessions(sessions: SessionInfo[]) {
@@ -789,6 +803,10 @@ function applyLocalSessions(sessions: SessionInfo[]) {
 function applyRemoteSessions(sessions: SessionInfo[]) {
   remoteRawList.value = sessions;
   refreshVisibleRemoteSessions();
+  pruneMissingRemoteTabs();
+}
+
+function pruneMissingRemoteTabs() {
   const pruned = pruneStaleRemoteTabs({
     tabs: tabs.value,
     remoteSessions: remoteList.value,
@@ -839,6 +857,34 @@ async function pollRemoteSessions() {
   }
 }
 
+async function pollPeerSessions() {
+  if (peerPollBusy || !$platform.peer?.listSessions) return;
+  peerPollBusy = true;
+  try {
+    const sessions = await $platform.peer.listSessions();
+    peerRawList.value = sessions
+      .map((session) => {
+        const raw = session as unknown as SessionInfo & { session_id?: string };
+        return { ...raw, id: raw.id ?? raw.session_id ?? "", peer_direct: true };
+      })
+      .filter((session) => session.id !== "");
+    refreshVisibleRemoteSessions();
+    pruneMissingRemoteTabs();
+  } catch (e) {
+    logDebug("rendezvous", "Peer session discovery failed; keeping last list", { error: errText(e) });
+  } finally {
+    peerPollBusy = false;
+  }
+}
+
+function startPeerSessionPoll() {
+  if (!$platform.peer?.listSessions || peerPollHandle !== null) return;
+  void pollPeerSessions();
+  peerPollHandle = window.setInterval(() => {
+    void pollPeerSessions();
+  }, 3000);
+}
+
 // HTTP fallback for non-Wails clients when the `/client-sessions` WS cannot
 // be established. Skips the Wails-specific listRemoteSessions() and hits the
 // platform bridge's HTTP `/api/sessions` directly. The web
@@ -867,7 +913,7 @@ async function refreshPlatformRelayState(): Promise<boolean> {
   if (!endpoint) {
     sessionListStreams.stopRemote();
     remoteRawList.value = [];
-    remoteList.value = [];
+    refreshVisibleRemoteSessions();
     return false;
   }
   connectRemoteSessionListWS(endpoint);
@@ -894,7 +940,7 @@ function connectRemoteSessionList(
 ) {
   sessionListStreams.stopRemote();
   remoteRawList.value = [];
-  remoteList.value = [];
+  refreshVisibleRemoteSessions();
   remoteMissingSince.clear();
   remoteEndpoint.value = attachEndpoint;
   directSignalEndpoint.value = signalEndpoint;
@@ -1354,7 +1400,7 @@ function onSwitchTab(delta: number) {
 // it, and every detachOnly caller re-places it immediately. resolvePaneRemote
 // is the guard for the day that stops holding, since a local session taking
 // this branch would be pointed at the relay endpoint and render empty.
-function openRemoteAsTab(sessionId: string, remote = true) {
+function openRemoteAsTab(sessionId: string, remote = true, peerDirect = isPeerSession(sessionId)) {
   // If any tab already holds a pane for this session, switch to it and
   // focus the EXACT pane — sidebar clicks on a session in a multi-pane
   // tab should land focus on that pane, not on whichever pane was active
@@ -1376,7 +1422,7 @@ function openRemoteAsTab(sessionId: string, remote = true) {
   tabs.value.push({
     id,
     layout: "single",
-    panes: [{ sessionId, remote: resolved.remote }],
+    panes: [{ sessionId, remote: resolved.remote, peerDirect: resolved.remote && peerDirect }],
     activePaneIdx: 0,
     colRatio: RATIO_DEFAULT,
     rowRatio: RATIO_DEFAULT,
@@ -1417,7 +1463,7 @@ async function mergeSelectedIntoTab(): Promise<void> {
   const capacity = PANE_COUNT[layout];
   const panes: Pane[] = new Array(capacity).fill(null).map((_, i) => (
     i < ids.length
-      ? { sessionId: ids[i], remote: true }
+      ? { sessionId: ids[i], remote: true, peerDirect: isPeerSession(ids[i]) }
       : { sessionId: null, remote: false }
   ));
   const newTab: Tab = {
@@ -1812,6 +1858,8 @@ onMounted(async () => {
     }
   }
 
+  if (caps.wailsBindings) startPeerSessionPoll();
+
   // Auto-update poll: every 5s pull state.available || ready and toggle the
   // ⚙ badge dot. Lower frequency than session poll because update state
   // changes are rare (boot check + 24h ticker). Wails-only — on web/capacitor
@@ -1884,6 +1932,8 @@ onUnmounted(() => {
   clearRelayIdentity();
   window.removeEventListener("hashchange", syncRoute);
   sessionListStreams.detachAll();
+  if (peerPollHandle !== null) window.clearInterval(peerPollHandle);
+  peerPollHandle = null;
   if (toastHandle !== null) window.clearTimeout(toastHandle);
   if (updatePollHandle !== null) window.clearInterval(updatePollHandle);
   teardownMeasureProbe();

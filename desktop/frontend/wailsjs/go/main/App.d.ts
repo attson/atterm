@@ -185,6 +185,8 @@ export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
 
 export function ListPeerMembers():Promise<Array<main.PeerMember>>;
 
+export function ListPeerSessions():Promise<string>;
+
 export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
 
 export function ListRemoteSessions():Promise<string>;
@@ -281,6 +283,8 @@ export function SendFeishuTestCard(arg1:string):Promise<void>;
 
 export function SendNativeDirectFrame(arg1:string,arg2:Array<number>):Promise<void>;
 
+export function SendPeerNativeDirectFrame(arg1:string,arg2:Array<number>):Promise<void>;
+
 export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
@@ -367,6 +371,8 @@ export function StartForward(arg1:string,arg2:string):Promise<void>;
 
 export function StartNativeDirect(arg1:main.NativeDirectStartRequest):Promise<void>;
 
+export function StartPeerNativeDirect(arg1:main.NativeDirectStartRequest):Promise<void>;
+
 export function StartPeerQuickTunnel():Promise<main.PeerQuickTunnelStatus>;
 
 export function StartServicePreview(arg1:main.ServicePreviewStartRequest):Promise<main.ServicePreviewStartResponse>;
@@ -376,6 +382,8 @@ export function StartWidget():Promise<void>;
 export function StopForward(arg1:string,arg2:string):Promise<void>;
 
 export function StopNativeDirect(arg1:string):Promise<void>;
+
+export function StopPeerNativeDirect(arg1:string):Promise<void>;
 
 export function StopPeerQuickTunnel():Promise<void>;
 

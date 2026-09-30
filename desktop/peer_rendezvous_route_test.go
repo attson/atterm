@@ -15,6 +15,7 @@ import (
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/rendezvous"
 	"github.com/attson/atterm/internal/rendezvousclient"
+	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -86,6 +87,19 @@ func TestPeerRendezvousHostReusesSessionAndConfigAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clientRoute.Close()
+	catalog, err := clientRoute.Catalog(ctx, rendezvousclient.PeerRoute{
+		PeerID: hostIdentity.PeerID(), PresenceID: hostCoordinates.PresenceID,
+		WrappingPublicKey: mustMembership(t, fixture.hostMembership, genesis).WrappingPublicKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 1 || catalog[0].ID != fixture.session.ID.String() || catalog[0].Permission != peertransport.PermissionControl {
+		t.Fatalf("catalog=%+v", catalog)
+	}
+	if got := fixture.session.SubscriberCount(); got != 0 {
+		t.Fatalf("catalog created %d terminal subscribers", got)
+	}
 
 	records := make(chan directClientRecord, 16)
 	configMessages := make(chan peerConfigTestRecord, 8)
@@ -149,6 +163,48 @@ func TestPeerRendezvousHostReusesSessionAndConfigAttachment(t *testing.T) {
 	}
 	if token, ok := client.RemoteMembershipToken(); !ok || token != fixture.hostMembership {
 		t.Fatal("client lost exact authenticated host membership")
+	}
+}
+
+func TestPeerRendezvousCatalogValidationEnforcesSessionScopeAndPermission(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	genesis, err := peerproto.VerifyGenesis(fixture.genesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientMembership := mustMembership(t, fixture.clientMembership, genesis)
+	host := &peerRendezvousHost{app: fixture.app}
+	remote := rendezvousclient.PeerRoute{
+		PeerID: fixture.clientIdentity.PeerID(), PresenceID: "unused",
+		WrappingPublicKey: clientMembership.WrappingPublicKey,
+	}
+	accepted, err := host.validateCatalog(remote, []rendezvousclient.PeerSession{
+		{
+			ID: fixture.session.ID.String(), Cols: 80, Rows: 24, HostID: fixture.host.hostID,
+			Permission: peertransport.PermissionControl,
+		},
+		{
+			ID: uuid.NewString(), Cols: 80, Rows: 24, HostID: fixture.host.hostID,
+			Permission: peertransport.PermissionView,
+		},
+		{
+			ID: fixture.session.ID.String(), Cols: 80, Rows: 24, HostID: fixture.host.hostID,
+			Permission: peertransport.PermissionFull,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accepted) != 1 || accepted[fixture.session.ID].info.RemotePermission != proto.RemotePermissionControl {
+		t.Fatalf("unauthorized catalog entry changed accepted result: %+v", accepted)
+	}
+
+	accepted, err = host.validateCatalog(remote, []rendezvousclient.PeerSession{{
+		ID: fixture.session.ID.String(), Cols: 80, Rows: 24, HostID: fixture.host.hostID,
+		Permission: peertransport.PermissionControl,
+	}})
+	if err != nil || len(accepted) != 1 {
+		t.Fatalf("authorized catalog=%+v err=%v", accepted, err)
 	}
 }
 

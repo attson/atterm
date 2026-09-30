@@ -17,6 +17,12 @@ export interface NativeDirectBridge {
   stop(id: string): Promise<void>
 }
 
+/** Go/Pion transports authenticate natively. Relay direct callers may still
+ * include accountKey, while accountless Peer callers intentionally omit it. */
+export type NativeDirectClientOptions = Omit<DirectClientOptions, 'accountKey'> & {
+  accountKey?: Uint8Array
+}
+
 function asError(value: unknown): Error {
   if (value instanceof Error) return value
   if (typeof value === 'string') return new Error(value)
@@ -41,8 +47,8 @@ function diagnostics(event: NativeDirectEvent): DirectTransportDiagnostics | nul
   return { iceState: state, ...(candidateType ? { candidateType } : {}) }
 }
 
-/** Wails adapter for the Go/Pion direct client. SessionConnection still owns
- * route switching, replay sequencing, and Relay fallback. */
+/** Wails adapter for Go/Pion direct clients. Its owner supplies either the
+ * Relay fallback lifecycle or the accountless Peer reconnect lifecycle. */
 export class NativeDirectClientTransport implements DirectTransport {
   private readonly id = crypto.randomUUID()
   private off: (() => void) | null = null
@@ -52,14 +58,15 @@ export class NativeDirectClientTransport implements DirectTransport {
   private closed = false
 
   constructor(
-    private readonly options: DirectClientOptions,
+    private readonly options: NativeDirectClientOptions,
     private readonly bridge: NativeDirectBridge,
+    private readonly eventPrefix = 'native-direct:event:',
   ) {}
 
   start(): void {
     if (this.started || this.closed) return
     this.started = true
-    this.off = this.bridge.on(`native-direct:event:${this.id}`, (data) => this.handleEvent(data))
+    this.off = this.bridge.on(`${this.eventPrefix}${this.id}`, (data) => this.handleEvent(data))
     void this.bridge.start({
       id: this.id,
       session_id: this.options.sessionId,

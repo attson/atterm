@@ -585,6 +585,12 @@ describe("remote tab session retention", () => {
     expect(source).toContain('location.hash = ""');
   });
 
+  test("successful Peer polls share the remote-tab stale grace behavior", () => {
+    const peerPoll = source.match(/async function pollPeerSessions\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(peerPoll).toContain("refreshVisibleRemoteSessions()");
+    expect(peerPoll).toContain("pruneMissingRemoteTabs()");
+  });
+
   test("sweep auto-closes a tab whose local/SSH session exited, leaving no live session", () => {
     // A terminal (local shell or adopted SSH session, both remote:false) that
     // exits gets its pane nulled by sweepMissingSessions. If the tab then holds

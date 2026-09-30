@@ -52,8 +52,9 @@ Implementation status: sync-epoch-derived opaque topics, 15-minute rotating memb
 adjacent-slot resolution, ephemeral registration challenge identities, an in-memory reachability
 directory, and deterministic all-peer/bounded-fanout config-sync planning are implemented. The
 Desktop planner revalidates active membership and joins reachability only to durable peer
-acknowledgement vectors. Pion signaling, automatic reconnect/backoff, and actual route dialing remain
-in PR 3.4, so the Stage A/B/C network convergence exit gate is not claimed yet.
+acknowledgement vectors. The planner now drives authenticated config-only Pion attempts without a
+terminal subscriber; rotating three-peer anti-entropy convergence is covered by durable replica and
+real Pion route tests.
 
 - Space members register rotating presence identifiers derived from Space material, not email/account ids。
 - Small Spaces attempt anti-entropy with all reachable peers; larger Spaces use bounded fanout based on vector lag。
@@ -121,7 +122,7 @@ new Quick Tunnel URL, view-only enforcement, member revocation and Rendezvous fa
 - [x] Rendezvous restart only drops ephemeral presence/signaling.
 - [ ] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
 - [x] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
-- [ ] A/B/C sync converges through rotating online peers without a designated hub.
+- [x] A/B/C sync converges through rotating online peers without a designated hub.
 - [ ] Restrictive NAT is reported honestly; Rendezvous alone is not called a data relay.
 
 Verification:

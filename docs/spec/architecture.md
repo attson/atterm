@@ -393,11 +393,13 @@ Rendezvous snapshot/online/offline 只能进入内存 reachability directory。D
 最多 4 个，按本地 operation lag、last exchange 和 slot 轮换排序。由此 A/B/C 等小拓扑不需要
 指定中心节点，大拓扑也不会让每个前台客户端同时拨所有成员。
 
-discovery planner 本身只产出 config-sync target，不建立 Pion route，也不创建 terminal
-subscriber。其上层 `internal/rendezvousclient/route.go` 在单条 presence WebSocket 上复用多个
-attempt，把 `open/authorized/offer/answer/ICE/error` 放入按 Peer pair 派生的 XChaCha20-Poly1305
-信封，再接入 Stage 1 的 Pion transport。Rendezvous 只能看到 opaque topic/presence/message id
-和 ciphertext；membership token 只进入 DataChannel 内的第二次身份握手。
+discovery planner 本身只产出 config-sync target，不创建 terminal subscriber。Desktop 每 3 秒
+把 target 映射成 config-only Pion attempt；该 attempt 使用保留的虚拟 session id 绑定握手
+transcript，只接受配置记录，不查 terminal registry、不调用 `Session.Subscribe`，target 离线或
+fanout 轮换时关闭。其下层 `internal/rendezvousclient/route.go` 在单条 presence WebSocket 上复用
+多个 attempt，把 `open/authorized/offer/answer/ICE/error` 放入按 Peer pair 派生的
+XChaCha20-Poly1305 信封，再接入 Stage 1 的 Pion transport。Rendezvous 只能看到 opaque
+topic/presence/message id 和 ciphertext；membership token 只进入 DataChannel 内的第二次身份握手。
 
 同一条加密 route 还承载分页的 `catalog_request/catalog_response`。host 在每次目录请求时重新按
 active membership、撤销、双方 session scope、双方 permission ceiling 和 owner
@@ -421,10 +423,11 @@ epoch，再重建 registration，使旧 topic/presence 与既有 attempt 一起�
 
 Rendezvous 生命周期是附加能力：启动或重连失败不阻塞桌面启动，本地 terminal、Relay 与 Quick
 Tunnel 不读取它的状态。成员 reconnect bundle 可发布 Quick Tunnel + Rendezvous 或仅
-Rendezvous route；首次 invitation redemption 仍固定经 Quick Tunnel。Settings 的手动同步只在
-当前已完成 membership handshake 的 Peer config channel 上重新发送 inventory；无认证通道时明确
-失败，不为同步新建 terminal subscriber 或隐藏的中心上传路径。成员目录中的“最近直连交换”来自
-各设备持久化的 `ConfigSyncPeers.LastExchangeAt`，不是 Rendezvous 提供的在线/last-seen 权威状态。
+Rendezvous route；首次 invitation redemption 仍固定经 Quick Tunnel。自动规划会为可达成员建立
+config-only Pion 通道，Settings 的手动同步则在所有已完成 membership handshake 的 terminal 或
+config-only channel 上重新发送 inventory；无认证通道时明确失败。两条路径都不创建 terminal
+subscriber 或隐藏的中心上传路径。成员目录中的“最近直连交换”来自各设备持久化的
+`ConfigSyncPeers.LastExchangeAt`，不是 Rendezvous 提供的在线/last-seen 权威状态。
 
 ## Relay 多实例架构
 

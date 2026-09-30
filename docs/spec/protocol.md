@@ -1271,6 +1271,13 @@ DataChannel 上完成现有
 `PeerMembershipAuthenticator` 握手，握手通过后才允许创建 terminal subscriber 和
 `peerConfigChannel`。
 
+配置 anti-entropy 使用保留的虚拟 session id
+`ffffffff-ffff-4fff-bfff-ffffffffffff` 建立 config-only `open`。该 id 只作为握手 transcript
+namespace，不对应 registry 中的 PTY，也不受 membership 的 `allowed_session_ids` 限制；host 仍须
+验证双方是当前 active member，并把握手权限固定为 `view`。config-only attempt 只接受
+`CONFIG_INVENTORY/BATCH/ACK` 记录，收到 terminal record 立即关闭，且整个生命周期不调用
+`Session.Subscribe`。旧客户端会把该 id 当不存在的 terminal session 并安全拒绝。
+
 `catalog_request` 用独立 request UUID 和从 0 开始的 offset 请求目标 host 当前可见的 session。
 host 每次请求都重新读取 signed membership/revocation、双方 session scope、双方 permission ceiling
 和 owner `remote_permission`，只在 `catalog_response` 返回交集内的 metadata 与 effective
@@ -1320,7 +1327,10 @@ Desktop 启用 Rendezvous 且已有 Peer Space 时会注册 host presence；单�
 registration_failed` 稳定码。诊断导出只包含 service origin 与聚合状态，不包含 topic、presence id、
 Peer id、SDP/ICE 或 payload。成员重连的
 `ConnectionBundle` 可同时携带 Quick Tunnel 与 Rendezvous，也可以只携带 Rendezvous；首次邀请
-核销仍必须包含可用 Quick Tunnel route，Rendezvous 不承担 bootstrap secret 交换。
+核销仍必须包含可用 Quick Tunnel route，Rendezvous 不承担 bootstrap secret 交换。registration
+在线期间 Desktop 每 3 秒把当前 host presence 与 signed membership、durable acknowledgement
+vector 重新规划，按小 Space 全连接/大 Space bounded fanout 维护 config-only Pion 通道；presence
+离线、fanout 轮换或 registration 结束会关闭不再需要的 outbound 通道。
 
 ## 重连与续传
 

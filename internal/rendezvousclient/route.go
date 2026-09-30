@@ -36,6 +36,12 @@ const (
 	routeMaxMetadataSize   = 1024
 )
 
+var configSyncSessionID = uuid.MustParse("ffffffff-ffff-4fff-bfff-ffffffffffff")
+
+// ConfigSyncSessionID is a reserved transcript namespace for authenticated
+// config-only attempts. It never names a terminal session or subscriber.
+func ConfigSyncSessionID() uuid.UUID { return configSyncSessionID }
+
 const (
 	routeKindOpen       = "open"
 	routeKindAuthorized = "authorized"
@@ -981,11 +987,11 @@ func validateClientAttempt(cfg ClientAttemptConfig) (peerproto.VerifiedGrant, pe
 	}
 	now := time.Now()
 	client, err := peerproto.VerifyGrant(cfg.ClientMembershipToken, genesis, now)
-	if err != nil || client.Document.SubjectPeerID != cfg.Identity.PeerID() || !membershipAllowsSession(client, cfg.SessionID) {
+	if err != nil || client.Document.SubjectPeerID != cfg.Identity.PeerID() || !membershipAllowsRoute(client, cfg.SessionID) {
 		return peerproto.VerifiedGrant{}, peerproto.VerifiedGrant{}, peerproto.VerifiedGenesis{}, ErrAuthentication
 	}
 	host, err := peerproto.VerifyGrant(cfg.HostMembershipToken, genesis, now)
-	if err != nil || !membershipAllowsSession(host, cfg.SessionID) {
+	if err != nil || !membershipAllowsRoute(host, cfg.SessionID) {
 		return peerproto.VerifiedGrant{}, peerproto.VerifiedGrant{}, peerproto.VerifiedGenesis{}, ErrAuthentication
 	}
 	return client, host, genesis, nil
@@ -1005,7 +1011,7 @@ func validateHostRouteAuthorization(request PeerOpenRequest, auth HostAuthorizat
 	if err != nil || auth.Identity == nil || client.Document.SubjectPeerID != request.ClientPeerID ||
 		client.Document.SubjectPeerID != remote.PeerID || host.Document.SubjectPeerID != auth.Identity.PeerID() ||
 		!bytes.Equal(client.WrappingPublicKey, remote.WrappingPublicKey) ||
-		!membershipAllowsSession(client, request.SessionID) || !membershipAllowsSession(host, request.SessionID) ||
+		!membershipAllowsRoute(client, request.SessionID) || !membershipAllowsRoute(host, request.SessionID) ||
 		!permissionWithin(auth.Permission, client.Document.Permission) || !permissionWithin(auth.Permission, host.Document.Permission) {
 		return routeWireMessage{}, nil, peertransport.Authorization{}, ErrAuthentication
 	}
@@ -1139,6 +1145,10 @@ func membershipAllowsSession(membership peerproto.VerifiedGrant, sessionID uuid.
 		}
 	}
 	return false
+}
+
+func membershipAllowsRoute(membership peerproto.VerifiedGrant, sessionID uuid.UUID) bool {
+	return sessionID == configSyncSessionID || membershipAllowsSession(membership, sessionID)
 }
 
 func permissionWithin(effective peertransport.Permission, granted peerproto.Permission) bool {

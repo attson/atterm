@@ -166,6 +166,7 @@ func (l *peerRendezvousLifecycle) run() {
 		l.state.LastErrorCode = ""
 		l.state.NextRetryAt = 0
 		l.mu.Unlock()
+		go host.runConfigSyncLoop()
 		rotation := time.NewTimer(untilNextPeerPresenceRotation(time.Now()))
 		rotated := false
 		select {

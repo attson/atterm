@@ -220,6 +220,42 @@ func (h *peerHostRuntime) authorize(clientPeerID string, sessionID uuid.UUID) (p
 	}, nil
 }
 
+// authorizeConfig authenticates an active member without granting access to
+// any terminal session. The reserved transcript session id keeps this channel
+// cryptographically separate from terminal attempts.
+func (h *peerHostRuntime) authorizeConfig(clientPeerID string) (peerHostAuthorization, error) {
+	manager, err := h.app.peerManager()
+	if err != nil {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
+	}
+	state, err := manager.store.Load()
+	if err != nil {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
+	}
+	identity, err := manager.loadIdentity()
+	if err != nil {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
+	}
+	active, err := activePeerMemberships(state, genesis, time.Now())
+	if err != nil {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
+	}
+	client := membershipForPeerID(active, clientPeerID)
+	local := membershipForPeerID(active, identity.PeerID())
+	if client == nil || local == nil {
+		return peerHostAuthorization{}, quicktunnel.ErrUnauthorized
+	}
+	return peerHostAuthorization{
+		Identity: identity, GenesisToken: state.GenesisToken,
+		ClientMembershipToken: client.Token, HostMembershipToken: local.Token,
+		Permission: peertransport.PermissionView,
+	}, nil
+}
+
 func (h *peerHostRuntime) catalog(clientPeerID string) ([]rendezvousclient.PeerSession, error) {
 	manager, err := h.app.peerManager()
 	if err != nil {

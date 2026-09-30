@@ -93,6 +93,51 @@ func TestRouteConnectsTrustedPeersThroughEncryptedRendezvousSignaling(t *testing
 	}
 }
 
+func TestRouteConnectsConfigSyncOutsideTerminalSessionScope(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	hostAuthenticated := make(chan *peertransport.PionHostChannel, 1)
+	clientAuthenticated := make(chan *peertransport.PionClientChannel, 1)
+
+	hostRoute := fixture.newHostRoute(t, ctx, func(_ context.Context, request PeerOpenRequest) (HostAuthorization, HostCallbacks, error) {
+		if request.SessionID != ConfigSyncSessionID() {
+			return HostAuthorization{}, HostCallbacks{}, ErrAuthentication
+		}
+		authorization := fixture.hostAuthorization()
+		authorization.Permission = peertransport.PermissionView
+		return authorization, HostCallbacks{
+			OnAuthenticated: func(channel *peertransport.PionHostChannel) { hostAuthenticated <- channel },
+		}, nil
+	})
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	attempt, err := clientRoute.Dial(ctx, ClientAttemptConfig{
+		Remote: fixture.hostPeer(), Identity: fixture.clientIdentity,
+		GenesisToken: fixture.genesisToken, ClientMembershipToken: fixture.clientMembership,
+		HostMembershipToken: fixture.hostMembership, SessionID: ConfigSyncSessionID(),
+		ClientInstanceID: "config-sync", WebRTC: webrtc.Configuration{},
+		OnAuthenticated: func(channel *peertransport.PionClientChannel) { clientAuthenticated <- channel },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attempt.Close()
+
+	select {
+	case <-hostAuthenticated:
+	case <-ctx.Done():
+		t.Fatal("config-sync host did not authenticate")
+	}
+	select {
+	case <-clientAuthenticated:
+	case <-ctx.Done():
+		t.Fatal("config-sync client did not authenticate")
+	}
+}
+
 func TestRouteClassifiesOfflineAndAuthorizationFailure(t *testing.T) {
 	fixture := newRouteFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -438,6 +483,7 @@ type routeFixture struct {
 func newRouteFixture(t *testing.T) *routeFixture {
 	t.Helper()
 	now := time.Now()
+	sessionID := uuid.New()
 	hostIdentity, _ := peercrypto.GenerateIdentity()
 	hostWrapping := testWrappingIdentity(t)
 	genesisToken, hostMembership, err := peerproto.NewSpace(hostIdentity, hostWrapping.PublicBytes(), now)
@@ -446,7 +492,9 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	}
 	genesis, _ := peerproto.VerifyGenesis(genesisToken)
 	hostGrant, _ := peerproto.VerifyGrant(hostMembership, genesis, now)
-	invitations, err := peerproto.NewInvitationBatch(hostIdentity, genesis, hostGrant, now, peerproto.InvitationOptions{Count: 1})
+	invitations, err := peerproto.NewInvitationBatch(hostIdentity, genesis, hostGrant, now, peerproto.InvitationOptions{
+		Count: 1, AllowedSessionIDs: []string{sessionID.String()},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +545,7 @@ func newRouteFixture(t *testing.T) *routeFixture {
 		hostSnapshot: hostSnapshot, clientIdentity: clientIdentity, clientWrapping: clientWrapping,
 		clientMembership: clientMembership, clientPresence: clientPresence,
 		clientConnection: clientConnection, clientSnapshot: clientSnapshot, topic: topic,
-		sessionID: uuid.New(),
+		sessionID: sessionID,
 	}
 }
 

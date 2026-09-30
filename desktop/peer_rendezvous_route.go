@@ -24,12 +24,16 @@ type peerRendezvousHost struct {
 	app        *App
 	runtime    *peerHostRuntime
 	route      *rendezvousclient.Route
+	ctx        context.Context
+	cancel     context.CancelFunc
 	serviceURL string
 	topic      string
 
-	mu       sync.Mutex
-	attempts map[uuid.UUID]*peerHostAttempt
-	catalog  map[uuid.UUID]peerDiscoveredSession
+	mu             sync.Mutex
+	attempts       map[uuid.UUID]*peerHostAttempt
+	configAttempts map[uuid.UUID]*peerRendezvousConfigHostAttempt
+	configClients  map[string]*peerRendezvousConfigClient
+	catalog        map[uuid.UUID]peerDiscoveredSession
 }
 
 type peerDiscoveredSession struct {
@@ -79,12 +83,16 @@ func newPeerRendezvousHostWithRegistrationContext(ctx, registrationCtx context.C
 		connection.CloseNow()
 		return nil, err
 	}
+	hostCtx, cancelHost := context.WithCancel(ctx)
 	peerHost := &peerRendezvousHost{
-		app: app, runtime: &peerHostRuntime{app: app, host: host},
+		app: app, runtime: &peerHostRuntime{app: app, host: host}, ctx: hostCtx, cancel: cancelHost,
 		serviceURL: presence.ServiceURL, topic: presence.Topic,
-		attempts: make(map[uuid.UUID]*peerHostAttempt), catalog: make(map[uuid.UUID]peerDiscoveredSession),
+		attempts:       make(map[uuid.UUID]*peerHostAttempt),
+		configAttempts: make(map[uuid.UUID]*peerRendezvousConfigHostAttempt),
+		configClients:  make(map[string]*peerRendezvousConfigClient),
+		catalog:        make(map[uuid.UUID]peerDiscoveredSession),
 	}
-	route, err := rendezvousclient.NewRoute(ctx, rendezvousclient.RouteConfig{
+	route, err := rendezvousclient.NewRoute(hostCtx, rendezvousclient.RouteConfig{
 		Connection: connection, InitialPresence: snapshot,
 		SpaceID: discovery.spaceID, EpochKey: discovery.syncKey,
 		LocalPeerID: discovery.localPeerID, LocalWrappingIdentity: wrapping,
@@ -101,6 +109,7 @@ func newPeerRendezvousHostWithRegistrationContext(ctx, registrationCtx context.C
 		},
 	})
 	if err != nil {
+		cancelHost()
 		connection.CloseNow()
 		return nil, err
 	}
@@ -268,6 +277,9 @@ func (h *peerRendezvousHost) authorize(ctx context.Context, request rendezvouscl
 	if err := ctx.Err(); err != nil {
 		return rendezvousclient.HostAuthorization{}, rendezvousclient.HostCallbacks{}, err
 	}
+	if request.SessionID == rendezvousclient.ConfigSyncSessionID() {
+		return h.authorizeConfig(ctx, request)
+	}
 	authorization, err := h.runtime.authorize(request.ClientPeerID, request.SessionID)
 	if err != nil {
 		return rendezvousclient.HostAuthorization{}, rendezvousclient.HostCallbacks{}, rendezvousclient.ErrAuthentication
@@ -333,11 +345,37 @@ func (h *peerRendezvousHost) syncConfigNow() (int, error) {
 	for _, attempt := range h.attempts {
 		attempts = append(attempts, attempt)
 	}
+	configAttempts := make([]*peerRendezvousConfigHostAttempt, 0, len(h.configAttempts))
+	for _, attempt := range h.configAttempts {
+		configAttempts = append(configAttempts, attempt)
+	}
+	configClients := make([]*peerRendezvousConfigClient, 0, len(h.configClients))
+	for _, client := range h.configClients {
+		configClients = append(configClients, client)
+	}
 	h.mu.Unlock()
 	sent := 0
 	var syncErr error
 	for _, attempt := range attempts {
 		active, err := attempt.syncConfigNow()
+		if active {
+			sent++
+		}
+		if err != nil {
+			syncErr = errors.Join(syncErr, err)
+		}
+	}
+	for _, attempt := range configAttempts {
+		active, err := attempt.syncConfigNow()
+		if active {
+			sent++
+		}
+		if err != nil {
+			syncErr = errors.Join(syncErr, err)
+		}
+	}
+	for _, client := range configClients {
+		active, err := client.syncConfigNow()
 		if active {
 			sent++
 		}
@@ -352,6 +390,9 @@ func (h *peerRendezvousHost) Close() {
 	if h == nil {
 		return
 	}
+	if h.cancel != nil {
+		h.cancel()
+	}
 	if h.route != nil {
 		h.route.Close()
 	}
@@ -361,9 +402,25 @@ func (h *peerRendezvousHost) Close() {
 		delete(h.attempts, id)
 		attempts = append(attempts, attempt)
 	}
+	configAttempts := make([]*peerRendezvousConfigHostAttempt, 0, len(h.configAttempts))
+	for id, attempt := range h.configAttempts {
+		delete(h.configAttempts, id)
+		configAttempts = append(configAttempts, attempt)
+	}
+	configClients := make([]*peerRendezvousConfigClient, 0, len(h.configClients))
+	for peerID, client := range h.configClients {
+		delete(h.configClients, peerID)
+		configClients = append(configClients, client)
+	}
 	h.mu.Unlock()
 	for _, attempt := range attempts {
 		attempt.close(false)
+	}
+	for _, attempt := range configAttempts {
+		attempt.close(false)
+	}
+	for _, client := range configClients {
+		client.close(true)
 	}
 }
 

@@ -149,6 +149,104 @@ func TestAntiEntropyBatchesAreBoundedVerifiedAndRetryable(t *testing.T) {
 	}
 }
 
+func TestAntiEntropyConvergesAcrossRotatingThreePeerTopology(t *testing.T) {
+	fixture := newRotationFixture(t)
+	peerB, _ := fixture.addMember(t, peerproto.PermissionControl, false, true)
+	peerC, _ := fixture.addMember(t, peerproto.PermissionControl, false, true)
+	key, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peers := []*DurableReplica{
+		openTestDurable(t, filepath.Join(t.TempDir(), "peer-a.json"), fixture.genesis.Document.SpaceID),
+		openTestDurable(t, filepath.Join(t.TempDir(), "peer-b.json"), fixture.genesis.Document.SpaceID),
+		openTestDurable(t, filepath.Join(t.TempDir(), "peer-c.json"), fixture.genesis.Document.SpaceID),
+	}
+	identities := []*peercrypto.Identity{fixture.creator, peerB, peerC}
+	mutations := []Mutation{
+		{SchemaVersion: SchemaVersion, Collection: CollectionPreferences, RecordID: "terminal_theme", Kind: KindSet, Payload: json.RawMessage(`"nord"`)},
+		{SchemaVersion: SchemaVersion, Collection: CollectionPreferences, RecordID: "terminal_font_size", Kind: KindSet, Payload: json.RawMessage(`18`)},
+		{SchemaVersion: SchemaVersion, Collection: CollectionPreferences, RecordID: "locale", Kind: KindSet, Payload: json.RawMessage(`"zh-CN"`)},
+	}
+
+	if _, _, err := peers[0].AppendEncrypted(identities[0], key, mutations[0]); err != nil {
+		t.Fatal(err)
+	}
+	transferAntiEntropyState(t, fixture.genesis, peers[0], peers[1])
+	if _, _, err := peers[1].AppendEncrypted(identities[1], key, mutations[1]); err != nil {
+		t.Fatal(err)
+	}
+	transferAntiEntropyState(t, fixture.genesis, peers[1], peers[2])
+	if _, _, err := peers[2].AppendEncrypted(identities[2], key, mutations[2]); err != nil {
+		t.Fatal(err)
+	}
+	transferAntiEntropyState(t, fixture.genesis, peers[2], peers[0])
+	transferAntiEntropyState(t, fixture.genesis, peers[0], peers[1])
+
+	wantVector := peers[0].Vector()
+	for index, replica := range peers {
+		if replica.Vector().Compare(wantVector) != VectorEqual {
+			t.Fatalf("peer %d vector=%v want=%v", index, replica.Vector(), wantVector)
+		}
+		for _, mutation := range mutations {
+			record, ok := replica.Get(mutation.Collection, mutation.RecordID)
+			if !ok {
+				t.Fatalf("peer %d missing %s/%s", index, mutation.Collection, mutation.RecordID)
+			}
+			plaintext, err := OpenRecordPayload(key, record)
+			if err != nil || !json.Valid(plaintext) {
+				t.Fatalf("peer %d open %s/%s payload=%q err=%v", index, mutation.Collection, mutation.RecordID, plaintext, err)
+			}
+		}
+	}
+}
+
+func transferAntiEntropyState(t *testing.T, genesis peerproto.VerifiedGenesis, source, destination *DurableReplica) {
+	t.Helper()
+	inventory, err := BuildAntiEntropyInventory(genesis, destination.Vector(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := source.PlanAntiEntropy(genesis, nil, nil, nil, inventory, MinAntiEntropyBatchSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assembler, err := NewAntiEntropyAssembler(genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cursor *AntiEntropyCursor
+	for {
+		batch, err := plan.Next(cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items, err := assembler.Add(batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			switch item.Kind {
+			case AntiEntropySnapshot:
+				if _, err := destination.AdoptSnapshot(item.Token); err != nil {
+					t.Fatal(err)
+				}
+			case AntiEntropyOperation:
+				if _, _, err := destination.Apply(item.Token); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				t.Fatalf("unexpected config-only item kind %q", item.Kind)
+			}
+		}
+		if batch.Done {
+			return
+		}
+		next := *batch.Next
+		cursor = &next
+	}
+}
+
 func TestAntiEntropyInventoryFiltersKnownGovernanceTokens(t *testing.T) {
 	fixture := newAntiEntropyFixture(t)
 	remote, err := BuildAntiEntropyInventory(

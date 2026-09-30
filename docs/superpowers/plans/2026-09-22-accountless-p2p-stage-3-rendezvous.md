@@ -118,7 +118,7 @@ new Quick Tunnel URL, view-only enforcement, member revocation and Rendezvous fa
 
 - [x] A trusted client reconnects after desktop restart without receiving a new Quick Tunnel URL.
 - [ ] Official and self-hosted services pass the same contract suite.
-- [ ] Rendezvous restart only drops ephemeral presence/signaling.
+- [x] Rendezvous restart only drops ephemeral presence/signaling.
 - [ ] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
 - [x] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
 - [ ] A/B/C sync converges through rotating online peers without a designated hub.

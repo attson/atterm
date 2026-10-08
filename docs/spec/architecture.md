@@ -416,7 +416,7 @@ membership token 或任何 Relay/account credential。首次加入成功后，Go
 中的 Quick Tunnel URL、签发 Peer 和到期时间；使用前再次确认该 Peer 仍在当前 deny-wins active
 membership 集合中，并要求目标 session 已由上述 Rendezvous 目录发现。WSS 路径复用相同的
 membership handshake、加密 terminal/config records 和 subscriber 生命周期。默认 route 仍是
-Rendezvous direct，ICE 失败不会自动切换。已有成员可在 Settings 手动导入无 ticket 的 signed
+Rendezvous direct。已有成员可在 Settings 手动导入无 ticket 的 signed
 reconnect bundle；Desktop 要求 bundle 属于当前 genesis、issuer 的精确 membership token 仍在
 deny-wins active set 中，再原子替换仅存在 Go 内存的 Quick Tunnel route。新 bundle 不含 Quick
 Tunnel 时会删除该 issuer 的旧 route。当前 Rendezvous catalog 已提供可选 v2 能力探测：
@@ -425,12 +425,16 @@ member reconnect bundle；旧 host 忽略探测，client 在 750 ms 后回退 v1
 先按现有 session scope/permission 验证目录，再独立验证 bundle 的 current genesis、精确 active
 issuer membership 与目标 Peer ID，成功后原子替换或删除该 issuer 的内存 route。v1 fallback 不改
 已有 route，URL/token 不落盘、不进入 renderer、日志或诊断。Peer terminal 重连失败且目标 session
-仍在已认证目录中时，renderer 只能查询 `direct/quick_tunnel` 可用性布尔值；用户可显式选择通过
-Quick Tunnel 重试。host 侧已为 Quick Tunnel WSS 与 Rendezvous Pion 共用 authenticated Peer route
+仍在已认证目录中时，renderer 只能查询 `direct/quick_tunnel` 可用性布尔值。对 ICE、Rendezvous
+可达性、timeout 或已建立 route 断开等可恢复故障，client 最多等待该本地查询 1 秒；若 Go 重新
+确认 signed Quick Tunnel hint 有效，就携带同一 client instance 与 last committed OUT seq 自动
+handover。认证、协议、backpressure 错误不允许换路降级；切到 Quick Tunnel 后只在该 route 上
+退避重试，避免来回 flap，用户仍可显式选择 Quick Tunnel。host 侧为 Quick Tunnel WSS 与
+Rendezvous Pion 共用 authenticated Peer route
 lease，按 `(remote_peer_id, session_id, client_instance_id)` 原子迁移 terminal subscriber 和 driver；
 新 route 完成授权重验与 replay catch-up 后才接管，旧 route 随即失去 terminal/config 写权限，
-且迟到 close 不会释放新 lease。不同客户端实例仍可独立订阅同一 session。自动 route 选择、
-断线续接 cursor 与 Direct/Quick Tunnel handover 仍属于后续工作。
+且迟到 close 不会释放新 lease。不同客户端实例仍可独立订阅同一 session。Relay-account 与 Peer
+principal 之间的自动选路，以及 Direct 恢复后的受控 failback 仍属于后续工作。
 
 Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
 registration：单次注册最多等待 10 秒，失败以 500 ms 到 8 s 退避，连接断开和 15 分钟

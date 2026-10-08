@@ -112,6 +112,155 @@ describe('PeerSessionConnection', () => {
     expect(transports[1].options.sinceSeq).toBe(8)
   })
 
+  it('falls back to an available Quick Tunnel without duplicate output or input', async () => {
+    const transports: FakeTransport[] = []
+    const outputs: string[] = []
+    const routes: Array<{ route: string; fallbackReason?: string }> = []
+    const resolveQuickTunnelFallback = vi.fn().mockResolvedValue(true)
+    const connection = new PeerSessionConnection(sessionID, {
+      onOutput: (data) => outputs.push(decodeText(data)),
+      onRouteChange: (diagnostics) => routes.push(diagnostics),
+    }, {
+      resolveQuickTunnelFallback,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    const direct = transports[0]
+    direct.options.callbacks.onAuthenticated?.()
+    direct.options.callbacks.onFrame(out(8, 'direct-eight'))
+    direct.options.callbacks.onReady(8)
+    direct.options.callbacks.onFailure(new Error('rendezvous client: ICE failed'))
+    connection.sendInput('during-handover')
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolveQuickTunnelFallback).toHaveBeenCalledOnce()
+    expect(transports).toHaveLength(2)
+    const quickTunnel = transports[1]
+    expect(quickTunnel.options).toMatchObject({
+      route: 'quick_tunnel',
+      sinceSeq: 8,
+      clientInstanceId: direct.options.clientInstanceId,
+    })
+    expect(routes.at(-1)).toMatchObject({
+      route: 'connecting-quick-tunnel',
+      fallbackReason: 'ice_failed',
+    })
+
+    direct.options.callbacks.onFrame(out(9, 'late-direct-nine'))
+    quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onFrame(out(8, 'duplicate-eight'))
+    quickTunnel.options.callbacks.onFrame(out(9, 'quick-nine'))
+    quickTunnel.options.callbacks.onReady(9)
+
+    expect(outputs).toEqual(['direct-eight', 'quick-nine'])
+    const quickFrames = quickTunnel.sent.map(decodeFrame)
+    expect(quickFrames.filter((frame) => frame.type === TYPE.IN)).toHaveLength(1)
+    expect(decodeText(quickFrames.find((frame) => frame.type === TYPE.IN)!.payload)).toBe('during-handover')
+    expect(direct.sent.map(decodeFrame).some((frame) => frame.type === TYPE.IN)).toBe(false)
+    expect(routes.at(-1)).toMatchObject({ route: 'quick-tunnel' })
+  })
+
+  it.each([
+    'Peer authentication failed',
+    'unsupported Peer record',
+    'Peer backpressure exceeded',
+  ])('does not downgrade %s to Quick Tunnel', async (failure) => {
+    const transports: FakeTransport[] = []
+    const resolveQuickTunnelFallback = vi.fn().mockResolvedValue(true)
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      resolveQuickTunnelFallback,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onFailure(new Error(failure))
+    await Promise.resolve()
+    expect(resolveQuickTunnelFallback).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(transports).toHaveLength(2)
+    expect(transports[1].options.route).toBe('direct')
+  })
+
+  it('resumes Direct retry when the Quick Tunnel availability check stalls', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      resolveQuickTunnelFallback: () => new Promise<boolean>(() => {}),
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onFailure(new Error('ICE failed'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(transports).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(transports).toHaveLength(2)
+    expect(transports[1].options.route).toBe('direct')
+  })
+
+  it('ignores a fallback decision that arrives after the pane is suspended', async () => {
+    const transports: FakeTransport[] = []
+    let resolveFallback!: (available: boolean) => void
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      resolveQuickTunnelFallback: () => new Promise<boolean>((resolve) => { resolveFallback = resolve }),
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onFailure(new Error('ICE failed'))
+    connection.suspend()
+    resolveFallback(true)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(transports).toHaveLength(1)
+    connection.attach()
+    expect(transports).toHaveLength(2)
+    expect(transports[1].options.route).toBe('direct')
+  })
+
+  it('keeps retrying Quick Tunnel after fallback instead of route flapping', async () => {
+    const transports: FakeTransport[] = []
+    const resolveQuickTunnelFallback = vi.fn().mockResolvedValue(true)
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      resolveQuickTunnelFallback,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onFailure(new Error('ICE failed'))
+    await vi.advanceTimersByTimeAsync(0)
+    transports[1].options.callbacks.onAuthenticated?.()
+    transports[1].options.callbacks.onReady(0)
+    transports[1].options.callbacks.onFailure(new Error('Quick Tunnel disconnected'))
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(transports).toHaveLength(3)
+    expect(transports[2].options.route).toBe('quick_tunnel')
+    expect(resolveQuickTunnelFallback).toHaveBeenCalledOnce()
+  })
+
   it('keeps an honest ICE failure visible while retrying the Rendezvous route', async () => {
     const transports: FakeTransport[] = []
     const routes: Array<{ route: string; fallbackReason?: string }> = []

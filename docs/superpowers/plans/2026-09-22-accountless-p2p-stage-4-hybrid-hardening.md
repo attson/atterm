@@ -38,12 +38,11 @@ WSS is now exposed through that same native Peer transport contract as an explic
 keys it by the authenticated issuer Peer ID, rechecks bundle expiry and current deny-wins membership,
 and resolves every endpoint and membership token outside the renderer. The WSS client reuses the
 existing encrypted terminal/config record channel and reports `Quick Tunnel` rather than `Direct`.
-The default request remains Rendezvous direct: no ICE failure automatically selects WSS, and no Relay
-credential or `account_key` enters the Peer path. Existing members can now manually import a signed,
+The default request remains Rendezvous direct, and no Relay credential or `account_key` enters the Peer
+path. Existing members can manually import a signed,
 ticketless reconnect bundle. Import requires the current genesis and exact active issuer membership,
-then atomically replaces (or removes) only the process-local Quick Tunnel hint. A failed Peer terminal
-can query token-free route availability and explicitly restart through Quick Tunnel; this is never
-invoked automatically. The encrypted Rendezvous catalog now also probes an optional v2 response that
+then atomically replaces (or removes) only the process-local Quick Tunnel hint. The encrypted Rendezvous
+catalog also probes an optional v2 response that
 carries the host's refreshed signed member bundle on its first page. Old hosts ignore the probe and are
 cached as v1-only after a short timeout; new clients independently bind the bundle issuer to the catalog
 Peer and current deny-wins membership before rotating only that process-local hint. This distribution
@@ -53,8 +52,11 @@ The lease key is `(remote_peer_id, session_id, client_instance_id)`: a replaceme
 the exact active membership and session scope, catches up replay, then atomically inherits the existing
 subscriber/driver identity. The superseded route loses terminal and config authority, a late old close
 cannot remove the replacement, and stale concurrent candidates cannot overwrite the winner. Independent
-client instances still coexist. Automatic route selection and handover remain disabled pending cursor,
-generation and soak-test gates.
+client instances still coexist. Peer clients now automatically select a currently verified Quick Tunnel
+hint after recoverable Direct reachability/transport failures. The transition keeps the client instance
+and committed OUT cursor, drops stale generation callbacks, freezes writes until replay ready, and stays
+on Quick Tunnel after fallback to prevent flapping. Authentication, protocol and backpressure failures do
+not downgrade. Relay-account/Peer cross-principal routing and automatic failback remain deferred.
 
 ## PR 4.2 - Automated handover
 
@@ -64,6 +66,12 @@ generation and soak-test gates.
 - Input freezes during ambiguous ownership; it is never sent twice。
 - Cooldown/hysteresis prevents flapping。
 - Sync channel can choose any authenticated Peer route independently of terminal subscriber lifecycle。
+
+Implementation status: the Peer-only `Rendezvous direct -> Quick Tunnel WSS` handover is implemented.
+The availability decision is a bounded token-free Go capability query; endpoints and membership tokens
+remain outside the renderer. Existing generation/cursor guards prove stale OUT is dropped, replay is
+deduplicated, and queued input is released only on the replacement route's `DIRECT_READY`. Relay fallback,
+cross-principal handover, cooldown-based Direct failback and full route-flap soak remain future slices.
 
 ## PR 4.3+ - Capability expansion
 

@@ -50,6 +50,7 @@ describe("TerminalView direct transport plumbing", () => {
     expect(source).toContain('platform.peer?.getSessionRouteStatus');
     expect(source).toMatch(/canRetryPeerQuickTunnel[\s\S]*peerQuickTunnelAvailable\.value/);
     expect(source).toContain('conn.setRoute("quick_tunnel")');
+    expect(source).toContain("resolveQuickTunnelFallback: refreshPeerRouteStatus");
   });
 });
 

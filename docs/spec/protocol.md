@@ -1134,8 +1134,17 @@ Quick Tunnel WSS 与 Rendezvous Pion host 共用进程内的 authenticated Peer 
 继承同一 `driver_client_id` / `driver_client_name`，subscriber count 不经过 0，也不触发 lazy uplink
 的假停止/重启。安装新租约后，旧 route 立即失去 `IN`、`RESIZE`、`CLAIM_DRIVER` 和 config sync
 权限；旧连接迟到的 close 只能释放自己，不能删除新租约。并发的陈旧候选不能覆盖已经获胜的
-route。该规则只约束 host 本地 attachment，不增加 frame/record 类型，也不启用自动 route 选择；
-Rendezvous direct 失败后是否显式改用 Quick Tunnel 仍由当前用户操作决定。
+route。该规则只约束 host 本地 attachment，不增加 frame/record 类型。
+
+Peer client 默认仍先尝试 Rendezvous direct。Direct 遇到
+`signal_endpoint_unavailable` / `webrtc_unavailable` / `timeout` / `host_unavailable` / `ice_failed` /
+`direct_disconnected` / `transport_error` 时，会用最多 1 秒向 Go 查询 token-free route capability；
+只有目标 session 仍在 authenticated catalog 且对应 signed Quick Tunnel hint 当前有效，才自动以
+同一 `client_instance_id` 和 last committed OUT seq 建立 Quick Tunnel。查询和 handover 期间冻结
+`IN`/`RESIZE`/`CLAIM_DRIVER`，旧 generation callback 全部丢弃，Quick Tunnel replay 按 OUT seq 去重
+后才恢复写入。`authentication_failed` / `protocol_error` / `backpressure` 等安全或完整性错误不得通过
+换路降级；一旦回退到 Quick Tunnel，后续断线只在该 route 上退避重试，不自动反向切回 Direct，
+避免 route flap。Peer-only handover 不引入 Relay credential、Relay subscriber 或 `account_key`。
 
 `CreatePeerConnectionBundle(invitation)` 只接受本地加密账本中仍开放、未消费、未撤销、未过期且
 由当前 active local membership 签发的 invitation；首次加入的 bundle 必须发布当前 Quick Tunnel
@@ -1312,7 +1321,8 @@ client 在接受该 host 的目录前，必须独立验证 bundle 属于当前 g
 deny-wins active set，且 issuer Peer ID 等于被请求的 Peer；通过后只原子替换该 issuer 的进程内
 Quick Tunnel hint，不持久化 URL/token，也不暴露给 renderer。空 bundle 只可能来自 v1 fallback，
 此时保留现有 hint 直到自身 expiry。此分发不创建 Pion attempt、terminal subscriber 或 config
-channel，也不触发 terminal route 切换；Quick Tunnel 重试仍需用户显式操作。
+channel，也不因 bundle 到达而主动切换 terminal route；只有之后发生上述可恢复 Direct 故障时，
+client 才重新查询 capability 并执行自动 Quick Tunnel handover。用户仍可在失败界面显式选择重试。
 
 发送 `open` 后，Rendezvous ACK 为 `queued` 映射 `peer offline`；连接、写入、ACK 超时或 host
 容量问题映射 `service unavailable`；Pion ICE/transport 建链失败映射 `ICE failed`；membership、

@@ -26,11 +26,25 @@ export interface PeerSessionConnectionOptions {
   clientName?: string
   route?: NativePeerRoute
   transportFactory: (options: NativeDirectClientOptions) => DirectTransport
+  /** Revalidates a Go-owned signed route hint without exposing its endpoint. */
+  resolveQuickTunnelFallback?: () => Promise<boolean>
 }
 
-/** Direct-only terminal connection for accountless Peer sessions. It keeps
- * the Relay-oriented SessionConnection untouched and reconnects exclusively
- * through the native Rendezvous transport. */
+// Reachability failures may change transport; trust/integrity failures must
+// fail on the current route instead of being hidden by a fallback.
+function allowsQuickTunnelFallback(reason: DirectFallbackReason): boolean {
+  return reason === 'signal_endpoint_unavailable' ||
+    reason === 'webrtc_unavailable' ||
+    reason === 'timeout' ||
+    reason === 'host_unavailable' ||
+    reason === 'ice_failed' ||
+    reason === 'direct_disconnected' ||
+    reason === 'transport_error'
+}
+
+/** Relay-independent terminal connection for accountless Peer sessions. It
+ * keeps the Relay-oriented SessionConnection untouched and uses only native
+ * Peer transports. */
 export class PeerSessionConnection {
   private readonly sidBytes: Uint8Array
   private readonly clientID = crypto.randomUUID()
@@ -44,6 +58,7 @@ export class PeerSessionConnection {
   private suspended = false
   private reconnectAttempts = 0
   private reconnectTimer: number | null = null
+  private fallbackPending = false
   private pendingInputs: string[] = []
   private pendingResize: { cols: number; rows: number } | null = null
   private pendingDriverClaim = false
@@ -66,7 +81,7 @@ export class PeerSessionConnection {
   attach(): void {
     if (this.detached) return
     this.suspended = false
-    if (this.transport || this.reconnectTimer !== null) return
+    if (this.transport || this.reconnectTimer !== null || this.fallbackPending) return
     this.start()
   }
 
@@ -142,6 +157,7 @@ export class PeerSessionConnection {
 
   private start(): void {
     const generation = ++this.generation
+    this.fallbackPending = false
     this.authenticated = false
     this.ready = false
     this.diagnostics = null
@@ -190,7 +206,7 @@ export class PeerSessionConnection {
       transport.start()
     } catch (value) {
       this.transport = null
-      this.scheduleReconnect(value instanceof Error ? value : new Error(String(value)))
+      this.recover(generation, value instanceof Error ? value : new Error(String(value)))
     }
   }
 
@@ -252,10 +268,10 @@ export class PeerSessionConnection {
     if (!this.isCurrent(generation, transport)) return
     this.transport = null
     transport.close()
-    this.scheduleReconnect(error)
+    this.recover(generation, error)
   }
 
-  private scheduleReconnect(error: Error): void {
+  private recover(generation: number, error: Error): void {
     if (this.detached || this.suspended) return
     const wasActive = this.ready
     this.authenticated = false
@@ -263,6 +279,52 @@ export class PeerSessionConnection {
     this.lastFailureReason = directFallbackReason(error, wasActive)
     this.handlers.onStatus?.('reconnecting')
     this.emitRoute(this.connectingRoute())
+    if (
+      this.route === 'direct' &&
+      allowsQuickTunnelFallback(this.lastFailureReason) &&
+      this.options.resolveQuickTunnelFallback
+    ) {
+      this.fallbackPending = true
+      void this.tryQuickTunnelFallback(generation)
+      return
+    }
+    this.scheduleReconnect()
+  }
+
+  private async tryQuickTunnelFallback(generation: number): Promise<void> {
+    let available = false
+    let timeout: number | null = null
+    try {
+      available = await Promise.race([
+        this.options.resolveQuickTunnelFallback!(),
+        new Promise<boolean>((resolve) => {
+          timeout = window.setTimeout(() => resolve(false), 1000)
+        }),
+      ])
+    } catch {
+      available = false
+    } finally {
+      if (timeout !== null) window.clearTimeout(timeout)
+    }
+    if (
+      generation !== this.generation ||
+      !this.fallbackPending ||
+      this.detached ||
+      this.suspended ||
+      this.transport !== null
+    ) return
+    this.fallbackPending = false
+    if (available) {
+      this.route = 'quick_tunnel'
+      this.reconnectAttempts = Math.max(1, this.reconnectAttempts)
+      this.start()
+      return
+    }
+    this.scheduleReconnect()
+  }
+
+  private scheduleReconnect(): void {
+    if (this.detached || this.suspended || this.reconnectTimer !== null) return
     const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++))
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null
@@ -272,6 +334,7 @@ export class PeerSessionConnection {
 
   private closeTransport(): void {
     this.generation++
+    this.fallbackPending = false
     const transport = this.transport
     this.transport = null
     this.authenticated = false

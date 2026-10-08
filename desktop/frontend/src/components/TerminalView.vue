@@ -138,7 +138,7 @@ const status = ref<Status>("connecting");
 const replayProgress = ref<ReplayProgress | null>(null);
 const routeDiagnostics = ref<SessionRouteDiagnostics>({ route: "relay" });
 const peerQuickTunnelAvailable = ref(false);
-let peerRouteStatusLoading = false;
+let peerRouteStatusPromise: Promise<boolean> | null = null;
 const routeLabel = computed(() => {
   switch (routeDiagnostics.value.route) {
     case "connecting-direct":
@@ -347,17 +347,27 @@ let isAlive = true;
 let focusCoalescer: FocusReportCoalescer | null = null;
 const replayInputGuard = createReplayInputGuard();
 
-async function refreshPeerRouteStatus(): Promise<void> {
+async function refreshPeerRouteStatus(): Promise<boolean> {
   const getStatus = platform.peer?.getSessionRouteStatus;
-  if (!props.peerDirect || !getStatus || peerRouteStatusLoading) return;
-  peerRouteStatusLoading = true;
+  if (!props.peerDirect || !getStatus) return false;
+  if (peerRouteStatusPromise) return peerRouteStatusPromise;
+  let timeout: number | null = null;
+  const request = Promise.race([
+    getStatus(props.sessionId).then((next) => next.quick_tunnel).catch(() => false),
+    new Promise<boolean>((resolve) => {
+      timeout = window.setTimeout(() => resolve(false), 1000);
+    }),
+  ]).then((available) => {
+    peerQuickTunnelAvailable.value = available;
+    return available;
+  }).finally(() => {
+    if (timeout !== null) window.clearTimeout(timeout);
+  });
+  peerRouteStatusPromise = request;
   try {
-    const next = await getStatus(props.sessionId);
-    peerQuickTunnelAvailable.value = next.quick_tunnel;
-  } catch {
-    peerQuickTunnelAvailable.value = false;
+    return await request;
   } finally {
-    peerRouteStatusLoading = false;
+    if (peerRouteStatusPromise === request) peerRouteStatusPromise = null;
   }
 }
 
@@ -2315,6 +2325,7 @@ function startConnection() {
       new PeerSessionConnection(props.sessionId, handlers, {
         clientName: localHostname.value,
         transportFactory: factory,
+        resolveQuickTunnelFallback: refreshPeerRouteStatus,
       }),
     );
     void refreshPeerRouteStatus();

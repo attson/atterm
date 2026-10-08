@@ -263,7 +263,7 @@ function requestServicePreview(pane: Pane): void {
              badge so opening a preview never replaces the remote-terminal badge.
              TerminalView teleports its switcher / add-form into this slot. -->
         <span
-          v-if="pane.sessionId && pane.remote && !pane.peerDirect && servicePreviewAvailable"
+          v-if="pane.sessionId && pane.remote && servicePreviewAvailable"
           class="service-preview-controls-slot"
           :id="`service-preview-controls-${pane.sessionId}`"
           aria-live="polite"
@@ -279,7 +279,7 @@ function requestServicePreview(pane: Pane): void {
           "
         >
           <button
-            v-if="servicePreviewAvailable && !pane.peerDirect"
+            v-if="servicePreviewAvailable"
             type="button"
             class="remote-preview-trigger"
             data-testid="remote-preview-trigger"

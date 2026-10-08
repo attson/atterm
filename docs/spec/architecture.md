@@ -190,6 +190,13 @@ ATTACH(sid, client_id)  ───►
 数据：原生 client loopback listener
        ⇄ /service-client ⇄ relay keyless pair ⇄ /service-host
        ⇄ owner <loopback>:<port>（localhost / IPv4 / IPv6）
+
+Peer 控制：PeerSessionConnection SERVICE_OPEN(peer_fields)
+           ⇄ encrypted FRAME record ⇄ owner peerHostAttempt
+
+Peer 数据：原生 client loopback listener
+           ⇄ encrypted SERVICE record (Direct Pion / Quick Tunnel WSS)
+           ⇄ owner <loopback>:<port>
 ```
 
 relay 为两条 service WS 发一次性 ticket，只看 multiplex header/额度并转发
@@ -210,6 +217,13 @@ Preview 不会改变 0→1/N→0 subscriber lifecycle，更不会让静默 PTY �
 上传。阶段 1 只在 Wails desktop 与 Capacitor iOS 暴露原生 bridge；纯 Web/PWA
 不显示入口。完整 wire、限额与生命周期见
 [Remote Web Preview 阶段 1 design](../superpowers/specs/2026-08-29-remote-web-preview-phase1-design.md)。
+
+Peer Preview 复用同一套 gateway/iframe UX，但不复用 Relay service hub、ticket 或
+`account_key`。`SERVICE_OPEN` 仍是控制帧，TCP 字节改走独立 `RecordService` logical channel；
+Direct 与 Quick Tunnel 共用相同 message codec。owner 对每次 open/收发重验 route lease、active
+membership、session scope、双方 `full` permission 和 current driver。route replacement、pane
+detach、权限降级或 driver 转移立即关闭 service。renderer 只持有 Go 进程内 opaque attempt id，
+看不到 endpoint、membership token、Peer key 或 Relay credential。
 
 ## 会话生命周期
 
@@ -408,8 +422,7 @@ Desktop 每 3 秒向当前可解析的 host presence 拉取目录，把成功结
 `session_id -> Peer route`，并以 session id 为权威和 Relay 会话合并到侧栏；同一 session 同时存在
 时 Relay 条目覆盖 Peer 条目。用户点开 Peer-only 条目后，renderer 只把 session id、replay cursor
 和 client instance id 交给 Go，Go 从缓存取 route、从 Peer store 重读 identity/membership/scope，
-再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback 或 service
-preview。图片/文件粘贴复用现有 `PASTE_IMAGE` / `PASTE_FILE` frame，只在 Peer route ready、
+再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback。图片/文件粘贴复用现有 `PASTE_IMAGE` / `PASTE_FILE` frame，只在 Peer route ready、
 当前 pane 是 driver 且双方 membership/session scope 与 owner policy 的 effective permission 都为
 `full` 时开放；owner host 在入 session 队列前重新验证 active membership、当前 route lease、driver、
 payload JSON/MIME 与 10 MiB binary 上限。
@@ -422,6 +435,14 @@ active membership、双方 session scope、owner 当前 `full` policy 与 route 
 要求当前 subscriber 是 driver；read/write 保留 5 MiB hard cap。route replacement/close 会取消 worker
 输出并关闭 watcher，旧 generation 的迟到 response/event 不进入新 route。Peer record 已端到端加密，
 所以允许读取 `.env*`；通用 policy 仍恒拒 `.ssh` / `.gnupg` / `.aws`。
+
+Peer Web Preview 复用 `SERVICE_OPEN` / `SERVICE_OPENED` / `SERVICE_CLOSE` 控制帧，但 request 的
+`peer_fields` 已由 Peer record E2EE 保护，禁止携带 Relay host ticket/sealed account envelope。
+成功后本机 gateway 通过 opaque native attempt id 注册 service；TCP open/data/close 使用独立
+`RecordService`，不会进入 terminal frame、FS/config callback 或 PTY subscriber。Direct Pion 与
+Quick Tunnel WSS 使用同一 codec，WSS 的 service queue 位于 terminal 与 config 优先级之间。
+每 route 4 个 service、每 service 16 条连接、每端双向累计 512 MiB；owner 每条消息都重验 current
+route/full/driver，降权、driver 丢失、detach 和 route replacement 均关闭 service state。
 
 Peer 远程创建会话复用 `SESSION_CREATE` / `SESSION_CREATED`，并复用 Settings 的 Session Profiles
 界面。renderer 从加密 catalog 中选择同一 `host_id` 下 effective permission 为 `control/full` 的

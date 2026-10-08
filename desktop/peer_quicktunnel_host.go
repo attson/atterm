@@ -49,6 +49,7 @@ type peerQuickTunnelManager interface {
 type peerQuickTunnelChannel interface {
 	SendRecord(context.Context, peertransport.RecordKind, []byte) error
 	SendFrame(context.Context, []byte) error
+	SendServiceMessage(context.Context, []byte) error
 	SendConfigMessage(context.Context, peertransport.RecordKind, []byte) error
 	RemoteMembershipToken() (string, bool)
 	Close() error
@@ -103,6 +104,7 @@ type peerHostAttempt struct {
 	fsPool            *fsWorkerPool
 	sessionCreate     *sessionCreateHandler
 	sessionCreateOut  chan proto.Frame
+	services          map[uuid.UUID]*peerServiceHost
 	leaseKey          peerHostRouteLeaseKey
 	leaseHeld         bool
 	starting          bool
@@ -677,6 +679,8 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 	case peertransport.RecordClose:
 		go a.removeSelf()
 		return nil
+	case peertransport.RecordService:
+		return a.handleServiceMessage(payload)
 	case peertransport.RecordFrame:
 		currentPermission, err := a.host.currentOwnerPermission()
 		if err != nil {
@@ -725,6 +729,10 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 			return a.handleFilesystemRequest(frame)
 		case proto.TypeSessionCreate:
 			return a.handleSessionCreate(frame)
+		case proto.TypeServiceOpen:
+			return a.handleServiceOpen(ctx, frame)
+		case proto.TypeServiceClose:
+			return a.handleServiceClose(frame)
 		case proto.TypeClaimDriver:
 			if currentPermission == proto.RemotePermissionView {
 				return errors.New("Peer driver claim exceeds permission")
@@ -954,6 +962,12 @@ func (a *peerHostAttempt) watchAuthorization(ctx context.Context) {
 				a.removeSelf()
 				return
 			}
+			a.mu.Lock()
+			hasServices := len(a.services) > 0
+			a.mu.Unlock()
+			if hasServices && !a.serviceAuthorized() {
+				a.closePeerServices()
+			}
 		}
 	}
 }
@@ -986,6 +1000,10 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 		transport := a.transport
 		channel := a.channel
 		peerFS := a.remoteFS
+		services := make([]*peerServiceHost, 0, len(a.services))
+		for _, service := range a.services {
+			services = append(services, service)
+		}
 		signal := a.signal
 		leaseKey := a.leaseKey
 		leaseHeld := a.leaseHeld
@@ -994,6 +1012,7 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 		a.fsPool = nil
 		a.sessionCreate = nil
 		a.sessionCreateOut = nil
+		a.services = nil
 		a.sub = nil
 		a.subscribedSession = nil
 		a.channel = nil
@@ -1012,6 +1031,9 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 		}
 		if peerFS != nil {
 			peerFS.close()
+		}
+		for _, service := range services {
+			service.close()
 		}
 		if sub != nil && sess != nil {
 			sess.Unsubscribe(sub)

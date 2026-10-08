@@ -43,10 +43,14 @@ const (
 	RecordConfigFragment  RecordKind = 10
 	RecordSignal          RecordKind = 11
 	RecordSignalFragment  RecordKind = 12
+	// RecordService carries one independently framed Remote Web Preview
+	// message. It shares the authenticated Peer record layer but never enters
+	// the terminal proto.Frame stream or PTY subscriber lifecycle.
+	RecordService RecordKind = 13
 )
 
 func (k RecordKind) valid() bool {
-	return k >= RecordFrame && k <= RecordSignalFragment
+	return k >= RecordFrame && k <= RecordService
 }
 
 func (k RecordKind) configMessage() bool {
@@ -54,7 +58,7 @@ func (k RecordKind) configMessage() bool {
 }
 
 func (k RecordKind) dataChannelMessage() bool {
-	return k >= RecordFrame && k <= RecordConfigFragment
+	return k >= RecordFrame && k <= RecordConfigFragment || k == RecordService
 }
 
 // IsConfigMessage reports whether a record carries one complete config

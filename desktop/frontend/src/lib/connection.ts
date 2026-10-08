@@ -221,6 +221,8 @@ export interface DirectTransport {
   start(): void;
   sendFrame(frame: Uint8Array): boolean;
   close(): void;
+  /** Opaque native route handle used only by the desktop Peer Preview bridge. */
+  nativeAttemptId?(): string;
 }
 
 export interface SessionListHandlers {
@@ -239,6 +241,7 @@ export interface ServiceOpenResult {
   clientTicket: string;
   clientToHostKey: Uint8Array;
   hostToClientKey: Uint8Array;
+  peerAttemptId?: string;
 }
 
 export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {

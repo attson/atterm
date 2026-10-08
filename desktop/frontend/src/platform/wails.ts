@@ -254,6 +254,7 @@ export function createWailsPlatform(): Platform {
             host_to_client_key: Array.from(mapping.hostToClientKey),
             port: mapping.port,
             path_prefix: mapping.pathPrefix || "",
+            peer_attempt_id: mapping.peerAttemptId || "",
           })),
           service_id: first.serviceId,
           client_ticket: first.clientTicket,
@@ -272,6 +273,7 @@ export function createWailsPlatform(): Platform {
           client_ticket: req.clientTicket,
           client_to_host_key: Array.from(req.clientToHostKey),
           host_to_client_key: Array.from(req.hostToClientKey),
+          peer_attempt_id: req.peerAttemptId || "",
         }))
       },
     },

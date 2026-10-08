@@ -115,7 +115,7 @@ func TestServicePreviewGatewaySurvivesPipeDeath(t *testing.T) {
 	mp.mu.Lock()
 	pipe := mp.pipe
 	mp.mu.Unlock()
-	pipe.cancel()
+	pipe.(*servicePreview).cancel()
 
 	waitFor(t, 3*time.Second, "mapping marked dead", func() bool {
 		mp.mu.Lock()
@@ -161,7 +161,7 @@ func TestServicePreviewPipeDeathEmitsEvent(t *testing.T) {
 	mp.mu.Lock()
 	pipe := mp.pipe
 	mp.mu.Unlock()
-	pipe.cancel()
+	pipe.(*servicePreview).cancel()
 
 	select {
 	case ev := <-events:

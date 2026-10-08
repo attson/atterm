@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/peertransport"
+	"github.com/google/uuid"
 )
 
 func TestWSSFallbackCarriesEncryptedTerminalAndConfigRecords(t *testing.T) {
@@ -93,12 +94,27 @@ func TestWSSFallbackCarriesEncryptedTerminalAndConfigRecords(t *testing.T) {
 	if got := receiveWSSRecord(t, ctx, hostConfig); got.kind != peertransport.RecordConfigInventory || !bytes.Equal(got.payload, largeConfig) {
 		t.Fatalf("host config record kind=%d size=%d", got.kind, len(got.payload))
 	}
+	servicePayload, err := peertransport.EncodeServiceMessage(peertransport.ServiceMessage{
+		ServiceID: uuid.New(), Kind: peertransport.ServiceData, Connection: 1, Data: []byte("preview"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SendRecord(ctx, peertransport.RecordService, servicePayload); !errors.Is(err, peertransport.ErrDirectTransport) {
+		t.Fatalf("generic service send error=%v, want ErrDirectTransport", err)
+	}
+	if err := client.SendServiceMessage(ctx, servicePayload); err != nil {
+		t.Fatal(err)
+	}
+	if got := receiveWSSRecord(t, ctx, hostRecords); got.kind != peertransport.RecordService || !bytes.Equal(got.payload, servicePayload) {
+		t.Fatalf("host service record kind=%d payload=%x", got.kind, got.payload)
+	}
 	if err := clientSignal.SendSignal(ctx, Signal{Type: SignalICEEnd}); !errors.Is(err, peertransport.ErrDirectTransport) {
 		t.Fatalf("signal after fallback error = %v, want ErrDirectTransport", err)
 	}
 }
 
-func TestWSSWriterPrioritizesControlThenTerminalThenConfig(t *testing.T) {
+func TestWSSWriterPrioritizesControlThenTerminalThenServiceThenConfig(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -147,6 +163,12 @@ func TestWSSWriterPrioritizesControlThenTerminalThenConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	serviceDone, err := writer.enqueue(ctx, wssPriorityService, []wssPlainRecord{{
+		kind: peertransport.RecordService, payload: []byte("service"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	secondConfigDone, err := writer.enqueue(ctx, wssPriorityConfig, []wssPlainRecord{{
 		kind: peertransport.RecordConfigInventory, payload: []byte("config-other"),
 	}})
@@ -154,7 +176,7 @@ func TestWSSWriterPrioritizesControlThenTerminalThenConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(releaseFirst)
-	for _, result := range []<-chan error{configDone, terminalDone, controlDone, secondConfigDone} {
+	for _, result := range []<-chan error{configDone, terminalDone, controlDone, serviceDone, secondConfigDone} {
 		select {
 		case err := <-result:
 			if err != nil {
@@ -166,7 +188,7 @@ func TestWSSWriterPrioritizesControlThenTerminalThenConfig(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	want := []string{"config-1", "control", "terminal", "config-2", "config-other"}
+	want := []string{"config-1", "control", "terminal", "service", "config-2", "config-other"}
 	if len(order) != len(want) {
 		t.Fatalf("write order = %v", order)
 	}

@@ -44,6 +44,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   SetPluginConfig: vi.fn().mockResolvedValue(undefined),
   GetAppVersion: vi.fn().mockResolvedValue('v0.3.19'),
   StartServicePreview: vi.fn().mockResolvedValue({ id: 'preview-1', url: 'http://127.0.0.1:49000/' }),
+  RebindServicePreview: vi.fn().mockResolvedValue(undefined),
   StopServicePreview: vi.fn().mockResolvedValue(undefined),
   GetPeerSpaceStatus: vi.fn().mockResolvedValue({ configured: false }),
   GetPeerConfigSyncStatus: vi.fn().mockResolvedValue({ configured: true, pending_operations: 2 }),
@@ -115,6 +116,7 @@ import {
   StartPeerQuickTunnel,
   StartPeerNativeDirect,
   SendPeerNativeDirectFrame,
+  RebindServicePreview,
   StartServicePreview,
   StopPeerNativeDirect,
   StopPeerQuickTunnel,
@@ -262,6 +264,35 @@ describe('createWailsPlatform', () => {
         expect.objectContaining({ service_id: 'service-root', port: 3000, path_prefix: '' }),
         expect.objectContaining({ service_id: 'service-api', port: 8080, path_prefix: '/api' }),
       ],
+    }))
+  })
+
+  it('servicePreview forwards only the opaque Peer attempt handle for Peer mappings', async () => {
+    const p = createWailsPlatform()
+    const emptyKey = new Uint8Array()
+    await p.servicePreview!.start({
+      mappings: [{
+        serviceId: 'peer-service', clientTicket: '',
+        clientToHostKey: emptyKey, hostToClientKey: emptyKey,
+        port: 3000, peerAttemptId: 'native-attempt-1',
+      }],
+    })
+    expect(StartServicePreview).toHaveBeenCalledWith(expect.objectContaining({
+      mappings: [expect.objectContaining({
+        service_id: 'peer-service', peer_attempt_id: 'native-attempt-1',
+        client_ticket: '', client_to_host_key: [], host_to_client_key: [],
+      })],
+    }))
+
+    await p.servicePreview!.rebind!({
+      gatewayId: 'gateway-1', mappingIndex: 0, serviceId: 'peer-service-2',
+      clientTicket: '', clientToHostKey: emptyKey, hostToClientKey: emptyKey,
+      peerAttemptId: 'native-attempt-2',
+    })
+    expect(RebindServicePreview).toHaveBeenCalledWith(expect.objectContaining({
+      gateway_id: 'gateway-1', service_id: 'peer-service-2',
+      peer_attempt_id: 'native-attempt-2', client_ticket: '',
+      client_to_host_key: [], host_to_client_key: [],
     }))
   })
 

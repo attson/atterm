@@ -43,6 +43,9 @@ type ServicePreviewMapping struct {
 	HostToClientKey []byte `json:"host_to_client_key"`
 	Port            uint16 `json:"port"`
 	PathPrefix      string `json:"path_prefix,omitempty"`
+	// PeerAttemptID is an opaque in-process handle for an authenticated Peer
+	// route. It is neither a network endpoint nor a credential.
+	PeerAttemptID string `json:"peer_attempt_id,omitempty"`
 }
 
 type ServicePreviewStartResponse struct {
@@ -61,6 +64,7 @@ type ServicePreviewRebindRequest struct {
 	ClientTicket    string `json:"client_ticket"`
 	ClientToHostKey []byte `json:"client_to_host_key"`
 	HostToClientKey []byte `json:"host_to_client_key"`
+	PeerAttemptID   string `json:"peer_attempt_id,omitempty"`
 }
 
 type servicePreviewManager struct {
@@ -95,7 +99,7 @@ type servicePreviewMapping struct {
 	gateway  *servicePreviewGateway
 
 	mu        sync.Mutex
-	pipe      *servicePreview // current live pipe; nil while dead
+	pipe      servicePreviewPipe // current live pipe; nil while dead
 	serviceID uuid.UUID
 	dead      bool
 }
@@ -119,6 +123,12 @@ type servicePreview struct {
 	closeOnce   sync.Once
 }
 
+type servicePreviewPipe interface {
+	acceptConn(net.Conn) bool
+	run()
+	close()
+}
+
 // servicePreviewReconnectingBody is returned (503 + Retry-After) while a mapping
 // is dead and awaiting rebind, instead of the 502 a closed proxy target yields.
 // The renderer overlays a "reconnecting" state over the iframe so users never
@@ -126,19 +136,33 @@ type servicePreview struct {
 var servicePreviewReconnectingBody = []byte(`{"reconnecting":true}`)
 
 func (a *App) StartServicePreview(req ServicePreviewStartRequest) (ServicePreviewStartResponse, error) {
-	if a.cfgStore == nil {
-		return ServicePreviewStartResponse{}, errors.New("relay config unavailable")
+	var cfg appConfig
+	if servicePreviewRequestUsesRelay(req) {
+		if a.cfgStore == nil {
+			return ServicePreviewStartResponse{}, errors.New("relay config unavailable")
+		}
+		cfg = a.cfgStore.Get()
+		if cfg.RelayURL == "" || cfg.RelaySessionToken == "" || cfg.RelayPaused {
+			return ServicePreviewStartResponse{}, errors.New("relay is not connected")
+		}
+		// Relay service sockets must land on the same home instance that routed
+		// the control request because its service hub is process-local.
+		cfg.RelayURL = uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
 	}
-	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" || cfg.RelayPaused {
-		return ServicePreviewStartResponse{}, errors.New("relay is not connected")
-	}
-	// The control request was routed through the user's home instance. The
-	// data socket must land on that same in-memory service hub; dialing the
-	// login/bootstrap URL would fail in a multi-instance realm.
-	cfg.RelayURL = uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
 	a.wireServicePreviewEmitter()
-	return a.servicePreviews.start(a.ctx, cfg, req)
+	return a.servicePreviews.startWithPeer(a.ctx, cfg, req, a.newPeerServicePreview)
+}
+
+func servicePreviewRequestUsesRelay(req ServicePreviewStartRequest) bool {
+	if len(req.Mappings) == 0 {
+		return true
+	}
+	for _, mapping := range req.Mappings {
+		if mapping.PeerAttemptID == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // wireServicePreviewEmitter installs the Wails event emitter onto the preview
@@ -167,23 +191,32 @@ func (a *App) StopServicePreview(id string) {
 // RebindServicePreview reattaches a dead mapping's pipe using a fresh lease the
 // renderer just opened. It keeps the gateway (and the browser URL) alive.
 func (a *App) RebindServicePreview(req ServicePreviewRebindRequest) error {
-	if a.cfgStore == nil {
-		return errors.New("relay config unavailable")
+	var cfg appConfig
+	if req.PeerAttemptID == "" {
+		if a.cfgStore == nil {
+			return errors.New("relay config unavailable")
+		}
+		cfg = a.cfgStore.Get()
+		if cfg.RelayURL == "" || cfg.RelaySessionToken == "" || cfg.RelayPaused {
+			return errors.New("relay is not connected")
+		}
+		cfg.RelayURL = uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
 	}
-	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" || cfg.RelayPaused {
-		return errors.New("relay is not connected")
-	}
-	cfg.RelayURL = uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
 	gid, err := uuid.Parse(req.GatewayID)
 	if err != nil {
 		return errors.New("invalid gateway id")
 	}
 	a.wireServicePreviewEmitter()
-	return a.servicePreviews.rebind(cfg, gid, req)
+	return a.servicePreviews.rebindWithPeer(cfg, gid, req, a.newPeerServicePreview)
 }
 
 func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req ServicePreviewStartRequest) (ServicePreviewStartResponse, error) {
+	return m.startWithPeer(parent, cfg, req, nil)
+}
+
+type peerServicePreviewFactory func(context.Context, string, uuid.UUID) (servicePreviewPipe, error)
+
+func (m *servicePreviewManager) startWithPeer(parent context.Context, cfg appConfig, req ServicePreviewStartRequest, peerFactory peerServicePreviewFactory) (ServicePreviewStartResponse, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -217,14 +250,14 @@ func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req
 		}
 		seenPrefixes[prefix] = struct{}{}
 		mapping.PathPrefix = prefix
-		ws, codec, serviceID, err := dialServiceClient(ctx, cfg, mapping)
+		pipe, serviceID, err := newServicePreviewPipe(ctx, cfg, mapping, peerFactory)
 		if err != nil {
 			gateway.close()
 			return ServicePreviewStartResponse{}, err
 		}
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			_ = ws.CloseNow()
+			pipe.close()
 			gateway.close()
 			return ServicePreviewStartResponse{}, err
 		}
@@ -238,7 +271,6 @@ func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req
 			gateway:   gateway,
 			serviceID: serviceID,
 		}
-		pipe := newServicePreview(ctx, ws, codec, serviceID)
 		mp.pipe = pipe
 		gateway.mappings = append(gateway.mappings, mp)
 		go mp.acceptLoop()
@@ -281,6 +313,10 @@ func (m *servicePreviewManager) start(parent context.Context, cfg appConfig, req
 // unchanged. The fresh serviceID/ticket/keys come from the renderer, which
 // re-ran the SERVICE_OPEN control handshake to mint them.
 func (m *servicePreviewManager) rebind(cfg appConfig, gid uuid.UUID, req ServicePreviewRebindRequest) error {
+	return m.rebindWithPeer(cfg, gid, req, nil)
+}
+
+func (m *servicePreviewManager) rebindWithPeer(cfg appConfig, gid uuid.UUID, req ServicePreviewRebindRequest, peerFactory peerServicePreviewFactory) error {
 	m.mu.Lock()
 	gateway := m.previews[gid]
 	m.mu.Unlock()
@@ -298,12 +334,12 @@ func (m *servicePreviewManager) rebind(cfg appConfig, gid uuid.UUID, req Service
 		HostToClientKey: req.HostToClientKey,
 		Port:            mp.port,
 		PathPrefix:      mp.prefix,
+		PeerAttemptID:   req.PeerAttemptID,
 	}
-	ws, codec, serviceID, err := dialServiceClient(gateway.ctx, cfg, mapping)
+	pipe, serviceID, err := newServicePreviewPipe(gateway.ctx, cfg, mapping, peerFactory)
 	if err != nil {
 		return err
 	}
-	pipe := newServicePreview(gateway.ctx, ws, codec, serviceID)
 	mp.mu.Lock()
 	old := mp.pipe
 	mp.pipe = pipe
@@ -322,6 +358,23 @@ func (m *servicePreviewManager) rebind(cfg appConfig, gid uuid.UUID, req Service
 		})
 	}
 	return nil
+}
+
+func newServicePreviewPipe(ctx context.Context, cfg appConfig, mapping ServicePreviewMapping, peerFactory peerServicePreviewFactory) (servicePreviewPipe, uuid.UUID, error) {
+	if mapping.PeerAttemptID != "" {
+		serviceID, err := uuid.Parse(mapping.ServiceID)
+		if err != nil || serviceID == uuid.Nil || peerFactory == nil || mapping.ClientTicket != "" ||
+			len(mapping.ClientToHostKey) != 0 || len(mapping.HostToClientKey) != 0 {
+			return nil, uuid.Nil, errors.New("invalid Peer service preview request")
+		}
+		pipe, err := peerFactory(ctx, mapping.PeerAttemptID, serviceID)
+		return pipe, serviceID, err
+	}
+	ws, codec, serviceID, err := dialServiceClient(ctx, cfg, mapping)
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
+	return newServicePreview(ctx, ws, codec, serviceID), serviceID, nil
 }
 
 func normalizeServicePreviewPrefix(raw string, root bool) (string, error) {
@@ -548,7 +601,7 @@ func (mp *servicePreviewMapping) acceptLoop() {
 
 // runPipe blocks on the pipe's lifetime, then marks the mapping dead (unless a
 // concurrent rebind already replaced the pipe) and fires the pipe-dead event.
-func (mp *servicePreviewMapping) runPipe(pipe *servicePreview) {
+func (mp *servicePreviewMapping) runPipe(pipe servicePreviewPipe) {
 	pipe.run()
 	mp.mu.Lock()
 	replaced := mp.pipe != pipe

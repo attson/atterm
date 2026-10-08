@@ -20,6 +20,7 @@ func TestRecordKindWireValuesRemainStable(t *testing.T) {
 		RecordConfigFragment:  10,
 		RecordSignal:          11,
 		RecordSignalFragment:  12,
+		RecordService:         13,
 	}
 	for kind, wire := range want {
 		if byte(kind) != wire {
@@ -38,6 +39,25 @@ func TestSignalRecordKindsAreNotDataChannelMessages(t *testing.T) {
 		if !kind.dataChannelMessage() {
 			t.Fatalf("existing DataChannel kind %d rejected", kind)
 		}
+	}
+	if !RecordService.dataChannelMessage() {
+		t.Fatal("service kind rejected as DataChannel message")
+	}
+}
+
+func TestServiceRecordSealsAndOpens(t *testing.T) {
+	sealer, opener := recordPair(t)
+	want := []byte("preview bytes")
+	record, err := sealer.Seal(RecordService, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, got, err := opener.Open(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != RecordService || !bytes.Equal(got, want) {
+		t.Fatalf("opened kind=%d payload=%q, want service %q", kind, got, want)
 	}
 }
 

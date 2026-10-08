@@ -379,6 +379,9 @@ type ServiceOpenPayload struct {
 	// Sealed is XChaCha20-Poly1305 over SealedServiceOpenFields under the
 	// session key, AAD=session_uuid||TypeServiceOpen.
 	Sealed []byte `json:"sealed,omitempty"`
+	// PeerFields is accepted only inside an authenticated Peer record. Peer
+	// routes already provide E2EE and do not depend on Relay account keys.
+	PeerFields *SealedServiceOpenFields `json:"peer_fields,omitempty"`
 }
 
 // SealedServiceOpenFields are the owner-only fields carried by

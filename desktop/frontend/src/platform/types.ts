@@ -373,6 +373,7 @@ export interface ServicePreviewMapping {
   hostToClientKey: Uint8Array
   port: number
   pathPrefix?: string
+  peerAttemptId?: string
 }
 
 export interface ServicePreviewStartRequest {
@@ -396,6 +397,7 @@ export interface ServicePreviewRebindRequest {
   clientTicket: string
   clientToHostKey: Uint8Array
   hostToClientKey: Uint8Array
+  peerAttemptId?: string
 }
 
 export interface ServicePreviewBridge {

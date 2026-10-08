@@ -18,10 +18,11 @@ import (
 type peerNativeTestChannel struct {
 	remoteMembership string
 
-	mu      sync.Mutex
-	frames  [][]byte
-	configs []peertransport.RecordKind
-	closed  bool
+	mu       sync.Mutex
+	frames   [][]byte
+	services [][]byte
+	configs  []peertransport.RecordKind
+	closed   bool
 }
 
 func (c *peerNativeTestChannel) SendRecord(context.Context, peertransport.RecordKind, []byte) error {
@@ -31,6 +32,13 @@ func (c *peerNativeTestChannel) SendRecord(context.Context, peertransport.Record
 func (c *peerNativeTestChannel) SendFrame(_ context.Context, frame []byte) error {
 	c.mu.Lock()
 	c.frames = append(c.frames, append([]byte(nil), frame...))
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *peerNativeTestChannel) SendServiceMessage(_ context.Context, payload []byte) error {
+	c.mu.Lock()
+	c.services = append(c.services, append([]byte(nil), payload...))
 	c.mu.Unlock()
 	return nil
 }

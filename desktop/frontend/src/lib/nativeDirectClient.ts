@@ -91,6 +91,10 @@ export class NativeDirectClientTransport implements DirectTransport {
     return true
   }
 
+  nativeAttemptId(): string {
+    return this.id
+  }
+
   close(): void {
     this.finish()
   }

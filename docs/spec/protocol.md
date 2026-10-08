@@ -524,9 +524,12 @@ command、cwd、env、startup command 等执行字段。
 
 ### Remote Web Preview (`SERVICE_OPEN` 0x3d / `SERVICE_OPENED` 0x3e / `SERVICE_CLOSE` 0x3f)
 
-Preview 控制帧沿已 attach session 路由；实际 HTTP/TCP 字节不进入本帧协议，
-而走独立 `/service-client` / `/service-host` WebSocket。该独立通道不创建
+Preview 控制帧沿已 attach session 路由；实际 HTTP/TCP 字节不进入 terminal
+`proto.Frame` stream。Relay account 路径使用独立 `/service-client` / `/service-host`
+WebSocket，Peer 路径使用独立的加密 `SERVICE` record logical channel。两种数据通道都不创建
 session subscriber，不触发 `STREAM_REQUEST/STOP`。
+
+#### Relay account variant
 
 `SERVICE_OPEN` payload：
 
@@ -572,6 +575,46 @@ session subscriber，不触发 `STREAM_REQUEST/STOP`。
 
 Service data message 的 AES-GCM multiplex 格式、额度和 key derivation 见
 [`2026-08-29-remote-web-preview-phase1-design.md`](../superpowers/specs/2026-08-29-remote-web-preview-phase1-design.md) §3–4。
+
+#### Peer variant
+
+Peer client 在 authenticated Direct 或 Quick Tunnel route ready 后发送：
+
+```json
+{
+  "request_id": "uuid",
+  "service_id": "uuid",
+  "peer_fields": { "port": 3000, "scheme": "http", "host": "127.0.0.1" }
+}
+```
+
+该 `SERVICE_OPEN` 已整体位于 Peer `FRAME` record 的 E2EE/authenticated boundary 内，因此
+`host_ticket` 必须为空、`sealed` 必须为空，也不使用 Relay token 或 `account_key`。owner 只接受
+`scheme=http` 和 `localhost` / `127.0.0.1` / `::1`；响应仍使用 `SERVICE_OPENED`，但成功响应的
+`client_ticket` 为空。renderer 只把当前 native route 的 opaque attempt id 交给本机 gateway，
+该 id 不是 endpoint、membership token 或可跨进程使用的 credential。
+
+实际 TCP 字节使用 authenticated Peer record `SERVICE=0x0d`，plaintext 固定为：
+
+```text
+service_id(16B UUID) || kind(1B) || connection_id(be32) || data_len(be16) || data
+```
+
+`kind=1/2/3` 分别表示 open/data/close。`connection_id` 非零；open/close 的 `data_len` 必须为 0，
+data 的长度必须为 `1..16361`，使完整 plaintext 不超过 16 KiB。service message 不允许进入 terminal
+frame callback 或 config reassembler。Direct Pion DataChannel 直接发送 `SERVICE` record；Quick Tunnel
+WSS 在同一物理 WebSocket 上使用独立有界 service queue，调度顺序为
+`control > terminal > service > config`。
+
+owner 在 open 和每条 service message 边界重新验证当前 route lease、exact active membership、
+双方 session scope、owner 当前 `remote_permission=full`、该 route 的 granted permission 仍为 `full`
+且 subscriber 仍是 current driver。每条 route 最多 4 个 service，每个 service 最多 16 条 TCP
+connection；每端按双向累计最多传输 512 MiB，send/receive queue 各最多 128 条且持续背压 5 秒即
+取消 service。
+显式 `SERVICE_CLOSE`、pane detach、route replacement、membership/session scope 失效、owner 降权或
+driver 转移都会关闭 listener/target socket 和 pending queue。未知 service、畸形 record 或越权消息
+fail closed 当前 Peer route；唯一例外是已关闭 service 的迟到 connection `close`，它作为幂等清理忽略，
+避免与并发 `SERVICE_CLOSE` 控制帧竞态误杀 terminal route。
 
 ### `CLAIM_DRIVER` (0x34) — client → relay
 
@@ -1070,6 +1113,7 @@ terminal subscriber lifecycle。
 | `CONFIG_FRAGMENT` | `0x0a` | 分片后的任一 config logical message |
 | `SIGNAL` | `0x0b` | JSON `Signal{v,type,payload}`，仅用于加密后的 SDP/ICE |
 | `SIGNAL_FRAGMENT` | `0x0c` | 分片后的单个 signaling message |
+| `SERVICE` | `0x0d` | 独立 Remote Web Preview multiplex message，不进入 terminal frame |
 
 单个 record plaintext 上限仍是 16 KiB。超过上限的配置消息用独立格式分片：
 
@@ -1173,10 +1217,10 @@ host/client attempt。offer/answer 只经上述 encrypted signal record 交换�
 
 收到 `wss_ready` 后，同一 WebSocket 切换到 WSS data 模式，复用首次 signaling membership
 handshake 已派生的 traffic key、nonce counter 和 exact remote membership，不再执行第二次
-handshake。此后只接受 `FRAME`..`CONFIG_FRAGMENT`（`0x01..0x0a`），任何 signaling record
-或未知类型都 fail closed。terminal/config 的 fragmentation 与 reassembly 规则和 DataChannel
+handshake。此后只接受 `FRAME`..`CONFIG_FRAGMENT`（`0x01..0x0a`）和独立 `SERVICE`（`0x0d`），
+任何 signaling record 或未知类型都 fail closed。terminal/config 的 fragmentation 与 reassembly 规则和 DataChannel
 完全相同；配置授权仍绑定 handshake 的 exact membership。WSS writer 使用有界队列，在每个
-encrypted record 边界按 `input/control > terminal output > config sync` 调度；同一 fragmented
+encrypted record 边界按 `input/control > terminal output > Preview service > config sync` 调度；同一 fragmented
 logical message 内保持同级连续，允许更高优先级 record 在 terminal/config 两套独立 reassembler
 之间抢占。Cloudflare 只能观察连接元数据、时序和 ciphertext size，不能读取 record plaintext。
 

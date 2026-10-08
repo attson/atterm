@@ -309,6 +309,15 @@ func (c *PionClientChannel) SendRecord(ctx context.Context, kind RecordKind, pla
 	return c.sendRecordLocked(ctx, kind, plaintext)
 }
 
+// SendServiceMessage sends one bounded Preview byte-channel message without
+// wrapping it in a terminal proto.Frame.
+func (c *PionClientChannel) SendServiceMessage(ctx context.Context, payload []byte) error {
+	if _, err := DecodeServiceMessage(payload); err != nil {
+		return err
+	}
+	return c.SendRecord(ctx, RecordService, payload)
+}
+
 func (c *PionClientChannel) SendFrame(ctx context.Context, frame []byte) error {
 	if c == nil || c.dc == nil || c.sealer == nil {
 		return fmt.Errorf("%w: unauthenticated channel", ErrDirectTransport)

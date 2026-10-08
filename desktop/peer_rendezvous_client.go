@@ -38,14 +38,15 @@ type peerNativeDirectClient struct {
 	route            string
 	quickRoute       peerQuickTunnelRoute
 
-	mu            sync.Mutex
-	attempt       *peertransport.PionClientAttempt
-	signal        *quicktunnel.SignalChannel
-	channel       peerQuickTunnelChannel
-	config        *peerConfigChannel
-	authenticated bool
-	stopped       bool
-	closeOnce     sync.Once
+	mu              sync.Mutex
+	attempt         *peertransport.PionClientAttempt
+	signal          *quicktunnel.SignalChannel
+	channel         peerQuickTunnelChannel
+	config          *peerConfigChannel
+	servicePreviews map[uuid.UUID]*peerServicePreview
+	authenticated   bool
+	stopped         bool
+	closeOnce       sync.Once
 }
 
 // StartPeerNativeDirect starts one accountless Peer terminal attachment. The
@@ -304,6 +305,24 @@ func (c *peerNativeDirectClient) handleRecord(kind peertransport.RecordKind, pay
 		}
 	case peertransport.RecordClose:
 		c.fail(errors.New("Peer direct host closed route"))
+	case peertransport.RecordService:
+		message, err := peertransport.DecodeServiceMessage(payload)
+		if err != nil {
+			c.fail(err)
+			return
+		}
+		c.mu.Lock()
+		preview := c.servicePreviews[message.ServiceID]
+		c.mu.Unlock()
+		if preview == nil {
+			if message.Kind != peertransport.ServiceClose {
+				c.fail(errors.New("Peer preview message targets an unknown service"))
+			}
+			return
+		}
+		if err := preview.handle(message); err != nil {
+			preview.close()
+		}
 	default:
 		c.fail(fmt.Errorf("unsupported Peer direct record kind %d", kind))
 	}
@@ -331,6 +350,18 @@ func (c *peerNativeDirectClient) sendFrame(frame []byte) error {
 	return channel.SendFrame(c.ctx, frame)
 }
 
+func (c *peerNativeDirectClient) sendServiceMessage(ctx context.Context, payload []byte) error {
+	c.mu.Lock()
+	channel := c.channel
+	authenticated := c.authenticated
+	stopped := c.stopped
+	c.mu.Unlock()
+	if stopped || !authenticated || channel == nil {
+		return errors.New("Peer preview channel unavailable")
+	}
+	return channel.SendServiceMessage(ctx, payload)
+}
+
 func (c *peerNativeDirectClient) emit(event NativeDirectEvent) {
 	if c.app.eventsEmitter != nil {
 		c.app.eventsEmitter(c.app.ctx, "peer-native-direct:event:"+c.id, event)
@@ -344,6 +375,7 @@ func (c *peerNativeDirectClient) finish(err error, emitFailure bool) {
 	var attempt *peertransport.PionClientAttempt
 	var signal *quicktunnel.SignalChannel
 	var channel peerQuickTunnelChannel
+	var previews []*peerServicePreview
 	finished := false
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
@@ -355,6 +387,10 @@ func (c *peerNativeDirectClient) finish(err error, emitFailure bool) {
 		c.signal = nil
 		c.channel = nil
 		c.config = nil
+		for _, preview := range c.servicePreviews {
+			previews = append(previews, preview)
+		}
+		c.servicePreviews = nil
 		c.authenticated = false
 		c.mu.Unlock()
 		c.cancel()
@@ -365,6 +401,9 @@ func (c *peerNativeDirectClient) finish(err error, emitFailure bool) {
 	})
 	if !finished {
 		return
+	}
+	for _, preview := range previews {
+		preview.close()
 	}
 	// Pion invokes OnClosed synchronously from Close. Keep that callback
 	// outside closeOnce.Do so its recursive finish call observes completion

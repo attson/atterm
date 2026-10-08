@@ -1737,6 +1737,7 @@ export namespace main {
 	    host_to_client_key: number[];
 	    port: number;
 	    path_prefix?: string;
+	    peer_attempt_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServicePreviewMapping(source);
@@ -1750,6 +1751,7 @@ export namespace main {
 	        this.host_to_client_key = source["host_to_client_key"];
 	        this.port = source["port"];
 	        this.path_prefix = source["path_prefix"];
+	        this.peer_attempt_id = source["peer_attempt_id"];
 	    }
 	}
 	export class ServicePreviewRebindRequest {
@@ -1759,6 +1761,7 @@ export namespace main {
 	    client_ticket: string;
 	    client_to_host_key: number[];
 	    host_to_client_key: number[];
+	    peer_attempt_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServicePreviewRebindRequest(source);
@@ -1772,6 +1775,7 @@ export namespace main {
 	        this.client_ticket = source["client_ticket"];
 	        this.client_to_host_key = source["client_to_host_key"];
 	        this.host_to_client_key = source["host_to_client_key"];
+	        this.peer_attempt_id = source["peer_attempt_id"];
 	    }
 	}
 	export class ServicePreviewStartRequest {

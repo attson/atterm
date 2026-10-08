@@ -49,6 +49,13 @@ interface SessionCreatedResponse {
   error?: string
 }
 
+interface ServiceOpenedResponse {
+  request_id: string
+  service_id: string
+  ok: boolean
+  error?: string
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface PeerHandoverAttempt {
@@ -110,6 +117,14 @@ export class PeerSessionConnection {
   private pendingSessionCreates = new Map<string, {
     generation: number
     resolve: (sessionID: string) => void
+    reject: (error: Error) => void
+    timer: number
+  }>()
+  private pendingServiceOpens = new Map<string, {
+    generation: number
+    serviceId: string
+    peerAttemptId: string
+    resolve: (result: ServiceOpenResult) => void
     reject: (error: Error) => void
     timer: number
   }>()
@@ -188,11 +203,55 @@ export class PeerSessionConnection {
     return false
   }
 
-  openService(_port: number, _host = 'localhost'): Promise<ServiceOpenResult> {
-    return Promise.reject(new Error('service preview is unavailable for Peer sessions'))
+  openService(port: number, host = 'localhost', timeoutMs = 30_000): Promise<ServiceOpenResult> {
+    const transport = this.transport
+    const peerAttemptId = transport?.nativeAttemptId?.() ?? ''
+    if (!this.ready || !transport || this.handover || !peerAttemptId) {
+      return Promise.reject(new Error('service preview failed: Peer route is not ready'))
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return Promise.reject(new Error('service preview failed: invalid port'))
+    }
+    if (!['localhost', '127.0.0.1', '::1'].includes(host)) {
+      return Promise.reject(new Error('service preview failed: target must be loopback'))
+    }
+    const requestId = crypto.randomUUID()
+    const serviceId = crypto.randomUUID()
+    const generation = this.generation
+    const payload = encodeText(JSON.stringify({
+      request_id: requestId,
+      service_id: serviceId,
+      peer_fields: { port, scheme: 'http', host },
+    }))
+    return new Promise<ServiceOpenResult>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingServiceOpens.delete(requestId)
+        reject(new Error('service preview timed out'))
+      }, timeoutMs)
+      this.pendingServiceOpens.set(requestId, {
+        generation, serviceId, peerAttemptId, resolve, reject, timer,
+      })
+      try {
+        if (!this.isCurrent(generation, transport) || this.handover ||
+          !transport.sendFrame(encodeFrame(TYPE.SERVICE_OPEN, this.sidBytes, payload))) {
+          throw new Error('service preview failed: Peer route changed')
+        }
+      } catch (value) {
+        window.clearTimeout(timer)
+        this.pendingServiceOpens.delete(requestId)
+        reject(value instanceof Error ? value : new Error(String(value)))
+      }
+    })
   }
 
-  closeService(_serviceID: string): void {}
+  closeService(serviceId: string): void {
+    if (!UUID_PATTERN.test(serviceId)) return
+    this.send(encodeFrame(
+      TYPE.SERVICE_CLOSE,
+      this.sidBytes,
+      encodeText(JSON.stringify({ service_id: serviceId })),
+    ))
+  }
 
   createSessionWithProfile(hostID: string, profileID: string, timeoutMs = 30_000): Promise<string> {
     const transport = this.transport
@@ -355,6 +414,10 @@ export class PeerSessionConnection {
       return
     }
     if (!this.sameSession(frame.sid)) throw new Error('Peer frame session mismatch')
+    if (frame.type === TYPE.SERVICE_OPENED) {
+      this.handleServiceOpened(frame.payload)
+      return
+    }
     if (frame.type === TYPE.OUT) {
       const { seq, data } = decodeOutPayload(frame.payload)
       if (seq > 0 && seq <= this.lastSeq) return
@@ -493,6 +556,42 @@ export class PeerSessionConnection {
     }
   }
 
+  private handleServiceOpened(payload: Uint8Array): void {
+    let response: ServiceOpenedResponse
+    try {
+      const parsed = JSON.parse(decodeText(payload)) as Partial<ServiceOpenedResponse>
+      if (!parsed || typeof parsed.request_id !== 'string' || typeof parsed.service_id !== 'string' ||
+        typeof parsed.ok !== 'boolean' || parsed.error !== undefined && typeof parsed.error !== 'string') return
+      response = parsed as ServiceOpenedResponse
+    } catch {
+      return
+    }
+    const pending = this.pendingServiceOpens.get(response.request_id)
+    if (!pending || pending.generation !== this.generation || response.service_id !== pending.serviceId) return
+    window.clearTimeout(pending.timer)
+    this.pendingServiceOpens.delete(response.request_id)
+    if (!response.ok) {
+      pending.reject(new Error(response.error || 'service preview rejected'))
+      return
+    }
+    pending.resolve({
+      serviceId: pending.serviceId,
+      clientTicket: '',
+      clientToHostKey: new Uint8Array(),
+      hostToClientKey: new Uint8Array(),
+      peerAttemptId: pending.peerAttemptId,
+    })
+  }
+
+  private rejectPendingServiceOpens(error: Error): void {
+    const pending = Array.from(this.pendingServiceOpens.values())
+    this.pendingServiceOpens.clear()
+    for (const request of pending) {
+      window.clearTimeout(request.timer)
+      request.reject(error)
+    }
+  }
+
   private flush(): void {
     if (!this.transport || !this.ready) return
     if (this.pendingDriverClaim) {
@@ -529,6 +628,7 @@ export class PeerSessionConnection {
     this.clearDirectFailbackTimer()
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
     this.rejectPendingSessionCreates(new Error('upstream_unavailable'))
+    this.rejectPendingServiceOpens(new Error('service preview failed: Peer route changed'))
     this.retiredFSRequestIDs.clear()
     const wasActive = this.ready
     this.authenticated = false
@@ -663,6 +763,7 @@ export class PeerSessionConnection {
     ) return
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
     this.rejectPendingSessionCreates(new Error('upstream_unavailable'))
+    this.rejectPendingServiceOpens(new Error('service preview failed: Peer route changed'))
     this.retiredFSRequestIDs.clear()
     let transport: DirectTransport
     const attempt: PeerHandoverAttempt = {
@@ -791,6 +892,7 @@ export class PeerSessionConnection {
   private closeTransport(): void {
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
     this.rejectPendingSessionCreates(new Error('upstream_unavailable'))
+    this.rejectPendingServiceOpens(new Error('service preview failed: Peer route changed'))
     this.retiredFSRequestIDs.clear()
     this.generation++
     this.fallbackPending = false

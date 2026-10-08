@@ -30,6 +30,7 @@ class FakeTransport implements DirectTransport {
   sent: Uint8Array[] = []
   closed = false
   failSend = false
+  readonly id = `attempt-${crypto.randomUUID()}`
 
   constructor(readonly options: NativeDirectClientOptions) {}
   start(): void {}
@@ -39,9 +40,71 @@ class FakeTransport implements DirectTransport {
     return true
   }
   close(): void { this.closed = true }
+  nativeAttemptId(): string { return this.id }
 }
 
 describe('PeerSessionConnection', () => {
+  it('opens and closes Preview over Peer control frames without Relay keys or tickets', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+
+    const opened = connection.openService(3000, '127.0.0.1')
+    const requestFrame = decodeFrame(transports[0].sent.at(-1)!)
+    const request = JSON.parse(decodeText(requestFrame.payload))
+    expect(requestFrame.type).toBe(TYPE.SERVICE_OPEN)
+    expect(request).toEqual({
+      request_id: expect.any(String),
+      service_id: expect.any(String),
+      peer_fields: { port: 3000, scheme: 'http', host: '127.0.0.1' },
+    })
+    expect(request).not.toHaveProperty('sealed')
+    expect(request).not.toHaveProperty('host_ticket')
+
+    transports[0].options.callbacks.onFrame(encodeFrame(
+      TYPE.SERVICE_OPENED,
+      uuidParse(sessionID),
+      encodeText(JSON.stringify({ request_id: request.request_id, service_id: request.service_id, ok: true })),
+    ))
+    await expect(opened).resolves.toEqual({
+      serviceId: request.service_id,
+      clientTicket: '',
+      clientToHostKey: new Uint8Array(),
+      hostToClientKey: new Uint8Array(),
+      peerAttemptId: transports[0].id,
+    })
+
+    connection.closeService(request.service_id)
+    const closeFrame = decodeFrame(transports[0].sent.at(-1)!)
+    expect(closeFrame.type).toBe(TYPE.SERVICE_CLOSE)
+    expect(JSON.parse(decodeText(closeFrame.payload))).toEqual({ service_id: request.service_id })
+  })
+
+  it('rejects a pending Peer Preview open when its route generation changes', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    const pending = connection.openService(3000)
+    connection.setRoute('quick_tunnel')
+    await expect(pending).rejects.toThrow(/route changed/i)
+  })
+
   it('routes plaintext FS responses and events over the encrypted Peer record', async () => {
     const transports: FakeTransport[] = []
     const events: unknown[] = []

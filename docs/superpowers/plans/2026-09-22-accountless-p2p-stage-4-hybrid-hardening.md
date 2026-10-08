@@ -91,7 +91,7 @@ Each capability ships as a separate PR with explicit principal/frame allowlist, 
 
 `full` permission does not automatically allow a new frame until its own enforcement PR lands.
 
-Implementation status: items 1-3 are implemented. Peer image/file paste reuses the existing
+Implementation status: items 1-4 are implemented. Peer image/file paste reuses the existing
 `PASTE_IMAGE` / `PASTE_FILE` protocol payloads over both Rendezvous Direct and Quick Tunnel,
 without Relay credentials or `account_key`. The renderer requires ready + driver + `full` and does
 not queue large blobs across handover. The owner host independently revalidates the exact active
@@ -109,7 +109,16 @@ and sends only request/host/profile ids. The owner resolves the profile locally,
 session scope, owner policy and route lease before fork and response, limits each route to one in-flight
 create, and drops late results after downgrade or route replacement. The request is never retried after it
 starts. A target currently needs at least one discoverable session; zero-session host control remains a
-future extension. Item 4 remains denied by the Peer frame allowlist.
+future extension. Peer Remote Web Preview reuses `SERVICE_OPEN` / `SERVICE_OPENED` /
+`SERVICE_CLOSE` for control but carries TCP bytes in a new authenticated `RecordService` logical
+channel, independently of terminal frames and PTY subscriber lifecycle. Direct Pion and Quick Tunnel
+WSS use the same bounded service codec; WSS schedules service below terminal and above config sync.
+The owner requires the current driver plus effective `full`, revalidates exact membership/session
+scope and route lease on every message, and closes services on downgrade, driver loss, detach or route
+replacement. Loopback-only targets, 4 services per route, 16 connections per service, 512 MiB per-end
+byte budgets and bounded backpressure are covered by transport and real TCP round-trip tests. The local
+gateway receives only an opaque native attempt id; Relay tickets, Relay credentials and `account_key`
+do not enter the Peer path.
 
 ## PR 4.x - Additional reachability
 

@@ -525,7 +525,6 @@ const pasteBlobCanSend = computed(() =>
 const canOpenPreview = computed(() =>
   Boolean(
     platform.servicePreview &&
-    !props.peerDirect &&
     !props.isLocalSession &&
     isDriver.value &&
     status.value === "attached" &&
@@ -588,6 +587,7 @@ async function reconnectPreviewMapping(gatewayId: string, index: number): Promis
         clientTicket: opened.clientTicket,
         clientToHostKey: opened.clientToHostKey,
         hostToClientKey: opened.hostToClientKey,
+        peerAttemptId: opened.peerAttemptId,
       });
       current.serviceIds[index] = opened.serviceId;
       clearPreviewReconnect(current);
@@ -723,6 +723,7 @@ async function openPreview(): Promise<void> {
         clientTicket: service.clientTicket,
         clientToHostKey: service.clientToHostKey,
         hostToClientKey: service.hostToClientKey,
+        peerAttemptId: service.peerAttemptId,
         port: ports[index],
         pathPrefix: normalizedPrefixes[index] || undefined,
       })),

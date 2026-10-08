@@ -17,6 +17,7 @@ type wssPriority byte
 const (
 	wssPriorityControl wssPriority = iota
 	wssPriorityTerminal
+	wssPriorityService
 	wssPriorityConfig
 )
 
@@ -217,7 +218,8 @@ func (c *WSSChannel) receive(kind peertransport.RecordKind, plaintext []byte) er
 // SendRecord queues one control record at the highest WSS priority.
 func (c *WSSChannel) SendRecord(ctx context.Context, kind peertransport.RecordKind, plaintext []byte) error {
 	if c == nil || c.writer == nil || !kind.IsDataMessage() || kind == peertransport.RecordFragment ||
-		kind == peertransport.RecordConfigFragment || kind.IsConfigMessage() || len(plaintext) > peertransport.MaxRecordPlaintext {
+		kind == peertransport.RecordConfigFragment || kind == peertransport.RecordService ||
+		kind.IsConfigMessage() || len(plaintext) > peertransport.MaxRecordPlaintext {
 		return fmt.Errorf("%w: invalid WSS control record", peertransport.ErrDirectTransport)
 	}
 	return c.writer.send(ctx, wssPriorityControl, []wssPlainRecord{{kind: kind, payload: append([]byte(nil), plaintext...)}})
@@ -238,6 +240,21 @@ func (c *WSSChannel) SendFrame(ctx context.Context, frame []byte) error {
 		priority = wssPriorityControl
 	}
 	return c.writer.send(ctx, priority, records)
+}
+
+// SendServiceMessage queues Preview bytes below terminal traffic and above
+// background config replication. Quick Tunnel keeps one physical WebSocket,
+// while the service envelope remains independent from terminal frames.
+func (c *WSSChannel) SendServiceMessage(ctx context.Context, payload []byte) error {
+	if c == nil || c.writer == nil {
+		return fmt.Errorf("%w: invalid WSS service channel", peertransport.ErrDirectTransport)
+	}
+	if _, err := peertransport.DecodeServiceMessage(payload); err != nil {
+		return err
+	}
+	return c.writer.send(ctx, wssPriorityService, []wssPlainRecord{{
+		kind: peertransport.RecordService, payload: append([]byte(nil), payload...),
+	}})
 }
 
 // SendConfigMessage queues one anti-entropy message at the lowest WSS
@@ -320,7 +337,7 @@ type wssWriter struct {
 
 	mu      sync.Mutex
 	stopped bool
-	queues  [3][]*wssSendRequest
+	queues  [4][]*wssSendRequest
 }
 
 func newWSSWriter(done <-chan struct{}, write func(context.Context, peertransport.RecordKind, []byte) error) *wssWriter {

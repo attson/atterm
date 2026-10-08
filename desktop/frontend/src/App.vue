@@ -75,6 +75,7 @@ import type { RemoteSession } from "./platform/types";
 import { type SessionConnection, type SessionInfo } from "./lib/connection";
 import { buildRelayWebSocketEndpoint } from "./lib/relayEndpoint";
 import { mergeLocalSessions } from "./lib/localListMerge";
+import { mergeVisibleRemoteSessions } from "./lib/routeCandidates";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir, type TerminalAppearance } from "./lib/types";
 import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
@@ -778,10 +779,8 @@ function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
 
 function refreshVisibleRemoteSessions() {
   const localIds = new Set(localList.value.map((s) => s.id));
-  const merged = new Map<string, SessionInfo>();
-  for (const session of peerRawList.value) merged.set(session.id, { ...session, peer_direct: true });
-  for (const session of remoteRawList.value) merged.set(session.id, session);
-  remoteList.value = Array.from(merged.values()).filter((s) => !localIds.has(s.id));
+  remoteList.value = mergeVisibleRemoteSessions(remoteRawList.value, peerRawList.value)
+    .filter((session) => !localIds.has(session.id));
 }
 
 function applyLocalSessions(sessions: SessionInfo[]) {

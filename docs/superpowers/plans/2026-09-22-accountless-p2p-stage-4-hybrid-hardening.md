@@ -27,6 +27,16 @@ Direct (Relay or Rendezvous signaling)
 - Candidate health does not create duplicate sidebar items。
 - Route selection respects user policy; no account login prompt in Peer-only mode。
 
+Implementation status: the frontend now has a pure candidate model keyed by
+`(principal, session_id)` with deterministic `direct > Quick Tunnel WSS > Relay WS`
+selection, route/principal compatibility checks, and an explicit Peer-only policy that cannot
+select Relay-account candidates. The sidebar merge uses this model for the currently available
+Relay catalog and Rendezvous Peer catalog, preserving one visible `session_id` with the established
+Relay-entry precedence while keeping the two trust groups separate before UI collapse. Quick Tunnel
+WSS has not yet been exposed through the frontend transport contract, so it is modeled and tested but
+not activated by this slice. Live route leasing and automatic handover remain disabled pending the
+shared transport/principal entry gate and soak tests.
+
 ## PR 4.2 - Automated handover
 
 - Direct establishment stops unnecessary Relay/Quick terminal byte flow。

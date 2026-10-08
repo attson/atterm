@@ -65,6 +65,7 @@ export const zhCN = {
     route: {
       relay: "Relay",
       connectingDirect: "正在建立直连",
+      directBlocked: "直连受阻",
       direct: "直连",
       current: "当前路径：{route}",
       iceState: "ICE 状态：{state}",
@@ -85,6 +86,14 @@ export const zhCN = {
         directDisconnected: "直连通道已断开",
         preferenceDisabled: "直连已关闭",
         transportError: "直连传输失败",
+      },
+      peerFailure: {
+        iceFailed: "P2P 数据通道建立失败，可能是受限 NAT 或 UDP 被阻断。Rendezvous 只负责发现与加密信令，不转发终端流量；请启用 Quick Tunnel 路径或切换网络后重试。",
+        rendezvousUnavailable: "Rendezvous 暂时不可用，Peer 会话将自动重试；本机终端、Relay 和 Quick Tunnel 不受影响。",
+        peerOffline: "对端当前不在线或尚未发布有效的 Rendezvous presence，Peer 会话将自动重试。",
+        authenticationFailed: "Peer 身份或成员授权校验失败。请在 Peer 连接设置中确认成员状态和授权范围。",
+        timeout: "Peer 直连建立超时。Rendezvous 不承载终端数据；请检查双方网络，或使用 Quick Tunnel 路径。",
+        transportError: "Peer 直连暂时不可用，正在重试。Rendezvous 仅用于发现与信令，不是终端数据 Relay。",
       },
     },
     connecting: "连接中...",

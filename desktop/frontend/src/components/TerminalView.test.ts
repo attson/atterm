@@ -38,6 +38,12 @@ describe("TerminalView direct transport plumbing", () => {
     expect(source).toContain("directTransportFactory: platform.directConnection.createTransport");
     expect(source).toContain("preferDirect: props.preferDirect");
   });
+
+  test("explains restrictive NAT without presenting Rendezvous as a data relay", () => {
+    expect(source).toContain('data-testid="peer-connection-failure"');
+    expect(source).toContain('terminal.route.peerFailure.iceFailed');
+    expect(source).toContain('props.peerDirect && routeDiagnostics.value.fallbackReason');
+  });
 });
 
 describe("TerminalView async mount lifecycle", () => {

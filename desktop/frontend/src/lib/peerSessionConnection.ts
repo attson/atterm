@@ -12,11 +12,13 @@ import {
 import type {
   ClosePayload,
   ConnectionHandlers,
+  DirectFallbackReason,
   DirectTransport,
   FSEvent,
   FSResponse,
   ServiceOpenResult,
 } from './connection'
+import { directFallbackReason } from './connection'
 import type { DirectTransportDiagnostics } from './directClient'
 import type { NativeDirectClientOptions } from './nativeDirectClient'
 
@@ -46,6 +48,7 @@ export class PeerSessionConnection {
   private pendingDriverClaim = false
   private currentDriverClientID = ''
   private diagnostics: DirectTransportDiagnostics | null = null
+  private lastFailureReason: DirectFallbackReason | undefined
   private startedAt = 0
 
   constructor(
@@ -158,6 +161,7 @@ export class PeerSessionConnection {
             this.lastSeq = replayedSeq
             this.ready = true
             this.reconnectAttempts = 0
+            this.lastFailureReason = undefined
             this.handlers.onStatus?.('attached')
             this.emitRoute('direct')
             this.flush()
@@ -239,10 +243,12 @@ export class PeerSessionConnection {
     this.scheduleReconnect(error)
   }
 
-  private scheduleReconnect(_error: Error): void {
+  private scheduleReconnect(error: Error): void {
     if (this.detached || this.suspended) return
+    const wasActive = this.ready
     this.authenticated = false
     this.ready = false
+    this.lastFailureReason = directFallbackReason(error, wasActive)
     this.handlers.onStatus?.('reconnecting')
     this.emitRoute('connecting-direct')
     const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++))
@@ -281,6 +287,7 @@ export class PeerSessionConnection {
       ...(this.diagnostics?.iceState ? { iceState: this.diagnostics.iceState } : {}),
       ...(this.diagnostics?.candidateType ? { candidateType: this.diagnostics.candidateType } : {}),
       ...(setupTimeMs !== undefined ? { setupTimeMs } : {}),
+      ...(this.lastFailureReason ? { fallbackReason: this.lastFailureReason } : {}),
     })
   }
 }

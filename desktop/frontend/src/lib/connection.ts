@@ -174,8 +174,9 @@ export interface SessionRouteDiagnostics {
 export function directFallbackReason(error: unknown, wasActive = false): DirectFallbackReason {
   const message = errText(error).toLowerCase();
   if (message.includes("rtcpeerconnection") || message.includes("webrtc is unavailable")) return "webrtc_unavailable";
-  if (message.includes("timed out") || message.includes("ticket_expired")) return "timeout";
-  if (message.includes("host_offline") || message.includes("peer_disconnected")) return "host_unavailable";
+  if (message.includes("timed out") || message.includes("deadline exceeded") || message.includes("ticket_expired")) return "timeout";
+  if (message.includes("host_offline") || message.includes("peer offline") || message.includes("peer_disconnected")) return "host_unavailable";
+  if (message.includes("rendezvous client: service unavailable")) return "signal_endpoint_unavailable";
   if (message.includes("signaling rejected") || message.includes("signaling disconnected")) return "signaling_rejected";
   if (message.includes("peer connection failed") || message.includes("ice")) return "ice_failed";
   if (message.includes("handshake") || message.includes("proof") || message.includes("auth")) return "authentication_failed";

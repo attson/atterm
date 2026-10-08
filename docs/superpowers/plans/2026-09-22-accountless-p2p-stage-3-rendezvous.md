@@ -108,6 +108,10 @@ membership handshake, host permission enforcement, periodic revocation check and
 Automated in-memory catalog/Pion tests and frontend direct-only connection tests are implemented;
 the real two-Desktop flow has also passed local acceptance: discovery, control, restart without a
 new Quick Tunnel URL, view-only enforcement, member revocation and Rendezvous failure isolation.
+Peer-only terminal panes retain the last classified route failure across reconnect attempts. ICE
+failure is shown as a likely restrictive-NAT/blocked-UDP condition and explicitly states that
+Rendezvous carries discovery/signaling only; the UI directs the user to a Quick Tunnel route or a
+different network instead of implying that Rendezvous can relay terminal bytes.
 
 - Discover only sessions authorized by both members' scopes and effective permission ceilings。
 - Keep session metadata, SDP/ICE, membership material and terminal bytes opaque to Rendezvous。
@@ -123,7 +127,7 @@ new Quick Tunnel URL, view-only enforcement, member revocation and Rendezvous fa
 - [ ] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
 - [x] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
 - [x] A/B/C sync converges through rotating online peers without a designated hub.
-- [ ] Restrictive NAT is reported honestly; Rendezvous alone is not called a data relay.
+- [x] Restrictive NAT is reported honestly; Rendezvous alone is not called a data relay.
 
 Verification:
 

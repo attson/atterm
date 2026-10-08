@@ -85,6 +85,58 @@ describe('PeerSessionConnection', () => {
     expect(transports[1].options.sinceSeq).toBe(8)
   })
 
+  it('keeps an honest ICE failure visible while retrying the Rendezvous route', async () => {
+    const transports: FakeTransport[] = []
+    const routes: Array<{ route: string; fallbackReason?: string }> = []
+    const connection = new PeerSessionConnection(sessionID, {
+      onRouteChange: (diagnostics) => routes.push(diagnostics),
+    }, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onFailure(new Error('rendezvous client: ICE failed'))
+
+    expect(routes.at(-1)).toMatchObject({
+      route: 'connecting-direct',
+      fallbackReason: 'ice_failed',
+    })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(transports).toHaveLength(2)
+    expect(routes.at(-1)).toMatchObject({
+      route: 'connecting-direct',
+      fallbackReason: 'ice_failed',
+    })
+
+    transports[1].options.callbacks.onAuthenticated?.()
+    transports[1].options.callbacks.onReady(0)
+    expect(routes.at(-1)).toEqual(expect.objectContaining({ route: 'direct' }))
+    expect(routes.at(-1)?.fallbackReason).toBeUndefined()
+  })
+
+  it.each([
+    ['rendezvous client: service unavailable', 'signal_endpoint_unavailable'],
+    ['rendezvous client: peer offline', 'host_unavailable'],
+    ['rendezvous client: authentication failed', 'authentication_failed'],
+  ])('preserves the Rendezvous failure category for %s', (message, fallbackReason) => {
+    const routes: Array<{ route: string; fallbackReason?: string }> = []
+    let transport: FakeTransport | undefined
+    const connection = new PeerSessionConnection(sessionID, {
+      onRouteChange: (diagnostics) => routes.push(diagnostics),
+    }, {
+      transportFactory: (options) => (transport = new FakeTransport(options)),
+    })
+
+    connection.attach()
+    transport!.options.callbacks.onFailure(new Error(message))
+
+    expect(routes.at(-1)).toMatchObject({ route: 'connecting-direct', fallbackReason })
+  })
+
   it('resumes a suspended pane and uses the host replay cursor', async () => {
     const transports: FakeTransport[] = []
     const connection = new PeerSessionConnection(sessionID, {}, {

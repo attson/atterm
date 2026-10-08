@@ -138,7 +138,10 @@ const replayProgress = ref<ReplayProgress | null>(null);
 const routeDiagnostics = ref<SessionRouteDiagnostics>({ route: "relay" });
 const routeLabel = computed(() => {
   switch (routeDiagnostics.value.route) {
-    case "connecting-direct": return t("terminal.route.connectingDirect");
+    case "connecting-direct":
+      return props.peerDirect && routeDiagnostics.value.fallbackReason
+        ? t("terminal.route.directBlocked")
+        : t("terminal.route.connectingDirect");
     case "direct": return t("terminal.route.direct");
     default: return t("terminal.route.relay");
   }
@@ -168,6 +171,18 @@ const routeDiagnosticsTitle = computed(() => {
   if (diagnostics.setupTimeMs !== undefined) lines.push(t("terminal.route.setupTime", { ms: diagnostics.setupTimeMs }));
   if (diagnostics.fallbackReason) lines.push(t("terminal.route.fallbackReason", { reason: fallbackReasonLabel(diagnostics.fallbackReason) }));
   return lines.join("\n");
+});
+const peerConnectionFailureHint = computed(() => {
+  if (!props.peerDirect) return "";
+  switch (routeDiagnostics.value.fallbackReason) {
+    case "ice_failed": return t("terminal.route.peerFailure.iceFailed");
+    case "signal_endpoint_unavailable": return t("terminal.route.peerFailure.rendezvousUnavailable");
+    case "host_unavailable": return t("terminal.route.peerFailure.peerOffline");
+    case "authentication_failed": return t("terminal.route.peerFailure.authenticationFailed");
+    case "timeout": return t("terminal.route.peerFailure.timeout");
+    case "transport_error": return t("terminal.route.peerFailure.transportError");
+    default: return "";
+  }
 });
 const menuOpen = ref(false);
 const menuX = ref(0);
@@ -2813,7 +2828,14 @@ watch(
         </div>
       </template>
       <span v-else-if="status === 'connecting'">{{ t("terminal.connecting") }}</span>
-      <span v-else-if="status === 'reconnecting'" class="warn">{{ t("terminal.reconnecting") }}</span>
+      <template v-else-if="status === 'reconnecting'">
+        <span class="warn">{{ t("terminal.reconnecting") }}</span>
+        <span
+          v-if="peerConnectionFailureHint"
+          class="peer-connection-failure"
+          data-testid="peer-connection-failure"
+        >{{ peerConnectionFailureHint }}</span>
+      </template>
       <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
       <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
     </div>
@@ -3513,6 +3535,14 @@ watch(
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }
 .overlay .dim { color: var(--fg-dim); }
+.peer-connection-failure {
+  display: block;
+  max-width: 360px;
+  margin-top: 4px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+  white-space: normal;
+}
 .progress-track {
   width: 190px;
   height: 4px;

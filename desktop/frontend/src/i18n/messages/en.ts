@@ -63,6 +63,7 @@ export const en = {
     route: {
       relay: "Relay",
       connectingDirect: "Connecting direct",
+      directBlocked: "Direct blocked",
       direct: "Direct",
       current: "Route: {route}",
       iceState: "ICE: {state}",
@@ -83,6 +84,14 @@ export const en = {
         directDisconnected: "direct channel disconnected",
         preferenceDisabled: "direct connection was disabled",
         transportError: "direct transport failed",
+      },
+      peerFailure: {
+        iceFailed: "The P2P data channel could not be established, possibly because of restrictive NAT or blocked UDP. Rendezvous only provides discovery and encrypted signaling; it does not relay terminal traffic. Enable a Quick Tunnel route or try another network.",
+        rendezvousUnavailable: "Rendezvous is temporarily unavailable. The Peer session will retry automatically; local terminals, Relay, and Quick Tunnel are unaffected.",
+        peerOffline: "The peer is offline or has not published a current Rendezvous presence. The Peer session will retry automatically.",
+        authenticationFailed: "Peer identity or membership authorization failed. Check the member status and session scope in Peer connection settings.",
+        timeout: "The Peer direct connection timed out. Rendezvous does not carry terminal data; check both networks or use a Quick Tunnel route.",
+        transportError: "The Peer direct route is temporarily unavailable and will retry. Rendezvous is only for discovery and signaling, not a terminal-data relay.",
       },
     },
     connecting: "connecting...",

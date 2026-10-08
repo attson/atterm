@@ -313,9 +313,12 @@ relay 端 mirror session 最后一个 subscriber 离开时发，请求桌面 app
 
 桌面 app 收到后取消 forwarder goroutine 并 `UnsubscribeLocal`。session 仍在本地活动，仅停止往远程上传字节。
 
-### `PASTE_IMAGE` (0x33) — client → relay → desktop PTY host
+### `PASTE_IMAGE` (0x33) — client → Relay/Peer route → desktop PTY host
 
-远程 web/mobile client 粘贴或显式选择图片时发送。relay 将其按 session inbound 路径转发给拥有该 PTY 的 desktop host；desktop host 保存图片并尽量模拟本机图片粘贴（设置宿主机系统剪贴板图片后向 PTY 发送 `Ctrl-V`），不支持原生图片剪贴板的平台回退为向 PTY 粘贴临时文件路径。当前原生剪贴板路径：
+远程 web/mobile client 粘贴或显式选择图片时发送。Relay 或已认证 Peer route 将其按 session inbound
+路径转发给拥有该 PTY 的 desktop host；desktop host 保存图片并尽量模拟本机图片粘贴（设置宿主机
+系统剪贴板图片后向 PTY 发送 `Ctrl-V`），不支持原生图片剪贴板的平台回退为向 PTY 粘贴临时文件路径。
+当前原生剪贴板路径：
 
 - macOS: `osascript`
 - Linux: 优先 `wl-copy`，再尝试 `xclip` / `xsel`
@@ -333,9 +336,12 @@ payload = JSON：
 
 `data` 解码后最大 10 MiB（JSON/base64 后仍需低于协议 16 MiB payload 上限）。`content_type` 必须是 `image/*`。
 
-权限与角色：只有当前 driver 且 `remote_permission = "full"` 的 subscriber 可以发送；`view` / `control` 或 viewer 状态必须被 relay 拦截，desktop host 执行前也要二次校验。
+权限与角色：只有当前 driver 且 effective permission 为 `full` 的 subscriber 可以发送。Relay 路径由
+relay 与 desktop host 双重拦截；Peer 路径由 authenticated membership/session scope、owner 当前
+`remote_permission`、route lease 和 desktop host 共同强制执行。Peer route 的 record encryption 已
+保护完整 frame，不使用 Relay `account_key` 信封。
 
-### `PASTE_FILE` (0x37) — client → relay → desktop PTY host
+### `PASTE_FILE` (0x37) — client → Relay/Peer route → desktop PTY host
 
 远程 client 显式选择/拖入的通用文件（PDF / log / diff / 任意二进制），路由与 `PASTE_IMAGE` 同构：driver + `full` 权限方可发送，非 driver 或不足权限静默 drop（日志 `not_driver` / `permission_denied`）。desktop 收到后 sanitize filename（strip 目录部分/控制字符、NFC normalize、≤128 字符、Windows 保留名前缀 `_`），落盘到 `<cache-root>/paste-files/<sid>/<safe-name>`（冲名追加 ` (N)`，`O_EXCL` 原子创建），然后把结果**绝对路径**直接 `Write` 进 PTY 主端（**无 CR，无引号**）。
 
@@ -353,8 +359,8 @@ payload = JSON：
 - `content_type`：客户端 best-effort，服务器不校验、不据此路由。允许任意 mime（含 `application/octet-stream`）。
 - `data`：原始字节。解码后 `≤ 10 MiB`（`maxPasteFileBytes`）；desktop 侧 backstop 与前端预检同数值。协议层仍受 payload 16 MiB 上限约束。
 - **E2EE**：当持有 `account_key` 时，整个 `PasteFilePayload` JSON 可以走 [§E2EE 信封](#e2ee-信封) 加密，AAD 鉴别字节 = `0x37`。**当前 Go 侧 attach 客户端已支持**（另一台 atterm desktop attach 时）；`web` / `Capacitor` 前端当前与 PASTE_IMAGE 同 posture，发送明文 JSON（独立 spec 再做 browser sealed paste）。
-- **权限**：`remote_permission = "full"` 才允许；`view` / `control` 被 relay 拒绝，同 PASTE_IMAGE。
-- **driver-only**：非当前 driver subscriber 的 PASTE_FILE 被 relay 静默 drop。
+- **权限**：effective permission 必须是 `full`；Relay 与 Peer 路径的强制边界同 PASTE_IMAGE。
+- **driver-only**：非当前 driver subscriber 的 PASTE_FILE 在 Relay 路径被静默 drop；Peer host 拒绝该 route frame。
 
 区别于 PASTE_IMAGE：不塞 native clipboard、不发 `Ctrl-V`；文件名对 AI/shell 可见（保留 sanitized 原名，方便后续读取时通过 mime 或后缀推断类型）。
 
@@ -1124,7 +1130,11 @@ Desktop 以 `WithoutAutoDrive` 订阅请求的本地 session，转发初始 scro
 inner-open。Desktop 在 attach、周期授权刷新和每次 config 消息边界重验当前 membership、撤销
 状态与 session scope；`CLAIM_DRIVER`、`IN` 和 `RESIZE` 的热路径继续检查实时 owner policy、
 effective permission 与 driver 身份，不在每个键入帧访问磁盘/keyring。连接期间降权或撤销会
-关闭 attempt。配置 anti-entropy 同时绑定到同一 authenticated membership，但使用独立 config
+关闭 attempt。`PASTE_IMAGE` / `PASTE_FILE` 复用同一个 `FRAME` record，只对当前 driver 和
+effective `full` permission 开放；host 在每次粘贴时重验 exact active membership、session scope、
+owner policy 与当前 route lease，并在投递前校验 JSON、image MIME、非空 body 和 10 MiB binary
+上限。Peer record encryption 已覆盖完整 frame，因此这条账户无关路径不引入 Relay `account_key`
+信封。配置 anti-entropy 同时绑定到同一 authenticated membership，但使用独立 config
 callback，绝不创建第二个 terminal subscriber。
 
 Quick Tunnel WSS 与 Rendezvous Pion host 共用进程内的 authenticated Peer route lease。租约键为
@@ -1132,7 +1142,7 @@ Quick Tunnel WSS 与 Rendezvous Pion host 共用进程内的 authenticated Peer 
 同一逻辑客户端的新 route 则必须先重新验证 exact active membership、session scope 和 permission，
 完成 scrollback catch-up 后才原子替换旧 subscriber。若旧 subscriber 是 driver，新的 subscriber
 继承同一 `driver_client_id` / `driver_client_name`，subscriber count 不经过 0，也不触发 lazy uplink
-的假停止/重启。安装新租约后，旧 route 立即失去 `IN`、`RESIZE`、`CLAIM_DRIVER` 和 config sync
+的假停止/重启。安装新租约后，旧 route 立即失去 `IN`、`RESIZE`、`PASTE_IMAGE`、`PASTE_FILE`、`CLAIM_DRIVER` 和 config sync
 权限；旧连接迟到的 close 只能释放自己，不能删除新租约。并发的陈旧候选不能覆盖已经获胜的
 route。该规则只约束 host 本地 attachment，不增加 frame/record 类型。
 
@@ -1153,6 +1163,10 @@ committed cursor 重连 Quick Tunnel，等新 `DIRECT_READY` 后再释放写入�
 以 generation 使迟到的 capability 和候选回调失效；用户在候选期间显式选择 Quick Tunnel 会取消
 候选、释放排队写入并进入下一轮 cooldown。Peer-only handover 不引入 Relay credential、Relay subscriber
 或 `account_key`。
+
+图片/文件 body 不进入普通输入的重连队列：route 尚未 `DIRECT_READY`、正在 handover、Blob 读取期间
+generation 改变或 native transport 拒绝入队时，client 明确返回失败，由用户重新选择文件。这样不会
+在 ownership 模糊期缓存 10 MiB payload，也不会把旧 route 上开始的操作静默迁移到新 route。
 
 `CreatePeerConnectionBundle(invitation)` 只接受本地加密账本中仍开放、未消费、未撤销、未过期且
 由当前 active local membership 签发的 invitation；首次加入的 bundle 必须发布当前 Quick Tunnel

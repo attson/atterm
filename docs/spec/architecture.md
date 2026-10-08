@@ -408,8 +408,11 @@ Desktop 每 3 秒向当前可解析的 host presence 拉取目录，把成功结
 `session_id -> Peer route`，并以 session id 为权威和 Relay 会话合并到侧栏；同一 session 同时存在
 时 Relay 条目覆盖 Peer 条目。用户点开 Peer-only 条目后，renderer 只把 session id、replay cursor
 和 client instance id 交给 Go，Go 从缓存取 route、从 Peer store 重读 identity/membership/scope，
-再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback、文件浏览、
-文件/图片粘贴或 service preview。
+再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback、文件浏览或
+service preview。图片/文件粘贴复用现有 `PASTE_IMAGE` / `PASTE_FILE` frame，只在 Peer route ready、
+当前 pane 是 driver 且双方 membership/session scope 与 owner policy 的 effective permission 都为
+`full` 时开放；owner host 在入 session 队列前重新验证 active membership、当前 route lease、driver、
+payload JSON/MIME 与 10 MiB binary 上限。
 
 同一 native Peer transport API 也接受显式 `quick_tunnel` route kind，但 renderer 不提供 URL、
 membership token 或任何 Relay/account credential。首次加入成功后，Go 只在内存保留已验签 bundle

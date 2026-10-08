@@ -221,7 +221,7 @@ export interface SessionListHandlers {
   onPrefsChanged?: () => void;
 }
 
-const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_PASTE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SERVICE_OPEN_TIMEOUT_MS = 30_000;
@@ -235,8 +235,12 @@ export interface ServiceOpenResult {
 
 export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {
   if (wsReadyState !== WebSocket.OPEN) return t("terminal.websocketNotOpen");
-  if (blobSize > MAX_PASTE_IMAGE_BYTES) {
-    return t("terminal.imageTooLarge", { size: blobSize, limit: MAX_PASTE_IMAGE_BYTES });
+  return pastePayloadSizeBlockReason(blobSize);
+}
+
+export function pastePayloadSizeBlockReason(blobSize: number): string | null {
+  if (blobSize > MAX_PASTE_BYTES) {
+    return t("terminal.imageTooLarge", { size: blobSize, limit: MAX_PASTE_BYTES });
   }
   return null;
 }
@@ -249,6 +253,16 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
     out += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(out);
+}
+
+export async function encodePastePayload(blob: Blob, filename: string, fallbackContentType: string): Promise<Uint8Array> {
+  const blocked = pastePayloadSizeBlockReason(blob.size);
+  if (blocked) throw new Error(blocked);
+  return encodeText(JSON.stringify({
+    filename,
+    content_type: blob.type || fallbackContentType,
+    data: arrayBufferToBase64(await blob.arrayBuffer()),
+  }));
 }
 
 function stringToBase64URL(value: string): string {
@@ -879,11 +893,7 @@ export class SessionConnection {
       this.handlers.onStatus?.("error");
       throw new Error(blocked ?? "websocket is not open");
     }
-    const payload = encodeText(JSON.stringify({
-      filename,
-      content_type: blob.type || "image/png",
-      data: arrayBufferToBase64(await blob.arrayBuffer()),
-    }));
+    const payload = await encodePastePayload(blob, filename, "image/png");
     logDebug("conn", "sending paste image", {
       filename,
       contentType: blob.type || "image/png",
@@ -905,11 +915,7 @@ export class SessionConnection {
       this.handlers.onStatus?.("error");
       throw new Error(blocked ?? "websocket is not open");
     }
-    const payload = encodeText(JSON.stringify({
-      filename,
-      content_type: blob.type || "application/octet-stream",
-      data: arrayBufferToBase64(await blob.arrayBuffer()),
-    }));
+    const payload = await encodePastePayload(blob, filename, "application/octet-stream");
     logDebug("conn", "sending paste file", {
       filename,
       contentType: blob.type || "application/octet-stream",

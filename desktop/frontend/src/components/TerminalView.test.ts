@@ -625,6 +625,15 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toMatch(/pasteImageBus\.emit\(file,\s*name\)/);
   });
 
+  test("allows full-permission Peer drivers to use image and file paste", () => {
+    const gate = source.match(/const\s+pasteBlobCanSend\s*=\s*computed\(\(\)\s*=>[\s\S]*?\n\);/);
+    expect(gate).not.toBeNull();
+    expect(gate![0]).toMatch(/auxKeysCanSend\.value/);
+    expect(gate![0]).toMatch(/effectiveRemotePermission\(props\.remotePermission\)\s*===\s*"full"/);
+    expect(gate![0]).not.toMatch(/peerDirect/);
+    expect(source).toMatch(/async function\s+handleImagePaste\([\s\S]*?if\s*\(!pasteBlobCanSend\.value\)\s*return/);
+  });
+
   test("uses Capacitor Camera Prompt for native image picking when available", () => {
     expect(source).toContain("CameraSource");
     expect(source).toContain("CameraResultType");

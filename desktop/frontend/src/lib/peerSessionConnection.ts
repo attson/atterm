@@ -18,7 +18,7 @@ import type {
   FSResponse,
   ServiceOpenResult,
 } from './connection'
-import { directFallbackReason } from './connection'
+import { directFallbackReason, encodePastePayload, pastePayloadSizeBlockReason } from './connection'
 import type { DirectTransportDiagnostics } from './directClient'
 import type { NativeDirectClientOptions, NativePeerRoute } from './nativeDirectClient'
 
@@ -170,12 +170,27 @@ export class PeerSessionConnection {
     return Promise.reject(new Error('filesystem access is unavailable for Peer sessions'))
   }
 
-  sendPasteImage(_blob: Blob, _filename = 'clipboard-image'): Promise<boolean> {
-    return Promise.reject(new Error('image paste is unavailable for Peer sessions'))
+  async sendPasteImage(blob: Blob, filename = 'clipboard-image'): Promise<boolean> {
+    return this.sendPaste(blob, filename, 'image/png', TYPE.PASTE_IMAGE)
   }
 
-  sendPasteFile(_blob: Blob, _filename: string): Promise<boolean> {
-    return Promise.reject(new Error('file paste is unavailable for Peer sessions'))
+  async sendPasteFile(blob: Blob, filename: string): Promise<boolean> {
+    return this.sendPaste(blob, filename, 'application/octet-stream', TYPE.PASTE_FILE)
+  }
+
+  private async sendPaste(blob: Blob, filename: string, fallbackContentType: string, type: typeof TYPE.PASTE_IMAGE | typeof TYPE.PASTE_FILE): Promise<boolean> {
+    const blocked = pastePayloadSizeBlockReason(blob.size)
+    if (blocked) throw new Error(blocked)
+    if (!this.ready || !this.transport || this.handover) {
+      throw new Error('Peer route is not ready')
+    }
+    const generation = this.generation
+    const transport = this.transport
+    const payload = await encodePastePayload(blob, filename, fallbackContentType)
+    if (!this.isCurrent(generation, transport) || !this.ready || this.handover || !transport.sendFrame(encodeFrame(type, this.sidBytes, payload))) {
+      throw new Error('Peer paste send failed')
+    }
+    return true
   }
 
   private start(): void {

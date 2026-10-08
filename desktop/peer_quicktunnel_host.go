@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -25,6 +26,10 @@ import (
 
 const peerQuickTunnelBundleValidity = 10 * time.Minute
 const peerQuickTunnelAuthorizationRefresh = 2 * time.Second
+
+// JSON/base64 overhead beyond the 10 MiB binary body is bounded so malformed
+// metadata cannot force an unbounded decode before the payload backstop runs.
+const maxPeerPastePayloadBytes = 4*((maxPasteFileBytes+2)/3) + 4*1024
 
 type peerQuickTunnelManager interface {
 	Start(context.Context) (quicktunnel.Status, error)
@@ -664,6 +669,25 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 				return errors.New("Peer subscriber is not driver")
 			}
 			return a.host.host.SendLocalInbound(a.sessionID, frame)
+		case proto.TypePasteImage, proto.TypePasteFile:
+			a.mu.Lock()
+			sub := a.sub
+			remoteMembership := a.remoteMembership
+			a.mu.Unlock()
+			pastePermission, err := a.host.currentPermission(remoteMembership, a.sessionID)
+			if err != nil ||
+				!localFrameAllowedByPermission(currentPermission, frame.Type) ||
+				!localFrameAllowedByPermission(pastePermission, frame.Type) {
+				return errors.New("Peer paste exceeds permission")
+			}
+			sess, ok := a.host.host.server.Registry().Get(a.sessionID)
+			if sub == nil || !ok || !sess.IsDriver(sub) {
+				return errors.New("Peer subscriber is not driver")
+			}
+			if err := validatePeerPasteFrame(frame); err != nil {
+				return err
+			}
+			return a.host.host.SendLocalInbound(a.sessionID, frame)
 		case proto.TypeClaimDriver:
 			if currentPermission == proto.RemotePermissionView {
 				return errors.New("Peer driver claim exceeds permission")
@@ -687,6 +711,36 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 	default:
 		return fmt.Errorf("Peer record kind %d is not accepted from client", kind)
 	}
+}
+
+func validatePeerPasteFrame(frame proto.Frame) error {
+	if len(frame.Payload) > maxPeerPastePayloadBytes {
+		return errors.New("Peer paste payload exceeds encoded size limit")
+	}
+	switch frame.Type {
+	case proto.TypePasteImage:
+		var payload proto.PasteImagePayload
+		if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+			return errors.New("invalid Peer paste image payload")
+		}
+		if len(payload.Data) == 0 || len(payload.Data) > maxPasteImageBytes {
+			return errors.New("Peer paste image data exceeds size limit")
+		}
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(payload.ContentType)), "image/") {
+			return errors.New("invalid Peer paste image content type")
+		}
+	case proto.TypePasteFile:
+		var payload proto.PasteFilePayload
+		if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+			return errors.New("invalid Peer paste file payload")
+		}
+		if len(payload.Data) == 0 || len(payload.Data) > maxPasteFileBytes {
+			return errors.New("Peer paste file data exceeds size limit")
+		}
+	default:
+		return errors.New("unsupported Peer paste frame")
+	}
+	return nil
 }
 
 func (a *peerHostAttempt) handleConfigMessage(kind peertransport.RecordKind, payload []byte) error {

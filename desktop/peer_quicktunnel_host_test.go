@@ -338,6 +338,125 @@ func TestPeerHostRouteLeaseReplacesSubscriberAndPreservesDriver(t *testing.T) {
 	}
 }
 
+func TestPeerHostPasteRequiresFullPermissionAndCurrentDriver(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		permission peerproto.Permission
+		want       bool
+	}{
+		{name: "view", permission: peerproto.PermissionView},
+		{name: "control", permission: peerproto.PermissionControl},
+		{name: "full", permission: peerproto.PermissionFull, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newPeerQuickTunnelFixture(t, tc.permission)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			attempt := &peerHostAttempt{
+				host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+				permission: string(tc.permission), clientInstanceID: "paste-client",
+			}
+			attempt.remove = func() { attempt.close(true) }
+			if err := attempt.start(ctx, &peerNativeTestChannel{remoteMembership: fixture.clientMembership}); err != nil {
+				t.Fatal(err)
+			}
+			defer attempt.close(true)
+
+			attempt.mu.Lock()
+			sub := attempt.sub
+			attempt.mu.Unlock()
+			fixture.session.ClaimDriver(sub, "paste-client", "Paste client")
+
+			imagePayload, _ := json.Marshal(proto.PasteImagePayload{
+				Filename: "clip.png", ContentType: "image/png", Data: []byte("png"),
+			})
+			filePayload, _ := json.Marshal(proto.PasteFilePayload{
+				Filename: "notes.txt", ContentType: "text/plain", Data: []byte("notes"),
+			})
+			for _, frame := range []proto.Frame{
+				{Type: proto.TypePasteImage, SessionID: fixture.session.ID, Payload: imagePayload},
+				{Type: proto.TypePasteFile, SessionID: fixture.session.ID, Payload: filePayload},
+			} {
+				err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(frame))
+				if !tc.want {
+					if err == nil {
+						t.Fatalf("permission %s accepted frame type 0x%02x", tc.name, frame.Type)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("full permission rejected frame type 0x%02x: %v", frame.Type, err)
+				}
+				select {
+				case got := <-fixture.session.Inbound():
+					if got.Type != frame.Type || !bytes.Equal(got.Payload, frame.Payload) {
+						t.Fatalf("inbound frame=%+v want type=0x%02x payload=%q", got, frame.Type, frame.Payload)
+					}
+				case <-time.After(time.Second):
+					t.Fatalf("frame type 0x%02x was not delivered", frame.Type)
+				}
+			}
+		})
+	}
+}
+
+func TestPeerHostPasteRejectsDowngradeMalformedOversizedAndStaleLease(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionFull)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	newAttempt := func() *peerHostAttempt {
+		attempt := &peerHostAttempt{
+			host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+			permission: proto.RemotePermissionFull, clientInstanceID: "paste-client",
+		}
+		attempt.remove = func() { attempt.close(true) }
+		if err := attempt.start(ctx, &peerNativeTestChannel{remoteMembership: fixture.clientMembership}); err != nil {
+			t.Fatal(err)
+		}
+		return attempt
+	}
+	first := newAttempt()
+	first.mu.Lock()
+	firstSub := first.sub
+	first.mu.Unlock()
+	fixture.session.ClaimDriver(firstSub, "paste-client", "Paste client")
+
+	validPayload, _ := json.Marshal(proto.PasteFilePayload{
+		Filename: "notes.txt", ContentType: "text/plain", Data: []byte("notes"),
+	})
+	frame := proto.Frame{Type: proto.TypePasteFile, SessionID: fixture.session.ID, Payload: validPayload}
+
+	fixture.app.cfgStore.mu.Lock()
+	fixture.app.cfgStore.cfg.RemotePermission = proto.RemotePermissionControl
+	fixture.app.cfgStore.mu.Unlock()
+	if err := first.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(frame)); err == nil {
+		t.Fatal("owner permission downgrade still accepted paste")
+	}
+	fixture.app.cfgStore.mu.Lock()
+	fixture.app.cfgStore.cfg.RemotePermission = proto.RemotePermissionFull
+	fixture.app.cfgStore.mu.Unlock()
+
+	malformed := frame
+	malformed.Payload = []byte("{")
+	if err := first.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(malformed)); err == nil {
+		t.Fatal("malformed paste payload was accepted")
+	}
+	oversizedPayload, _ := json.Marshal(proto.PasteFilePayload{
+		Filename: "large.bin", ContentType: "application/octet-stream", Data: make([]byte, maxPasteFileBytes+1),
+	})
+	oversized := frame
+	oversized.Payload = oversizedPayload
+	if err := first.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(oversized)); err == nil {
+		t.Fatal("oversized paste payload was accepted")
+	}
+
+	second := newAttempt()
+	defer second.close(true)
+	if err := first.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(frame)); err == nil {
+		t.Fatal("superseded route lease still accepted paste")
+	}
+}
+
 func TestPeerHostRouteLeaseSurvivesOneHundredReplacements(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	ctx, cancel := context.WithCancel(context.Background())

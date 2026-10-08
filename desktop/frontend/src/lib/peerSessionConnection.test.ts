@@ -6,6 +6,15 @@ import { PeerSessionConnection } from './peerSessionConnection'
 
 const sessionID = '11111111-2222-3333-4444-555555555555'
 
+function testBlob(value: string, type: string): Blob {
+  const bytes = encodeText(value)
+  return {
+    size: bytes.length,
+    type,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  } as Blob
+}
+
 function out(seq: number, text: string): Uint8Array {
   const data = encodeText(text)
   const payload = new Uint8Array(8 + data.length)
@@ -31,6 +40,95 @@ class FakeTransport implements DirectTransport {
 }
 
 describe('PeerSessionConnection', () => {
+  it('sends image and file paste frames only after the Peer route is ready', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    await expect(connection.sendPasteImage(testBlob('png', 'image/png'), 'clip.png'))
+      .rejects.toThrow(/not ready/i)
+    expect(transports[0].sent).toHaveLength(0)
+
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    await expect(connection.sendPasteImage(testBlob('png', 'image/png'), 'clip.png'))
+      .resolves.toBe(true)
+    await expect(connection.sendPasteFile(testBlob('notes', 'text/plain'), 'notes.txt'))
+      .resolves.toBe(true)
+
+    const frames = transports[0].sent.map(decodeFrame)
+    expect(frames.map((frame) => frame.type)).toEqual([TYPE.PASTE_IMAGE, TYPE.PASTE_FILE])
+    expect(JSON.parse(decodeText(frames[0].payload))).toEqual({
+      filename: 'clip.png',
+      content_type: 'image/png',
+      data: 'cG5n',
+    })
+    expect(JSON.parse(decodeText(frames[1].payload))).toEqual({
+      filename: 'notes.txt',
+      content_type: 'text/plain',
+      data: 'bm90ZXM=',
+    })
+  })
+
+  it('rejects oversized paste and does not report a failed transport send as success', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+
+    await expect(connection.sendPasteFile(new Blob([new Uint8Array(10 * 1024 * 1024 + 1)]), 'large.bin'))
+      .rejects.toThrow(/too large/i)
+    expect(transports[0].sent).toHaveLength(0)
+
+    transports[0].closed = true
+    await expect(connection.sendPasteImage(testBlob('png', 'image/png'), 'clip.png'))
+      .rejects.toThrow(/send failed/i)
+    expect(transports[0].sent).toHaveLength(0)
+  })
+
+  it('does not move an in-flight paste across a route generation change', async () => {
+    const transports: FakeTransport[] = []
+    let finishRead!: (buffer: ArrayBuffer) => void
+    const blob = {
+      size: 3,
+      type: 'image/png',
+      arrayBuffer: () => new Promise<ArrayBuffer>((resolve) => { finishRead = resolve }),
+    } as Blob
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    const pending = connection.sendPasteImage(blob, 'clip.png')
+    connection.setRoute('quick_tunnel')
+    finishRead(encodeText('png').buffer as ArrayBuffer)
+
+    await expect(pending).rejects.toThrow(/send failed/i)
+    expect(transports).toHaveLength(2)
+    expect(transports[0].sent).toHaveLength(0)
+    expect(transports[1].sent).toHaveLength(0)
+  })
+
   it('switches routes only when explicitly requested and restarts immediately', () => {
     vi.useFakeTimers()
     const transports: FakeTransport[] = []

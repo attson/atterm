@@ -659,7 +659,7 @@ func localFrameAllowedByPermission(remotePermission string, typ proto.Type) bool
 	switch typ {
 	case proto.TypeIn, proto.TypeResize:
 		return remotePermission == proto.RemotePermissionControl || remotePermission == proto.RemotePermissionFull
-	case proto.TypePasteImage:
+	case proto.TypePasteImage, proto.TypePasteFile:
 		return remotePermission == proto.RemotePermissionFull
 	default:
 		return true

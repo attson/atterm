@@ -520,7 +520,7 @@ const auxKeysCanSend = computed(() =>
   isDriver.value && isPasteAllowed(status.value, props.remotePermission)
 );
 const pasteBlobCanSend = computed(() =>
-  !props.peerDirect && auxKeysCanSend.value && effectiveRemotePermission(props.remotePermission) === "full"
+  auxKeysCanSend.value && effectiveRemotePermission(props.remotePermission) === "full"
 );
 const canOpenPreview = computed(() =>
   Boolean(
@@ -1145,6 +1145,7 @@ async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
 }
 
 async function handleImagePaste(e: ClipboardEvent) {
+  if (!pasteBlobCanSend.value) return;
   const items = Array.from(e.clipboardData?.items || []);
   const anyFile = items.find((i) => i.kind === "file");
   if (!anyFile) return;

@@ -65,8 +65,10 @@ export const zhCN = {
     route: {
       relay: "Relay",
       connectingDirect: "正在建立直连",
+      connectingQuickTunnel: "正在连接 Quick Tunnel",
       directBlocked: "直连受阻",
       direct: "直连",
+      quickTunnel: "Quick Tunnel",
       current: "当前路径：{route}",
       iceState: "ICE 状态：{state}",
       candidateType: "候选类型：{type}",

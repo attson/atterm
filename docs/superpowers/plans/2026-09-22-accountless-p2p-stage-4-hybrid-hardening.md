@@ -33,9 +33,15 @@ selection, route/principal compatibility checks, and an explicit Peer-only polic
 select Relay-account candidates. The sidebar merge uses this model for the currently available
 Relay catalog and Rendezvous Peer catalog, preserving one visible `session_id` with the established
 Relay-entry precedence while keeping the two trust groups separate before UI collapse. Quick Tunnel
-WSS has not yet been exposed through the frontend transport contract, so it is modeled and tested but
-not activated by this slice. Live route leasing and automatic handover remain disabled pending the
-shared transport/principal entry gate and soak tests.
+WSS is now exposed through that same native Peer transport contract as an explicit
+`route=quick_tunnel` choice. Go retains the already verified first-join hint only in process memory,
+keys it by the authenticated issuer Peer ID, rechecks bundle expiry and current deny-wins membership,
+and resolves every endpoint and membership token outside the renderer. The WSS client reuses the
+existing encrypted terminal/config record channel and reports `Quick Tunnel` rather than `Direct`.
+The default request remains Rendezvous direct: no ICE failure automatically selects WSS, and no Relay
+credential or `account_key` enters the Peer path. Importing rotated member reconnect bundles, live
+route leasing and automatic handover remain disabled pending the shared transport/principal entry gate
+and soak tests.
 
 ## PR 4.2 - Automated handover
 

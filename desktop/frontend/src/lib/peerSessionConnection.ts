@@ -20,10 +20,11 @@ import type {
 } from './connection'
 import { directFallbackReason } from './connection'
 import type { DirectTransportDiagnostics } from './directClient'
-import type { NativeDirectClientOptions } from './nativeDirectClient'
+import type { NativeDirectClientOptions, NativePeerRoute } from './nativeDirectClient'
 
 export interface PeerSessionConnectionOptions {
   clientName?: string
+  route?: NativePeerRoute
   transportFactory: (options: NativeDirectClientOptions) => DirectTransport
 }
 
@@ -136,7 +137,7 @@ export class PeerSessionConnection {
     this.diagnostics = null
     this.startedAt = performance.now()
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? 'connecting' : 'reconnecting')
-    this.emitRoute('connecting-direct')
+    this.emitRoute(this.connectingRoute())
     let transport: DirectTransport
     try {
       transport = this.options.transportFactory({
@@ -144,6 +145,7 @@ export class PeerSessionConnection {
         sessionId: this.sessionID,
         sinceSeq: this.lastSeq,
         clientInstanceId: this.clientID,
+        route: this.options.route,
         callbacks: {
           onAuthenticated: () => {
             if (!this.isCurrent(generation, transport)) return
@@ -163,13 +165,13 @@ export class PeerSessionConnection {
             this.reconnectAttempts = 0
             this.lastFailureReason = undefined
             this.handlers.onStatus?.('attached')
-            this.emitRoute('direct')
+            this.emitRoute(this.connectedRoute())
             this.flush()
           },
           onDiagnostics: (diagnostics) => {
             if (!this.isCurrent(generation, transport)) return
             this.diagnostics = diagnostics
-            this.emitRoute(this.ready ? 'direct' : 'connecting-direct')
+            this.emitRoute(this.ready ? this.connectedRoute() : this.connectingRoute())
           },
           onFailure: (error) => this.fail(generation, transport, error),
         },
@@ -250,7 +252,7 @@ export class PeerSessionConnection {
     this.ready = false
     this.lastFailureReason = directFallbackReason(error, wasActive)
     this.handlers.onStatus?.('reconnecting')
-    this.emitRoute('connecting-direct')
+    this.emitRoute(this.connectingRoute())
     const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++))
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null
@@ -280,8 +282,20 @@ export class PeerSessionConnection {
     return other.length === this.sidBytes.length && other.every((value, index) => value === this.sidBytes[index])
   }
 
-  private emitRoute(route: 'connecting-direct' | 'direct'): void {
-    const setupTimeMs = route === 'direct' ? Math.max(0, Math.round(performance.now() - this.startedAt)) : undefined
+  private connectingRoute(): 'connecting-direct' | 'connecting-quick-tunnel' {
+    return this.diagnostics?.route === 'quick_tunnel' || this.options.route === 'quick_tunnel'
+      ? 'connecting-quick-tunnel'
+      : 'connecting-direct'
+  }
+
+  private connectedRoute(): 'direct' | 'quick-tunnel' {
+    return this.diagnostics?.route === 'quick_tunnel' || this.options.route === 'quick_tunnel'
+      ? 'quick-tunnel'
+      : 'direct'
+  }
+
+  private emitRoute(route: 'connecting-direct' | 'direct' | 'connecting-quick-tunnel' | 'quick-tunnel'): void {
+    const setupTimeMs = route === 'direct' || route === 'quick-tunnel' ? Math.max(0, Math.round(performance.now() - this.startedAt)) : undefined
     this.handlers.onRouteChange?.({
       route,
       ...(this.diagnostics?.iceState ? { iceState: this.diagnostics.iceState } : {}),

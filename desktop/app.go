@@ -387,6 +387,8 @@ type App struct {
 	nativeDirect   map[string]*nativeDirectClient
 	peerNativeMu   sync.Mutex
 	peerNative     map[string]*peerNativeDirectClient
+	peerRouteMu    sync.Mutex
+	peerRoutes     map[string]peerQuickTunnelRoute
 
 	// peerSpace is initialized lazily because most existing installations use
 	// only Relay mode and should not create Peer identity or keyring entries.

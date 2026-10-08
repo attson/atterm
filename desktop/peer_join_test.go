@@ -243,3 +243,32 @@ func TestJoinPeerSpacePersistsBootstrapAndRecoversEpochKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestJoinPeerSpaceCachesOnlyTheVerifiedQuickTunnelIssuerRoute(t *testing.T) {
+	fixture := newPeerJoinFixture(t)
+	if _, err := fixture.destination.JoinPeerSpace(JoinPeerSpaceReq{
+		ConnectionBundle: fixture.bundle, ExpectedFingerprint: fixture.fingerprint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := peerproto.VerifyConnectionBundle(fixture.bundle, fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := fixture.destination.peerQuickTunnelRoute(verified.Document.IssuerPeerID)
+	if err != nil || route.URL != "https://peer-join.trycloudflare.com" || route.ExpiresAt != verified.Document.ExpiresAt {
+		t.Fatalf("cached route=%+v err=%v", route, err)
+	}
+	if _, err := fixture.destination.peerQuickTunnelRoute(fixture.identity.PeerID()); !errors.Is(err, errPeerQuickTunnelRouteUnavailable) {
+		t.Fatalf("unrelated Peer route error=%v", err)
+	}
+
+	fixture.destination.peerRouteMu.Lock()
+	fixture.destination.peerRoutes[verified.Document.IssuerPeerID] = peerQuickTunnelRoute{
+		URL: "https://peer-join.trycloudflare.com", ExpiresAt: 1,
+	}
+	fixture.destination.peerRouteMu.Unlock()
+	if _, err := fixture.destination.peerQuickTunnelRoute(verified.Document.IssuerPeerID); !errors.Is(err, errPeerQuickTunnelRouteUnavailable) {
+		t.Fatalf("expired route error=%v", err)
+	}
+}

@@ -63,8 +63,10 @@ export const en = {
     route: {
       relay: "Relay",
       connectingDirect: "Connecting direct",
+      connectingQuickTunnel: "Connecting through Quick Tunnel",
       directBlocked: "Direct blocked",
       direct: "Direct",
+      quickTunnel: "Quick Tunnel",
       current: "Route: {route}",
       iceState: "ICE: {state}",
       candidateType: "Candidate: {type}",

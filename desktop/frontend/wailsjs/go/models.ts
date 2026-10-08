@@ -792,6 +792,7 @@ export namespace main {
 	    session_id: string;
 	    since_seq: number;
 	    client_instance_id: string;
+	    route?: string;
 
 
 	    static createFrom(source: any = {}) {
@@ -805,6 +806,7 @@ export namespace main {
 	        this.session_id = source["session_id"];
 	        this.since_seq = source["since_seq"];
 	        this.client_instance_id = source["client_instance_id"];
+	        this.route = source["route"];
 	    }
 	}
 	export class NewSessionReq {

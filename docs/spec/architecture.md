@@ -411,6 +411,14 @@ Desktop 每 3 秒向当前可解析的 host presence 拉取目录，把成功结
 再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback、文件浏览、
 文件/图片粘贴或 service preview。
 
+同一 native Peer transport API 也接受显式 `quick_tunnel` route kind，但 renderer 不提供 URL、
+membership token 或任何 Relay/account credential。首次加入成功后，Go 只在内存保留已验签 bundle
+中的 Quick Tunnel URL、签发 Peer 和到期时间；使用前再次确认该 Peer 仍在当前 deny-wins active
+membership 集合中，并要求目标 session 已由上述 Rendezvous 目录发现。WSS 路径复用相同的
+membership handshake、加密 terminal/config records 和 subscriber 生命周期。默认 route 仍是
+Rendezvous direct，ICE 失败不会在本阶段自动切换；临时 URL 轮换后的 reconnect bundle 导入也仍是
+后续 route leasing 工作。
+
 Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
 registration：单次注册最多等待 10 秒，失败以 500 ms 到 8 s 退避，连接断开和 15 分钟
 presence 轮换都会重建。运行状态只向 renderer 投影 mode、service origin、状态、最近注册时间、

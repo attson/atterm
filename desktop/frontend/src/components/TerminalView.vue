@@ -142,6 +142,8 @@ const routeLabel = computed(() => {
       return props.peerDirect && routeDiagnostics.value.fallbackReason
         ? t("terminal.route.directBlocked")
         : t("terminal.route.connectingDirect");
+    case "connecting-quick-tunnel": return t("terminal.route.connectingQuickTunnel");
+    case "quick-tunnel": return t("terminal.route.quickTunnel");
     case "direct": return t("terminal.route.direct");
     default: return t("terminal.route.relay");
   }

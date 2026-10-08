@@ -5,6 +5,7 @@ interface NativeDirectEvent {
   kind: string
   frame_base64?: string
   last_replayed_seq?: number
+  route?: string
   ice_state?: string
   candidate_type?: string
   error?: string
@@ -12,7 +13,7 @@ interface NativeDirectEvent {
 
 export interface NativeDirectBridge {
   on(event: string, handler: (data: unknown) => void): () => void
-  start(req: { id: string; session_id: string; since_seq: number; client_instance_id: string }): Promise<void>
+  start(req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: NativePeerRoute }): Promise<void>
   send(id: string, frame: number[]): Promise<void>
   stop(id: string): Promise<void>
 }
@@ -21,7 +22,10 @@ export interface NativeDirectBridge {
  * include accountKey, while accountless Peer callers intentionally omit it. */
 export type NativeDirectClientOptions = Omit<DirectClientOptions, 'accountKey'> & {
   accountKey?: Uint8Array
+  route?: NativePeerRoute
 }
+
+export type NativePeerRoute = 'direct' | 'quick_tunnel'
 
 function asError(value: unknown): Error {
   if (value instanceof Error) return value
@@ -37,14 +41,16 @@ function decodeBase64(value: string): Uint8Array {
 }
 
 function diagnostics(event: NativeDirectEvent): DirectTransportDiagnostics | null {
+  const route = event.route === 'direct' || event.route === 'quick_tunnel' ? event.route : undefined
   const state = event.ice_state
-  if (state !== 'new' && state !== 'checking' && state !== 'connected' && state !== 'completed' &&
-      state !== 'failed' && state !== 'disconnected' && state !== 'closed') return null
+  const iceState = state === 'new' || state === 'checking' || state === 'connected' || state === 'completed' ||
+      state === 'failed' || state === 'disconnected' || state === 'closed' ? state : undefined
+  if (!route && !iceState) return null
   const candidate = event.candidate_type
   const candidateType = candidate === 'host' || candidate === 'srflx' || candidate === 'prflx' || candidate === 'relay'
     ? candidate
     : undefined
-  return { iceState: state, ...(candidateType ? { candidateType } : {}) }
+  return { ...(route ? { route } : {}), ...(iceState ? { iceState } : {}), ...(candidateType ? { candidateType } : {}) }
 }
 
 /** Wails adapter for Go/Pion direct clients. Its owner supplies either the
@@ -72,6 +78,7 @@ export class NativeDirectClientTransport implements DirectTransport {
       session_id: this.options.sessionId,
       since_seq: this.options.sinceSeq,
       client_instance_id: this.options.clientInstanceId,
+      ...(this.options.route ? { route: this.options.route } : {}),
     }).catch((error) => this.fail(error))
   }
 

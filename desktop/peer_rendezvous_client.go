@@ -10,13 +10,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peertransport"
+	"github.com/attson/atterm/internal/quicktunnel"
 	"github.com/attson/atterm/internal/rendezvousclient"
 	"github.com/google/uuid"
 )
 
 const peerNativeDirectMaxAttempts = 16
+
+const (
+	peerNativeRouteDirect      = "direct"
+	peerNativeRouteQuickTunnel = "quick_tunnel"
+)
 
 type peerNativeDirectClient struct {
 	id               string
@@ -28,10 +35,13 @@ type peerNativeDirectClient struct {
 	sinceSeq         uint64
 	clientInstanceID string
 	remote           rendezvousclient.PeerRoute
+	route            string
+	quickRoute       peerQuickTunnelRoute
 
 	mu            sync.Mutex
 	attempt       *peertransport.PionClientAttempt
-	channel       *peertransport.PionClientChannel
+	signal        *quicktunnel.SignalChannel
+	channel       peerQuickTunnelChannel
 	config        *peerConfigChannel
 	authenticated bool
 	stopped       bool
@@ -39,8 +49,8 @@ type peerNativeDirectClient struct {
 }
 
 // StartPeerNativeDirect starts one accountless Peer terminal attachment. The
-// renderer supplies no route or credential; both are resolved from the active
-// encrypted Peer store and the latest authenticated catalog.
+// renderer selects only a route kind; endpoints and credentials are resolved
+// from the verified Go-owned route cache, Peer store and authenticated catalog.
 func (a *App) StartPeerNativeDirect(req NativeDirectStartRequest) error {
 	if a == nil || a.ctx == nil {
 		return errors.New("Peer direct client unavailable")
@@ -56,6 +66,13 @@ func (a *App) StartPeerNativeDirect(req NativeDirectStartRequest) error {
 	if strings.TrimSpace(req.ClientInstanceID) == "" || len(req.ClientInstanceID) > 128 {
 		return errors.New("invalid Peer direct client instance id")
 	}
+	route := strings.TrimSpace(req.Route)
+	if route == "" {
+		route = peerNativeRouteDirect
+	}
+	if route != peerNativeRouteDirect && route != peerNativeRouteQuickTunnel {
+		return errors.New("unsupported Peer native route")
+	}
 	a.peerRendezvousMu.Lock()
 	lifecycle := a.peerRendezvous
 	a.peerRendezvousMu.Unlock()
@@ -65,18 +82,26 @@ func (a *App) StartPeerNativeDirect(req NativeDirectStartRequest) error {
 	lifecycle.mu.Lock()
 	host := lifecycle.active
 	lifecycle.mu.Unlock()
-	if host == nil || host.route == nil {
+	if host == nil || route == peerNativeRouteDirect && host.route == nil {
 		return rendezvousclient.ErrServiceUnavailable
 	}
 	discovered, ok := host.discoveredSession(sessionID)
 	if !ok {
 		return errors.New("Peer session is no longer discoverable")
 	}
+	var quickRoute peerQuickTunnelRoute
+	if route == peerNativeRouteQuickTunnel {
+		quickRoute, err = a.peerQuickTunnelRoute(discovered.remote.PeerID)
+		if err != nil {
+			return err
+		}
+	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	client := &peerNativeDirectClient{
 		id: id.String(), app: a, host: host, ctx: ctx, cancel: cancel,
 		sessionID: sessionID, sinceSeq: req.SinceSeq,
 		clientInstanceID: req.ClientInstanceID, remote: discovered.remote,
+		route: route, quickRoute: quickRoute,
 	}
 	a.peerNativeMu.Lock()
 	if a.peerNative == nil {
@@ -146,7 +171,11 @@ func (c *peerNativeDirectClient) run() error {
 	if err != nil {
 		return rendezvousclient.ErrAuthentication
 	}
-	active, err := activePeerMemberships(state, genesis, time.Now())
+	now := time.Now()
+	if manager.now != nil {
+		now = manager.now()
+	}
+	active, err := activePeerMemberships(state, genesis, now)
 	if err != nil {
 		return rendezvousclient.ErrAuthentication
 	}
@@ -156,14 +185,17 @@ func (c *peerNativeDirectClient) run() error {
 		!peerMembershipAllowsSession(*remote, c.sessionID) {
 		return rendezvousclient.ErrAuthentication
 	}
+	if c.route == peerNativeRouteQuickTunnel {
+		return c.runQuickTunnel(state.GenesisToken, identity, local.Token, remote.Token)
+	}
 	attempt, err := c.host.route.Dial(c.ctx, rendezvousclient.ClientAttemptConfig{
 		Remote: c.remote, Identity: identity, GenesisToken: state.GenesisToken,
 		ClientMembershipToken: local.Token, HostMembershipToken: remote.Token,
 		SessionID: c.sessionID, ClientInstanceID: c.clientInstanceID,
-		OnAuthenticated: c.onAuthenticated, OnRecord: c.handleRecord,
+		OnAuthenticated: func(channel *peertransport.PionClientChannel) { c.onAuthenticated(channel) }, OnRecord: c.handleRecord,
 		OnConfigMessage: c.handleConfigMessage,
 		OnDiagnostics: func(iceState, candidateType string) {
-			c.emit(NativeDirectEvent{Kind: "diagnostics", ICEState: iceState, CandidateType: candidateType})
+			c.emit(NativeDirectEvent{Kind: "diagnostics", Route: peerNativeRouteDirect, ICEState: iceState, CandidateType: candidateType})
 		},
 		OnClosed: func(closeErr error) {
 			if closeErr != nil && c.ctx.Err() == nil {
@@ -185,7 +217,39 @@ func (c *peerNativeDirectClient) run() error {
 	return nil
 }
 
-func (c *peerNativeDirectClient) onAuthenticated(channel *peertransport.PionClientChannel) {
+func (c *peerNativeDirectClient) runQuickTunnel(genesisToken string, identity *peercrypto.Identity, localMembership, remoteMembership string) error {
+	signal, err := quicktunnel.Dial(c.ctx, quicktunnel.ClientConfig{
+		URL: c.quickRoute.URL, Identity: identity, GenesisToken: genesisToken,
+		ClientMembershipToken: localMembership, HostMembershipToken: remoteMembership,
+		SessionID: c.sessionID, ClientInstanceID: c.clientInstanceID,
+		OnClosed: func(_ *quicktunnel.SignalChannel, closeErr error) {
+			if closeErr != nil && c.ctx.Err() == nil {
+				c.fail(closeErr)
+			}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if c.stopped {
+		c.mu.Unlock()
+		_ = signal.Close()
+		return nil
+	}
+	c.signal = signal
+	c.mu.Unlock()
+	if err := signal.BindWSSFallback(quicktunnel.WSSFallbackConfig{
+		OnAuthenticated: func(channel *quicktunnel.WSSChannel) { c.onAuthenticated(channel) },
+		OnRecord:        c.handleRecord, OnConfigMessage: c.handleConfigMessage,
+	}); err != nil {
+		return err
+	}
+	_, err = signal.StartWSSFallback(c.ctx)
+	return err
+}
+
+func (c *peerNativeDirectClient) onAuthenticated(channel peerQuickTunnelChannel) {
 	config, err := newPeerConfigChannel(c.app, channel)
 	if err != nil {
 		_ = channel.Close()
@@ -202,6 +266,9 @@ func (c *peerNativeDirectClient) onAuthenticated(channel *peertransport.PionClie
 	c.config = config
 	c.authenticated = true
 	c.mu.Unlock()
+	if c.route == peerNativeRouteQuickTunnel {
+		c.emit(NativeDirectEvent{Kind: "diagnostics", Route: c.route})
+	}
 	c.emit(NativeDirectEvent{Kind: "authenticated"})
 	if err := config.Start(c.ctx); err != nil {
 		c.fail(fmt.Errorf("start Peer config channel: %w", err))
@@ -275,14 +342,17 @@ func (c *peerNativeDirectClient) stop()          { c.finish(nil, false) }
 
 func (c *peerNativeDirectClient) finish(err error, emitFailure bool) {
 	var attempt *peertransport.PionClientAttempt
-	var channel *peertransport.PionClientChannel
+	var signal *quicktunnel.SignalChannel
+	var channel peerQuickTunnelChannel
 	finished := false
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		c.stopped = true
 		attempt = c.attempt
+		signal = c.signal
 		channel = c.channel
 		c.attempt = nil
+		c.signal = nil
 		c.channel = nil
 		c.config = nil
 		c.authenticated = false
@@ -301,6 +371,8 @@ func (c *peerNativeDirectClient) finish(err error, emitFailure bool) {
 	// instead of blocking on the same sync.Once.
 	if attempt != nil {
 		_ = attempt.Close()
+	} else if signal != nil {
+		_ = signal.Close()
 	} else if channel != nil {
 		_ = channel.Close()
 	}

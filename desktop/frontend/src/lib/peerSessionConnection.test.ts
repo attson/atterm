@@ -157,4 +157,27 @@ describe('PeerSessionConnection', () => {
     expect(transports).toHaveLength(2)
     expect(transports[1].options.sinceSeq).toBe(12)
   })
+
+  it('labels an explicitly selected Quick Tunnel route without automatic fallback', () => {
+    const transports: FakeTransport[] = []
+    const routes: Array<{ route: string }> = []
+    const connection = new PeerSessionConnection(sessionID, {
+      onRouteChange: (diagnostics) => routes.push(diagnostics),
+    }, {
+      route: 'quick_tunnel',
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    expect(transports[0].options.route).toBe('quick_tunnel')
+    expect(routes.at(-1)).toMatchObject({ route: 'connecting-quick-tunnel' })
+    transports[0].options.callbacks.onDiagnostics?.({ route: 'quick_tunnel' })
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    expect(routes.at(-1)).toMatchObject({ route: 'quick-tunnel' })
+  })
 })

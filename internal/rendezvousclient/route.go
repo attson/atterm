@@ -27,6 +27,7 @@ const (
 	routeAuthorizationTTL  = 30 * time.Second
 	routeAckTimeout        = 5 * time.Second
 	routeResponseTimeout   = 10 * time.Second
+	routeCatalogProbeWait  = 750 * time.Millisecond
 	routeReplayWindowSize  = 2048
 	routeMaxAttempts       = 32
 	routeMaxCatalogs       = 32
@@ -43,12 +44,14 @@ var configSyncSessionID = uuid.MustParse("ffffffff-ffff-4fff-bfff-ffffffffffff")
 func ConfigSyncSessionID() uuid.UUID { return configSyncSessionID }
 
 const (
-	routeKindOpen       = "open"
-	routeKindAuthorized = "authorized"
-	routeKindSignal     = "signal"
-	routeKindError      = "error"
-	routeKindCatalog    = "catalog_request"
-	routeKindCatalogOK  = "catalog_response"
+	routeKindOpen            = "open"
+	routeKindAuthorized      = "authorized"
+	routeKindSignal          = "signal"
+	routeKindError           = "error"
+	routeKindCatalog         = "catalog_request"
+	routeKindCatalogOK       = "catalog_response"
+	routeKindCatalogRoutes   = "catalog_request_routes"
+	routeKindCatalogRoutesOK = "catalog_response_routes"
 )
 
 const (
@@ -127,6 +130,18 @@ type PeerCatalogRequest struct {
 
 type HostCatalogFunc func(context.Context, PeerCatalogRequest) ([]PeerSession, error)
 
+// PeerCatalog is a session snapshot plus an optional signed, ticketless
+// reconnect bundle. The bundle is transported only inside the pairwise
+// encrypted signaling envelope and remains subject to caller-side validation.
+type PeerCatalog struct {
+	Sessions         []PeerSession
+	ConnectionBundle string
+}
+
+// HostConnectionBundleFunc creates a fresh member reconnect bundle for the
+// authenticated catalog requester without starting a transport.
+type HostConnectionBundleFunc func(context.Context, PeerCatalogRequest) (string, error)
+
 type RouteConfig struct {
 	Connection            *PresenceConnection
 	InitialPresence       []rendezvous.Presence
@@ -137,6 +152,7 @@ type RouteConfig struct {
 	ResolvePeer           func(presenceID string) (PeerRoute, bool)
 	AuthorizeHost         HostAuthorizeFunc
 	CatalogHost           HostCatalogFunc
+	ConnectionBundleHost  HostConnectionBundleFunc
 	WebRTC                webrtc.Configuration
 }
 
@@ -174,6 +190,7 @@ type routeWireMessage struct {
 	CatalogOffset       int                      `json:"catalog_offset,omitempty"`
 	CatalogNextOffset   int                      `json:"catalog_next_offset,omitempty"`
 	Sessions            []PeerSession            `json:"sessions,omitempty"`
+	ConnectionBundle    string                   `json:"connection_bundle,omitempty"`
 }
 
 type routeAck struct {
@@ -198,6 +215,16 @@ type catalogRequest struct {
 	response chan routeWireMessage
 }
 
+type catalogRoutesCapability uint8
+
+const (
+	catalogRoutesUnknown catalogRoutesCapability = iota
+	catalogRoutesSupported
+	catalogRoutesUnsupported
+)
+
+var errCatalogRoutesUnsupported = errors.New("Rendezvous route catalog unsupported")
+
 // Route multiplexes encrypted signaling attempts over one foreground
 // PresenceConnection. Terminal and config records never traverse this type.
 type Route struct {
@@ -206,14 +233,15 @@ type Route struct {
 	cancel context.CancelFunc
 	replay *SignalReplayWindow
 
-	mu        sync.Mutex
-	online    map[string]rendezvous.Role
-	acks      map[string]chan routeAck
-	clients   map[uuid.UUID]*clientRouteAttempt
-	hosts     map[uuid.UUID]*hostRouteAttempt
-	catalogs  map[uuid.UUID]catalogRequest
-	closed    bool
-	closeOnce sync.Once
+	mu            sync.Mutex
+	online        map[string]rendezvous.Role
+	acks          map[string]chan routeAck
+	clients       map[uuid.UUID]*clientRouteAttempt
+	hosts         map[uuid.UUID]*hostRouteAttempt
+	catalogs      map[uuid.UUID]catalogRequest
+	catalogRoutes map[string]catalogRoutesCapability
+	closed        bool
+	closeOnce     sync.Once
 }
 
 func NewRoute(parent context.Context, cfg RouteConfig) (*Route, error) {
@@ -228,7 +256,7 @@ func NewRoute(parent context.Context, cfg RouteConfig) (*Route, error) {
 		cfg: cfg, ctx: ctx, cancel: cancel, replay: NewSignalReplayWindow(routeReplayWindowSize),
 		online: make(map[string]rendezvous.Role), acks: make(map[string]chan routeAck),
 		clients: make(map[uuid.UUID]*clientRouteAttempt), hosts: make(map[uuid.UUID]*hostRouteAttempt),
-		catalogs: make(map[uuid.UUID]catalogRequest),
+		catalogs: make(map[uuid.UUID]catalogRequest), catalogRoutes: make(map[string]catalogRoutesCapability),
 	}
 	for _, presence := range cfg.InitialPresence {
 		if validateOpaqueID(presence.PresenceID, 32) != nil || presence.PresenceID == cfg.Connection.PresenceID() ||
@@ -369,10 +397,58 @@ func (r *Route) Dial(ctx context.Context, cfg ClientAttemptConfig) (*peertranspo
 // Every page is independently pairwise encrypted and correlated; no terminal
 // subscriber or Pion attempt is created by this operation.
 func (r *Route) Catalog(ctx context.Context, remote PeerRoute) ([]PeerSession, error) {
-	if r == nil || ctx == nil || remote.PeerID == "" || validateOpaqueID(remote.PresenceID, 32) != nil {
-		return nil, ErrServiceUnavailable
+	catalog, err := r.fetchCatalog(ctx, remote, routeKindCatalog, routeKindCatalogOK, 0)
+	return catalog.Sessions, err
+}
+
+// CatalogWithRoutes probes for the optional route-bearing catalog extension.
+// A peer that does not answer the short probe is cached as v1-only for this
+// Route lifetime. Once support is observed, transient v2 failures fall back to
+// v1 sessions without downgrading the cached capability.
+func (r *Route) CatalogWithRoutes(ctx context.Context, remote PeerRoute) (PeerCatalog, error) {
+	if r == nil || ctx == nil {
+		return PeerCatalog{}, ErrServiceUnavailable
 	}
-	var sessions []PeerSession
+	r.mu.Lock()
+	capability := r.catalogRoutes[remote.PeerID]
+	r.mu.Unlock()
+	if capability == catalogRoutesUnsupported {
+		return r.fetchCatalog(ctx, remote, routeKindCatalog, routeKindCatalogOK, 0)
+	}
+	probeWait := time.Duration(0)
+	if capability == catalogRoutesUnknown {
+		probeWait = routeCatalogProbeWait
+	}
+	catalog, err := r.fetchCatalog(ctx, remote, routeKindCatalogRoutes, routeKindCatalogRoutesOK, probeWait)
+	if err == nil {
+		r.mu.Lock()
+		r.catalogRoutes[remote.PeerID] = catalogRoutesSupported
+		r.mu.Unlock()
+		return catalog, nil
+	}
+	if ctx.Err() != nil {
+		return PeerCatalog{}, err
+	}
+	if errors.Is(err, ErrAuthentication) || errors.Is(err, ErrInvalidSignal) {
+		return PeerCatalog{}, err
+	}
+	if errors.Is(err, errCatalogRoutesUnsupported) {
+		r.mu.Lock()
+		r.catalogRoutes[remote.PeerID] = catalogRoutesUnsupported
+		r.mu.Unlock()
+	}
+	fallback, fallbackErr := r.fetchCatalog(ctx, remote, routeKindCatalog, routeKindCatalogOK, 0)
+	if fallbackErr != nil {
+		return PeerCatalog{}, errors.Join(err, fallbackErr)
+	}
+	return fallback, nil
+}
+
+func (r *Route) fetchCatalog(ctx context.Context, remote PeerRoute, requestKind, responseKind string, firstResponseWait time.Duration) (PeerCatalog, error) {
+	if r == nil || ctx == nil || remote.PeerID == "" || validateOpaqueID(remote.PresenceID, 32) != nil {
+		return PeerCatalog{}, ErrServiceUnavailable
+	}
+	var catalog PeerCatalog
 	for offset := 0; ; {
 		requestID := uuid.New()
 		response := make(chan routeWireMessage, 1)
@@ -380,40 +456,47 @@ func (r *Route) Catalog(ctx context.Context, remote PeerRoute) ([]PeerSession, e
 		_, online := r.online[remote.PresenceID]
 		if r.closed {
 			r.mu.Unlock()
-			return nil, ErrServiceUnavailable
+			return PeerCatalog{}, ErrServiceUnavailable
 		}
 		if !online {
 			r.mu.Unlock()
-			return nil, ErrPeerOffline
+			return PeerCatalog{}, ErrPeerOffline
 		}
 		if len(r.catalogs) >= routeMaxCatalogs {
 			r.mu.Unlock()
-			return nil, ErrServiceUnavailable
+			return PeerCatalog{}, ErrServiceUnavailable
 		}
 		r.catalogs[requestID] = catalogRequest{remote: clonePeerRoute(remote), response: response}
 		r.mu.Unlock()
 
 		request := routeWireMessage{
-			Version: routeWireVersion, Kind: routeKindCatalog, AttemptID: requestID,
+			Version: routeWireVersion, Kind: requestKind, AttemptID: requestID,
 			ClientPeerID: r.cfg.LocalPeerID, CatalogOffset: offset,
 		}
 		err := r.sendConfirmed(ctx, remote, request)
 		if err == nil {
-			timer := time.NewTimer(routeResponseTimeout)
+			responseWait := routeResponseTimeout
+			if offset == 0 && firstResponseWait > 0 {
+				responseWait = firstResponseWait
+			}
+			timer := time.NewTimer(responseWait)
 			select {
 			case message := <-response:
 				if message.Kind == routeKindError {
 					err = classifyWireRouteError(message.Code)
-				} else if validateCatalogResponse(message, request, remote) != nil {
+				} else if validateCatalogResponse(message, request, remote, responseKind) != nil {
 					err = ErrAuthentication
 				} else {
-					sessions = append(sessions, clonePeerSessions(message.Sessions)...)
-					if len(sessions) > routeMaxCatalogEntries {
+					catalog.Sessions = append(catalog.Sessions, clonePeerSessions(message.Sessions)...)
+					if offset == 0 {
+						catalog.ConnectionBundle = message.ConnectionBundle
+					}
+					if len(catalog.Sessions) > routeMaxCatalogEntries {
 						err = ErrInvalidSignal
 					} else if message.CatalogNextOffset == 0 {
 						timer.Stop()
 						r.removeCatalog(requestID)
-						return sessions, nil
+						return catalog, nil
 					} else {
 						offset = message.CatalogNextOffset
 					}
@@ -423,13 +506,17 @@ func (r *Route) Catalog(ctx context.Context, remote PeerRoute) ([]PeerSession, e
 			case <-r.ctx.Done():
 				err = ErrServiceUnavailable
 			case <-timer.C:
-				err = ErrPeerOffline
+				if offset == 0 && firstResponseWait > 0 {
+					err = errCatalogRoutesUnsupported
+				} else {
+					err = ErrPeerOffline
+				}
 			}
 			timer.Stop()
 		}
 		r.removeCatalog(requestID)
 		if err != nil {
-			return nil, err
+			return PeerCatalog{}, err
 		}
 	}
 }
@@ -616,19 +703,23 @@ func (r *Route) handleEncryptedSignal(event rendezvous.EventMessage) {
 		r.handleClientResponse(remote, message)
 	case routeKindSignal:
 		r.handleAttemptSignal(remote, message)
-	case routeKindCatalog:
+	case routeKindCatalog, routeKindCatalogRoutes:
 		r.handleCatalogRequest(remote, message)
-	case routeKindCatalogOK:
+	case routeKindCatalogOK, routeKindCatalogRoutesOK:
 		r.handleCatalogResponse(remote, message)
 	}
 }
 
 func (r *Route) handleCatalogRequest(remote PeerRoute, message routeWireMessage) {
-	if r.cfg.CatalogHost == nil || validateCatalogRequest(message) != nil || message.ClientPeerID != remote.PeerID {
+	if message.Kind == routeKindCatalogRoutes && r.cfg.ConnectionBundleHost == nil {
+		return
+	}
+	if r.cfg.CatalogHost == nil || validateCatalogRequest(message, message.Kind) != nil || message.ClientPeerID != remote.PeerID {
 		r.sendRouteError(remote, message.AttemptID, routeErrorAuthentication)
 		return
 	}
-	sessions, err := r.cfg.CatalogHost(r.ctx, PeerCatalogRequest{ClientPeerID: message.ClientPeerID})
+	request := PeerCatalogRequest{ClientPeerID: message.ClientPeerID}
+	sessions, err := r.cfg.CatalogHost(r.ctx, request)
 	if err != nil {
 		r.sendRouteError(remote, message.AttemptID, routeErrorAuthentication)
 		return
@@ -646,8 +737,22 @@ func (r *Route) handleCatalogRequest(remote PeerRoute, message routeWireMessage)
 		r.sendRouteError(remote, message.AttemptID, routeErrorAuthentication)
 		return
 	}
+	connectionBundle := ""
+	responseKind := routeKindCatalogOK
+	if message.Kind == routeKindCatalogRoutes {
+		responseKind = routeKindCatalogRoutesOK
+		if message.CatalogOffset == 0 {
+			connectionBundle, err = r.cfg.ConnectionBundleHost(r.ctx, request)
+			if err != nil || connectionBundle == "" || !utf8.ValidString(connectionBundle) {
+				r.sendRouteError(remote, message.AttemptID, routeErrorServiceUnavailable)
+				return
+			}
+		}
+	}
 	end := min(message.CatalogOffset+routeCatalogPageSize, len(sessions))
-	response, err := catalogPageResponse(r.cfg.LocalPeerID, message.AttemptID, message.CatalogOffset, end, sessions)
+	response, err := catalogPageResponse(
+		responseKind, r.cfg.LocalPeerID, message.AttemptID, message.CatalogOffset, end, sessions, connectionBundle,
+	)
 	if err != nil {
 		r.sendRouteError(remote, message.AttemptID, routeErrorServiceUnavailable)
 		return
@@ -657,16 +762,16 @@ func (r *Route) handleCatalogRequest(remote PeerRoute, message routeWireMessage)
 	}
 }
 
-func catalogPageResponse(hostID string, requestID uuid.UUID, offset, end int, sessions []PeerSession) (routeWireMessage, error) {
+func catalogPageResponse(kind, hostID string, requestID uuid.UUID, offset, end int, sessions []PeerSession, connectionBundle string) (routeWireMessage, error) {
 	for {
 		next := 0
 		if end < len(sessions) {
 			next = end
 		}
 		response := routeWireMessage{
-			Version: routeWireVersion, Kind: routeKindCatalogOK, AttemptID: requestID,
+			Version: routeWireVersion, Kind: kind, AttemptID: requestID,
 			HostID: hostID, CatalogOffset: offset, CatalogNextOffset: next,
-			Sessions: clonePeerSessions(sessions[offset:end]),
+			Sessions: clonePeerSessions(sessions[offset:end]), ConnectionBundle: connectionBundle,
 		}
 		encoded, err := json.Marshal(response)
 		if err == nil && len(encoded) <= maxSignalPlaintext {
@@ -1059,22 +1164,32 @@ func validateOpenWire(message routeWireMessage) error {
 	return nil
 }
 
-func validateCatalogRequest(message routeWireMessage) error {
-	if message.Version != routeWireVersion || message.Kind != routeKindCatalog || message.AttemptID == uuid.Nil ||
+func validateCatalogRequest(message routeWireMessage, expectedKind string) error {
+	if message.Version != routeWireVersion || message.Kind != expectedKind ||
+		(expectedKind != routeKindCatalog && expectedKind != routeKindCatalogRoutes) || message.AttemptID == uuid.Nil ||
 		!validRouteIdentifier(message.ClientPeerID) || message.CatalogOffset < 0 || message.CatalogOffset > routeMaxCatalogEntries ||
-		len(message.Sessions) != 0 || message.CatalogNextOffset != 0 {
+		len(message.Sessions) != 0 || message.CatalogNextOffset != 0 || message.ConnectionBundle != "" {
 		return ErrAuthentication
 	}
 	return nil
 }
 
-func validateCatalogResponse(message, request routeWireMessage, remote PeerRoute) error {
-	if message.Version != routeWireVersion || message.Kind != routeKindCatalogOK || message.AttemptID != request.AttemptID ||
+func validateCatalogResponse(message, request routeWireMessage, remote PeerRoute, expectedKind string) error {
+	if message.Version != routeWireVersion || message.Kind != expectedKind ||
+		(expectedKind != routeKindCatalogOK && expectedKind != routeKindCatalogRoutesOK) || message.AttemptID != request.AttemptID ||
 		message.HostID != remote.PeerID || message.CatalogOffset != request.CatalogOffset ||
 		len(message.Sessions) > routeCatalogPageSize || message.CatalogNextOffset < 0 ||
 		message.CatalogNextOffset > routeMaxCatalogEntries ||
 		(message.CatalogNextOffset != 0 && (message.CatalogNextOffset <= message.CatalogOffset ||
 			message.CatalogNextOffset != message.CatalogOffset+len(message.Sessions))) {
+		return ErrAuthentication
+	}
+	if expectedKind == routeKindCatalogOK && message.ConnectionBundle != "" {
+		return ErrAuthentication
+	}
+	if expectedKind == routeKindCatalogRoutesOK &&
+		((message.CatalogOffset == 0 && (message.ConnectionBundle == "" || !utf8.ValidString(message.ConnectionBundle))) ||
+			(message.CatalogOffset != 0 && message.ConnectionBundle != "")) {
 		return ErrAuthentication
 	}
 	for _, session := range message.Sessions {

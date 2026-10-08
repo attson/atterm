@@ -107,6 +107,19 @@ func newPeerRendezvousHostWithRegistrationContext(ctx, registrationCtx context.C
 			}
 			return peerHost.runtime.catalog(request.ClientPeerID)
 		},
+		ConnectionBundleHost: func(ctx context.Context, _ rendezvousclient.PeerCatalogRequest) (string, error) {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			bundle, err := app.CreatePeerConnectionBundle("")
+			if err != nil {
+				return "", err
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			return bundle, nil
+		},
 	})
 	if err != nil {
 		cancelHost()
@@ -123,16 +136,16 @@ func (h *peerRendezvousHost) discoverSessions(ctx context.Context) ([]proto.Sess
 	}
 	remotes := h.route.OnlinePeerRoutes()
 	type result struct {
-		remote   rendezvousclient.PeerRoute
-		sessions []rendezvousclient.PeerSession
-		err      error
+		remote  rendezvousclient.PeerRoute
+		catalog rendezvousclient.PeerCatalog
+		err     error
 	}
 	results := make(chan result, len(remotes))
 	for _, remote := range remotes {
 		remote := remote
 		go func() {
-			sessions, err := h.route.Catalog(ctx, remote)
-			results <- result{remote: remote, sessions: sessions, err: err}
+			catalog, err := h.route.CatalogWithRoutes(ctx, remote)
+			results <- result{remote: remote, catalog: catalog, err: err}
 		}()
 	}
 	next := make(map[uuid.UUID]peerDiscoveredSession)
@@ -144,7 +157,7 @@ func (h *peerRendezvousHost) discoverSessions(ctx context.Context) ([]proto.Sess
 				joined = errors.Join(joined, item.err)
 				continue
 			}
-			accepted, err := h.validateCatalog(item.remote, item.sessions)
+			accepted, err := h.validateAndApplyCatalog(item.remote, item.catalog)
 			if err != nil {
 				joined = errors.Join(joined, err)
 				continue
@@ -168,6 +181,19 @@ func (h *peerRendezvousHost) discoverSessions(ctx context.Context) ([]proto.Sess
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos, nil
+}
+
+func (h *peerRendezvousHost) validateAndApplyCatalog(remote rendezvousclient.PeerRoute, catalog rendezvousclient.PeerCatalog) (map[uuid.UUID]peerDiscoveredSession, error) {
+	accepted, err := h.validateCatalog(remote, catalog.Sessions)
+	if err != nil {
+		return nil, err
+	}
+	if catalog.ConnectionBundle != "" {
+		if _, err := h.app.importPeerConnectionBundle(catalog.ConnectionBundle, remote.PeerID); err != nil {
+			return nil, rendezvousclient.ErrAuthentication
+		}
+	}
+	return accepted, nil
 }
 
 func (h *peerRendezvousHost) validateCatalog(remote rendezvousclient.PeerRoute, sessions []rendezvousclient.PeerSession) (map[uuid.UUID]peerDiscoveredSession, error) {

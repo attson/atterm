@@ -110,7 +110,8 @@ func TestRendezvousWireContainsNoPeerSecretsOrDataChannelPlaintext(t *testing.T)
 	terminalReceived := make(chan []byte, 1)
 	configReceived := make(chan []byte, 1)
 	metadataMarker := "private-session-title-marker"
-	hostRoute := fixture.newHostRouteWithCatalog(t, ctx, func(context.Context, PeerOpenRequest) (HostAuthorization, HostCallbacks, error) {
+	bundleMarker := "private-signed-route-bundle-marker"
+	hostRoute := fixture.newHostRouteWithCatalogAndBundle(t, ctx, func(context.Context, PeerOpenRequest) (HostAuthorization, HostCallbacks, error) {
 		return fixture.hostAuthorization(), HostCallbacks{
 			OnAuthenticated: func(channel *peertransport.PionHostChannel) { hostAuthenticated <- channel },
 			OnRecord: func(_ peertransport.RecordKind, payload []byte) {
@@ -127,6 +128,8 @@ func TestRendezvousWireContainsNoPeerSecretsOrDataChannelPlaintext(t *testing.T)
 			StartedAt: time.Now().Unix(), HostID: fixture.hostIdentity.PeerID(),
 			Permission: peertransport.PermissionControl,
 		}}, nil
+	}, func(context.Context, PeerCatalogRequest) (string, error) {
+		return bundleMarker, nil
 	})
 	defer hostRoute.Close()
 	clientRoute := fixture.newClientRoute(t, ctx)
@@ -182,11 +185,11 @@ func TestRendezvousWireContainsNoPeerSecretsOrDataChannelPlaintext(t *testing.T)
 	case <-ctx.Done():
 		t.Fatal("config marker did not cross the DataChannel")
 	}
-	catalog, err := clientRoute.Catalog(ctx, fixture.hostPeer())
+	catalog, err := clientRoute.CatalogWithRoutes(ctx, fixture.hostPeer())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 1 || catalog[0].Title != metadataMarker {
+	if len(catalog.Sessions) != 1 || catalog.Sessions[0].Title != metadataMarker || catalog.ConnectionBundle != bundleMarker {
 		t.Fatalf("catalog=%+v", catalog)
 	}
 
@@ -211,6 +214,7 @@ func TestRendezvousWireContainsNoPeerSecretsOrDataChannelPlaintext(t *testing.T)
 		{name: "client membership", secret: fixture.clientMembership},
 		{name: "session id", secret: fixture.sessionID.String()},
 		{name: "session metadata", secret: metadataMarker},
+		{name: "connection bundle", secret: bundleMarker},
 		{name: "client instance", secret: clientInstanceID},
 		{name: "SDP", secret: sdpMarker},
 		{name: "config", secret: string(configMarker)},
@@ -409,6 +413,146 @@ func TestRouteCatalogReturnsAuthorizedSessionsWithoutOpeningTerminalAttempt(t *t
 	hostRoute.mu.Unlock()
 	if attempts != 0 {
 		t.Fatalf("catalog created %d terminal attempts", attempts)
+	}
+}
+
+func TestRouteCatalogWithRoutesReturnsBundleAndKeepsLegacyCatalogUnchanged(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	bundleRequests := make(chan PeerCatalogRequest, 2)
+	hostRoute := fixture.newHostRouteWithCatalogAndBundle(t, ctx, nil, func(context.Context, PeerCatalogRequest) ([]PeerSession, error) {
+		result := make([]PeerSession, routeCatalogPageSize+1)
+		for index := range result {
+			result[index] = PeerSession{
+				ID: uuid.NewString(), Cols: 80, Rows: 24, HostID: fixture.hostIdentity.PeerID(),
+				Permission: peertransport.PermissionControl,
+			}
+		}
+		return result, nil
+	}, func(_ context.Context, request PeerCatalogRequest) (string, error) {
+		bundleRequests <- request
+		return "signed-member-route-bundle", nil
+	})
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	legacy, err := clientRoute.Catalog(ctx, fixture.hostPeer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy) != routeCatalogPageSize+1 {
+		t.Fatalf("legacy entries=%d", len(legacy))
+	}
+	select {
+	case request := <-bundleRequests:
+		t.Fatalf("legacy catalog requested bundle for %q", request.ClientPeerID)
+	default:
+	}
+
+	catalog, err := clientRoute.CatalogWithRoutes(ctx, fixture.hostPeer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Sessions) != routeCatalogPageSize+1 || catalog.ConnectionBundle != "signed-member-route-bundle" {
+		t.Fatalf("route catalog=%+v", catalog)
+	}
+	select {
+	case request := <-bundleRequests:
+		if request.ClientPeerID != fixture.clientIdentity.PeerID() {
+			t.Fatalf("bundle client=%q", request.ClientPeerID)
+		}
+	default:
+		t.Fatal("route catalog did not request a bundle")
+	}
+	select {
+	case request := <-bundleRequests:
+		t.Fatalf("route catalog requested bundle again for %q", request.ClientPeerID)
+	default:
+	}
+}
+
+func TestRouteCatalogWithRoutesCachesV1OnlyPeerAfterProbe(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	catalogCalls := 0
+	hostRoute := fixture.newHostRouteWithCatalog(t, ctx, nil, func(context.Context, PeerCatalogRequest) ([]PeerSession, error) {
+		catalogCalls++
+		return []PeerSession{{
+			ID: uuid.NewString(), Cols: 80, Rows: 24, HostID: fixture.hostIdentity.PeerID(),
+			Permission: peertransport.PermissionView,
+		}}, nil
+	})
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	for range 2 {
+		catalog, err := clientRoute.CatalogWithRoutes(ctx, fixture.hostPeer())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(catalog.Sessions) != 1 || catalog.ConnectionBundle != "" {
+			t.Fatalf("fallback catalog=%+v", catalog)
+		}
+	}
+	if catalogCalls != 2 {
+		t.Fatalf("v1 catalog calls=%d want=2", catalogCalls)
+	}
+	clientRoute.mu.Lock()
+	capability := clientRoute.catalogRoutes[fixture.hostIdentity.PeerID()]
+	clientRoute.mu.Unlock()
+	if capability != catalogRoutesUnsupported {
+		t.Fatalf("cached capability=%d want unsupported", capability)
+	}
+}
+
+func TestRouteCatalogWithRoutesKeepsSupportedCapabilityAcrossTransientFailure(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	bundleAvailable := true
+	hostRoute := fixture.newHostRouteWithCatalogAndBundle(t, ctx, nil, func(context.Context, PeerCatalogRequest) ([]PeerSession, error) {
+		return []PeerSession{{
+			ID: uuid.NewString(), Cols: 80, Rows: 24, HostID: fixture.hostIdentity.PeerID(),
+			Permission: peertransport.PermissionView,
+		}}, nil
+	}, func(context.Context, PeerCatalogRequest) (string, error) {
+		if !bundleAvailable {
+			return "", ErrServiceUnavailable
+		}
+		return "signed-member-route-bundle", nil
+	})
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	first, err := clientRoute.CatalogWithRoutes(ctx, fixture.hostPeer())
+	if err != nil || first.ConnectionBundle == "" {
+		t.Fatalf("first catalog=%+v err=%v", first, err)
+	}
+	bundleAvailable = false
+	second, err := clientRoute.CatalogWithRoutes(ctx, fixture.hostPeer())
+	if err != nil || len(second.Sessions) != 1 || second.ConnectionBundle != "" {
+		t.Fatalf("fallback catalog=%+v err=%v", second, err)
+	}
+	clientRoute.mu.Lock()
+	capability := clientRoute.catalogRoutes[fixture.hostIdentity.PeerID()]
+	clientRoute.mu.Unlock()
+	if capability != catalogRoutesSupported {
+		t.Fatalf("cached capability=%d want supported", capability)
+	}
+}
+
+func TestCatalogRouteBundleMustFitEncryptedEnvelope(t *testing.T) {
+	_, err := catalogPageResponse(
+		routeKindCatalogRoutesOK, "host", uuid.New(), 0, 0, nil,
+		strings.Repeat("x", maxSignalPlaintext),
+	)
+	if !errors.Is(err, ErrInvalidSignal) {
+		t.Fatalf("oversized route bundle error=%v", err)
 	}
 }
 
@@ -768,6 +912,16 @@ func (f *routeFixture) newHostRoute(t *testing.T, ctx context.Context, authorize
 }
 
 func (f *routeFixture) newHostRouteWithCatalog(t *testing.T, ctx context.Context, authorize HostAuthorizeFunc, catalog HostCatalogFunc) *Route {
+	return f.newHostRouteWithCatalogAndBundle(t, ctx, authorize, catalog, nil)
+}
+
+func (f *routeFixture) newHostRouteWithCatalogAndBundle(
+	t *testing.T,
+	ctx context.Context,
+	authorize HostAuthorizeFunc,
+	catalog HostCatalogFunc,
+	bundle HostConnectionBundleFunc,
+) *Route {
 	t.Helper()
 	route, err := NewRoute(ctx, RouteConfig{
 		Connection: f.hostConnection, InitialPresence: f.hostSnapshot,
@@ -777,7 +931,7 @@ func (f *routeFixture) newHostRouteWithCatalog(t *testing.T, ctx context.Context
 			peer := f.clientPeer()
 			return peer, presenceID == peer.PresenceID
 		},
-		AuthorizeHost: authorize, CatalogHost: catalog,
+		AuthorizeHost: authorize, CatalogHost: catalog, ConnectionBundleHost: bundle,
 	})
 	if err != nil {
 		t.Fatal(err)

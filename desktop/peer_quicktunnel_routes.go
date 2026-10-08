@@ -37,6 +37,10 @@ type PeerSessionRouteStatus struct {
 // ImportPeerConnectionBundle rotates the process-local route hint for an
 // existing Peer member. First-join bundles are deliberately rejected here.
 func (a *App) ImportPeerConnectionBundle(raw string) (PeerRouteImportResult, error) {
+	return a.importPeerConnectionBundle(raw, "")
+}
+
+func (a *App) importPeerConnectionBundle(raw, expectedIssuerPeerID string) (PeerRouteImportResult, error) {
 	token, err := normalizePeerConnectionBundle(raw)
 	if err != nil {
 		return PeerRouteImportResult{}, errPeerConnectionBundleImportRejected
@@ -50,7 +54,7 @@ func (a *App) ImportPeerConnectionBundle(raw string) (PeerRouteImportResult, err
 		now = manager.now()
 	}
 	bundle, err := peerproto.VerifyConnectionBundle(token, now)
-	if err != nil || bundle.Ticket != nil {
+	if err != nil || bundle.Ticket != nil || expectedIssuerPeerID != "" && bundle.Document.IssuerPeerID != expectedIssuerPeerID {
 		return PeerRouteImportResult{}, errPeerConnectionBundleImportRejected
 	}
 	state, err := manager.store.Load()

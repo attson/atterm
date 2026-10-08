@@ -1262,8 +1262,9 @@ LP(from_presence_id) || LP(to_presence_id) || LP(message_id)
 也不能把 ciphertext 替换到另一个 topic、方向或 message id。客户端对
 `(from_presence_id, message_id)` 使用 2048 条有界 replay window。
 
-解密后的 route message 有六种：`catalog_request`、`catalog_response`、`open`、`authorized`、
-`signal`、`error`。`open` 携带短期 attempt ticket、目标 session 和 client identity；`authorized`
+解密后的 route message 有八种：`catalog_request`、`catalog_response`、
+`catalog_request_routes`、`catalog_response_routes`、`open`、`authorized`、`signal`、`error`。
+`open` 携带短期 attempt ticket、目标 session 和 client identity；`authorized`
 只返回该 attempt 的有效期与 effective permission；`signal` 携带 Pion offer/answer/ICE；`error`
 只返回稳定类别。上述字段全部位于加密信封内。Genesis、membership token、
 revocation/config operation 和 terminal frame 从不发给 Rendezvous；双方仍必须在 Pion
@@ -1284,8 +1285,24 @@ host 每次请求都重新读取 signed membership/revocation、双方 session s
 permission。响应每页最多 16 条、总计最多 512 条；单个 UTF-8 metadata 字段最多 1024 bytes。
 每页都绑定 request UUID、请求 offset、目标 Peer route 和 pairwise signal envelope；Rendezvous
 只能看到 64 KiB 以内的 ciphertext。catalog 不创建 Pion attempt、terminal subscriber 或 config
-channel，也不进入 `ConnectionBundle`。只有用户选择某条 session 后才发送 `open` 并建立现有
-Pion/DataChannel 路径，host 在 attach 时再次执行完整授权检查。
+channel；v1 `catalog_response` 不携带 `ConnectionBundle`。只有用户选择某条 session 后才发送
+`open` 并建立现有 Pion/DataChannel 路径，host 在 attach 时再次执行完整授权检查。
+
+`catalog_request_routes` 是可选的向后兼容能力探测，请求字段与 `catalog_request` 完全相同，
+使只认识 v1 字段的旧 host 仍能严格解码后忽略未知 kind。新 client 对未知 Peer 最多等待 750 ms；
+收到 `catalog_response_routes` 后在当前 `Route` 生命周期缓存支持状态，未收到则缓存为 v1-only
+并重新请求 `catalog_request`。已确认支持的 Peer 若发生瞬时 service/offline 失败，可回退 v1 session
+目录但不降级能力缓存；认证或消息结构错误不得通过 v1 绕过。
+
+`catalog_response_routes` 仅在 offset 0 的第一页增加 `connection_bundle`，后续页必须省略。host
+每次第一页请求都重新生成由当前 active local membership 签名的无 ticket member reconnect bundle；
+它可包含当前 Quick Tunnel + Rendezvous route，也可只含 Rendezvous route。该字段与 session metadata
+一起位于 pairwise XChaCha20-Poly1305 信封内，Rendezvous 只能看到不超过 64 KiB 的 ciphertext。
+client 在接受该 host 的目录前，必须独立验证 bundle 属于当前 genesis、issuer 精确 membership 仍在
+deny-wins active set，且 issuer Peer ID 等于被请求的 Peer；通过后只原子替换该 issuer 的进程内
+Quick Tunnel hint，不持久化 URL/token，也不暴露给 renderer。空 bundle 只可能来自 v1 fallback，
+此时保留现有 hint 直到自身 expiry。此分发不创建 Pion attempt、terminal subscriber 或 config
+channel，也不触发 terminal route 切换；Quick Tunnel 重试仍需用户显式操作。
 
 发送 `open` 后，Rendezvous ACK 为 `queued` 映射 `peer offline`；连接、写入、ACK 超时或 host
 容量问题映射 `service unavailable`；Pion ICE/transport 建链失败映射 `ICE failed`；membership、

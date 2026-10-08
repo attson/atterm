@@ -43,8 +43,13 @@ credential or `account_key` enters the Peer path. Existing members can now manua
 ticketless reconnect bundle. Import requires the current genesis and exact active issuer membership,
 then atomically replaces (or removes) only the process-local Quick Tunnel hint. A failed Peer terminal
 can query token-free route availability and explicitly restart through Quick Tunnel; this is never
-invoked automatically. Automatic bundle propagation, live route leasing and automatic handover remain
-disabled pending the shared transport/principal entry gate and soak tests.
+invoked automatically. The encrypted Rendezvous catalog now also probes an optional v2 response that
+carries the host's refreshed signed member bundle on its first page. Old hosts ignore the probe and are
+cached as v1-only after a short timeout; new clients independently bind the bundle issuer to the catalog
+Peer and current deny-wins membership before rotating only that process-local hint. This distribution
+creates no terminal subscriber or Pion attempt and a v1 fallback leaves the current hint untouched.
+Live route leasing and automatic handover remain disabled pending the shared transport/principal entry
+gate and soak tests.
 
 ## PR 4.2 - Automated handover
 

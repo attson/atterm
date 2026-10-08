@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/quicktunnel"
 	"github.com/attson/atterm/internal/rendezvous"
 	"github.com/attson/atterm/internal/rendezvousclient"
 	"github.com/google/uuid"
@@ -59,6 +62,16 @@ func TestPeerRendezvousHostReusesSessionAndConfigAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hostRoute.Close()
+	fixture.peerHost.tunnel = &fakePeerQuickTunnelManager{status: quicktunnel.Status{
+		Running: true, PublicURL: "https://catalog-route.trycloudflare.com",
+	}}
+	fixture.app.quickTunnel = fixture.peerHost
+	fixture.app.peerRendezvous = &peerRendezvousLifecycle{active: &peerRendezvousHost{
+		serviceURL: "https://rendezvous.example", topic: hostCoordinates.Topic,
+	}}
+	if _, err := fixture.app.CreatePeerConnectionBundle(""); err != nil {
+		t.Fatalf("create catalog connection bundle: %v", err)
+	}
 
 	clientCoordinates, err := peerdiscovery.DeriveCoordinates(syncKey, genesis.Document.SpaceID, fixture.clientIdentity.PeerID(), time.Now())
 	if err != nil {
@@ -87,15 +100,19 @@ func TestPeerRendezvousHostReusesSessionAndConfigAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clientRoute.Close()
-	catalog, err := clientRoute.Catalog(ctx, rendezvousclient.PeerRoute{
+	catalog, err := clientRoute.CatalogWithRoutes(ctx, rendezvousclient.PeerRoute{
 		PeerID: hostIdentity.PeerID(), PresenceID: hostCoordinates.PresenceID,
 		WrappingPublicKey: mustMembership(t, fixture.hostMembership, genesis).WrappingPublicKey,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 1 || catalog[0].ID != fixture.session.ID.String() || catalog[0].Permission != peertransport.PermissionControl {
+	if len(catalog.Sessions) != 1 || catalog.Sessions[0].ID != fixture.session.ID.String() || catalog.Sessions[0].Permission != peertransport.PermissionControl || catalog.ConnectionBundle == "" {
 		t.Fatalf("catalog=%+v", catalog)
+	}
+	verifiedBundle, err := peerproto.VerifyConnectionBundle(catalog.ConnectionBundle, time.Now())
+	if err != nil || verifiedBundle.Ticket != nil || verifiedBundle.Document.IssuerPeerID != hostIdentity.PeerID() {
+		t.Fatalf("catalog connection bundle=%+v err=%v", verifiedBundle.Document, err)
 	}
 	if got := fixture.session.SubscriberCount(); got != 0 {
 		t.Fatalf("catalog created %d terminal subscribers", got)
@@ -422,6 +439,100 @@ func TestPeerRendezvousCatalogValidationEnforcesSessionScopeAndPermission(t *tes
 	}})
 	if err != nil || len(accepted) != 1 {
 		t.Fatalf("authorized catalog=%+v err=%v", accepted, err)
+	}
+}
+
+func TestPeerRendezvousCatalogAutomaticallyRotatesVerifiedQuickTunnelRoute(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	genesis, err := peerproto.VerifyGenesis(fixture.genesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientMembership := mustMembership(t, fixture.clientMembership, genesis)
+	host := &peerRendezvousHost{app: fixture.app}
+	remote := rendezvousclient.PeerRoute{
+		PeerID: fixture.clientIdentity.PeerID(), PresenceID: "unused",
+		WrappingPublicKey: clientMembership.WrappingPublicKey,
+	}
+	session := rendezvousclient.PeerSession{
+		ID: fixture.session.ID.String(), Cols: 80, Rows: 24, HostID: fixture.host.hostID,
+		Permission: peertransport.PermissionControl,
+	}
+	bundle := newPeerMemberRouteBundle(t, fixture, genesis, []peerproto.ConnectionRoute{{
+		Kind: peerproto.RouteQuickTunnel, URL: "https://automatic.trycloudflare.com",
+	}})
+	accepted, err := host.validateAndApplyCatalog(remote, rendezvousclient.PeerCatalog{
+		Sessions: []rendezvousclient.PeerSession{session}, ConnectionBundle: bundle,
+	})
+	if err != nil || len(accepted) != 1 {
+		t.Fatalf("accepted=%+v err=%v", accepted, err)
+	}
+	route, err := fixture.app.peerQuickTunnelRoute(fixture.clientIdentity.PeerID())
+	if err != nil || route.URL != "https://automatic.trycloudflare.com" {
+		t.Fatalf("automatic route=%+v err=%v", route, err)
+	}
+	if got := fixture.session.SubscriberCount(); got != 0 {
+		t.Fatalf("route catalog created %d terminal subscribers", got)
+	}
+
+	rendezvousOnly := newPeerMemberRouteBundle(t, fixture, genesis, []peerproto.ConnectionRoute{{
+		Kind: peerproto.RouteRendezvous, URL: "https://rendezvous.example",
+		Topic: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32)),
+	}})
+	if _, err := host.validateAndApplyCatalog(remote, rendezvousclient.PeerCatalog{
+		Sessions: []rendezvousclient.PeerSession{session}, ConnectionBundle: rendezvousOnly,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.app.peerQuickTunnelRoute(fixture.clientIdentity.PeerID()); !errors.Is(err, errPeerQuickTunnelRouteUnavailable) {
+		t.Fatalf("Rendezvous-only refresh route error=%v", err)
+	}
+}
+
+func TestPeerRendezvousCatalogRejectsMismatchedBundleAndV1LeavesRouteUntouched(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	genesis, err := peerproto.VerifyGenesis(fixture.genesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app.peerRoutes = map[string]peerQuickTunnelRoute{
+		fixture.clientIdentity.PeerID(): {
+			URL: "https://existing.trycloudflare.com", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		},
+	}
+	clientMembership := mustMembership(t, fixture.clientMembership, genesis)
+	host := &peerRendezvousHost{app: fixture.app}
+	remote := rendezvousclient.PeerRoute{
+		PeerID: fixture.clientIdentity.PeerID(), PresenceID: "unused",
+		WrappingPublicKey: clientMembership.WrappingPublicKey,
+	}
+	sessions := []rendezvousclient.PeerSession{{
+		ID: fixture.session.ID.String(), Cols: 80, Rows: 24, HostID: fixture.host.hostID,
+		Permission: peertransport.PermissionControl,
+	}}
+	hostIdentity, err := fixture.app.peerSpace.loadIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatchedBundle, err := peerproto.NewMemberConnectionBundle(
+		hostIdentity, genesis, fixture.hostMembership,
+		[]peerproto.ConnectionRoute{{Kind: peerproto.RouteQuickTunnel, URL: "https://mismatch.trycloudflare.com"}},
+		fixture.app.peerSpace.now(), 10*time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.validateAndApplyCatalog(remote, rendezvousclient.PeerCatalog{
+		Sessions: sessions, ConnectionBundle: mismatchedBundle,
+	}); !errors.Is(err, rendezvousclient.ErrAuthentication) {
+		t.Fatalf("issuer mismatch catalog error=%v", err)
+	}
+	if _, err := host.validateAndApplyCatalog(remote, rendezvousclient.PeerCatalog{Sessions: sessions}); err != nil {
+		t.Fatal(err)
+	}
+	route, err := fixture.app.peerQuickTunnelRoute(fixture.clientIdentity.PeerID())
+	if err != nil || route.URL != "https://existing.trycloudflare.com" {
+		t.Fatalf("v1 fallback mutated route=%+v err=%v", route, err)
 	}
 }
 

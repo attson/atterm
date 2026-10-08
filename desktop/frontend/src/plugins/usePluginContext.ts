@@ -1,6 +1,6 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import type { Endpoint } from "../lib/api";
-import type { SessionConnection, SessionInfo } from "../lib/connection";
+import type { SessionFSConnection, SessionInfo } from "../lib/connection";
 import type { Pane } from "../lib/types";
 import type { PluginContext } from "./types";
 import { t } from "../i18n";
@@ -9,7 +9,7 @@ export interface PluginContextInputs {
   activePane: Ref<Pane | null>;
   endpointForPane: (pane: Pane) => Endpoint | null;
   sessionInfoForPane: (pane: Pane) => SessionInfo | null;
-  sessionConnectionForPane: (pane: Pane) => SessionConnection | null;
+  sessionConnectionForPane: (pane: Pane) => SessionFSConnection | null;
   sendToSession: (sessionId: string, endpoint: Endpoint, text: string) => void;
   showToast: (msg: string) => void;
   terminalThemeId: Ref<string> | ComputedRef<string>;
@@ -19,7 +19,7 @@ export function createPluginContext(inputs: PluginContextInputs): PluginContext 
   const activeSessionId = computed(() => inputs.activePane.value?.sessionId ?? null);
   const activeIsRemote = computed(() => !!inputs.activePane.value?.remote);
 
-  const activeSessionConnection = computed<SessionConnection | null>(() => {
+  const activeSessionConnection = computed<SessionFSConnection | null>(() => {
     const p = inputs.activePane.value;
     return p ? inputs.sessionConnectionForPane(p) : null;
   });

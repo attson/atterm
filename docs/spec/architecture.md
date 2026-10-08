@@ -78,7 +78,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
 | `desktop/relay_host.go` | desktop | 启 mini relay，spawn PTY，AdoptSession | 不连远程 |
 | `desktop/uplink.go` | desktop | 远程 relay 客户端（lazy 协议） | 不直接拥有 PTY |
-| `desktop/remote_fs.go` | desktop | 远程文件浏览器桥接：本机文件系统 CRUD + 回收站 + watch，响应 `FS_REQUEST`/发 `FS_EVENT`，受 `remote_permission=full` 门控（配合 `internal/relay/fs_router.go` 按 host 路由） | 不做前端 UI、不越权访问未授权 session 的 host |
+| `desktop/remote_fs.go` | desktop | 远程文件浏览器桥接：本机文件系统 CRUD + 回收站 + watch，响应 `FS_REQUEST`/发 `FS_EVENT`，受 `remote_permission=full` 门控；Relay 经 `internal/relay/fs_router.go` 按 requester 路由，Peer route 按 attempt 生命周期隔离 | 不做前端 UI、不越权访问未授权 session 的 host |
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
@@ -408,11 +408,20 @@ Desktop 每 3 秒向当前可解析的 host presence 拉取目录，把成功结
 `session_id -> Peer route`，并以 session id 为权威和 Relay 会话合并到侧栏；同一 session 同时存在
 时 Relay 条目覆盖 Peer 条目。用户点开 Peer-only 条目后，renderer 只把 session id、replay cursor
 和 client instance id 交给 Go，Go 从缓存取 route、从 Peer store 重读 identity/membership/scope，
-再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback、文件浏览或
-service preview。图片/文件粘贴复用现有 `PASTE_IMAGE` / `PASTE_FILE` frame，只在 Peer route ready、
+再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback 或 service
+preview。图片/文件粘贴复用现有 `PASTE_IMAGE` / `PASTE_FILE` frame，只在 Peer route ready、
 当前 pane 是 driver 且双方 membership/session scope 与 owner policy 的 effective permission 都为
 `full` 时开放；owner host 在入 session 队列前重新验证 active membership、当前 route lease、driver、
 payload JSON/MIME 与 10 MiB binary 上限。
+
+Peer 文件浏览复用 `FS_REQUEST` / `FS_RESPONSE` / `FS_EVENT` 和同一份 File Explorer UI，但 payload
+不叠加 Relay `account_key`：单段 plaintext FS JSON 由 Peer record layer 整体加密。每条 authenticated
+attempt 持有独立 `remoteFS`、4-request worker budget 和 watch 生命周期；host 对每个请求重验 exact
+active membership、双方 session scope、owner 当前 `full` policy 与 route lease，覆盖 renderer 的
+`client_id`，并在发送 response/event 前再次重验。普通 CRUD/watch 不要求 driver，`open_external`
+要求当前 subscriber 是 driver；read/write 保留 5 MiB hard cap。route replacement/close 会取消 worker
+输出并关闭 watcher，旧 generation 的迟到 response/event 不进入新 route。Peer record 已端到端加密，
+所以允许读取 `.env*`；通用 policy 仍恒拒 `.ssh` / `.gnupg` / `.aws`。
 
 同一 native Peer transport API 也接受显式 `quick_tunnel` route kind，但 renderer 不提供 URL、
 membership token 或任何 Relay/account credential。首次加入成功后，Go 只在内存保留已验签 bundle

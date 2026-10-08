@@ -15,10 +15,19 @@ import type {
   DirectFallbackReason,
   DirectTransport,
   FSEvent,
+  FSRequest,
   FSResponse,
   ServiceOpenResult,
 } from './connection'
-import { directFallbackReason, encodePastePayload, pastePayloadSizeBlockReason } from './connection'
+import {
+  DEFAULT_FS_REQUEST_TIMEOUT_MS,
+  directFallbackReason,
+  encodePastePayload,
+  isFSResponse,
+  pastePayloadSizeBlockReason,
+} from './connection'
+import { decodeSegments, encodeSegments } from './fsSegments'
+import { errText, logWarn } from './log'
 import type { DirectTransportDiagnostics } from './directClient'
 import type { NativeDirectClientOptions, NativePeerRoute } from './nativeDirectClient'
 
@@ -81,6 +90,14 @@ export class PeerSessionConnection {
   private pendingInputs: string[] = []
   private pendingResize: { cols: number; rows: number } | null = null
   private pendingDriverClaim = false
+  private pendingFSRequests = new Map<string, {
+    generation: number
+    resolve: (response: FSResponse) => void
+    reject: (error: Error) => void
+    timer: number
+  }>()
+  private retiredFSRequestIDs = new Set<string>()
+  private fsEventHandlers = new Set<(event: FSEvent) => void>()
   private currentDriverClientID = ''
   private diagnostics: DirectTransportDiagnostics | null = null
   private lastFailureReason: DirectFallbackReason | undefined
@@ -162,12 +179,44 @@ export class PeerSessionConnection {
 
   closeService(_serviceID: string): void {}
 
-  onFSEvent(_handler: (event: FSEvent) => void): () => void {
-    return () => {}
+  onFSEvent(handler: (event: FSEvent) => void): () => void {
+    this.fsEventHandlers.add(handler)
+    return () => this.fsEventHandlers.delete(handler)
   }
 
-  sendFSRequest(_request: unknown): Promise<FSResponse> {
-    return Promise.reject(new Error('filesystem access is unavailable for Peer sessions'))
+  sendFSRequest(request: FSRequest, timeoutMs = DEFAULT_FS_REQUEST_TIMEOUT_MS): Promise<FSResponse> {
+    const transport = this.transport
+    if (!this.ready || !transport || this.handover) {
+      return Promise.reject(new Error('filesystem request failed: Peer route is not ready'))
+    }
+    const requestID = request.request_id || this.newUniqueFSRequestID()
+    if (this.pendingFSRequests.has(requestID)) {
+      return Promise.reject(new Error(`duplicate filesystem request_id: ${requestID}`))
+    }
+    if (this.retiredFSRequestIDs.has(requestID)) {
+      return Promise.reject(new Error(`retired filesystem request_id after timeout: ${requestID}`))
+    }
+    const generation = this.generation
+    const payload: FSRequest = { ...request, request_id: requestID }
+    const encoded = encodeSegments([encodeText(JSON.stringify(payload))])
+    return new Promise<FSResponse>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingFSRequests.delete(requestID)
+        this.retiredFSRequestIDs.add(requestID)
+        reject(new Error(`filesystem request timed out: ${requestID}`))
+      }, timeoutMs)
+      this.pendingFSRequests.set(requestID, { generation, resolve, reject, timer })
+      try {
+        if (!this.isCurrent(generation, transport) || this.handover ||
+          !transport.sendFrame(encodeFrame(TYPE.FS_REQUEST, this.sidBytes, encoded))) {
+          throw new Error('Peer filesystem request send failed')
+        }
+      } catch (value) {
+        window.clearTimeout(timer)
+        this.pendingFSRequests.delete(requestID)
+        reject(value instanceof Error ? value : new Error(String(value)))
+      }
+    })
   }
 
   async sendPasteImage(blob: Blob, filename = 'clipboard-image'): Promise<boolean> {
@@ -277,11 +326,75 @@ export class PeerSessionConnection {
       this.detach()
       return
     }
+    if (frame.type === TYPE.FS_RESPONSE) {
+      this.handleFSResponse(frame.payload)
+      return
+    }
+    if (frame.type === TYPE.FS_EVENT) {
+      this.handleFSEvent(frame.payload)
+      return
+    }
     throw new Error(`unsupported Peer frame type 0x${frame.type.toString(16).padStart(2, '0')}`)
   }
 
   private send(frame: Uint8Array): boolean {
     return Boolean(!this.handover && this.ready && this.transport?.sendFrame(frame))
+  }
+
+  private handleFSResponse(payload: Uint8Array): void {
+    const segments = decodeSegments(payload)
+    if (!segments || segments.length !== 1) return
+    let response: FSResponse
+    try {
+      const parsed = JSON.parse(decodeText(segments[0]))
+      if (!isFSResponse(parsed)) return
+      response = parsed
+    } catch {
+      return
+    }
+    const pending = this.pendingFSRequests.get(response.request_id)
+    if (!pending || pending.generation !== this.generation) return
+    window.clearTimeout(pending.timer)
+    this.pendingFSRequests.delete(response.request_id)
+    pending.resolve(response)
+  }
+
+  private handleFSEvent(payload: Uint8Array): void {
+    const segments = decodeSegments(payload)
+    if (!segments || segments.length !== 1) return
+    let event: FSEvent
+    try {
+      const parsed = JSON.parse(decodeText(segments[0])) as Partial<FSEvent>
+      if (!parsed || typeof parsed.watch_id !== 'string' || typeof parsed.path !== 'string' ||
+        typeof parsed.event !== 'string') return
+      event = parsed as FSEvent
+    } catch {
+      return
+    }
+    for (const handler of this.fsEventHandlers) {
+      try {
+        handler(event)
+      } catch (error) {
+        logWarn('peer', 'fs event handler threw', { error: errText(error) })
+      }
+    }
+  }
+
+  private newUniqueFSRequestID(): string {
+    for (let index = 0; index < 5; index++) {
+      const requestID = `fs-${crypto.randomUUID()}`
+      if (!this.pendingFSRequests.has(requestID) && !this.retiredFSRequestIDs.has(requestID)) return requestID
+    }
+    return `fs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  }
+
+  private rejectPendingFSRequests(error: Error): void {
+    const pending = Array.from(this.pendingFSRequests.values())
+    this.pendingFSRequests.clear()
+    for (const request of pending) {
+      window.clearTimeout(request.timer)
+      request.reject(error)
+    }
   }
 
   private flush(): void {
@@ -318,6 +431,8 @@ export class PeerSessionConnection {
   private recover(generation: number, error: Error): void {
     if (this.detached || this.suspended) return
     this.clearDirectFailbackTimer()
+    this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
+    this.retiredFSRequestIDs.clear()
     const wasActive = this.ready
     this.authenticated = false
     this.ready = false
@@ -449,6 +564,8 @@ export class PeerSessionConnection {
       this.suspended ||
       this.handover
     ) return
+    this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
+    this.retiredFSRequestIDs.clear()
     let transport: DirectTransport
     const attempt: PeerHandoverAttempt = {
       generation,
@@ -574,6 +691,8 @@ export class PeerSessionConnection {
   }
 
   private closeTransport(): void {
+    this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
+    this.retiredFSRequestIDs.clear()
     this.generation++
     this.fallbackPending = false
     this.failbackProbe = null

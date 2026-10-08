@@ -15,8 +15,10 @@ function styleBlockFor(selector: string): string {
 }
 
 describe("TerminalView plugin connection registry", () => {
-  test("registers its live SessionConnection and only removes its own entry", () => {
-    expect(appSource).toMatch(/reactive\(new Map<string, SessionConnection>\(\)\)/);
+  test("registers its live Relay or Peer FS connection and only removes its own entry", () => {
+    expect(appSource).toContain(
+      "reactive(new Map<string, SessionFSConnection>())",
+    );
     expect(appSource).toMatch(/const selectedPane = computed<Pane \| null>/);
     expect(appSource).toMatch(/watch\(selectedPane,/);
     expect(source).toContain('"atterm:pluginSessionConnections"');

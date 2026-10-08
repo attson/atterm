@@ -72,7 +72,7 @@ import {
 import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState, SessionProfile } from "./lib/api";
 import { saveRelayConfig, clearRelayConfig } from "@webshared/api/relay-config";
 import type { RemoteSession } from "./platform/types";
-import { type SessionConnection, type SessionInfo } from "./lib/connection";
+import { type SessionFSConnection, type SessionInfo } from "./lib/connection";
 import { buildRelayWebSocketEndpoint } from "./lib/relayEndpoint";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { mergeVisibleRemoteSessions } from "./lib/routeCandidates";
@@ -662,7 +662,7 @@ provide("atterm:pluginInputSenders", pluginInputSenders);
 
 // TerminalView owns these connections. Plugins must reuse an entry instead of
 // opening another /client attachment for the active session.
-const pluginSessionConnections = reactive(new Map<string, SessionConnection>()) as Map<string, SessionConnection>;
+const pluginSessionConnections = reactive(new Map<string, SessionFSConnection>()) as Map<string, SessionFSConnection>;
 provide("atterm:pluginSessionConnections", pluginSessionConnections);
 
 const pluginContext = createPluginContext({

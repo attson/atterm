@@ -91,13 +91,18 @@ Each capability ships as a separate PR with explicit principal/frame allowlist, 
 
 `full` permission does not automatically allow a new frame until its own enforcement PR lands.
 
-Implementation status: item 1 is implemented. Peer image/file paste reuses the existing
+Implementation status: items 1-2 are implemented. Peer image/file paste reuses the existing
 `PASTE_IMAGE` / `PASTE_FILE` protocol payloads over both Rendezvous Direct and Quick Tunnel,
 without Relay credentials or `account_key`. The renderer requires ready + driver + `full` and does
 not queue large blobs across handover. The owner host independently revalidates the exact active
 membership/session scope, current owner policy, driver and route lease, then bounds encoded and
-decoded payload sizes before forwarding to the local session. Items 2-4 remain denied by the Peer
-frame allowlist.
+decoded payload sizes before forwarding to the local session. Peer Remote File Explorer reuses
+`FS_REQUEST` / `FS_RESPONSE` / `FS_EVENT` and the shared desktop/web panel over both Rendezvous
+Direct and Quick Tunnel. Each authenticated host attempt owns its worker/watch lifecycle; requests
+and outbound results revalidate membership, scope, owner `full` policy and route lease, while route
+changes reject client pending RPCs and discard stale results. The Peer record supplies E2EE, so FS
+payloads stay single-segment and do not depend on Relay `account_key`; read/write caps and permanently
+denied credential directories remain unchanged. Items 3-4 remain denied by the Peer frame allowlist.
 
 ## PR 4.x - Additional reachability
 

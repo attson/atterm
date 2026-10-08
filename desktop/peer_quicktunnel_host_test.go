@@ -7,7 +7,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -455,6 +457,292 @@ func TestPeerHostPasteRejectsDowngradeMalformedOversizedAndStaleLease(t *testing
 	if err := first.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(frame)); err == nil {
 		t.Fatal("superseded route lease still accepted paste")
 	}
+}
+
+func TestPeerHostFilesystemRequiresFullPermissionAndInjectsClientIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		permission peerproto.Permission
+		allowed    bool
+	}{
+		{name: "view", permission: peerproto.PermissionView},
+		{name: "control", permission: peerproto.PermissionControl},
+		{name: "full", permission: peerproto.PermissionFull, allowed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newPeerQuickTunnelFixture(t, tc.permission)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+			attempt := &peerHostAttempt{
+				host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+				permission: string(tc.permission), clientInstanceID: "fs-client",
+			}
+			attempt.remove = func() { attempt.close(true) }
+			if err := attempt.start(ctx, channel); err != nil {
+				t.Fatal(err)
+			}
+			defer attempt.close(true)
+
+			executed := make(chan proto.FSRequestPayload, 1)
+			attempt.mu.Lock()
+			attempt.remoteFS.exec = func(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {
+				executed <- req
+				return remoteFSResponseFrame(sessionID, proto.FSResponsePayload{
+					RequestID: req.RequestID, OK: true, Entries: []proto.DirEntry{},
+				}, nil)
+			}
+			attempt.mu.Unlock()
+			payload, err := proto.EncodeFSRequest(proto.FSRequestPayload{
+				RequestID: "peer-list", ClientID: "renderer-spoof", Op: "list_dir", Path: "/tmp",
+			}, nil, fixture.session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+				Type: proto.TypeFSRequest, SessionID: fixture.session.ID, Payload: payload,
+			}))
+			if !tc.allowed {
+				if err == nil {
+					t.Fatalf("permission %s accepted filesystem request", tc.name)
+				}
+				select {
+				case req := <-executed:
+					t.Fatalf("permission %s executed request %+v", tc.name, req)
+				case <-time.After(20 * time.Millisecond):
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("full permission rejected filesystem request: %v", err)
+			}
+			select {
+			case req := <-executed:
+				if req.ClientID != "fs-client" {
+					t.Fatalf("client id = %q, want host-injected identity", req.ClientID)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("filesystem request was not executed")
+			}
+			waitForPeerFSResponse(t, channel, "peer-list")
+		})
+	}
+}
+
+func TestPeerHostFilesystemOpenExternalRequiresCurrentDriver(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionFull)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+	attempt := &peerHostAttempt{
+		host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+		permission: proto.RemotePermissionFull, clientInstanceID: "fs-driver",
+	}
+	attempt.remove = func() { attempt.close(true) }
+	if err := attempt.start(ctx, channel); err != nil {
+		t.Fatal(err)
+	}
+	defer attempt.close(true)
+	attempt.mu.Lock()
+	attempt.remoteFS.exec = func(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {
+		return remoteFSResponseFrame(sessionID, proto.FSResponsePayload{RequestID: req.RequestID, OK: true}, nil)
+	}
+	sub := attempt.sub
+	attempt.mu.Unlock()
+
+	request := proto.FSRequestPayload{RequestID: "peer-open", Op: "open_external", Path: "/tmp"}
+	payload, _ := proto.EncodeFSRequest(request, nil, fixture.session.ID)
+	frame := proto.Marshal(proto.Frame{Type: proto.TypeFSRequest, SessionID: fixture.session.ID, Payload: payload})
+	if err := attempt.handleRecord(ctx, peertransport.RecordFrame, frame); err == nil {
+		t.Fatal("non-driver Peer route accepted open_external")
+	}
+	fixture.session.ClaimDriver(sub, "fs-driver", "FS driver")
+	if err := attempt.handleRecord(ctx, peertransport.RecordFrame, frame); err != nil {
+		t.Fatalf("current driver open_external: %v", err)
+	}
+	waitForPeerFSResponse(t, channel, "peer-open")
+}
+
+func TestPeerHostFilesystemDropsResponseFromSupersededRoute(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionFull)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	start := func(channel *peerNativeTestChannel) *peerHostAttempt {
+		attempt := &peerHostAttempt{
+			host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+			permission: proto.RemotePermissionFull, clientInstanceID: "stable-fs-client",
+		}
+		attempt.remove = func() { attempt.close(true) }
+		if err := attempt.start(ctx, channel); err != nil {
+			t.Fatal(err)
+		}
+		return attempt
+	}
+	oldChannel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+	old := start(oldChannel)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	old.mu.Lock()
+	old.remoteFS.exec = func(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {
+		close(started)
+		<-release
+		return remoteFSResponseFrame(sessionID, proto.FSResponsePayload{RequestID: req.RequestID, OK: true}, nil)
+	}
+	old.mu.Unlock()
+	payload, _ := proto.EncodeFSRequest(proto.FSRequestPayload{RequestID: "stale-fs", Op: "list_dir", Path: "/tmp"}, nil, fixture.session.ID)
+	if err := old.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+		Type: proto.TypeFSRequest, SessionID: fixture.session.ID, Payload: payload,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("old route filesystem request did not start")
+	}
+
+	replacementChannel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+	replacement := start(replacementChannel)
+	defer replacement.close(true)
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	if peerChannelHasFSResponse(oldChannel, "stale-fs") {
+		t.Fatal("superseded route sent a late filesystem response")
+	}
+}
+
+func TestPeerHostFilesystemRejectsMalformedOversizedAndBusyRequests(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionFull)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+	attempt := &peerHostAttempt{
+		host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+		permission: proto.RemotePermissionFull, clientInstanceID: "bounded-fs-client",
+	}
+	attempt.remove = func() { attempt.close(true) }
+	if err := attempt.start(ctx, channel); err != nil {
+		t.Fatal(err)
+	}
+	defer attempt.close(true)
+
+	for _, payload := range [][]byte{{0}, make([]byte, maxPeerFSPayloadBytes+1)} {
+		err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+			Type: proto.TypeFSRequest, SessionID: fixture.session.ID, Payload: payload,
+		}))
+		if err == nil {
+			t.Fatalf("accepted malformed filesystem payload of %d bytes", len(payload))
+		}
+	}
+
+	release := make(chan struct{})
+	attempt.mu.Lock()
+	attempt.remoteFS.exec = func(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {
+		<-release
+		return remoteFSResponseFrame(sessionID, proto.FSResponsePayload{RequestID: req.RequestID, OK: true}, nil)
+	}
+	attempt.mu.Unlock()
+	for index := 0; index <= fsRequestsPerSession; index++ {
+		requestID := fmt.Sprintf("busy-%d", index)
+		payload, _ := proto.EncodeFSRequest(proto.FSRequestPayload{
+			RequestID: requestID, Op: "list_dir", Path: "/tmp",
+		}, nil, fixture.session.ID)
+		if err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+			Type: proto.TypeFSRequest, SessionID: fixture.session.ID, Payload: payload,
+		})); err != nil {
+			t.Fatalf("submit %s: %v", requestID, err)
+		}
+	}
+	response := waitForPeerFSResponse(t, channel, "busy-4")
+	if response.OK || !strings.Contains(response.Error, "too many requests") {
+		t.Fatalf("busy response = %+v", response)
+	}
+	close(release)
+}
+
+func TestPeerHostFilesystemDropsResponseAfterOwnerPermissionDowngrade(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionFull)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+	attempt := &peerHostAttempt{
+		host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+		permission: proto.RemotePermissionFull, clientInstanceID: "downgrade-fs-client",
+	}
+	attempt.remove = func() { attempt.close(true) }
+	if err := attempt.start(ctx, channel); err != nil {
+		t.Fatal(err)
+	}
+	defer attempt.close(true)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	attempt.mu.Lock()
+	attempt.remoteFS.exec = func(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {
+		close(started)
+		<-release
+		return remoteFSResponseFrame(sessionID, proto.FSResponsePayload{RequestID: req.RequestID, OK: true}, nil)
+	}
+	attempt.mu.Unlock()
+	payload, _ := proto.EncodeFSRequest(proto.FSRequestPayload{
+		RequestID: "downgraded-fs", Op: "read_file", Path: "/tmp/a",
+	}, nil, fixture.session.ID)
+	if err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+		Type: proto.TypeFSRequest, SessionID: fixture.session.ID, Payload: payload,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("filesystem request did not start")
+	}
+	fixture.app.cfgStore.mu.Lock()
+	fixture.app.cfgStore.cfg.RemotePermission = proto.RemotePermissionControl
+	fixture.app.cfgStore.mu.Unlock()
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	if peerChannelHasFSResponse(channel, "downgraded-fs") {
+		t.Fatal("permission downgrade leaked a filesystem response")
+	}
+}
+
+func waitForPeerFSResponse(t *testing.T, channel *peerNativeTestChannel, requestID string) proto.FSResponsePayload {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		channel.mu.Lock()
+		frames := append([][]byte(nil), channel.frames...)
+		channel.mu.Unlock()
+		for _, raw := range frames {
+			frame, err := proto.Unmarshal(raw)
+			if err != nil || frame.Type != proto.TypeFSResponse {
+				continue
+			}
+			response, err := proto.DecodeFSResponse(frame.Payload, nil, frame.SessionID)
+			if err == nil && response.RequestID == requestID {
+				return response
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("filesystem response %q was not sent", requestID)
+	return proto.FSResponsePayload{}
+}
+
+func peerChannelHasFSResponse(channel *peerNativeTestChannel, requestID string) bool {
+	channel.mu.Lock()
+	defer channel.mu.Unlock()
+	for _, raw := range channel.frames {
+		frame, err := proto.Unmarshal(raw)
+		if err != nil || frame.Type != proto.TypeFSResponse {
+			continue
+		}
+		response, err := proto.DecodeFSResponse(frame.Payload, nil, frame.SessionID)
+		if err == nil && response.RequestID == requestID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPeerHostRouteLeaseSurvivesOneHundredReplacements(t *testing.T) {

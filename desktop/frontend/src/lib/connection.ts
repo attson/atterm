@@ -118,6 +118,14 @@ export interface FSEvent {
   event: "changed" | string;
 }
 
+/** Minimal connection surface consumed by the remote file explorer. Both
+ * Relay-backed SessionConnection and accountless PeerSessionConnection
+ * implement it. */
+export interface SessionFSConnection {
+  sendFSRequest(req: FSRequest, timeoutMs?: number): Promise<FSResponse>;
+  onFSEvent(handler: (event: FSEvent) => void): () => void;
+}
+
 export interface ConnectionHandlers {
   onOutput?: (data: Uint8Array) => void;
   onClose?: (info: ClosePayload) => void;
@@ -223,7 +231,7 @@ export interface SessionListHandlers {
 
 export const MAX_PASTE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SERVICE_OPEN_TIMEOUT_MS = 30_000;
 
 export interface ServiceOpenResult {
@@ -347,7 +355,7 @@ function isFSChunkPayload(value: unknown): value is FSChunkPayload {
   );
 }
 
-function isFSResponse(value: unknown): value is FSResponse {
+export function isFSResponse(value: unknown): value is FSResponse {
   if (!isRecord(value)) return false;
   if (typeof value.request_id !== "string" || typeof value.ok !== "boolean") return false;
   if (!isOptionalString(value.error) || !isOptionalString(value.watch_id)) return false;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFrame, decodeText, encodeFrame, encodeText, TYPE, uuidParse } from './proto'
 import type { DirectTransport } from './connection'
+import { decodeSegments, encodeSegments } from './fsSegments'
 import type { NativeDirectClientOptions } from './nativeDirectClient'
 import { PeerSessionConnection } from './peerSessionConnection'
 
@@ -28,11 +29,12 @@ function out(seq: number, text: string): Uint8Array {
 class FakeTransport implements DirectTransport {
   sent: Uint8Array[] = []
   closed = false
+  failSend = false
 
   constructor(readonly options: NativeDirectClientOptions) {}
   start(): void {}
   sendFrame(frame: Uint8Array): boolean {
-    if (this.closed) return false
+    if (this.closed || this.failSend) return false
     this.sent.push(frame)
     return true
   }
@@ -40,6 +42,116 @@ class FakeTransport implements DirectTransport {
 }
 
 describe('PeerSessionConnection', () => {
+  it('routes plaintext FS responses and events over the encrypted Peer record', async () => {
+    const transports: FakeTransport[] = []
+    const events: unknown[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.onFSEvent((event) => events.push(event))
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+
+    const response = connection.sendFSRequest({ op: 'list_dir', path: '/tmp', request_id: 'peer-fs-1' })
+    const requestFrame = decodeFrame(transports[0].sent[0])
+    expect(requestFrame.type).toBe(TYPE.FS_REQUEST)
+    expect(JSON.parse(decodeText(decodeSegments(requestFrame.payload)![0]))).toEqual({
+      op: 'list_dir',
+      path: '/tmp',
+      request_id: 'peer-fs-1',
+    })
+
+    transports[0].options.callbacks.onFrame(encodeFrame(
+      TYPE.FS_EVENT,
+      uuidParse(sessionID),
+      encodeSegments([encodeText(JSON.stringify({ watch_id: 'watch-1', path: '/tmp', event: 'changed' }))]),
+    ))
+    transports[0].options.callbacks.onFrame(encodeFrame(
+      TYPE.FS_RESPONSE,
+      uuidParse(sessionID),
+      encodeSegments([encodeText(JSON.stringify({ request_id: 'peer-fs-1', ok: true, entries: [] }))]),
+    ))
+
+    await expect(response).resolves.toEqual({ request_id: 'peer-fs-1', ok: true, entries: [] })
+    expect(events).toEqual([{ watch_id: 'watch-1', path: '/tmp', event: 'changed' }])
+  })
+
+  it('rejects duplicate, timed-out, and failed Peer FS sends without leaking request IDs', async () => {
+    vi.useFakeTimers()
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+
+    const first = connection.sendFSRequest({ op: 'list_dir', path: '/tmp', request_id: 'peer-duplicate' }, 10)
+    await expect(connection.sendFSRequest({ op: 'file_meta', path: '/tmp/a', request_id: 'peer-duplicate' }, 10))
+      .rejects.toThrow(/duplicate/i)
+    const firstRejection = expect(first).rejects.toThrow(/timed out/i)
+    await vi.advanceTimersByTimeAsync(10)
+    await firstRejection
+    await expect(connection.sendFSRequest({ op: 'list_dir', path: '/tmp', request_id: 'peer-duplicate' }, 10))
+      .rejects.toThrow(/retired/i)
+
+    transports[0].failSend = true
+    await expect(connection.sendFSRequest({ op: 'list_dir', path: '/tmp', request_id: 'peer-send-fail' }))
+      .rejects.toThrow(/send failed/i)
+    transports[0].failSend = false
+    const retry = connection.sendFSRequest({ op: 'list_dir', path: '/tmp', request_id: 'peer-send-fail' })
+    transports[0].options.callbacks.onFrame(encodeFrame(
+      TYPE.FS_RESPONSE,
+      uuidParse(sessionID),
+      encodeSegments([encodeText(JSON.stringify({ request_id: 'peer-send-fail', ok: true, entries: [] }))]),
+    ))
+    await expect(retry).resolves.toMatchObject({ request_id: 'peer-send-fail', ok: true })
+  })
+
+  it('rejects in-flight FS requests and drops stale responses across route generations', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.attach()
+    const oldRoute = transports[0]
+    oldRoute.options.callbacks.onAuthenticated?.()
+    oldRoute.options.callbacks.onReady(0)
+    const pending = connection.sendFSRequest({ op: 'list_dir', path: '/tmp', request_id: 'old-route' })
+
+    connection.setRoute('quick_tunnel')
+    await expect(pending).rejects.toThrow(/route changed/i)
+    oldRoute.options.callbacks.onFrame(encodeFrame(
+      TYPE.FS_RESPONSE,
+      uuidParse(sessionID),
+      encodeSegments([encodeText(JSON.stringify({ request_id: 'old-route', ok: true, entries: [] }))]),
+    ))
+
+    const replacement = transports[1]
+    replacement.options.callbacks.onAuthenticated?.()
+    replacement.options.callbacks.onReady(0)
+    const current = connection.sendFSRequest({ op: 'list_dir', path: '/tmp', request_id: 'new-route' })
+    replacement.options.callbacks.onFrame(encodeFrame(
+      TYPE.FS_RESPONSE,
+      uuidParse(sessionID),
+      encodeSegments([encodeText(JSON.stringify({ request_id: 'new-route', ok: true, entries: [] }))]),
+    ))
+    await expect(current).resolves.toMatchObject({ request_id: 'new-route', ok: true })
+  })
+
   it('sends image and file paste frames only after the Peer route is ready', async () => {
     const transports: FakeTransport[] = []
     const connection = new PeerSessionConnection(sessionID, {}, {

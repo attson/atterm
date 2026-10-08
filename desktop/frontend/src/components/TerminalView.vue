@@ -7,7 +7,7 @@ import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "xterm-addon-webgl";
 import { SearchAddon } from "xterm-addon-search";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-import { SessionConnection, type ConnectionHandlers, type DirectFallbackReason, type SessionRouteDiagnostics, type Status } from "../lib/connection";
+import { SessionConnection, type ConnectionHandlers, type DirectFallbackReason, type SessionFSConnection, type SessionRouteDiagnostics, type Status } from "../lib/connection";
 import { PeerSessionConnection } from "../lib/peerSessionConnection";
 import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
@@ -393,7 +393,7 @@ const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
   null,
 );
 
-const pluginSessionConnections = inject<Map<string, SessionConnection> | null>(
+const pluginSessionConnections = inject<Map<string, SessionFSConnection> | null>(
   "atterm:pluginSessionConnections",
   null,
 );
@@ -2356,7 +2356,7 @@ function startConnection() {
     );
   }
   conn.attach();
-  if (conn instanceof SessionConnection) pluginSessionConnections?.set(props.sessionId, conn);
+  pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins
   // (Quick Input) can pipe text through this same driver connection.
   // A fresh SessionConnection would attach as a viewer and have its

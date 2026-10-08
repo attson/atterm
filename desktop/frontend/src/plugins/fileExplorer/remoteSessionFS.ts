@@ -1,5 +1,5 @@
 import type { DirEntry, FileContent, FileMetaInfo } from "../../platform/types";
-import type { FSChunkPayload, FSResponse, SessionConnection } from "../../lib/connection";
+import type { FSChunkPayload, FSResponse, SessionFSConnection } from "../../lib/connection";
 import type { FileSystemBridge } from "./fsBridge";
 import { errText, logWarn } from "../../lib/log";
 
@@ -41,7 +41,7 @@ function bytesToBase64(data: Uint8Array): string {
   return btoa(binary);
 }
 
-export function createRemoteSessionFS(conn: SessionConnection, identity = "remote"): RemoteFileSystemBridge {
+export function createRemoteSessionFS(conn: SessionFSConnection, identity = "remote"): RemoteFileSystemBridge {
   const assetURLs = new Map<string, string>();
   const pendingAssetURLs = new Map<string, { generation: number; promise: Promise<string> }>();
   const assetGenerations = new Map<string, number>();

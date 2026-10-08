@@ -31,6 +31,11 @@ const peerQuickTunnelAuthorizationRefresh = 2 * time.Second
 // metadata cannot force an unbounded decode before the payload backstop runs.
 const maxPeerPastePayloadBytes = 4*((maxPasteFileBytes+2)/3) + 4*1024
 
+// FS writes use JSON's base64 encoding inside the already encrypted Peer
+// record. Bound the encoded request before decoding so a malformed client
+// cannot force an unbounded allocation ahead of fsAccess's 5 MiB hard cap.
+const maxPeerFSPayloadBytes = 4*((maxWriteBytesHard+2)/3) + 64*1024
+
 type peerQuickTunnelManager interface {
 	Start(context.Context) (quicktunnel.Status, error)
 	Stop() error
@@ -90,6 +95,8 @@ type peerHostAttempt struct {
 	sub               *session.Subscriber
 	subscribedSession *session.Session
 	streamCancel      context.CancelFunc
+	remoteFS          *remoteFS
+	fsPool            *fsWorkerPool
 	leaseKey          peerHostRouteLeaseKey
 	leaseHeld         bool
 	starting          bool
@@ -528,10 +535,15 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	default:
 	}
 	streamCtx, cancel := context.WithCancel(parent)
+	peerFS := newRemoteFS(newFSAccess(remoteFSAllowRoots(), false), nil)
+	peerFS.driverClientID = a.host.host.DriverClientID
+	fsOut := make(chan proto.Frame, fsRequestsPerSession+1)
+	fsPool := newFSWorkerPool(streamCtx, fsOut, proto.RemotePermissionFull, peerFS, fsRequestsPerSession)
 	a.mu.Lock()
 	if a.closed || a.sub != nil || a.channel != nil {
 		a.mu.Unlock()
 		cancel()
+		peerFS.close()
 		sess.Unsubscribe(sub)
 		return errors.New("Peer attempt closed or already streaming")
 	}
@@ -542,6 +554,8 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	a.sub = sub
 	a.subscribedSession = sess
 	a.streamCancel = cancel
+	a.remoteFS = peerFS
+	a.fsPool = fsPool
 	a.remotePeerID = remotePeerID
 	a.leaseKey = leaseKey
 	previous, claimed := a.host.app.claimPeerHostRouteLease(leaseKey, replacedAttempt, a)
@@ -553,11 +567,14 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 		a.sub = nil
 		a.subscribedSession = nil
 		a.streamCancel = nil
+		a.remoteFS = nil
+		a.fsPool = nil
 		a.remotePeerID = ""
 		a.leaseKey = peerHostRouteLeaseKey{}
 		a.starting = false
 		a.mu.Unlock()
 		cancel()
+		peerFS.close()
 		sess.Unsubscribe(sub)
 		return errors.New("Peer route lease changed during attachment")
 	}
@@ -566,6 +583,7 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	a.mu.Unlock()
 	attached = true
 	go a.stream(streamCtx, channel, sub, replayToSeq)
+	go a.streamFilesystem(streamCtx, channel, peerFS, fsOut)
 	go a.watchAuthorization(streamCtx)
 	if previous != nil && previous != a {
 		previous.removeSelf()
@@ -688,6 +706,8 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 				return err
 			}
 			return a.host.host.SendLocalInbound(a.sessionID, frame)
+		case proto.TypeFSRequest:
+			return a.handleFilesystemRequest(frame)
 		case proto.TypeClaimDriver:
 			if currentPermission == proto.RemotePermissionView {
 				return errors.New("Peer driver claim exceeds permission")
@@ -711,6 +731,80 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 	default:
 		return fmt.Errorf("Peer record kind %d is not accepted from client", kind)
 	}
+}
+
+func (a *peerHostAttempt) handleFilesystemRequest(frame proto.Frame) error {
+	if len(frame.Payload) > maxPeerFSPayloadBytes {
+		return errors.New("Peer filesystem payload exceeds encoded size limit")
+	}
+	a.mu.Lock()
+	remoteMembership := a.remoteMembership
+	pool := a.fsPool
+	sub := a.sub
+	a.mu.Unlock()
+	permission, err := a.host.currentPermission(remoteMembership, a.sessionID)
+	if err != nil || permission != proto.RemotePermissionFull || a.permission != proto.RemotePermissionFull {
+		return errors.New("Peer filesystem requires full permission")
+	}
+	request, err := proto.DecodeFSRequest(frame.Payload, nil, a.sessionID)
+	if err != nil {
+		return errors.New("invalid Peer filesystem request")
+	}
+	if request.RequestID == "" || len(request.RequestID) > 256 || request.Op == "" || len(request.Op) > 64 {
+		return errors.New("invalid Peer filesystem request")
+	}
+	if pool == nil {
+		return errors.New("Peer filesystem is unavailable")
+	}
+	// The renderer is untrusted. Bind open_external and diagnostics to the
+	// authenticated logical client identity carried by the route lease.
+	request.ClientID = a.clientInstanceID
+	if request.Op == "open_external" {
+		sess, ok := a.host.host.server.Registry().Get(a.sessionID)
+		if sub == nil || !ok || !sess.IsDriver(sub) {
+			return errors.New("Peer filesystem open_external requires current driver")
+		}
+	}
+	pool.submit(a.sessionID, request)
+	return nil
+}
+
+func (a *peerHostAttempt) streamFilesystem(ctx context.Context, channel peerQuickTunnelChannel, fs *remoteFS, responses <-chan proto.Frame) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case frame := <-responses:
+			if !a.sendFilesystemFrame(ctx, channel, frame) {
+				return
+			}
+		case frame := <-fs.events():
+			if !a.sendFilesystemFrame(ctx, channel, frame) {
+				return
+			}
+		}
+	}
+}
+
+func (a *peerHostAttempt) sendFilesystemFrame(ctx context.Context, channel peerQuickTunnelChannel, frame proto.Frame) bool {
+	if frame.SessionID != a.sessionID ||
+		(frame.Type != proto.TypeFSResponse && frame.Type != proto.TypeFSEvent) ||
+		!a.currentRouteLease() {
+		return false
+	}
+	a.mu.Lock()
+	currentChannel := a.channel
+	remoteMembership := a.remoteMembership
+	a.mu.Unlock()
+	permission, err := a.host.currentPermission(remoteMembership, a.sessionID)
+	if err != nil || permission != proto.RemotePermissionFull || currentChannel != channel {
+		return false
+	}
+	if err := channel.SendFrame(ctx, proto.Marshal(frame)); err != nil {
+		a.removeSelf()
+		return false
+	}
+	return true
 }
 
 func validatePeerPasteFrame(frame proto.Frame) error {
@@ -814,10 +908,13 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 		sess := a.subscribedSession
 		transport := a.transport
 		channel := a.channel
+		peerFS := a.remoteFS
 		signal := a.signal
 		leaseKey := a.leaseKey
 		leaseHeld := a.leaseHeld
 		a.streamCancel = nil
+		a.remoteFS = nil
+		a.fsPool = nil
 		a.sub = nil
 		a.subscribedSession = nil
 		a.channel = nil
@@ -833,6 +930,9 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 		}
 		if cancel != nil {
 			cancel()
+		}
+		if peerFS != nil {
+			peerFS.close()
 		}
 		if sub != nil && sess != nil {
 			sess.Unsubscribe(sub)

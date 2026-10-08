@@ -366,7 +366,7 @@ payload = JSON：
 
 ### Remote File Explorer (`FS_REQUEST` 0x38 / `FS_RESPONSE` 0x39 / `FS_EVENT` 0x3a)
 
-远程文件浏览器使用三个 additive JSON 帧，均复用帧 header 里的 `session_id` 作为目标会话。它只定义协议载荷；relay/client/uplink 的具体处理在后续实现中接入。
+远程文件浏览器使用三个 additive 帧，均复用帧 header 里的 `session_id` 作为目标会话。相同的 request/response/event 语义同时用于 Relay attach 和经过 membership handshake 的 Peer route。
 
 #### Flow
 
@@ -375,12 +375,14 @@ payload = JSON：
 3. desktop uplink 调用本机受限文件访问层，返回同 `request_id` 的 `FS_RESPONSE`。
 4. 对目录 watch，desktop uplink 后续用 `FS_EVENT` 向 requester client 推送变更；client 收到后重新发 `list_dir` / `file_meta` 等请求刷新。
 
+Peer route 不经过 relay：client 把 `FS_REQUEST` 放进已认证、已加密的 Peer record，owner host 在当前 route lease 内执行并把 `FS_RESPONSE` / `FS_EVENT` 只发回该 attempt。route suspend、handover、detach 或关闭会取消 client pending request、关闭 owner watch/runtime；旧 generation 的迟到 response/event 必须丢弃，不能迁移到替代 route。
+
 #### Permissions
 
 文件浏览会读取 owner 机器上的路径，权限必须是 owner 显式发布的 `remote_permission = "full"`。relay 和 desktop host 都必须按当前 session 的 `remote_permission` 拦截：
 
 - `view` / `control`：不允许浏览或读取远程文件，所有 `FS_REQUEST` 都必须拒绝。
-- `full`：允许只读浏览、预览、分块读取、目录 watch。
+- `full`：允许浏览、预览、分块读取、目录 watch，以及现有文件浏览器提供的写入、新建、重命名、删除、建目录和回收站操作。
 
 只读操作不要求当前 driver 状态：`list_dir` / `file_meta` / `read_file` / `read_chunk` / `watch_dir` / `unwatch_dir` 在 `remote_permission = "full"` 下可由已授权 client 发起。`open_external` 会在 owner 机器触发 OS 打开动作，因此额外要求发送方是当前 driver；relay 侧需按 session driver 状态拒绝，desktop uplink 执行前再拦一次，保持与 `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` 的本机动作防线一致。
 
@@ -401,11 +403,15 @@ payload = JSON：
 
 - `request_id`：client 生成的关联 ID；desktop 原样带回。
 - `client_id`：relay 转发前按已 attach subscriber 的身份注入/覆盖；浏览器传入的值不可信且会被忽略。desktop host 只用它对 `open_external` 做当前 driver 二次校验，普通浏览器 client 不需要也不应该自行设置。
-- `op`：`list_dir` / `file_meta` / `read_file` / `read_chunk` / `watch_dir` / `unwatch_dir` / `open_external`。
+- `op`：`list_dir` / `file_meta` / `read_file` / `read_chunk` / `watch_dir` / `unwatch_dir` / `open_external` / `write_file` / `create_file` / `rename` / `remove` / `mkdir` / `trash`。
 - `path`：owner 机器上的路径；desktop 必须走本地 allow-root/path-clean 校验。
 - `max_bytes`：`read_file` 的最大返回字节数，host 仍有 hard cap。
 - `offset` / `length`：`read_chunk` 的分块范围。
 - `watch_id`：`unwatch_dir` 使用 desktop 之前返回的 watch id。
+- `data`：`write_file` 的标准 base64 文件内容；owner host 解码后仍强制 `5 MiB` hard cap。
+- `expected_modtime` / `create_if_missing`：`write_file` 的乐观并发与可创建语义。
+- `new_path`：`rename` 的目标路径；源和目标都经过 owner allow-root/path-clean 校验。
+- `recursive`：`remove` 是否递归删除目录。
 
 #### `FS_RESPONSE` payload
 
@@ -461,6 +467,8 @@ segment 0 恒为明文 JSON，只放 relay 转发和鉴权真正需要的字段�
 - **持有 key 的一端恒定发出 sealed segment**，哪怕内容为空（例如 `unwatch_dir` 的响应）。segment 数表达的是 key 状态，不是"这条响应有没有数据"。
 - **seal 失败 fail-closed**，不走 §612 的明文回退。因为 `.env*` 的放开条件正是"sealing 生效"，静默回退等于在守卫失效的瞬间把密钥送上线。此时返回一条不含路径的错误响应。
 - **`.env*` 在远程侧仅当 sealing 生效时可读**。判据是 agent 自己的 key 状态（`fsAccess.denyEnv`），与任何入站字段无关，所以 relay 无法通过篡改请求把会话降级成明文。本地 Wails 直连不产生帧，恒可读。`.ssh` / `.gnupg` / `.aws` 两侧恒拒。
+
+Peer route 已由 membership handshake 后的 record layer 端到端加密，不使用 Relay `account_key` 信封。三类 FS payload 都必须是上述分段结构的**单个 plaintext JSON segment**，再整体进入加密 Peer record；host 拒绝额外 sealed segment，避免把 Relay account key 状态混入 Peer trust。因为字节不会明文经过公网服务，Peer `fsAccess` 使用 `denyEnv=false`，所以 `.env*` 可读；`.ssh` / `.gnupg` / `.aws` 仍由通用 path policy 恒拒。owner host 对每个请求重验 exact active membership、双方 session scope、owner 当前 permission 与当前 route lease，覆盖 renderer 提供的 `client_id`；每 session 最多 4 个并发请求，read/write 各保留 `5 MiB` hard cap，`open_external` 额外要求当前 driver。发送 response/event 前再验一次权限与 lease，防止慢读取期间降权或 handover 后泄露结果。
 
 relay 仍可做 payload 大小限制（信封长度可见），但不再能审计路径。完整设计见 [../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md](../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md)。
 

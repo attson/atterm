@@ -1,17 +1,20 @@
 package rendezvous
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/peercrypto"
 	"nhooyr.io/websocket"
 )
@@ -34,6 +37,15 @@ func (c *testClock) Advance(d time.Duration) {
 }
 
 func TestServerAuthenticatesPresenceAndRoutesOpaqueSignals(t *testing.T) {
+	var serviceLogs bytes.Buffer
+	previousLevel := logging.CurrentLevel()
+	logging.SetSink(&serviceLogs)
+	logging.SetLevel(logging.LevelDebug)
+	t.Cleanup(func() {
+		logging.SetSink(os.Stderr)
+		logging.SetLevel(previousLevel)
+	})
+
 	clock := &testClock{now: time.Unix(1_800_000_000, 0)}
 	handler, err := New(Config{
 		AllowedOrigins: []string{"https://app.example"},
@@ -78,6 +90,9 @@ func TestServerAuthenticatesPresenceAndRoutesOpaqueSignals(t *testing.T) {
 	for _, secret := range []string{topic, hostPresence, memberPresence, payload, hostIdentity.PeerID()} {
 		if strings.Contains(metrics, secret) {
 			t.Fatalf("metrics exposed routing or identity material %q", secret)
+		}
+		if strings.Contains(serviceLogs.String(), secret) {
+			t.Fatalf("DEBUG service logs exposed routing, identity, or payload material %q", secret)
 		}
 	}
 	if !strings.Contains(metrics, "atterm_rendezvous_forwarded_messages_total 1") {

@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/attson/atterm/internal/rendezvous"
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
+	"nhooyr.io/websocket"
 )
 
 func TestRouteConnectsTrustedPeersThroughEncryptedRendezvousSignaling(t *testing.T) {
@@ -90,6 +94,131 @@ func TestRouteConnectsTrustedPeersThroughEncryptedRendezvousSignaling(t *testing
 		}
 	case <-ctx.Done():
 		t.Fatal("client record did not cross DataChannel")
+	}
+}
+
+func TestRendezvousWireContainsNoPeerSecretsOrDataChannelPlaintext(t *testing.T) {
+	recorder := &rendezvousWireRecorder{}
+	fixture := newRouteFixtureWithService(t, func(backendURL string) string {
+		return recorder.proxy(t, backendURL)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	hostAuthenticated := make(chan *peertransport.PionHostChannel, 1)
+	clientAuthenticated := make(chan *peertransport.PionClientChannel, 1)
+	terminalReceived := make(chan []byte, 1)
+	configReceived := make(chan []byte, 1)
+	metadataMarker := "private-session-title-marker"
+	hostRoute := fixture.newHostRouteWithCatalog(t, ctx, func(context.Context, PeerOpenRequest) (HostAuthorization, HostCallbacks, error) {
+		return fixture.hostAuthorization(), HostCallbacks{
+			OnAuthenticated: func(channel *peertransport.PionHostChannel) { hostAuthenticated <- channel },
+			OnRecord: func(_ peertransport.RecordKind, payload []byte) {
+				terminalReceived <- append([]byte(nil), payload...)
+			},
+			OnConfigMessage: func(_ peertransport.RecordKind, payload []byte) error {
+				configReceived <- append([]byte(nil), payload...)
+				return nil
+			},
+		}, nil
+	}, func(context.Context, PeerCatalogRequest) ([]PeerSession, error) {
+		return []PeerSession{{
+			ID: fixture.sessionID.String(), Title: metadataMarker, Cols: 80, Rows: 24,
+			StartedAt: time.Now().Unix(), HostID: fixture.hostIdentity.PeerID(),
+			Permission: peertransport.PermissionControl,
+		}}, nil
+	})
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	clientInstanceID := "private-client-instance-marker"
+	attempt, err := clientRoute.Dial(ctx, ClientAttemptConfig{
+		Remote: fixture.hostPeer(), Identity: fixture.clientIdentity,
+		GenesisToken: fixture.genesisToken, ClientMembershipToken: fixture.clientMembership,
+		HostMembershipToken: fixture.hostMembership, SessionID: fixture.sessionID,
+		ClientInstanceID: clientInstanceID, WebRTC: webrtc.Configuration{},
+		OnAuthenticated: func(channel *peertransport.PionClientChannel) { clientAuthenticated <- channel },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attempt.Close()
+
+	select {
+	case <-hostAuthenticated:
+	case <-ctx.Done():
+		t.Fatal("host membership handshake did not authenticate")
+	}
+	var clientChannel *peertransport.PionClientChannel
+	select {
+	case clientChannel = <-clientAuthenticated:
+	case <-ctx.Done():
+		t.Fatal("client membership handshake did not authenticate")
+	}
+
+	terminalMarker := []byte("private-terminal-frame-marker")
+	if err := clientChannel.SendRecord(ctx, peertransport.RecordFrame, terminalMarker); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-terminalReceived:
+		if !bytes.Equal(got, terminalMarker) {
+			t.Fatalf("terminal marker=%q", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("terminal marker did not cross the DataChannel")
+	}
+
+	configMarker := []byte("private-config-sync-marker")
+	if err := clientChannel.SendConfigMessage(ctx, peertransport.RecordConfigInventory, configMarker); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-configReceived:
+		if !bytes.Equal(got, configMarker) {
+			t.Fatalf("config marker=%q", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("config marker did not cross the DataChannel")
+	}
+	catalog, err := clientRoute.Catalog(ctx, fixture.hostPeer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 1 || catalog[0].Title != metadataMarker {
+		t.Fatalf("catalog=%+v", catalog)
+	}
+
+	sdpMarker := "private-sdp-offer-marker"
+	if err := clientRoute.sendConfirmed(ctx, fixture.hostPeer(), routeWireMessage{
+		Version: routeWireVersion, Kind: routeKindSignal, AttemptID: uuid.New(),
+		SignalType: "offer", Payload: sdpMarker,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wire := recorder.bytes()
+	if !bytes.Contains(wire, []byte(`"kind":"publish"`)) {
+		t.Fatal("wire recorder did not observe Rendezvous publish traffic")
+	}
+	for _, sensitive := range []struct {
+		name   string
+		secret string
+	}{
+		{name: "invitation", secret: fixture.invitationToken},
+		{name: "host membership", secret: fixture.hostMembership},
+		{name: "client membership", secret: fixture.clientMembership},
+		{name: "session id", secret: fixture.sessionID.String()},
+		{name: "session metadata", secret: metadataMarker},
+		{name: "client instance", secret: clientInstanceID},
+		{name: "SDP", secret: sdpMarker},
+		{name: "config", secret: string(configMarker)},
+		{name: "terminal", secret: string(terminalMarker)},
+	} {
+		if bytes.Contains(wire, []byte(sensitive.secret)) {
+			t.Fatalf("Rendezvous wire exposed %s plaintext", sensitive.name)
+		}
 	}
 }
 
@@ -464,6 +593,7 @@ type routeFixture struct {
 	epoch            configsync.EpochKey
 	spaceID          string
 	genesisToken     string
+	invitationToken  string
 	hostIdentity     *peercrypto.Identity
 	hostWrapping     *peercrypto.WrappingIdentity
 	hostMembership   string
@@ -481,6 +611,10 @@ type routeFixture struct {
 }
 
 func newRouteFixture(t *testing.T) *routeFixture {
+	return newRouteFixtureWithService(t, nil)
+}
+
+func newRouteFixtureWithService(t *testing.T, wrap func(string) string) *routeFixture {
 	t.Helper()
 	now := time.Now()
 	sessionID := uuid.New()
@@ -517,13 +651,17 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	server := httptest.NewServer(service)
 	t.Cleanup(server.Close)
 	t.Cleanup(service.Close)
+	serviceURL := server.URL
+	if wrap != nil {
+		serviceURL = wrap(serviceURL)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	topic := encodedID(40, 32)
 	hostPresence := encodedID(41, 32)
 	clientPresence := encodedID(42, 32)
 	hostConnection, hostSnapshot, err := DialPresence(ctx, PresenceConfig{
-		ServiceURL: server.URL, AllowInsecureLoopback: true, Topic: topic,
+		ServiceURL: serviceURL, AllowInsecureLoopback: true, Topic: topic,
 		PresenceID: hostPresence, Role: rendezvous.RoleHost,
 	})
 	if err != nil {
@@ -531,7 +669,7 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	}
 	t.Cleanup(hostConnection.CloseNow)
 	clientConnection, clientSnapshot, err := DialPresence(ctx, PresenceConfig{
-		ServiceURL: server.URL, AllowInsecureLoopback: true, Topic: topic,
+		ServiceURL: serviceURL, AllowInsecureLoopback: true, Topic: topic,
 		PresenceID: clientPresence, Role: rendezvous.RoleMember,
 	})
 	if err != nil {
@@ -540,13 +678,73 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	t.Cleanup(clientConnection.CloseNow)
 	return &routeFixture{
 		server: server, service: service, epoch: epoch, spaceID: genesis.Document.SpaceID,
-		genesisToken: genesisToken, hostIdentity: hostIdentity, hostWrapping: hostWrapping,
+		genesisToken: genesisToken, invitationToken: invitations[0],
+		hostIdentity: hostIdentity, hostWrapping: hostWrapping,
 		hostMembership: hostMembership, hostPresence: hostPresence, hostConnection: hostConnection,
 		hostSnapshot: hostSnapshot, clientIdentity: clientIdentity, clientWrapping: clientWrapping,
 		clientMembership: clientMembership, clientPresence: clientPresence,
 		clientConnection: clientConnection, clientSnapshot: clientSnapshot, topic: topic,
 		sessionID: sessionID,
 	}
+}
+
+type rendezvousWireRecorder struct {
+	mu       sync.Mutex
+	messages [][]byte
+}
+
+func (r *rendezvousWireRecorder) proxy(t *testing.T, backendURL string) string {
+	t.Helper()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		upstreamURL := "ws" + strings.TrimPrefix(backendURL, "http") + request.URL.Path
+		upstream, _, err := websocket.Dial(request.Context(), upstreamURL, &websocket.DialOptions{
+			Subprotocols: []string{rendezvous.Subprotocol},
+		})
+		if err != nil {
+			http.Error(w, "upstream unavailable", http.StatusBadGateway)
+			return
+		}
+		defer upstream.CloseNow()
+		downstream, err := websocket.Accept(w, request, &websocket.AcceptOptions{
+			Subprotocols: []string{rendezvous.Subprotocol}, InsecureSkipVerify: true,
+		})
+		if err != nil {
+			return
+		}
+		defer downstream.CloseNow()
+
+		ctx, cancel := context.WithCancel(request.Context())
+		defer cancel()
+		done := make(chan struct{}, 2)
+		go r.copy(ctx, upstream, downstream, done)
+		go r.copy(ctx, downstream, upstream, done)
+		<-done
+	})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+func (r *rendezvousWireRecorder) copy(ctx context.Context, destination, source *websocket.Conn, done chan<- struct{}) {
+	defer func() { done <- struct{}{} }()
+	for {
+		messageType, payload, err := source.Read(ctx)
+		if err != nil {
+			return
+		}
+		r.mu.Lock()
+		r.messages = append(r.messages, append([]byte(nil), payload...))
+		r.mu.Unlock()
+		if err := destination.Write(ctx, messageType, payload); err != nil {
+			return
+		}
+	}
+}
+
+func (r *rendezvousWireRecorder) bytes() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return bytes.Join(r.messages, []byte{'\n'})
 }
 
 func (f *routeFixture) hostPeer() PeerRoute {
@@ -566,6 +764,10 @@ func (f *routeFixture) hostAuthorization() HostAuthorization {
 }
 
 func (f *routeFixture) newHostRoute(t *testing.T, ctx context.Context, authorize HostAuthorizeFunc) *Route {
+	return f.newHostRouteWithCatalog(t, ctx, authorize, nil)
+}
+
+func (f *routeFixture) newHostRouteWithCatalog(t *testing.T, ctx context.Context, authorize HostAuthorizeFunc, catalog HostCatalogFunc) *Route {
 	t.Helper()
 	route, err := NewRoute(ctx, RouteConfig{
 		Connection: f.hostConnection, InitialPresence: f.hostSnapshot,
@@ -575,7 +777,7 @@ func (f *routeFixture) newHostRoute(t *testing.T, ctx context.Context, authorize
 			peer := f.clientPeer()
 			return peer, presenceID == peer.PresenceID
 		},
-		AuthorizeHost: authorize,
+		AuthorizeHost: authorize, CatalogHost: catalog,
 	})
 	if err != nil {
 		t.Fatal(err)

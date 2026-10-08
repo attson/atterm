@@ -39,6 +39,9 @@ Implement:
 Implementation status: canonical official/custom/disabled endpoint and STUN configuration,
 browser capability preflight, self-host container/docs, and the shared black-box contract runner
 are implemented. Settings presentation and connection lifecycle remain in PR 3.4/3.5.
+The self-hosted production-proxy posture passes the black-box runner locally. The official
+`rendezvous.atterm.dev` origin did not resolve during the 2026-10-08 acceptance run, so the shared
+deployment gate remains open rather than treating the in-process service test as an official check.
 
 - Publish one protocol and contract suite for both deployments。
 - Official/custom/disabled URL configuration。
@@ -112,6 +115,10 @@ Peer-only terminal panes retain the last classified route failure across reconne
 failure is shown as a likely restrictive-NAT/blocked-UDP condition and explicitly states that
 Rendezvous carries discovery/signaling only; the UI directs the user to a Quick Tunnel route or a
 different network instead of implying that Rendezvous can relay terminal bytes.
+The route integration suite also records the decoded WebSocket frames at the Rendezvous boundary
+while a real Pion channel carries terminal and config markers. Invitation/membership tokens,
+session metadata, SDP, config and terminal plaintext are absent from that wire capture; the service
+suite separately checks DEBUG logs and metrics for routing, identity and payload markers.
 
 - Discover only sessions authorized by both members' scopes and effective permission ceilings。
 - Keep session metadata, SDP/ICE, membership material and terminal bytes opaque to Rendezvous。
@@ -124,7 +131,7 @@ different network instead of implying that Rendezvous can relay terminal bytes.
 - [x] A trusted client reconnects after desktop restart without receiving a new Quick Tunnel URL.
 - [ ] Official and self-hosted services pass the same contract suite.
 - [x] Rendezvous restart only drops ephemeral presence/signaling.
-- [ ] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
+- [x] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
 - [x] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
 - [x] A/B/C sync converges through rotating online peers without a designated hub.
 - [x] Restrictive NAT is reported honestly; Rendezvous alone is not called a data relay.

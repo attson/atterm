@@ -261,6 +261,230 @@ describe('PeerSessionConnection', () => {
     expect(resolveQuickTunnelFallback).toHaveBeenCalledOnce()
   })
 
+  it('fails back to Direct after cooldown and promotes only after replay ready', async () => {
+    const transports: FakeTransport[] = []
+    const outputs: string[] = []
+    const routes: Array<{ route: string }> = []
+    const resolveDirectFailback = vi.fn().mockResolvedValue(true)
+    const connection = new PeerSessionConnection(sessionID, {
+      onOutput: (data) => outputs.push(decodeText(data)),
+      onRouteChange: (diagnostics) => routes.push(diagnostics),
+    }, {
+      route: 'quick_tunnel',
+      resolveDirectFailback,
+      directFailbackCooldownMs: 1000,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    const quickTunnel = transports[0]
+    quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onFrame(out(4, 'quick-four'))
+    quickTunnel.options.callbacks.onReady(4)
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(transports).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(resolveDirectFailback).toHaveBeenCalledOnce()
+    expect(transports).toHaveLength(2)
+
+    const direct = transports[1]
+    expect(direct.options).toMatchObject({
+      route: 'direct',
+      sinceSeq: 4,
+      clientInstanceId: quickTunnel.options.clientInstanceId,
+    })
+    expect(quickTunnel.closed).toBe(false)
+    expect(routes.at(-1)).toMatchObject({ route: 'connecting-direct' })
+
+    quickTunnel.options.callbacks.onFrame(out(5, 'quick-five'))
+    connection.sendInput('during-failback')
+    expect(quickTunnel.sent.map(decodeFrame).some((frame) => frame.type === TYPE.IN)).toBe(false)
+    direct.options.callbacks.onAuthenticated?.()
+    direct.options.callbacks.onFrame(out(5, 'duplicate-five'))
+    direct.options.callbacks.onFrame(out(6, 'direct-six'))
+    direct.options.callbacks.onReady(6)
+
+    expect(outputs).toEqual(['quick-four', 'quick-five', 'direct-six'])
+    expect(quickTunnel.closed).toBe(true)
+    expect(routes.at(-1)).toMatchObject({ route: 'direct' })
+    const directFrames = direct.sent.map(decodeFrame)
+    expect(directFrames.filter((frame) => frame.type === TYPE.IN)).toHaveLength(1)
+    expect(decodeText(directFrames.find((frame) => frame.type === TYPE.IN)!.payload)).toBe('during-failback')
+  })
+
+  it('reconnects Quick Tunnel after a failed Direct candidate and backs off', async () => {
+    const transports: FakeTransport[] = []
+    const resolveDirectFailback = vi.fn().mockResolvedValue(true)
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      route: 'quick_tunnel',
+      resolveDirectFailback,
+      directFailbackCooldownMs: 1000,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    const quickTunnel = transports[0]
+    quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onReady(0)
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const direct = transports[1]
+    connection.sendInput('held-during-candidate')
+    direct.options.callbacks.onFailure(new Error('ICE failed'))
+    expect(direct.closed).toBe(true)
+    expect(quickTunnel.closed).toBe(true)
+    expect(quickTunnel.sent).toHaveLength(0)
+
+    await vi.advanceTimersByTimeAsync(500)
+    const replacementQuickTunnel = transports[2]
+    expect(replacementQuickTunnel.options.route).toBe('quick_tunnel')
+    replacementQuickTunnel.options.callbacks.onAuthenticated?.()
+    replacementQuickTunnel.options.callbacks.onReady(0)
+    expect(replacementQuickTunnel.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([TYPE.IN])
+
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(transports).toHaveLength(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(transports).toHaveLength(4)
+    expect(resolveDirectFailback).toHaveBeenCalledTimes(2)
+  })
+
+  it('lets the manual Quick Tunnel action cancel an in-flight Direct failback', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      route: 'quick_tunnel',
+      resolveDirectFailback: vi.fn().mockResolvedValue(true),
+      directFailbackCooldownMs: 1000,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    const quickTunnel = transports[0]
+    quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onReady(0)
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const direct = transports[1]
+    connection.sendInput('held-before-cancel')
+    connection.setRoute('quick_tunnel')
+
+    expect(direct.closed).toBe(true)
+    expect(quickTunnel.closed).toBe(true)
+    expect(quickTunnel.sent).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(500)
+    const replacementQuickTunnel = transports[2]
+    replacementQuickTunnel.options.callbacks.onAuthenticated?.()
+    replacementQuickTunnel.options.callbacks.onReady(0)
+    expect(replacementQuickTunnel.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([TYPE.IN])
+  })
+
+  it('lets a ready Direct candidate win when the replaced Quick Tunnel closes first', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      route: 'quick_tunnel',
+      resolveDirectFailback: vi.fn().mockResolvedValue(true),
+      directFailbackCooldownMs: 1000,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    const quickTunnel = transports[0]
+    quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onReady(3)
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const direct = transports[1]
+    quickTunnel.options.callbacks.onFailure(new Error('Peer direct host closed route'))
+    connection.sendInput('after-old-close')
+    direct.options.callbacks.onAuthenticated?.()
+    direct.options.callbacks.onReady(3)
+
+    expect(transports).toHaveLength(2)
+    expect(direct.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([TYPE.IN])
+  })
+
+  it('ignores a late Direct failback capability result after suspend', async () => {
+    const transports: FakeTransport[] = []
+    let resolveDirect!: (available: boolean) => void
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      route: 'quick_tunnel',
+      resolveDirectFailback: () => new Promise<boolean>((resolve) => { resolveDirect = resolve }),
+      directFailbackCooldownMs: 1000,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    await vi.advanceTimersByTimeAsync(1000)
+    connection.sendInput('probe-keeps-old-route-live')
+    expect(transports[0].sent.map(decodeFrame).map((frame) => frame.type)).toEqual([TYPE.IN])
+    connection.suspend()
+    resolveDirect(true)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(transports).toHaveLength(1)
+    expect(transports[0].closed).toBe(true)
+  })
+
+  it('does not let an old capability probe unlock a resumed pane probe', async () => {
+    const transports: FakeTransport[] = []
+    const resolvers: Array<(available: boolean) => void> = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      route: 'quick_tunnel',
+      resolveDirectFailback: () => new Promise<boolean>((resolve) => { resolvers.push(resolve) }),
+      directFailbackCooldownMs: 100,
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    await vi.advanceTimersByTimeAsync(100)
+    connection.suspend()
+    connection.attach()
+    transports[1].options.callbacks.onAuthenticated?.()
+    transports[1].options.callbacks.onReady(0)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(resolvers).toHaveLength(2)
+
+    resolvers[0](true)
+    await vi.advanceTimersByTimeAsync(0)
+    transports[1].options.callbacks.onReady(0)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(resolvers).toHaveLength(2)
+
+    resolvers[1](true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(transports).toHaveLength(3)
+    expect(transports[2].options.route).toBe('direct')
+  })
+
   it('preserves cursor and single-writer semantics across 100 forced route handovers', () => {
     const transports: FakeTransport[] = []
     const outputs: string[] = []

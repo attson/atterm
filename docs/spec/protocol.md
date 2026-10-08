@@ -1143,8 +1143,16 @@ Peer client 默认仍先尝试 Rendezvous direct。Direct 遇到
 同一 `client_instance_id` 和 last committed OUT seq 建立 Quick Tunnel。查询和 handover 期间冻结
 `IN`/`RESIZE`/`CLAIM_DRIVER`，旧 generation callback 全部丢弃，Quick Tunnel replay 按 OUT seq 去重
 后才恢复写入。`authentication_failed` / `protocol_error` / `backpressure` 等安全或完整性错误不得通过
-换路降级；一旦回退到 Quick Tunnel，后续断线只在该 route 上退避重试，不自动反向切回 Direct，
-避免 route flap。Peer-only handover 不引入 Relay credential、Relay subscriber 或 `account_key`。
+换路降级。回退到 Quick Tunnel 并稳定 ready 后，client 至少等待 30 秒才重新查询 Direct capability；
+不可用或候选失败会按 30 秒起步指数退避，最长 5 分钟。只有 capability 仍有效才以相同
+`client_instance_id` / OUT cursor 并行创建 Direct 候选：host 通过 replacing subscriber 原子迁移租约，
+subscriber count 不经过 0；client 从候选创建起冻结写入，同时接收两路 OUT 并按 seq 去重，直到
+Direct `DIRECT_READY` 才提升新 route 并关闭仍存活的旧 transport。候选失败时不能把排队写入退回旧
+transport：native `sendFrame` 的成功只表示异步入队，host 可能已撤销旧 lease；client 必须关闭旧路并从
+committed cursor 重连 Quick Tunnel，等新 `DIRECT_READY` 后再释放写入。成功 Direct 会重置 cooldown。pane suspend / detach
+以 generation 使迟到的 capability 和候选回调失效；用户在候选期间显式选择 Quick Tunnel 会取消
+候选、释放排队写入并进入下一轮 cooldown。Peer-only handover 不引入 Relay credential、Relay subscriber
+或 `account_key`。
 
 `CreatePeerConnectionBundle(invitation)` 只接受本地加密账本中仍开放、未消费、未撤销、未过期且
 由当前 active local membership 签发的 invitation；首次加入的 bundle 必须发布当前 Quick Tunnel

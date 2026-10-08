@@ -59,6 +59,7 @@ import {
 import { useQuickTemplates } from "../composables/useQuickTemplates";
 import { setServicePreviewActive } from "../composables/useServicePreviewActive";
 import { usePlatform } from "../platform";
+import type { PeerSessionRouteStatus } from "../platform/types";
 import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import ServicePreviewSwitcher from "./ServicePreviewSwitcher.vue";
@@ -138,7 +139,7 @@ const status = ref<Status>("connecting");
 const replayProgress = ref<ReplayProgress | null>(null);
 const routeDiagnostics = ref<SessionRouteDiagnostics>({ route: "relay" });
 const peerQuickTunnelAvailable = ref(false);
-let peerRouteStatusPromise: Promise<boolean> | null = null;
+let peerRouteStatusPromise: Promise<PeerSessionRouteStatus> | null = null;
 const routeLabel = computed(() => {
   switch (routeDiagnostics.value.route) {
     case "connecting-direct":
@@ -347,19 +348,19 @@ let isAlive = true;
 let focusCoalescer: FocusReportCoalescer | null = null;
 const replayInputGuard = createReplayInputGuard();
 
-async function refreshPeerRouteStatus(): Promise<boolean> {
+async function loadPeerRouteStatus(): Promise<PeerSessionRouteStatus> {
   const getStatus = platform.peer?.getSessionRouteStatus;
-  if (!props.peerDirect || !getStatus) return false;
+  if (!props.peerDirect || !getStatus) return { direct: false, quick_tunnel: false };
   if (peerRouteStatusPromise) return peerRouteStatusPromise;
   let timeout: number | null = null;
   const request = Promise.race([
-    getStatus(props.sessionId).then((next) => next.quick_tunnel).catch(() => false),
-    new Promise<boolean>((resolve) => {
-      timeout = window.setTimeout(() => resolve(false), 1000);
+    getStatus(props.sessionId).catch(() => ({ direct: false, quick_tunnel: false })),
+    new Promise<PeerSessionRouteStatus>((resolve) => {
+      timeout = window.setTimeout(() => resolve({ direct: false, quick_tunnel: false }), 1000);
     }),
-  ]).then((available) => {
-    peerQuickTunnelAvailable.value = available;
-    return available;
+  ]).then((next) => {
+    peerQuickTunnelAvailable.value = next.quick_tunnel;
+    return next;
   }).finally(() => {
     if (timeout !== null) window.clearTimeout(timeout);
   });
@@ -369,6 +370,14 @@ async function refreshPeerRouteStatus(): Promise<boolean> {
   } finally {
     if (peerRouteStatusPromise === request) peerRouteStatusPromise = null;
   }
+}
+
+async function refreshPeerRouteStatus(): Promise<boolean> {
+  return (await loadPeerRouteStatus()).quick_tunnel;
+}
+
+async function resolvePeerDirectFailback(): Promise<boolean> {
+  return (await loadPeerRouteStatus()).direct;
 }
 
 function retryPeerThroughQuickTunnel(): void {
@@ -2326,6 +2335,7 @@ function startConnection() {
         clientName: localHostname.value,
         transportFactory: factory,
         resolveQuickTunnelFallback: refreshPeerRouteStatus,
+        resolveDirectFailback: resolvePeerDirectFailback,
       }),
     );
     void refreshPeerRouteStatus();

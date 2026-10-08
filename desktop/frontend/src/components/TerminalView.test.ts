@@ -51,6 +51,7 @@ describe("TerminalView direct transport plumbing", () => {
     expect(source).toMatch(/canRetryPeerQuickTunnel[\s\S]*peerQuickTunnelAvailable\.value/);
     expect(source).toContain('conn.setRoute("quick_tunnel")');
     expect(source).toContain("resolveQuickTunnelFallback: refreshPeerRouteStatus");
+    expect(source).toContain("resolveDirectFailback: resolvePeerDirectFailback");
   });
 });
 

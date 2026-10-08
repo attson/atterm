@@ -74,7 +74,11 @@ deduplicated, and queued input is released only on the replacement route's `DIRE
 cross-principal handover and cooldown-based Direct failback remain future slices. Deterministic client and
 host soak tests now force 100 route replacements: the client retains one instance/cursor, drops duplicate
 and stale OUT, and emits each queued write once; the host keeps one subscriber/driver lease and permanently
-rejects every superseded route. Cross-process NAT/network-switch soak remains an exit-gate task.
+rejects every superseded route. Quick Tunnel now probes a Direct failback only after a 30-second stable
+cooldown, with exponential retry capped at five minutes. The Direct candidate keeps the same identity and
+cursor, freezes writes until replay ready, and either promotes atomically or reconnects Quick Tunnel from
+the committed cursor without trusting an asynchronously revoked old writer.
+Cross-principal Relay handover and cross-process NAT/network-switch soak remain future work.
 
 ## PR 4.3+ - Capability expansion
 

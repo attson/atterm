@@ -28,7 +28,22 @@ export interface PeerSessionConnectionOptions {
   transportFactory: (options: NativeDirectClientOptions) => DirectTransport
   /** Revalidates a Go-owned signed route hint without exposing its endpoint. */
   resolveQuickTunnelFallback?: () => Promise<boolean>
+  /** Revalidates that Rendezvous still exposes this authenticated session. */
+  resolveDirectFailback?: () => Promise<boolean>
+  directFailbackCooldownMs?: number
 }
+
+interface PeerHandoverAttempt {
+  generation: number
+  transport: DirectTransport
+  authenticated: boolean
+  diagnostics: DirectTransportDiagnostics | null
+  startedAt: number
+  promoted: boolean
+}
+
+const defaultDirectFailbackCooldownMs = 30_000
+const maxDirectFailbackCooldownMs = 5 * 60_000
 
 // Reachability failures may change transport; trust/integrity failures must
 // fail on the current route instead of being hidden by a fallback.
@@ -59,6 +74,10 @@ export class PeerSessionConnection {
   private reconnectAttempts = 0
   private reconnectTimer: number | null = null
   private fallbackPending = false
+  private handover: PeerHandoverAttempt | null = null
+  private failbackTimer: number | null = null
+  private failbackProbe: object | null = null
+  private failbackAttempts = 0
   private pendingInputs: string[] = []
   private pendingResize: { cols: number; rows: number } | null = null
   private pendingDriverClaim = false
@@ -102,7 +121,11 @@ export class PeerSessionConnection {
   setPreferDirect(_enabled: boolean): void {}
 
   setRoute(route: NativePeerRoute): void {
-    if (this.detached || route === this.route) return
+    if (this.detached) return
+    if (route === this.route) {
+      if (route === 'quick_tunnel' && this.handover) this.cancelHandover(this.handover)
+      return
+    }
     this.route = route
     this.clearReconnect()
     this.closeTransport()
@@ -193,6 +216,7 @@ export class PeerSessionConnection {
             this.handlers.onStatus?.('attached')
             this.emitRoute(this.connectedRoute())
             this.flush()
+            if (this.route === 'quick_tunnel') this.scheduleDirectFailback()
           },
           onDiagnostics: (diagnostics) => {
             if (!this.isCurrent(generation, transport)) return
@@ -242,7 +266,7 @@ export class PeerSessionConnection {
   }
 
   private send(frame: Uint8Array): boolean {
-    return Boolean(this.ready && this.transport?.sendFrame(frame))
+    return Boolean(!this.handover && this.ready && this.transport?.sendFrame(frame))
   }
 
   private flush(): void {
@@ -268,11 +292,17 @@ export class PeerSessionConnection {
     if (!this.isCurrent(generation, transport)) return
     this.transport = null
     transport.close()
+    if (this.handover?.generation === generation) {
+      this.authenticated = false
+      this.ready = false
+      return
+    }
     this.recover(generation, error)
   }
 
   private recover(generation: number, error: Error): void {
     if (this.detached || this.suspended) return
+    this.clearDirectFailbackTimer()
     const wasActive = this.ready
     this.authenticated = false
     this.ready = false
@@ -332,13 +362,215 @@ export class PeerSessionConnection {
     }, delay)
   }
 
+  private scheduleDirectFailback(): void {
+    this.clearDirectFailbackTimer()
+    if (
+      !this.options.resolveDirectFailback ||
+      this.route !== 'quick_tunnel' ||
+      !this.ready ||
+      this.detached ||
+      this.suspended ||
+      this.handover ||
+      this.failbackProbe
+    ) return
+    const base = Math.max(1, this.options.directFailbackCooldownMs ?? defaultDirectFailbackCooldownMs)
+    const delay = Math.min(maxDirectFailbackCooldownMs, base * Math.pow(2, this.failbackAttempts))
+    const generation = this.generation
+    this.failbackTimer = window.setTimeout(() => {
+      this.failbackTimer = null
+      void this.probeDirectFailback(generation)
+    }, delay)
+  }
+
+  private async probeDirectFailback(generation: number): Promise<void> {
+    if (
+      generation !== this.generation ||
+      this.route !== 'quick_tunnel' ||
+      !this.ready ||
+      this.detached ||
+      this.suspended ||
+      this.handover ||
+      this.failbackProbe
+    ) return
+    const probe = {}
+    this.failbackProbe = probe
+    let available = false
+    let timeout: number | null = null
+    try {
+      available = await Promise.race([
+        this.options.resolveDirectFailback!(),
+        new Promise<boolean>((resolve) => {
+          timeout = window.setTimeout(() => resolve(false), 1000)
+        }),
+      ])
+    } catch {
+      available = false
+    } finally {
+      if (timeout !== null) window.clearTimeout(timeout)
+      if (this.failbackProbe === probe) this.failbackProbe = null
+    }
+    if (
+      generation !== this.generation ||
+      this.route !== 'quick_tunnel' ||
+      !this.ready ||
+      this.detached ||
+      this.suspended ||
+      this.handover
+    ) return
+    if (!available) {
+      this.failbackAttempts++
+      this.scheduleDirectFailback()
+      return
+    }
+    this.startDirectHandover(generation)
+  }
+
+  private startDirectHandover(generation: number): void {
+    if (
+      generation !== this.generation ||
+      this.route !== 'quick_tunnel' ||
+      !this.ready ||
+      this.detached ||
+      this.suspended ||
+      this.handover
+    ) return
+    let transport: DirectTransport
+    const attempt: PeerHandoverAttempt = {
+      generation,
+      transport: null as unknown as DirectTransport,
+      authenticated: false,
+      diagnostics: null,
+      startedAt: performance.now(),
+      promoted: false,
+    }
+    try {
+      transport = this.options.transportFactory({
+        signalURL: '',
+        sessionId: this.sessionID,
+        sinceSeq: this.lastSeq,
+        clientInstanceId: this.clientID,
+        route: 'direct',
+        callbacks: {
+          onAuthenticated: () => {
+            if (!this.isHandoverCurrent(attempt)) return
+            attempt.authenticated = true
+          },
+          onFrame: (bytes) => {
+            if (!this.isHandoverCurrent(attempt)) return
+            this.handleFrame(decodeFrame(bytes))
+          },
+          onReady: (replayedSeq) => {
+            if (!this.isHandoverCurrent(attempt)) return
+            if (!attempt.authenticated || replayedSeq < this.lastSeq) {
+              this.failHandover(attempt, new Error('invalid Peer replay cursor'))
+              return
+            }
+            this.promoteHandover(attempt, replayedSeq)
+          },
+          onDiagnostics: (diagnostics) => {
+            if (!this.isHandoverCurrent(attempt)) return
+            attempt.diagnostics = diagnostics
+            if (attempt.promoted) {
+              this.diagnostics = diagnostics
+              this.emitRoute('direct')
+            } else {
+              this.emitHandoverRoute(attempt)
+            }
+          },
+          onFailure: (error) => {
+            if (!this.isHandoverCurrent(attempt)) return
+            if (attempt.promoted) this.fail(generation, attempt.transport, error)
+            else this.failHandover(attempt, error)
+          },
+        },
+      })
+      attempt.transport = transport
+      this.handover = attempt
+      this.handlers.onStatus?.('reconnecting')
+      this.emitHandoverRoute(attempt)
+      transport.start()
+    } catch (value) {
+      if (this.handover === attempt) this.failHandover(attempt, value instanceof Error ? value : new Error(String(value)))
+      else {
+        this.failbackAttempts++
+        this.scheduleDirectFailback()
+      }
+    }
+  }
+
+  private promoteHandover(attempt: PeerHandoverAttempt, replayedSeq: number): void {
+    if (!this.isHandoverCurrent(attempt) || attempt.promoted) return
+    const previous = this.transport
+    attempt.promoted = true
+    this.handover = null
+    this.transport = attempt.transport
+    this.route = 'direct'
+    this.authenticated = true
+    this.ready = true
+    this.lastSeq = replayedSeq
+    this.reconnectAttempts = 0
+    this.failbackAttempts = 0
+    this.lastFailureReason = undefined
+    this.diagnostics = attempt.diagnostics
+    this.startedAt = attempt.startedAt
+    this.handlers.onStatus?.('attached')
+    this.emitRoute('direct')
+    previous?.close()
+    this.flush()
+  }
+
+  private failHandover(attempt: PeerHandoverAttempt, error: Error): void {
+    if (!this.isHandoverCurrent(attempt) || attempt.promoted) return
+    this.handover = null
+    attempt.transport.close()
+    const previous = this.transport
+    this.transport = null
+    previous?.close()
+    this.failbackAttempts++
+    this.lastFailureReason = directFallbackReason(error, false)
+    this.route = 'quick_tunnel'
+    this.recover(attempt.generation, error)
+  }
+
+  private cancelHandover(attempt: PeerHandoverAttempt): void {
+    if (!this.isHandoverCurrent(attempt) || attempt.promoted) return
+    this.handover = null
+    attempt.transport.close()
+    const previous = this.transport
+    this.transport = null
+    previous?.close()
+    this.failbackAttempts++
+    this.lastFailureReason = undefined
+    this.diagnostics = { route: 'quick_tunnel' }
+    this.authenticated = false
+    this.ready = false
+    this.handlers.onStatus?.('reconnecting')
+    this.emitRoute('connecting-quick-tunnel')
+    this.scheduleReconnect()
+  }
+
+  private emitHandoverRoute(attempt: PeerHandoverAttempt): void {
+    this.handlers.onRouteChange?.({
+      route: 'connecting-direct',
+      ...(attempt.diagnostics?.iceState ? { iceState: attempt.diagnostics.iceState } : {}),
+      ...(attempt.diagnostics?.candidateType ? { candidateType: attempt.diagnostics.candidateType } : {}),
+      ...(this.lastFailureReason ? { fallbackReason: this.lastFailureReason } : {}),
+    })
+  }
+
   private closeTransport(): void {
     this.generation++
     this.fallbackPending = false
+    this.failbackProbe = null
+    this.failbackAttempts = 0
+    this.clearDirectFailbackTimer()
+    const handover = this.handover
+    this.handover = null
     const transport = this.transport
     this.transport = null
     this.authenticated = false
     this.ready = false
+    handover?.transport.close()
     transport?.close()
   }
 
@@ -347,8 +579,21 @@ export class PeerSessionConnection {
     this.reconnectTimer = null
   }
 
+  private clearDirectFailbackTimer(): void {
+    if (this.failbackTimer !== null) window.clearTimeout(this.failbackTimer)
+    this.failbackTimer = null
+  }
+
   private isCurrent(generation: number, transport: DirectTransport): boolean {
     return generation === this.generation && this.transport === transport && !this.detached && !this.suspended
+  }
+
+  private isHandoverCurrent(attempt: PeerHandoverAttempt): boolean {
+    if (attempt.promoted) return this.isCurrent(attempt.generation, attempt.transport)
+    return this.handover === attempt &&
+      attempt.generation === this.generation &&
+      !this.detached &&
+      !this.suspended
   }
 
   private sameSession(other: Uint8Array): boolean {

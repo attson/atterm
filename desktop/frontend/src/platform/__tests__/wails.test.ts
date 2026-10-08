@@ -71,7 +71,9 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   StartPeerQuickTunnel: vi.fn().mockResolvedValue({ running: true, starting: false, public_url: 'https://route.trycloudflare.com' }),
   StopPeerQuickTunnel: vi.fn().mockResolvedValue(undefined),
   CreatePeerConnectionBundle: vi.fn().mockResolvedValue('atc1.member-route.signature'),
-  ListPeerSessions: vi.fn().mockResolvedValue(JSON.stringify([{ id: 'peer-session-1', host_id: 'peer-host' }])),
+  ListPeerSessions: vi.fn().mockResolvedValue(JSON.stringify([{
+    id: 'peer-session-1', host_id: 'peer-host', remote_permission: 'full',
+  }])),
   GetPeerSessionRouteStatus: vi.fn().mockResolvedValue({ direct: true, quick_tunnel: true }),
   StartPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
   SendPeerNativeDirectFrame: vi.fn().mockResolvedValue(undefined),
@@ -112,10 +114,12 @@ import {
   GetAppVersion,
   StartPeerQuickTunnel,
   StartPeerNativeDirect,
+  SendPeerNativeDirectFrame,
   StartServicePreview,
   StopPeerNativeDirect,
   StopPeerQuickTunnel,
 } from '../../../wailsjs/go/main/App'
+import { decodeFrame, decodeText, encodeFrame, encodeText, TYPE, uuidParse } from '../../lib/proto'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import {
   fetchRelayMe,
@@ -382,6 +386,56 @@ describe('createWailsPlatform', () => {
     }))
 
     transport.close()
+    expect(StopPeerNativeDirect).toHaveBeenCalledOnce()
+  })
+
+  it('creates a Peer session through the first Direct-capable anchor and closes the temporary route', async () => {
+    const targetHostID = 'peer-host'
+    ;(ListPeerSessions as ReturnType<typeof vi.fn>).mockResolvedValueOnce(JSON.stringify([
+      { id: '11111111-1111-4111-8111-111111111111', host_id: targetHostID, remote_permission: 'control' },
+      { id: '22222222-2222-4222-8222-222222222222', host_id: targetHostID, remote_permission: 'full' },
+      { id: '33333333-3333-4333-8333-333333333333', host_id: targetHostID, remote_permission: 'full' },
+    ]))
+    ;(GetPeerSessionRouteStatus as ReturnType<typeof vi.fn>).mockImplementation(async (sessionID: string) => {
+      if (sessionID.startsWith('1111')) throw new Error('stale catalog entry')
+      return {
+        direct: sessionID.startsWith('3333'),
+        quick_tunnel: sessionID.startsWith('2222'),
+      }
+    })
+    const p = createWailsPlatform()
+
+    const created = p.sessions.createSessionWithProfile!(targetHostID, 'profile-a')
+    await vi.waitFor(() => expect(StartPeerNativeDirect).toHaveBeenCalledOnce())
+    const startRequest = (StartPeerNativeDirect as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(startRequest).toMatchObject({
+      session_id: '33333333-3333-4333-8333-333333333333',
+      route: 'direct',
+    })
+
+    const eventCall = (EventsOn as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([event]) => typeof event === 'string' && event.startsWith('peer-native-direct:event:'),
+    )
+    expect(eventCall).toBeTruthy()
+    const handleEvent = eventCall![1] as (data: unknown) => void
+    handleEvent({ kind: 'authenticated' })
+    handleEvent({ kind: 'ready', last_replayed_seq: 0 })
+    await vi.waitFor(() => expect(SendPeerNativeDirectFrame).toHaveBeenCalledOnce())
+
+    const sent = decodeFrame(new Uint8Array((SendPeerNativeDirectFrame as ReturnType<typeof vi.fn>).mock.calls[0][1]))
+    const request = JSON.parse(decodeText(sent.payload))
+    expect(sent.type).toBe(TYPE.SESSION_CREATE)
+    expect(request).toEqual(expect.objectContaining({ host_id: targetHostID, profile_id: 'profile-a' }))
+
+    const newSessionID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const response = encodeFrame(
+      TYPE.SESSION_CREATED,
+      uuidParse(newSessionID),
+      encodeText(JSON.stringify({ request_id: request.request_id, ok: true, session_id: newSessionID })),
+    )
+    handleEvent({ kind: 'frame', frame_base64: btoa(String.fromCharCode(...response)) })
+
+    await expect(created).resolves.toBe(newSessionID)
     expect(StopPeerNativeDirect).toHaveBeenCalledOnce()
   })
 

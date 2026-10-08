@@ -472,6 +472,56 @@ Peer route 已由 membership handshake 后的 record layer 端到端加密，不
 
 relay 仍可做 payload 大小限制（信封长度可见），但不再能审计路径。完整设计见 [../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md](../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md)。
 
+### Remote session create (`SESSION_CREATE` 0x3b / `SESSION_CREATED` 0x3c)
+
+远程客户端可以要求目标 desktop 使用目标机本地保存的 Session Profile 创建会话。Relay account
+路径与 authenticated Peer route 复用同一组 payload；请求只引用 Profile，不携带或覆盖
+command、cwd、env、startup command 等执行字段。
+
+`SESSION_CREATE` payload 是严格 JSON：
+
+```json
+{
+  "request_id": "sc-uuid",
+  "host_id": "target-desktop-host-id",
+  "profile_id": "target-local-profile-id"
+}
+```
+
+- 三个字段都必须是非空字符串；desktop host 拒绝未知 JSON 字段。Peer route 额外把 encoded
+  payload 限制为 `4 KiB`，`request_id` / `host_id` / `profile_id` 各不超过 256 字节。
+- `host_id` 必须精确等于接收 desktop 的本机 host id。`profile_id` 只作为本地配置 lookup key；
+  找不到时返回 `unknown_profile`，不得退回 default profile。
+- Relay 路径的请求 frame 使用 nil session id，由 relay 按 `host_id` 路由。Peer 没有独立的
+  host control channel，因此请求必须放在目标 host 已发布、当前仍可发现的一条 session route 上，
+  frame header 使用该 **anchor session id**。anchor 只提供 membership/session-scope/route-lease
+  授权与响应路由；新建 session 不继承它的 PTY、driver 或 replay 状态。
+- Peer client 为一次操作建立临时 terminal route，但不 claim driver、不发 `IN`/`RESIZE`；Direct
+  可用时优先 Direct，否则使用当前已验签 Quick Tunnel hint。当前目标 host 至少要有一个可发现
+  session；零会话 host 的创建需要未来独立 host control channel。
+- effective permission 必须是 `control` 或 `full`。owner host 在收请求、worker 真正 fork 前和发
+  response 前分别重验 exact active membership、双方 session scope、owner 当前 policy 与 route
+  lease；每个 authenticated Peer attempt 同时只允许一个创建请求。
+
+`SESSION_CREATED` payload：
+
+```json
+{
+  "request_id": "sc-uuid",
+  "ok": true,
+  "session_id": "new-session-uuid",
+  "error": ""
+}
+```
+
+成功时 frame header 与 payload 的 `session_id` 必须同时等于新 session UUID；失败时 frame header
+使用 nil session id，`error` 为稳定错误码或 owner host 的启动错误。稳定码包括
+`unknown_profile`、`permission_denied`、`session_create_busy`、`request_in_flight`、
+`duplicate_request_id`、`unknown_host_id`、`invalid_request`、`upstream_unavailable` 和 `timeout`。
+客户端在 route handover/close 时取消 pending request，并且发出请求后**不自动重试**：超时可能发生
+在 PTY 已成功 fork 但 response 丢失之后，自动重发会留下重复 shell。新 session 会通过后续 catalog
+刷新出现，成功响应则允许客户端立即按返回 id 打开它。
+
 ### Remote Web Preview (`SERVICE_OPEN` 0x3d / `SERVICE_OPENED` 0x3e / `SERVICE_CLOSE` 0x3f)
 
 Preview 控制帧沿已 attach session 路由；实际 HTTP/TCP 字节不进入本帧协议，

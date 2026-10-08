@@ -839,4 +839,101 @@ describe('PeerSessionConnection', () => {
     transports[0].options.callbacks.onReady(0)
     expect(routes.at(-1)).toMatchObject({ route: 'quick-tunnel' })
   })
+
+  it('creates a session from only host and profile ids and resolves the matching response', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+
+    const created = connection.createSessionWithProfile(' host-a ', ' profile-a ')
+    const requestFrame = decodeFrame(transports[0].sent.at(-1)!)
+    const request = JSON.parse(decodeText(requestFrame.payload)) as Record<string, unknown>
+    expect(requestFrame.type).toBe(TYPE.SESSION_CREATE)
+    expect(requestFrame.sid).toEqual(uuidParse(sessionID))
+    expect(request).toEqual({
+      request_id: expect.stringMatching(/^sc-/),
+      host_id: 'host-a',
+      profile_id: 'profile-a',
+    })
+    expect(Object.keys(request).sort()).toEqual(['host_id', 'profile_id', 'request_id'])
+
+    const createdSessionID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    transports[0].options.callbacks.onFrame(encodeFrame(
+      TYPE.SESSION_CREATED,
+      uuidParse(createdSessionID),
+      encodeText(JSON.stringify({ request_id: request.request_id, ok: true, session_id: createdSessionID })),
+    ))
+    await expect(created).resolves.toBe(createdSessionID)
+  })
+
+  it('rejects owner errors and never retries a create across a route generation', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+
+    const refused = connection.createSessionWithProfile('host-a', 'missing-profile')
+    const refusedRequest = JSON.parse(decodeText(decodeFrame(transports[0].sent.at(-1)!).payload))
+    transports[0].options.callbacks.onFrame(encodeFrame(
+      TYPE.SESSION_CREATED,
+      new Uint8Array(16),
+      encodeText(JSON.stringify({ request_id: refusedRequest.request_id, ok: false, error: 'unknown_profile' })),
+    ))
+    await expect(refused).rejects.toThrow('unknown_profile')
+
+    const pending = connection.createSessionWithProfile('host-a', 'profile-a')
+    connection.setRoute('quick_tunnel')
+    await expect(pending).rejects.toThrow('upstream_unavailable')
+    transports[1].options.callbacks.onAuthenticated?.()
+    transports[1].options.callbacks.onReady(0)
+    expect(transports[1].sent.map(decodeFrame).filter((frame) => frame.type === TYPE.SESSION_CREATE)).toHaveLength(0)
+  })
+
+  it('ignores mismatched or malformed success responses until the create timeout', async () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+
+    const pending = connection.createSessionWithProfile('host-a', 'profile-a', 20)
+    const request = JSON.parse(decodeText(decodeFrame(transports[0].sent.at(-1)!).payload))
+    const validSessionID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    for (const response of [
+      { request_id: 'other-request', ok: true, session_id: validSessionID, sid: uuidParse(validSessionID) },
+      { request_id: request.request_id, ok: true, session_id: 'zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz', sid: new Uint8Array(16) },
+      { request_id: request.request_id, ok: true, session_id: validSessionID, sid: uuidParse(sessionID) },
+    ]) {
+      transports[0].options.callbacks.onFrame(encodeFrame(
+        TYPE.SESSION_CREATED,
+        response.sid,
+        encodeText(JSON.stringify({ request_id: response.request_id, ok: response.ok, session_id: response.session_id })),
+      ))
+    }
+
+    const rejection = expect(pending).rejects.toThrow('timeout')
+    await vi.advanceTimersByTimeAsync(20)
+    await rejection
+  })
 })

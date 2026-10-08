@@ -163,14 +163,13 @@ export interface SessionBridge {
   listRelaySessions?(): Promise<_RelaySessionRow[]>
   revokeRelaySession?(idHash: string): Promise<void>
   signOutOtherRelaySessions?(): Promise<_SignOutOthersResult>
-  /** Capacitor-only (design §5). Mobile cannot fork a PTY, so this asks a
-   *  specific connected desktop (by host_id, from RemoteSession.host_id) to
-   *  fork a session from one of its own saved profiles (by profile_id, from
-   *  ProfileView.id) and resolves with the new session_id on success. The
-   *  Wails platform never gains this — it already forks locally via
-   *  newSession, which is faster and cannot fail on relay routing.
+  /** Remote profile launch. This asks a specific connected desktop (by
+   *  host_id, from RemoteSession.host_id) to fork a session from one of its
+   *  own saved profiles (by profile_id, from ProfileView.id) and resolves
+   *  with the new session_id on success. Capacitor uses the Relay account
+   *  route; Wails can use an authenticated accountless Peer route.
    *
-   *  One round trip, no retry: rejects after a 30s timeout (matching the
+   *  One round trip, no request retry: rejects after a 30s timeout (matching the
    *  relay's own request_in_flight TTL headroom) with Error('timeout'), and
    *  the caller must not resend — a retried "start a shell" that actually
    *  succeeded the first time leaves an orphan process nobody asked for. On
@@ -179,7 +178,7 @@ export interface SessionBridge {
    *  SessionCreatedPayload.Error in internal/proto/frame.go (plus
    *  'relay_not_configured' when no relay session exists locally).
    *
-   *  Implementation opens a brand-new WebSocket to the relay's /client
+   *  The Capacitor implementation opens a brand-new WebSocket to the relay's /client
    *  endpoint for every call, rather than reusing one connection across
    *  requests (there is no existing attached connection to ride when the
    *  phone isn't attached to anything, unlike the FS request path's
@@ -199,7 +198,9 @@ export interface SessionBridge {
    *  account key's MaxConnectionsPerKey connection slots (shared with the
    *  sidebar's session list and any attached terminals) for up to 30s —
    *  bounded to one such slot at a time by that same JS guard, but worth
-   *  knowing if connection-limit errors ever show up here. */
+   *  knowing if connection-limit errors ever show up here. The Wails Peer
+   *  implementation similarly owns one temporary terminal route, but sends
+   *  no driver claim or terminal input and closes it after the response. */
   createSessionWithProfile?(hostID: string, profileID: string): Promise<string>
 }
 

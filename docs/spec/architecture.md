@@ -423,6 +423,18 @@ active membership、双方 session scope、owner 当前 `full` policy 与 route 
 输出并关闭 watcher，旧 generation 的迟到 response/event 不进入新 route。Peer record 已端到端加密，
 所以允许读取 `.env*`；通用 policy 仍恒拒 `.ssh` / `.gnupg` / `.aws`。
 
+Peer 远程创建会话复用 `SESSION_CREATE` / `SESSION_CREATED`，并复用 Settings 的 Session Profiles
+界面。renderer 从加密 catalog 中选择同一 `host_id` 下 effective permission 为 `control/full` 的
+可发现 session 作为临时 anchor，依次查询 token-free route capability，优先 Direct、其次 Quick
+Tunnel；连接 ready 后只发送 `{request_id, host_id, profile_id}`，不 claim driver、不发送 terminal
+input，收到一条响应或 30 秒超时即关闭。请求开始后不跨 generation 重试。owner 的
+`peerHostAttempt` 用 anchor session 的 authenticated membership、双方 session scope 和共享 route
+lease 做授权，但只在本地配置中按 `profile_id` 解析 shell/cwd/env/startup command；renderer 无法
+注入这些执行字段。owner 在 worker fork 前与 response 发出前重验权限/lease，每个 attempt 只允许
+一个并发 create，route replacement 或 owner 降权会丢弃旧路迟到响应。当前方案要求目标设备至少
+发布一个可发现 session；支持零会话 host 需要后续独立 control channel，不能把 `host_id` 当成
+session id 或绕过 session-scope 授权。
+
 同一 native Peer transport API 也接受显式 `quick_tunnel` route kind，但 renderer 不提供 URL、
 membership token 或任何 Relay/account credential。首次加入成功后，Go 只在内存保留已验签 bundle
 中的 Quick Tunnel URL、签发 Peer 和到期时间；使用前再次确认该 Peer 仍在当前 deny-wins active

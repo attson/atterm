@@ -72,6 +72,7 @@ import type { Platform, EnvironmentInfo, RemoteSession } from './types'
 import { main as WailsModels } from '../../wailsjs/go/models'
 import { setAccountKeyProvider } from '../lib/account-key'
 import { NativeDirectClientTransport } from '../lib/nativeDirectClient'
+import { PeerSessionConnection } from '../lib/peerSessionConnection'
 
 // In-memory cache of the unlocked account_key. Mirrors the Capacitor
 // platform's cache but reads from the Go App.GetAccountKey binding
@@ -79,6 +80,80 @@ import { NativeDirectClientTransport } from '../lib/nativeDirectClient'
 // login/register (api.loginRemoteRelay / api.registerRemoteRelay calls
 // are wrapped to refetch). Wiped on logout.
 let cachedAccountKey: Uint8Array | null = null
+
+const peerNativeBridge = {
+  on: (event: string, handler: (data: unknown) => void) => EventsOn(event, handler as (...data: unknown[]) => void),
+  start: (req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: 'direct' | 'quick_tunnel' }) => StartPeerNativeDirect(req),
+  send: (id: string, frame: number[]) => SendPeerNativeDirectFrame(id, frame),
+  stop: (id: string) => StopPeerNativeDirect(id),
+}
+
+async function listPeerRemoteSessions(): Promise<RemoteSession[]> {
+  const parsed = JSON.parse(await ListPeerSessions()) as RemoteSession[] | null
+  return (parsed ?? []).map((session) => ({
+    ...session,
+    session_id: session.session_id || (session as unknown as { id?: string }).id || '',
+    peer_direct: true,
+  }))
+}
+
+async function createPeerSessionWithProfile(hostID: string, profileID: string): Promise<string> {
+  const candidates = (await listPeerRemoteSessions())
+    .filter((session) => session.host_id === hostID &&
+      (session.remote_permission === 'control' || session.remote_permission === 'full') && session.session_id)
+    .sort((left, right) => left.session_id.localeCompare(right.session_id))
+  if (candidates.length === 0) throw new Error('unknown_host_id')
+
+  let selected: { anchor: RemoteSession; route: 'direct' | 'quick_tunnel' } | null = null
+  let quickTunnelCandidate: RemoteSession | null = null
+  for (const anchor of candidates) {
+    let routeStatus: Awaited<ReturnType<typeof GetPeerSessionRouteStatus>>
+    try {
+      routeStatus = await GetPeerSessionRouteStatus(anchor.session_id)
+    } catch {
+      continue
+    }
+    if (routeStatus.direct) {
+      selected = { anchor, route: 'direct' }
+      break
+    }
+    if (!quickTunnelCandidate && routeStatus.quick_tunnel) quickTunnelCandidate = anchor
+  }
+  if (!selected && quickTunnelCandidate) selected = { anchor: quickTunnelCandidate, route: 'quick_tunnel' }
+  if (!selected) throw new Error('upstream_unavailable')
+  const { anchor, route } = selected
+
+  return new Promise<string>((resolve, reject) => {
+    const startedAt = Date.now()
+    let requestStarted = false
+    let settled = false
+    let connection: PeerSessionConnection | null = null
+    const finish = (complete: () => void) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      connection?.detach()
+      complete()
+    }
+    const timer = window.setTimeout(() => finish(() => reject(new Error('timeout'))), 30_000)
+    connection = new PeerSessionConnection(anchor.session_id, {
+      onStatus: (status) => {
+        if (status !== 'attached' || requestStarted || settled) return
+        requestStarted = true
+        const remaining = Math.max(1, 30_000 - (Date.now() - startedAt))
+        void connection!.createSessionWithProfile(hostID, profileID, remaining)
+          .then((sessionID) => finish(() => resolve(sessionID)))
+          .catch((error) => finish(() => reject(error)))
+      },
+      onClose: () => finish(() => reject(new Error('upstream_unavailable'))),
+    }, {
+      route,
+      transportFactory: (options) => new NativeDirectClientTransport(options, peerNativeBridge, 'peer-native-direct:event:'),
+      resolveQuickTunnelFallback: async () => (await GetPeerSessionRouteStatus(anchor.session_id)).quick_tunnel,
+    })
+    connection.attach()
+  })
+}
 
 function b64StdToBytes(s: string): Uint8Array {
   if (!s) return new Uint8Array(0)
@@ -150,15 +225,14 @@ export function createWailsPlatform(): Platform {
       newSession: api.newSession,
       closeSession: api.closeSession,
       listShells: api.listShells,
-      // Remote session listing currently goes through SessionListConnection
-      // in App.vue. Keep this empty until the platform bridge is unified.
-      listRemoteSessions: async (): Promise<RemoteSession[]> => [],
+      listRemoteSessions: listPeerRemoteSessions,
       markSessionsSeen: api.markSessionsSeen,
       getPins: () => api.getPinnedSessionIds(),
       setPins: (ids) => api.setPinnedSessionIds(ids),
       listRelaySessions: api.listRelaySessions,
       revokeRelaySession: api.revokeRelaySession,
       signOutOtherRelaySessions: api.signOutOtherRelaySessions,
+      createSessionWithProfile: createPeerSessionWithProfile,
     },
     servicePreview: {
       supportsMappings: true,
@@ -313,21 +387,9 @@ export function createWailsPlatform(): Platform {
       startQuickTunnel: () => StartPeerQuickTunnel(),
       stopQuickTunnel: () => StopPeerQuickTunnel(),
       createConnectionBundle: (invitationToken) => CreatePeerConnectionBundle(invitationToken),
-      listSessions: async () => {
-        const parsed = JSON.parse(await ListPeerSessions()) as RemoteSession[] | null
-        return (parsed ?? []).map((session) => ({
-          ...session,
-          session_id: session.session_id || (session as unknown as { id?: string }).id || '',
-          peer_direct: true,
-        }))
-      },
+      listSessions: listPeerRemoteSessions,
       getSessionRouteStatus: (sessionID) => GetPeerSessionRouteStatus(sessionID),
-      createSessionTransport: (options) => new NativeDirectClientTransport(options, {
-        on: (event, handler) => EventsOn(event, handler as (...data: unknown[]) => void),
-        start: (req) => StartPeerNativeDirect(req),
-        send: (id, frame) => SendPeerNativeDirectFrame(id, frame),
-        stop: (id) => StopPeerNativeDirect(id),
-      }, 'peer-native-direct:event:'),
+      createSessionTransport: (options) => new NativeDirectClientTransport(options, peerNativeBridge, 'peer-native-direct:event:'),
     },
     updater: {
       getState: api.getUpdateState,

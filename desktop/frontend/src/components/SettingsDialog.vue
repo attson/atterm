@@ -497,7 +497,11 @@ function onSaveClick() {
           <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" @bindings-changed="onBindingsChanged" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
-          <SettingsProfiles v-if="activeTab === 'profiles' && caps.wailsBindings" @profiles-changed="onProfilesChanged" />
+          <SettingsProfiles
+            v-if="activeTab === 'profiles' && caps.wailsBindings"
+            @profiles-changed="onProfilesChanged"
+            @session-created="(sessionId) => emit('session-created', sessionId)"
+          />
           <SettingsProfilesMobile
             v-if="activeTab === 'mobile-profiles' && caps.capacitor"
             @session-created="(sessionId) => emit('session-created', sessionId)"

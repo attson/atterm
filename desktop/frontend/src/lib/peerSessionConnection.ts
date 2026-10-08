@@ -42,6 +42,15 @@ export interface PeerSessionConnectionOptions {
   directFailbackCooldownMs?: number
 }
 
+interface SessionCreatedResponse {
+  request_id: string
+  ok: boolean
+  session_id?: string
+  error?: string
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 interface PeerHandoverAttempt {
   generation: number
   transport: DirectTransport
@@ -98,6 +107,12 @@ export class PeerSessionConnection {
   }>()
   private retiredFSRequestIDs = new Set<string>()
   private fsEventHandlers = new Set<(event: FSEvent) => void>()
+  private pendingSessionCreates = new Map<string, {
+    generation: number
+    resolve: (sessionID: string) => void
+    reject: (error: Error) => void
+    timer: number
+  }>()
   private currentDriverClientID = ''
   private diagnostics: DirectTransportDiagnostics | null = null
   private lastFailureReason: DirectFallbackReason | undefined
@@ -178,6 +193,42 @@ export class PeerSessionConnection {
   }
 
   closeService(_serviceID: string): void {}
+
+  createSessionWithProfile(hostID: string, profileID: string, timeoutMs = 30_000): Promise<string> {
+    const transport = this.transport
+    const targetHostID = hostID.trim()
+    const targetProfileID = profileID.trim()
+    if (!this.ready || !transport || this.handover) {
+      return Promise.reject(new Error('upstream_unavailable'))
+    }
+    if (!targetHostID || targetHostID.length > 256 || !targetProfileID || targetProfileID.length > 256) {
+      return Promise.reject(new Error('invalid_request'))
+    }
+    const requestID = `sc-${crypto.randomUUID()}`
+    const generation = this.generation
+    const payload = encodeText(JSON.stringify({
+      request_id: requestID,
+      host_id: targetHostID,
+      profile_id: targetProfileID,
+    }))
+    return new Promise<string>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingSessionCreates.delete(requestID)
+        reject(new Error('timeout'))
+      }, timeoutMs)
+      this.pendingSessionCreates.set(requestID, { generation, resolve, reject, timer })
+      try {
+        if (!this.isCurrent(generation, transport) || this.handover ||
+          !transport.sendFrame(encodeFrame(TYPE.SESSION_CREATE, this.sidBytes, payload))) {
+          throw new Error('upstream_unavailable')
+        }
+      } catch (value) {
+        window.clearTimeout(timer)
+        this.pendingSessionCreates.delete(requestID)
+        reject(value instanceof Error ? value : new Error(String(value)))
+      }
+    })
+  }
 
   onFSEvent(handler: (event: FSEvent) => void): () => void {
     this.fsEventHandlers.add(handler)
@@ -299,6 +350,10 @@ export class PeerSessionConnection {
   }
 
   private handleFrame(frame: Frame): void {
+    if (frame.type === TYPE.SESSION_CREATED) {
+      this.handleSessionCreated(frame)
+      return
+    }
     if (!this.sameSession(frame.sid)) throw new Error('Peer frame session mismatch')
     if (frame.type === TYPE.OUT) {
       const { seq, data } = decodeOutPayload(frame.payload)
@@ -397,6 +452,47 @@ export class PeerSessionConnection {
     }
   }
 
+  private handleSessionCreated(frame: Frame): void {
+    let response: SessionCreatedResponse
+    try {
+      const parsed = JSON.parse(decodeText(frame.payload)) as Partial<SessionCreatedResponse>
+      if (!parsed || typeof parsed.request_id !== 'string' || typeof parsed.ok !== 'boolean' ||
+        parsed.session_id !== undefined && typeof parsed.session_id !== 'string' ||
+        parsed.error !== undefined && typeof parsed.error !== 'string') return
+      response = parsed as SessionCreatedResponse
+    } catch {
+      return
+    }
+    const pending = this.pendingSessionCreates.get(response.request_id)
+    if (!pending || pending.generation !== this.generation) return
+    if (response.ok) {
+      if (!response.session_id || !UUID_PATTERN.test(response.session_id)) return
+      let expected: Uint8Array
+      try {
+        expected = uuidParse(response.session_id)
+      } catch {
+        return
+      }
+      if (!this.sameBytes(frame.sid, expected)) return
+    }
+    window.clearTimeout(pending.timer)
+    this.pendingSessionCreates.delete(response.request_id)
+    if (!response.ok) {
+      pending.reject(new Error(response.error || 'upstream_unavailable'))
+      return
+    }
+    pending.resolve(response.session_id!)
+  }
+
+  private rejectPendingSessionCreates(error: Error): void {
+    const pending = Array.from(this.pendingSessionCreates.values())
+    this.pendingSessionCreates.clear()
+    for (const request of pending) {
+      window.clearTimeout(request.timer)
+      request.reject(error)
+    }
+  }
+
   private flush(): void {
     if (!this.transport || !this.ready) return
     if (this.pendingDriverClaim) {
@@ -432,6 +528,7 @@ export class PeerSessionConnection {
     if (this.detached || this.suspended) return
     this.clearDirectFailbackTimer()
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
+    this.rejectPendingSessionCreates(new Error('upstream_unavailable'))
     this.retiredFSRequestIDs.clear()
     const wasActive = this.ready
     this.authenticated = false
@@ -565,6 +662,7 @@ export class PeerSessionConnection {
       this.handover
     ) return
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
+    this.rejectPendingSessionCreates(new Error('upstream_unavailable'))
     this.retiredFSRequestIDs.clear()
     let transport: DirectTransport
     const attempt: PeerHandoverAttempt = {
@@ -692,6 +790,7 @@ export class PeerSessionConnection {
 
   private closeTransport(): void {
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
+    this.rejectPendingSessionCreates(new Error('upstream_unavailable'))
     this.retiredFSRequestIDs.clear()
     this.generation++
     this.fallbackPending = false
@@ -731,7 +830,11 @@ export class PeerSessionConnection {
   }
 
   private sameSession(other: Uint8Array): boolean {
-    return other.length === this.sidBytes.length && other.every((value, index) => value === this.sidBytes[index])
+    return this.sameBytes(other, this.sidBytes)
+  }
+
+  private sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index])
   }
 
   private connectingRoute(): 'connecting-direct' | 'connecting-quick-tunnel' {

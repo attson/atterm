@@ -160,6 +160,7 @@ import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { createPinia } from "pinia";
 import SettingsDialog from "./SettingsDialog.vue";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsProfiles from "./SettingsProfiles.vue";
 import SettingsProfilesMobile from "./SettingsProfilesMobile.vue";
 
 const baseProps: { localSessionCount: number; remoteSessionCount: number; terminalThemeId: string; initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" } = { localSessionCount: 0, remoteSessionCount: 0, terminalThemeId: "default" };
@@ -450,6 +451,15 @@ describe("SettingsDialog appearance forwarding", () => {
 // under), switches to its tab, and proves both ends: the dialog is
 // listening on the child, and it re-emits exactly what it received.
 describe("SettingsDialog session-created forwarding", () => {
+  it("forwards session-created from desktop Peer profiles", async () => {
+    const w = mountDialog();
+    await switchToTab(w, en.settings.profiles.tab);
+
+    w.findComponent(SettingsProfiles).vm.$emit("session-created", "peer-session-id");
+
+    expect(w.emitted("session-created")!.at(-1)![0]).toEqual("peer-session-id");
+  });
+
   it("forwards session-created from SettingsProfilesMobile", async () => {
     platform.caps = { ...platform.caps, capacitor: true };
     __setPlatformForTests(platform);

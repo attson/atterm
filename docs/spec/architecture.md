@@ -426,7 +426,11 @@ member reconnect bundle；旧 host 忽略探测，client 在 750 ms 后回退 v1
 issuer membership 与目标 Peer ID，成功后原子替换或删除该 issuer 的内存 route。v1 fallback 不改
 已有 route，URL/token 不落盘、不进入 renderer、日志或诊断。Peer terminal 重连失败且目标 session
 仍在已认证目录中时，renderer 只能查询 `direct/quick_tunnel` 可用性布尔值；用户可显式选择通过
-Quick Tunnel 重试。route leasing 和自动 handover 仍属于后续工作。
+Quick Tunnel 重试。host 侧已为 Quick Tunnel WSS 与 Rendezvous Pion 共用 authenticated Peer route
+lease，按 `(remote_peer_id, session_id, client_instance_id)` 原子迁移 terminal subscriber 和 driver；
+新 route 完成授权重验与 replay catch-up 后才接管，旧 route 随即失去 terminal/config 写权限，
+且迟到 close 不会释放新 lease。不同客户端实例仍可独立订阅同一 session。自动 route 选择、
+断线续接 cursor 与 Direct/Quick Tunnel handover 仍属于后续工作。
 
 Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
 registration：单次注册最多等待 10 秒，失败以 500 ms 到 8 s 退避，连接断开和 15 分钟

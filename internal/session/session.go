@@ -243,6 +243,10 @@ type Subscriber struct {
 	// driver only via an explicit CLAIM_DRIVER, never because the uplink
 	// (re)subscribed. ClaimDriver still promotes it.
 	noAutoDrive bool
+	// replaces is an existing subscriber that this subscriber atomically
+	// supersedes after replay catch-up. It is used by authenticated route
+	// handover so subscriber lifecycle never passes through zero.
+	replaces *Subscriber
 }
 
 // SubscribeOption configures a subscription created by Subscribe.
@@ -253,6 +257,14 @@ type SubscribeOption func(*Subscriber)
 // driver role can still be assigned to it explicitly via ClaimDriver.
 func WithoutAutoDrive() SubscribeOption {
 	return func(sub *Subscriber) { sub.noAutoDrive = true }
+}
+
+// ReplacingSubscriber atomically swaps an existing subscriber for the new
+// subscriber after replay catch-up. If old is no longer attached, Subscribe
+// behaves like a normal addition. A driver lease transfers without changing
+// its end-to-end client identity.
+func ReplacingSubscriber(old *Subscriber) SubscribeOption {
+	return func(sub *Subscriber) { sub.replaces = old }
 }
 
 // Out returns the channel this subscriber should be drained from.
@@ -739,15 +751,28 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 		s.mu.Lock()
 	}
 	closed := s.closed
-	wasEmpty := len(s.subs) == 0
+	initialCount := len(s.subs)
+	wasEmpty := initialCount == 0
 	added := false
 	var (
 		promotedToDriver   bool
+		replacedSubscriber *Subscriber
 		snapshotMeta       proto.SessionInfo
 		snapshotDriverID   string
 		snapshotDriverName string
 	)
 	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
+		if sub.replaces != nil {
+			if _, exists := s.subs[sub.replaces]; exists {
+				replacedSubscriber = sub.replaces
+				delete(s.subs, sub.replaces)
+				if s.driverSubscriber == sub.replaces {
+					s.driverSubscriber = sub
+					promotedToDriver = true
+				}
+			}
+			sub.replaces = nil
+		}
 		s.subs[sub] = struct{}{}
 		added = true
 		if !s.driverFromUpstream && s.driverSubscriber == nil && !sub.noAutoDrive {
@@ -763,11 +788,16 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	firstHook := s.onFirstSubscribe
 	countHook := s.onSubscriberCount
 	subCount := len(s.subs)
+	countChanged := subCount != initialCount
 	s.mu.Unlock()
 
 	if closed || !added {
+		sub.replaces = nil
 		sub.close()
 		return sub, lastSeq
+	}
+	if replacedSubscriber != nil {
+		replacedSubscriber.close()
 	}
 	if promotedToDriver {
 		s.broadcastDriverMeta(snapshotMeta, snapshotDriverID, snapshotDriverName)
@@ -780,7 +810,7 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	// Synchronous (not goroutine) so successive counts stay ordered — a stale
 	// count arriving after a newer one would mis-render the viewer badge. The
 	// hook must be non-blocking (the relay's is a non-blocking enqueue).
-	if countHook != nil {
+	if countHook != nil && countChanged {
 		countHook(subCount)
 	}
 	return sub, lastSeq

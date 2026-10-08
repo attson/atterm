@@ -74,6 +74,7 @@ type peerHostAttempt struct {
 	sessionID        uuid.UUID
 	permission       string
 	clientInstanceID string
+	remotePeerID     string
 
 	mu                sync.Mutex
 	transport         *peertransport.PionHostAttempt
@@ -84,6 +85,9 @@ type peerHostAttempt struct {
 	sub               *session.Subscriber
 	subscribedSession *session.Session
 	streamCancel      context.CancelFunc
+	leaseKey          peerHostRouteLeaseKey
+	leaseHeld         bool
+	starting          bool
 	closed            bool
 	closeOnce         sync.Once
 }
@@ -468,11 +472,28 @@ func (h *peerQuickTunnelHost) takeAttempt(signal *quicktunnel.SignalChannel) *pe
 }
 
 func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelChannel) error {
+	a.mu.Lock()
+	if a.closed || a.starting || a.sub != nil || a.channel != nil {
+		a.mu.Unlock()
+		return errors.New("Peer attempt closed or already streaming")
+	}
+	a.starting = true
+	a.mu.Unlock()
+	attached := false
+	defer func() {
+		if attached {
+			return
+		}
+		a.mu.Lock()
+		a.starting = false
+		a.mu.Unlock()
+	}()
+
 	remoteMembership, ok := channel.RemoteMembershipToken()
 	if !ok {
 		return errors.New("Peer membership is unavailable after authentication")
 	}
-	currentPermission, err := a.host.currentPermission(remoteMembership, a.sessionID)
+	currentPermission, remotePeerID, err := a.host.currentPeerAuthorization(remoteMembership, a.sessionID)
 	if err != nil || permissionRankName(currentPermission) < permissionRankName(a.permission) {
 		return errors.New("Peer authorization changed before attachment")
 	}
@@ -484,8 +505,23 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	if !ok || sess.Info().HostID != a.host.host.hostID {
 		return errors.New("local Peer session is unavailable")
 	}
+	leaseKey := peerHostRouteLeaseKey{
+		remotePeerID: remotePeerID, sessionID: a.sessionID, clientInstanceID: a.clientInstanceID,
+	}
+	replacedAttempt := a.host.app.currentPeerHostRouteLease(leaseKey)
 	clientID := "peer:" + a.clientInstanceID
-	sub, replayToSeq := sess.Subscribe(0, clientID, a.clientInstanceID, session.WithoutAutoDrive())
+	subscribeOptions := []session.SubscribeOption{session.WithoutAutoDrive()}
+	if replacedAttempt != nil && replacedAttempt != a {
+		if replacedSub := replacedAttempt.currentSubscriberFor(a.sessionID); replacedSub != nil {
+			subscribeOptions = append(subscribeOptions, session.ReplacingSubscriber(replacedSub))
+		}
+	}
+	sub, replayToSeq := sess.Subscribe(0, clientID, a.clientInstanceID, subscribeOptions...)
+	select {
+	case <-sub.Done():
+		return errors.New("Peer subscriber closed during attachment")
+	default:
+	}
 	streamCtx, cancel := context.WithCancel(parent)
 	a.mu.Lock()
 	if a.closed || a.sub != nil || a.channel != nil {
@@ -501,9 +537,34 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	a.sub = sub
 	a.subscribedSession = sess
 	a.streamCancel = cancel
+	a.remotePeerID = remotePeerID
+	a.leaseKey = leaseKey
+	previous, claimed := a.host.app.claimPeerHostRouteLease(leaseKey, replacedAttempt, a)
+	if !claimed {
+		a.channel = nil
+		a.config = nil
+		a.remoteMembership = ""
+		a.streamCtx = nil
+		a.sub = nil
+		a.subscribedSession = nil
+		a.streamCancel = nil
+		a.remotePeerID = ""
+		a.leaseKey = peerHostRouteLeaseKey{}
+		a.starting = false
+		a.mu.Unlock()
+		cancel()
+		sess.Unsubscribe(sub)
+		return errors.New("Peer route lease changed during attachment")
+	}
+	a.leaseHeld = true
+	a.starting = false
 	a.mu.Unlock()
+	attached = true
 	go a.stream(streamCtx, channel, sub, replayToSeq)
 	go a.watchAuthorization(streamCtx)
+	if previous != nil && previous != a {
+		previous.removeSelf()
+	}
 	if err := config.Start(streamCtx); err != nil {
 		return fmt.Errorf("start Peer config channel: %w", err)
 	}
@@ -520,6 +581,10 @@ func (a *peerHostAttempt) stream(ctx context.Context, channel peerQuickTunnelCha
 			return
 		case frame, open := <-sub.Out():
 			if !open {
+				a.removeSelf()
+				return
+			}
+			if !a.currentRouteLease() {
 				a.removeSelf()
 				return
 			}
@@ -552,6 +617,9 @@ func (a *peerHostAttempt) stream(ctx context.Context, channel peerQuickTunnelCha
 }
 
 func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.RecordKind, payload []byte) error {
+	if kind != peertransport.RecordClose && !a.currentRouteLease() {
+		return errors.New("Peer route lease is no longer active")
+	}
 	switch kind {
 	case peertransport.RecordPing:
 		if len(payload) != 8 {
@@ -622,6 +690,9 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 }
 
 func (a *peerHostAttempt) handleConfigMessage(kind peertransport.RecordKind, payload []byte) error {
+	if !a.currentRouteLease() {
+		return errors.New("Peer route lease is no longer active")
+	}
 	a.mu.Lock()
 	config := a.config
 	remoteMembership := a.remoteMembership
@@ -647,6 +718,10 @@ func (a *peerHostAttempt) watchAuthorization(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !a.currentRouteLease() {
+				a.removeSelf()
+				return
+			}
 			a.mu.Lock()
 			remoteMembership := a.remoteMembership
 			a.mu.Unlock()
@@ -686,14 +761,22 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 		transport := a.transport
 		channel := a.channel
 		signal := a.signal
+		leaseKey := a.leaseKey
+		leaseHeld := a.leaseHeld
 		a.streamCancel = nil
 		a.sub = nil
 		a.subscribedSession = nil
 		a.channel = nil
 		a.config = nil
 		a.remoteMembership = ""
+		a.remotePeerID = ""
 		a.streamCtx = nil
+		a.leaseHeld = false
+		a.starting = false
 		a.mu.Unlock()
+		if leaseHeld && a.host != nil {
+			a.host.app.releasePeerHostRouteLease(leaseKey, a)
+		}
 		if cancel != nil {
 			cancel()
 		}
@@ -713,9 +796,14 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 }
 
 func (a *peerHostAttempt) removeSelf() {
-	if a != nil && a.remove != nil {
-		a.remove()
+	if a == nil {
+		return
 	}
+	if a.remove != nil {
+		a.remove()
+		return
+	}
+	a.close(true)
 }
 
 func (a *peerHostAttempt) syncConfigNow() (bool, error) {
@@ -727,69 +815,78 @@ func (a *peerHostAttempt) syncConfigNow() (bool, error) {
 	ctx := a.streamCtx
 	closed := a.closed
 	a.mu.Unlock()
-	if closed || config == nil || ctx == nil || ctx.Err() != nil {
+	if closed || config == nil || ctx == nil || ctx.Err() != nil || !a.currentRouteLease() {
 		return false, nil
 	}
 	return true, config.Start(ctx)
 }
 
 func (h *peerHostRuntime) currentPermission(remoteMembership string, sessionID uuid.UUID) (string, error) {
+	permission, _, err := h.currentPeerAuthorization(remoteMembership, sessionID)
+	return permission, err
+}
+
+func (h *peerHostRuntime) currentPeerAuthorization(remoteMembership string, sessionID uuid.UUID) (string, string, error) {
 	if remoteMembership == "" {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	manager, err := h.app.peerManager()
 	if err != nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	state, err := manager.store.Load()
 	if err != nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
 	if err != nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
-	remote, err := peerproto.VerifyGrant(remoteMembership, genesis, time.Now())
+	now := time.Now()
+	if manager.now != nil {
+		now = manager.now()
+	}
+	remote, err := peerproto.VerifyGrant(remoteMembership, genesis, now)
 	if err != nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	identity, err := manager.loadIdentity()
 	if err != nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
-	active, err := activePeerMemberships(state, genesis, time.Now())
+	active, err := activePeerMemberships(state, genesis, now)
 	if err != nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	canonicalRemote := membershipForPeerID(active, remote.Document.SubjectPeerID)
 	local := membershipForPeerID(active, identity.PeerID())
 	if canonicalRemote == nil || canonicalRemote.Token != remoteMembership || local == nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	sess, ok := h.host.server.Registry().Get(sessionID)
 	if !ok || sess.Info().HostID != h.host.hostID {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	if !peerMembershipAllowsSession(remote, sessionID) || !peerMembershipAllowsSession(*local, sessionID) {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	ownerPermission, err := h.currentOwnerPermission()
 	if err != nil {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	ownerTransportPermission, ok := directTransportPermission(ownerPermission)
 	if !ok {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	remotePermission, ok := peerPermission(remote.Document.Permission)
 	if !ok {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
 	localPermission, ok := peerPermission(local.Document.Permission)
 	if !ok {
-		return "", quicktunnel.ErrUnauthorized
+		return "", "", quicktunnel.ErrUnauthorized
 	}
-	return peerPermissionName(minimumPeerTransportPermission(ownerTransportPermission, remotePermission, localPermission)), nil
+	return peerPermissionName(minimumPeerTransportPermission(ownerTransportPermission, remotePermission, localPermission)), remote.Document.SubjectPeerID, nil
 }
 
 func peerMembershipAllowsSession(membership peerproto.VerifiedGrant, sessionID uuid.UUID) bool {

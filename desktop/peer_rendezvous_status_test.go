@@ -10,6 +10,7 @@ import (
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/quicktunnel"
 	"github.com/attson/atterm/internal/rendezvousclient"
+	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -117,9 +118,18 @@ func TestSyncPeerConfigNowUsesOnlyAuthenticatedChannels(t *testing.T) {
 	}
 
 	sink := &peerConfigInventorySink{}
+	leaseKey := peerHostRouteLeaseKey{
+		remotePeerID: "peer-a", sessionID: uuid.New(), clientInstanceID: "client-a",
+	}
 	attempt := &peerHostAttempt{
+		host:      &peerHostRuntime{app: app},
 		config:    &peerConfigChannel{app: app, transport: sink},
 		streamCtx: context.Background(),
+		leaseKey:  leaseKey,
+		leaseHeld: true,
+	}
+	if _, ok := app.claimPeerHostRouteLease(leaseKey, nil, attempt); !ok {
+		t.Fatal("failed to install authenticated Peer route lease")
 	}
 	host := &peerQuickTunnelHost{attempts: map[*quicktunnel.SignalChannel]*peerHostAttempt{nil: attempt}}
 	app.quickTunnel = host

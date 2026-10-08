@@ -48,8 +48,13 @@ carries the host's refreshed signed member bundle on its first page. Old hosts i
 cached as v1-only after a short timeout; new clients independently bind the bundle issuer to the catalog
 Peer and current deny-wins membership before rotating only that process-local hint. This distribution
 creates no terminal subscriber or Pion attempt and a v1 fallback leaves the current hint untouched.
-Live route leasing and automatic handover remain disabled pending the shared transport/principal entry
-gate and soak tests.
+Authenticated Peer live route leasing is now active on the shared Quick Tunnel/Rendezvous host path.
+The lease key is `(remote_peer_id, session_id, client_instance_id)`: a replacement route revalidates
+the exact active membership and session scope, catches up replay, then atomically inherits the existing
+subscriber/driver identity. The superseded route loses terminal and config authority, a late old close
+cannot remove the replacement, and stale concurrent candidates cannot overwrite the winner. Independent
+client instances still coexist. Automatic route selection and handover remain disabled pending cursor,
+generation and soak-test gates.
 
 ## PR 4.2 - Automated handover
 

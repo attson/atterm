@@ -383,12 +383,14 @@ type App struct {
 
 	// nativeDirect owns Wails-side Pion client attempts. The browser transport
 	// remains in use on Web/Capacitor; desktop attempts never depend on WebKit.
-	nativeDirectMu sync.Mutex
-	nativeDirect   map[string]*nativeDirectClient
-	peerNativeMu   sync.Mutex
-	peerNative     map[string]*peerNativeDirectClient
-	peerRouteMu    sync.Mutex
-	peerRoutes     map[string]peerQuickTunnelRoute
+	nativeDirectMu  sync.Mutex
+	nativeDirect    map[string]*nativeDirectClient
+	peerNativeMu    sync.Mutex
+	peerNative      map[string]*peerNativeDirectClient
+	peerRouteMu     sync.Mutex
+	peerRoutes      map[string]peerQuickTunnelRoute
+	peerHostLeaseMu sync.Mutex
+	peerHostLeases  map[peerHostRouteLeaseKey]*peerHostAttempt
 
 	// peerSpace is initialized lazily because most existing installations use
 	// only Relay mode and should not create Peer identity or keyring entries.

@@ -1127,6 +1127,16 @@ effective permission 与 driver 身份，不在每个键入帧访问磁盘/keyri
 关闭 attempt。配置 anti-entropy 同时绑定到同一 authenticated membership，但使用独立 config
 callback，绝不创建第二个 terminal subscriber。
 
+Quick Tunnel WSS 与 Rendezvous Pion host 共用进程内的 authenticated Peer route lease。租约键为
+`(remote_peer_id, session_id, client_instance_id)`：同一 Peer 的不同设备或 pane 可以各自 attach，
+同一逻辑客户端的新 route 则必须先重新验证 exact active membership、session scope 和 permission，
+完成 scrollback catch-up 后才原子替换旧 subscriber。若旧 subscriber 是 driver，新的 subscriber
+继承同一 `driver_client_id` / `driver_client_name`，subscriber count 不经过 0，也不触发 lazy uplink
+的假停止/重启。安装新租约后，旧 route 立即失去 `IN`、`RESIZE`、`CLAIM_DRIVER` 和 config sync
+权限；旧连接迟到的 close 只能释放自己，不能删除新租约。并发的陈旧候选不能覆盖已经获胜的
+route。该规则只约束 host 本地 attachment，不增加 frame/record 类型，也不启用自动 route 选择；
+Rendezvous direct 失败后是否显式改用 Quick Tunnel 仍由当前用户操作决定。
+
 `CreatePeerConnectionBundle(invitation)` 只接受本地加密账本中仍开放、未消费、未撤销、未过期且
 由当前 active local membership 签发的 invitation；首次加入的 bundle 必须发布当前 Quick Tunnel
 URL，也可以附带 Rendezvous hint。空 invitation 生成 member reconnect bundle，可发布 Quick

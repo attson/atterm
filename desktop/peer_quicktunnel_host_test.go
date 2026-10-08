@@ -253,6 +253,154 @@ func TestPeerQuickTunnelHostAttachesLocalSessionAndConfigChannel(t *testing.T) {
 	}
 }
 
+func TestPeerHostRouteLeaseReplacesSubscriberAndPreservesDriver(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var subscriberCounts []int
+	fixture.session.SetSubscriberCountHook(func(count int) {
+		subscriberCounts = append(subscriberCounts, count)
+	})
+
+	newAttempt := func() (*peerHostAttempt, *peerNativeTestChannel) {
+		attempt := &peerHostAttempt{
+			host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+			permission: proto.RemotePermissionControl, clientInstanceID: "stable-client-instance",
+		}
+		attempt.remove = func() { attempt.close(true) }
+		channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+		return attempt, channel
+	}
+
+	first, firstChannel := newAttempt()
+	if err := first.start(ctx, firstChannel); err != nil {
+		t.Fatal(err)
+	}
+	claimPayload, err := json.Marshal(proto.ClaimDriverPayload{ClientID: "logical-client", ClientName: "desktop-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+		Type: proto.TypeClaimDriver, SessionID: fixture.session.ID, Payload: claimPayload,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if got := fixture.session.DriverClientID(); got != "logical-client" {
+		t.Fatalf("initial driver=%q", got)
+	}
+
+	second, secondChannel := newAttempt()
+	if err := second.start(ctx, secondChannel); err != nil {
+		t.Fatal(err)
+	}
+	defer second.close(true)
+	if got := fixture.session.SubscriberCount(); got != 1 {
+		t.Fatalf("subscriber count after route replacement=%d want=1", got)
+	}
+	if got := fixture.session.DriverClientID(); got != "logical-client" {
+		t.Fatalf("replacement driver=%q want preserved identity", got)
+	}
+	if len(subscriberCounts) != 1 || subscriberCounts[0] != 1 {
+		t.Fatalf("subscriber count transitions=%v want [1]", subscriberCounts)
+	}
+	firstChannel.mu.Lock()
+	firstClosed := firstChannel.closed
+	firstChannel.mu.Unlock()
+	if !firstClosed {
+		t.Fatal("superseded route channel remained open")
+	}
+	if err := first.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+		Type: proto.TypeIn, SessionID: fixture.session.ID, Payload: []byte("old"),
+	})); err == nil {
+		t.Fatal("superseded route was still allowed to send input")
+	}
+	if err := second.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+		Type: proto.TypeIn, SessionID: fixture.session.ID, Payload: []byte("new"),
+	})); err != nil {
+		t.Fatalf("replacement route input: %v", err)
+	}
+	select {
+	case frame := <-fixture.session.Inbound():
+		if string(frame.Payload) != "new" {
+			t.Fatalf("inbound payload=%q", frame.Payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replacement route input was not delivered")
+	}
+
+	first.close(true)
+	key := peerHostRouteLeaseKey{
+		remotePeerID: fixture.clientIdentity.PeerID(), sessionID: fixture.session.ID,
+		clientInstanceID: "stable-client-instance",
+	}
+	if current := fixture.app.currentPeerHostRouteLease(key); current != second {
+		t.Fatalf("late old close changed current lease=%p want=%p", current, second)
+	}
+}
+
+func TestPeerHostRouteLeaseKeepsDifferentClientInstancesIndependent(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionView)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	start := func(clientInstanceID string) *peerHostAttempt {
+		attempt := &peerHostAttempt{
+			host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+			permission: proto.RemotePermissionView, clientInstanceID: clientInstanceID,
+		}
+		attempt.remove = func() { attempt.close(true) }
+		if err := attempt.start(ctx, &peerNativeTestChannel{remoteMembership: fixture.clientMembership}); err != nil {
+			t.Fatal(err)
+		}
+		return attempt
+	}
+
+	first := start("client-a")
+	defer first.close(true)
+	second := start("client-b")
+	defer second.close(true)
+	if got := fixture.session.SubscriberCount(); got != 2 {
+		t.Fatalf("independent subscriber count=%d want=2", got)
+	}
+	for _, item := range []struct {
+		clientID string
+		attempt  *peerHostAttempt
+	}{{"client-a", first}, {"client-b", second}} {
+		key := peerHostRouteLeaseKey{
+			remotePeerID: fixture.clientIdentity.PeerID(), sessionID: fixture.session.ID,
+			clientInstanceID: item.clientID,
+		}
+		if current := fixture.app.currentPeerHostRouteLease(key); current != item.attempt {
+			t.Fatalf("lease %s=%p want=%p", item.clientID, current, item.attempt)
+		}
+	}
+}
+
+func TestPeerHostRouteLeaseRejectsStaleClaim(t *testing.T) {
+	app := &App{}
+	key := peerHostRouteLeaseKey{
+		remotePeerID: "peer-a", sessionID: uuid.New(), clientInstanceID: "client-a",
+	}
+	old := &peerHostAttempt{}
+	winner := &peerHostAttempt{}
+	stale := &peerHostAttempt{}
+
+	if previous, ok := app.claimPeerHostRouteLease(key, nil, old); !ok || previous != nil {
+		t.Fatalf("initial claim previous=%p ok=%v", previous, ok)
+	}
+	app.releasePeerHostRouteLease(key, old)
+	if previous, ok := app.claimPeerHostRouteLease(key, old, winner); !ok || previous != old {
+		t.Fatalf("replacement claim previous=%p ok=%v", previous, ok)
+	}
+	if current, ok := app.claimPeerHostRouteLease(key, old, stale); ok || current != winner {
+		t.Fatalf("stale claim current=%p ok=%v want winner=%p", current, ok, winner)
+	}
+	app.releasePeerHostRouteLease(key, old)
+	if current := app.currentPeerHostRouteLease(key); current != winner {
+		t.Fatalf("old release changed current lease=%p want=%p", current, winner)
+	}
+}
+
 func TestPeerQuickTunnelHostWSSFallbackAttachesLocalSession(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	server := httptest.NewServer(fixture.peerHost.handler)

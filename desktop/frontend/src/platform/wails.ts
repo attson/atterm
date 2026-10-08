@@ -38,6 +38,7 @@ import {
   RevokePeerMember,
   PreviewPeerConnectionBundle,
   JoinPeerSpace,
+  ImportPeerConnectionBundle,
   GetPeerQuickTunnelStatus,
   GetPeerRendezvousConfig,
   SetPeerRendezvousConfig,
@@ -48,6 +49,7 @@ import {
   StopPeerQuickTunnel,
   CreatePeerConnectionBundle,
   ListPeerSessions,
+  GetPeerSessionRouteStatus,
   StartPeerNativeDirect,
   SendPeerNativeDirectFrame,
   StopPeerNativeDirect,
@@ -295,6 +297,7 @@ export function createWailsPlatform(): Platform {
       createSpace: () => CreatePeerSpace(),
       previewConnectionBundle: (raw) => PreviewPeerConnectionBundle(raw),
       joinSpace: (req) => JoinPeerSpace(new WailsModels.JoinPeerSpaceReq(req)),
+      importConnectionBundle: (raw) => ImportPeerConnectionBundle(raw),
       createInvitations: (req) => CreatePeerInvitations(new WailsModels.CreatePeerInvitationsReq(req)),
       listInvitations: () => ListPeerInvitations(),
       revokeInvitation: (inviteID) => RevokePeerInvitation(inviteID),
@@ -318,6 +321,7 @@ export function createWailsPlatform(): Platform {
           peer_direct: true,
         }))
       },
+      getSessionRouteStatus: (sessionID) => GetPeerSessionRouteStatus(sessionID),
       createSessionTransport: (options) => new NativeDirectClientTransport(options, {
         on: (event, handler) => EventsOn(event, handler as (...data: unknown[]) => void),
         start: (req) => StartPeerNativeDirect(req),

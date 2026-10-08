@@ -39,9 +39,12 @@ keys it by the authenticated issuer Peer ID, rechecks bundle expiry and current 
 and resolves every endpoint and membership token outside the renderer. The WSS client reuses the
 existing encrypted terminal/config record channel and reports `Quick Tunnel` rather than `Direct`.
 The default request remains Rendezvous direct: no ICE failure automatically selects WSS, and no Relay
-credential or `account_key` enters the Peer path. Importing rotated member reconnect bundles, live
-route leasing and automatic handover remain disabled pending the shared transport/principal entry gate
-and soak tests.
+credential or `account_key` enters the Peer path. Existing members can now manually import a signed,
+ticketless reconnect bundle. Import requires the current genesis and exact active issuer membership,
+then atomically replaces (or removes) only the process-local Quick Tunnel hint. A failed Peer terminal
+can query token-free route availability and explicitly restart through Quick Tunnel; this is never
+invoked automatically. Automatic bundle propagation, live route leasing and automatic handover remain
+disabled pending the shared transport/principal entry gate and soak tests.
 
 ## PR 4.2 - Automated handover
 

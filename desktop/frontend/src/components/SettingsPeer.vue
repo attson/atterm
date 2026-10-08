@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Check, Copy, Database, Play, Plus, QrCode, RadioTower, RefreshCw, Save, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
+import { Check, Copy, Database, Download, Play, Plus, QrCode, RadioTower, RefreshCw, Save, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
 import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
@@ -19,6 +19,9 @@ const scanning = ref(false)
 const tunnelBusy = ref(false)
 const routeCopying = ref(false)
 const routeCopied = ref(false)
+const routeImporting = ref(false)
+const routeBundleInput = ref('')
+const routeImportResult = ref<'quick_tunnel' | 'no_quick_tunnel' | ''>('')
 const creatingSpace = ref(false)
 const invitationsLoading = ref(false)
 const invitationCreating = ref(false)
@@ -365,6 +368,24 @@ async function copyMemberRoute(): Promise<void> {
     error.value = t('settings.peer.errors.routeCopy')
   } finally {
     routeCopying.value = false
+  }
+}
+
+async function importMemberRoute(): Promise<void> {
+  const peer = platform.peer
+  const raw = routeBundleInput.value.trim()
+  if (!peer || !raw || routeImporting.value) return
+  error.value = ''
+  routeImportResult.value = ''
+  routeImporting.value = true
+  try {
+    const result = await peer.importConnectionBundle(raw)
+    routeBundleInput.value = ''
+    routeImportResult.value = result.quick_tunnel ? 'quick_tunnel' : 'no_quick_tunnel'
+  } catch {
+    error.value = t('settings.peer.errors.routeImport')
+  } finally {
+    routeImporting.value = false
   }
 }
 
@@ -892,6 +913,47 @@ function permissionLabel(permission: string): string {
         :busy-peer-id="memberActionID"
         @revoke="revokeMember"
       />
+
+      <section class="peer-section" data-testid="peer-route-import-section">
+        <div class="section-heading">
+          <Download :size="17" aria-hidden="true" />
+          <div>
+            <h3>{{ t('settings.peer.routeImport.title') }}</h3>
+            <p class="hint">{{ t('settings.peer.routeImport.hint') }}</p>
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="field-label" for="peer-route-bundle">{{ t('settings.peer.routeImport.label') }}</label>
+          <textarea
+            id="peer-route-bundle"
+            v-model="routeBundleInput"
+            data-testid="peer-route-import-input"
+            rows="3"
+            :placeholder="t('settings.peer.routeImport.placeholder')"
+            :disabled="routeImporting"
+            autocomplete="off"
+            spellcheck="false"
+            @input="routeImportResult = ''"
+          />
+        </div>
+        <div class="actions">
+          <button
+            type="button"
+            class="primary-action"
+            data-testid="peer-route-import-button"
+            :disabled="routeImporting || !routeBundleInput.trim()"
+            @click="importMemberRoute"
+          >
+            <Download :size="15" aria-hidden="true" />
+            {{ routeImporting ? t('settings.peer.routeImport.importing') : t('settings.peer.routeImport.action') }}
+          </button>
+        </div>
+        <p v-if="routeImportResult" class="success-note" data-testid="peer-route-import-success">
+          {{ routeImportResult === 'quick_tunnel'
+            ? t('settings.peer.routeImport.quickTunnelReady')
+            : t('settings.peer.routeImport.quickTunnelRemoved') }}
+        </p>
+      </section>
 
       <section v-if="hasQuickTunnelHost" class="peer-section" data-testid="peer-tunnel-section">
         <div>
@@ -1674,6 +1736,12 @@ button:disabled {
 .error {
   margin: 0;
   color: var(--bad);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.success-note {
+  margin: 0;
+  color: var(--good);
   font-size: 12px;
   line-height: 1.5;
 }

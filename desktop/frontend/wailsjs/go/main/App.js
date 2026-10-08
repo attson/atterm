@@ -218,6 +218,10 @@ export function GetPeerRendezvousStatus() {
   return window['go']['main']['App']['GetPeerRendezvousStatus']();
 }
 
+export function GetPeerSessionRouteStatus(arg1) {
+  return window['go']['main']['App']['GetPeerSessionRouteStatus'](arg1);
+}
+
 export function GetPeerSpaceStatus() {
   return window['go']['main']['App']['GetPeerSpaceStatus']();
 }
@@ -332,6 +336,10 @@ export function GetWebglRendererEnabled() {
 
 export function HasAccountKey() {
   return window['go']['main']['App']['HasAccountKey']();
+}
+
+export function ImportPeerConnectionBundle(arg1) {
+  return window['go']['main']['App']['ImportPeerConnectionBundle'](arg1);
 }
 
 export function ImportSSHHosts(arg1) {

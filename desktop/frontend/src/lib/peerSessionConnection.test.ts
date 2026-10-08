@@ -31,6 +31,33 @@ class FakeTransport implements DirectTransport {
 }
 
 describe('PeerSessionConnection', () => {
+  it('switches routes only when explicitly requested and restarts immediately', () => {
+    vi.useFakeTimers()
+    const transports: FakeTransport[] = []
+    const routes: Array<string | undefined> = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        routes.push(options.route)
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onFailure(new Error('ICE failed'))
+    expect(routes).toEqual(['direct'])
+
+    connection.setRoute('quick_tunnel')
+    expect(routes).toEqual(['direct', 'quick_tunnel'])
+    expect(transports[0].closed).toBe(true)
+    vi.advanceTimersByTime(10_000)
+    expect(routes).toEqual(['direct', 'quick_tunnel'])
+
+    connection.detach()
+    vi.useRealTimers()
+  })
+
   beforeEach(() => { vi.useFakeTimers() })
 
   it('attaches without Relay, replays once, and flushes queued terminal writes', () => {

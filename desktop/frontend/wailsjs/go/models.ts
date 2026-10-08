@@ -1115,6 +1115,36 @@ export namespace main {
 	        this.next_retry_at = source["next_retry_at"];
 	    }
 	}
+	export class PeerRouteImportResult {
+	    issuer_peer_id: string;
+	    quick_tunnel: boolean;
+	    expires_at: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerRouteImportResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.issuer_peer_id = source["issuer_peer_id"];
+	        this.quick_tunnel = source["quick_tunnel"];
+	        this.expires_at = source["expires_at"];
+	    }
+	}
+	export class PeerSessionRouteStatus {
+	    direct: boolean;
+	    quick_tunnel: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerSessionRouteStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.direct = source["direct"];
+	        this.quick_tunnel = source["quick_tunnel"];
+	    }
+	}
 	export class PeerSpaceStatus {
 	    configured: boolean;
 	    peer_id?: string;

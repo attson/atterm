@@ -51,6 +51,7 @@ export class PeerSessionConnection {
   private diagnostics: DirectTransportDiagnostics | null = null
   private lastFailureReason: DirectFallbackReason | undefined
   private startedAt = 0
+  private route: NativePeerRoute
 
   constructor(
     private readonly sessionID: string,
@@ -59,6 +60,7 @@ export class PeerSessionConnection {
   ) {
     this.sidBytes = uuidParse(sessionID)
     this.clientName = options.clientName?.trim() || 'desktop'
+    this.route = options.route ?? 'direct'
   }
 
   attach(): void {
@@ -83,6 +85,14 @@ export class PeerSessionConnection {
   }
 
   setPreferDirect(_enabled: boolean): void {}
+
+  setRoute(route: NativePeerRoute): void {
+    if (this.detached || route === this.route) return
+    this.route = route
+    this.clearReconnect()
+    this.closeTransport()
+    if (!this.suspended) this.start()
+  }
 
   sendInput(value: string): void {
     if (!this.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(value)))) {
@@ -145,7 +155,7 @@ export class PeerSessionConnection {
         sessionId: this.sessionID,
         sinceSeq: this.lastSeq,
         clientInstanceId: this.clientID,
-        route: this.options.route,
+        route: this.route,
         callbacks: {
           onAuthenticated: () => {
             if (!this.isCurrent(generation, transport)) return
@@ -283,13 +293,13 @@ export class PeerSessionConnection {
   }
 
   private connectingRoute(): 'connecting-direct' | 'connecting-quick-tunnel' {
-    return this.diagnostics?.route === 'quick_tunnel' || this.options.route === 'quick_tunnel'
+    return this.diagnostics?.route === 'quick_tunnel' || this.route === 'quick_tunnel'
       ? 'connecting-quick-tunnel'
       : 'connecting-direct'
   }
 
   private connectedRoute(): 'direct' | 'quick-tunnel' {
-    return this.diagnostics?.route === 'quick_tunnel' || this.options.route === 'quick_tunnel'
+    return this.diagnostics?.route === 'quick_tunnel' || this.route === 'quick_tunnel'
       ? 'quick-tunnel'
       : 'direct'
   }

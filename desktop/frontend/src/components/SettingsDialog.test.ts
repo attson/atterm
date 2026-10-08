@@ -313,6 +313,7 @@ describe("SettingsDialog caps gating", () => {
       createSpace: vi.fn(),
       previewConnectionBundle: vi.fn(),
       joinSpace: vi.fn(),
+      importConnectionBundle: vi.fn(),
       createInvitations: vi.fn(),
       listInvitations: vi.fn(),
       revokeInvitation: vi.fn(),

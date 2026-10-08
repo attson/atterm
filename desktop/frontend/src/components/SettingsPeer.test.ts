@@ -24,6 +24,7 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
       createSpace: vi.fn(),
       previewConnectionBundle: vi.fn(),
       joinSpace: vi.fn(),
+      importConnectionBundle: vi.fn(),
       createInvitations: vi.fn(),
       listInvitations: vi.fn(),
       listMembers: vi.fn(),
@@ -111,6 +112,9 @@ beforeEach(() => {
   fakePlatform.peer.createSpace.mockResolvedValue(configuredStatus)
   fakePlatform.peer.previewConnectionBundle.mockResolvedValue(preview)
   fakePlatform.peer.joinSpace.mockResolvedValue(configuredStatus)
+  fakePlatform.peer.importConnectionBundle.mockResolvedValue({
+    issuer_peer_id: 'peer_host_789', quick_tunnel: true, expires_at: 1_797_984_000,
+  })
   fakePlatform.peer.getQuickTunnelStatus.mockResolvedValue({ running: false, starting: false })
   fakePlatform.peer.startQuickTunnel.mockResolvedValue({
     running: true,
@@ -235,6 +239,20 @@ describe('SettingsPeer', () => {
 
     expect(wrapper.get('[data-testid="peer-configured"]').text()).toContain(configuredStatus.space_id)
     expect(wrapper.find('[data-testid="peer-bundle-input"]').exists()).toBe(false)
+  })
+
+  it('imports a ticketless member route without re-entering the join flow', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const wrapper = await mountReady()
+
+    await wrapper.get('[data-testid="peer-route-import-input"]').setValue('atterm://peer/connect#atc1.member-route')
+    await wrapper.get('[data-testid="peer-route-import-button"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.importConnectionBundle).toHaveBeenCalledWith('atterm://peer/connect#atc1.member-route')
+    expect(fakePlatform.peer.joinSpace).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="peer-route-import-success"]').text()).toContain('settings.peer.routeImport.quickTunnelReady')
+    expect(wrapper.get('[data-testid="peer-route-import-input"]').element).toHaveProperty('value', '')
   })
 
   it('creates a new Peer Space and loads host controls', async () => {

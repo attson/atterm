@@ -33,6 +33,8 @@ export type PeerMember = _Models.PeerMember
 export type PeerConnectionPreview = _Models.PeerConnectionPreview
 export type PeerRendezvousConfig = _Models.PeerRendezvousConfig
 export type PeerRendezvousStatus = _Models.PeerRendezvousStatus
+export type PeerRouteImportResult = _Models.PeerRouteImportResult
+export type PeerSessionRouteStatus = _Models.PeerSessionRouteStatus
 
 export interface EnvironmentInfo {
   buildType: string
@@ -324,6 +326,7 @@ export interface PeerBridge {
   createSpace(): Promise<PeerSpaceStatus>
   previewConnectionBundle(raw: string): Promise<PeerConnectionPreview>
   joinSpace(req: { connection_bundle: string; expected_fingerprint: string }): Promise<PeerSpaceStatus>
+  importConnectionBundle(raw: string): Promise<PeerRouteImportResult>
   createInvitations(req: CreatePeerInvitationsRequest): Promise<PeerInvitation[]>
   listInvitations(): Promise<PeerInvitation[]>
   revokeInvitation(inviteID: string): Promise<void>
@@ -341,6 +344,7 @@ export interface PeerBridge {
   reconnectRendezvous(): Promise<PeerRendezvousStatus>
   syncConfigNow(): Promise<PeerConfigSyncStatus>
   listSessions?(): Promise<RemoteSession[]>
+  getSessionRouteStatus?(sessionID: string): Promise<PeerSessionRouteStatus>
   createSessionTransport?: (options: NativeDirectClientOptions) => DirectTransport
   /** Desktop host controls. Clients without a local gateway leave these absent. */
   getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>

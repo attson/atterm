@@ -44,6 +44,13 @@ describe("TerminalView direct transport plumbing", () => {
     expect(source).toContain('terminal.route.peerFailure.iceFailed');
     expect(source).toContain('props.peerDirect && routeDiagnostics.value.fallbackReason');
   });
+
+  test("offers Quick Tunnel only after the native route cache confirms it", () => {
+    expect(source).toContain('data-testid="peer-quick-tunnel-retry"');
+    expect(source).toContain('platform.peer?.getSessionRouteStatus');
+    expect(source).toMatch(/canRetryPeerQuickTunnel[\s\S]*peerQuickTunnelAvailable\.value/);
+    expect(source).toContain('conn.setRoute("quick_tunnel")');
+  });
 });
 
 describe("TerminalView async mount lifecycle", () => {

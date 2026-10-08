@@ -58,6 +58,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   RevokePeerMember: vi.fn().mockResolvedValue(undefined),
   PreviewPeerConnectionBundle: vi.fn().mockResolvedValue({ fingerprint: 'SHA256:space' }),
   JoinPeerSpace: vi.fn().mockResolvedValue({ configured: true, peer_id: 'peer-2', space_id: 'space-1' }),
+  ImportPeerConnectionBundle: vi.fn().mockResolvedValue({ issuer_peer_id: 'peer-2', quick_tunnel: true, expires_at: 20 }),
   GetPeerRendezvousConfig: vi.fn().mockResolvedValue({
     mode: 'disabled', url: '', websocket_url: '', health_url: '', stun_mode: 'default',
     stun_urls: ['stun:stun.cloudflare.com:3478'],
@@ -71,6 +72,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   StopPeerQuickTunnel: vi.fn().mockResolvedValue(undefined),
   CreatePeerConnectionBundle: vi.fn().mockResolvedValue('atc1.member-route.signature'),
   ListPeerSessions: vi.fn().mockResolvedValue(JSON.stringify([{ id: 'peer-session-1', host_id: 'peer-host' }])),
+  GetPeerSessionRouteStatus: vi.fn().mockResolvedValue({ direct: true, quick_tunnel: true }),
   StartPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
   SendPeerNativeDirectFrame: vi.fn().mockResolvedValue(undefined),
   StopPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
@@ -96,7 +98,9 @@ import {
   GetPeerConfigSyncStatus,
   GetPluginConfig,
   JoinPeerSpace,
+  ImportPeerConnectionBundle,
   ListPeerSessions,
+  GetPeerSessionRouteStatus,
   ListPeerMembers,
   PreviewPeerConnectionBundle,
   RevokePeerMember,
@@ -308,6 +312,20 @@ describe('createWailsPlatform', () => {
 
     await p.peer!.stopQuickTunnel!()
     expect(StopPeerQuickTunnel).toHaveBeenCalledOnce()
+  })
+
+  it('peer bridge imports member routes and exposes token-free route status', async () => {
+    const p = createWailsPlatform()
+
+    expect(await p.peer!.importConnectionBundle('atc1.member-route.signature')).toEqual({
+      issuer_peer_id: 'peer-2', quick_tunnel: true, expires_at: 20,
+    })
+    expect(ImportPeerConnectionBundle).toHaveBeenCalledWith('atc1.member-route.signature')
+
+    expect(await p.peer!.getSessionRouteStatus!('peer-session-1')).toEqual({
+      direct: true, quick_tunnel: true,
+    })
+    expect(GetPeerSessionRouteStatus).toHaveBeenCalledWith('peer-session-1')
   })
 
   it('peer bridge persists local Rendezvous configuration through typed Wails bindings', async () => {

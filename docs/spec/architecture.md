@@ -416,8 +416,13 @@ membership token 或任何 Relay/account credential。首次加入成功后，Go
 中的 Quick Tunnel URL、签发 Peer 和到期时间；使用前再次确认该 Peer 仍在当前 deny-wins active
 membership 集合中，并要求目标 session 已由上述 Rendezvous 目录发现。WSS 路径复用相同的
 membership handshake、加密 terminal/config records 和 subscriber 生命周期。默认 route 仍是
-Rendezvous direct，ICE 失败不会在本阶段自动切换；临时 URL 轮换后的 reconnect bundle 导入也仍是
-后续 route leasing 工作。
+Rendezvous direct，ICE 失败不会自动切换。已有成员可在 Settings 手动导入无 ticket 的 signed
+reconnect bundle；Desktop 要求 bundle 属于当前 genesis、issuer 的精确 membership token 仍在
+deny-wins active set 中，再原子替换仅存在 Go 内存的 Quick Tunnel route。新 bundle 不含 Quick
+Tunnel 时会删除该 issuer 的旧 route。Peer terminal 重连失败且目标 session 仍在已认证目录中时，
+renderer 只能查询 `direct/quick_tunnel` 可用性布尔值；用户可显式选择通过 Quick Tunnel 重试，URL、
+membership token 和其它凭据始终不进入 renderer。自动 bundle 分发、route leasing 和自动 handover
+仍属于后续工作。
 
 Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
 registration：单次注册最多等待 10 秒，失败以 500 ms 到 8 s 退避，连接断开和 15 分钟

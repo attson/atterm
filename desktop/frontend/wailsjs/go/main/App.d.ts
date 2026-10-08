@@ -113,6 +113,8 @@ export function GetPeerRendezvousConfig():Promise<main.PeerRendezvousConfig>;
 
 export function GetPeerRendezvousStatus():Promise<main.PeerRendezvousStatus>;
 
+export function GetPeerSessionRouteStatus(arg1:string):Promise<main.PeerSessionRouteStatus>;
+
 export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
 
 export function GetPinnedSessionIds():Promise<Array<string>>;
@@ -170,6 +172,8 @@ export function GetUserHomeDir():Promise<string>;
 export function GetWebglRendererEnabled():Promise<boolean>;
 
 export function HasAccountKey():Promise<boolean>;
+
+export function ImportPeerConnectionBundle(arg1:string):Promise<main.PeerRouteImportResult>;
 
 export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 

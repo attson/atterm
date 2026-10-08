@@ -64,6 +64,7 @@ import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import ServicePreviewSwitcher from "./ServicePreviewSwitcher.vue";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
+import { Cloud } from "lucide-vue-next";
 
 const props = withDefaults(
   defineProps<{
@@ -136,6 +137,8 @@ const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
 const replayProgress = ref<ReplayProgress | null>(null);
 const routeDiagnostics = ref<SessionRouteDiagnostics>({ route: "relay" });
+const peerQuickTunnelAvailable = ref(false);
+let peerRouteStatusLoading = false;
 const routeLabel = computed(() => {
   switch (routeDiagnostics.value.route) {
     case "connecting-direct":
@@ -186,6 +189,13 @@ const peerConnectionFailureHint = computed(() => {
     default: return "";
   }
 });
+const canRetryPeerQuickTunnel = computed(() => (
+  props.peerDirect
+  && status.value === "reconnecting"
+  && peerQuickTunnelAvailable.value
+  && routeDiagnostics.value.route !== "connecting-quick-tunnel"
+  && routeDiagnostics.value.route !== "quick-tunnel"
+));
 const menuOpen = ref(false);
 const menuX = ref(0);
 const menuY = ref(0);
@@ -336,6 +346,25 @@ let isAlive = true;
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
 const replayInputGuard = createReplayInputGuard();
+
+async function refreshPeerRouteStatus(): Promise<void> {
+  const getStatus = platform.peer?.getSessionRouteStatus;
+  if (!props.peerDirect || !getStatus || peerRouteStatusLoading) return;
+  peerRouteStatusLoading = true;
+  try {
+    const next = await getStatus(props.sessionId);
+    peerQuickTunnelAvailable.value = next.quick_tunnel;
+  } catch {
+    peerQuickTunnelAvailable.value = false;
+  } finally {
+    peerRouteStatusLoading = false;
+  }
+}
+
+function retryPeerThroughQuickTunnel(): void {
+  if (!canRetryPeerQuickTunnel.value || !(conn instanceof PeerSessionConnection)) return;
+  conn.setRoute("quick_tunnel");
+}
 
 // Map<sessionId, (text) => void> provided by App.vue. Plugins use it to
 // reuse the active driver SessionConnection for input. Absent (undefined)
@@ -2243,6 +2272,7 @@ function startConnection() {
     },
     onStatus: (s) => {
       status.value = s;
+      if (props.peerDirect && s === "reconnecting") void refreshPeerRouteStatus();
       if (s !== "attached" && previews.value.length) void stopAllPreviews();
     },
     onReplayProgress: (progress) => {
@@ -2287,6 +2317,7 @@ function startConnection() {
         transportFactory: factory,
       }),
     );
+    void refreshPeerRouteStatus();
   } else {
     if (!props.endpoint) {
       status.value = "error";
@@ -2837,6 +2868,16 @@ watch(
           class="peer-connection-failure"
           data-testid="peer-connection-failure"
         >{{ peerConnectionFailureHint }}</span>
+        <button
+          v-if="canRetryPeerQuickTunnel"
+          type="button"
+          class="peer-route-retry"
+          data-testid="peer-quick-tunnel-retry"
+          @click="retryPeerThroughQuickTunnel"
+        >
+          <Cloud :size="14" aria-hidden="true" />
+          {{ t("terminal.route.retryQuickTunnel") }}
+        </button>
       </template>
       <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
       <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
@@ -3544,6 +3585,21 @@ watch(
   color: var(--fg-dim);
   line-height: 1.45;
   white-space: normal;
+}
+.peer-route-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  margin-top: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  color: var(--fg);
+  cursor: pointer;
+  pointer-events: auto;
 }
 .progress-track {
   width: 190px;

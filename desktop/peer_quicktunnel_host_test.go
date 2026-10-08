@@ -338,6 +338,92 @@ func TestPeerHostRouteLeaseReplacesSubscriberAndPreservesDriver(t *testing.T) {
 	}
 }
 
+func TestPeerHostRouteLeaseSurvivesOneHundredReplacements(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var subscriberCounts []int
+	fixture.session.SetSubscriberCountHook(func(count int) {
+		subscriberCounts = append(subscriberCounts, count)
+	})
+
+	newAttempt := func() (*peerHostAttempt, *peerNativeTestChannel) {
+		attempt := &peerHostAttempt{
+			host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
+			permission: proto.RemotePermissionControl, clientInstanceID: "stable-soak-client",
+		}
+		attempt.remove = func() { attempt.close(true) }
+		channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
+		return attempt, channel
+	}
+
+	current, currentChannel := newAttempt()
+	if err := current.start(ctx, currentChannel); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { current.close(true) }()
+	claimPayload, err := json.Marshal(proto.ClaimDriverPayload{ClientID: "logical-soak-client", ClientName: "desktop-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+		Type: proto.TypeClaimDriver, SessionID: fixture.session.ID, Payload: claimPayload,
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	key := peerHostRouteLeaseKey{
+		remotePeerID: fixture.clientIdentity.PeerID(), sessionID: fixture.session.ID,
+		clientInstanceID: "stable-soak-client",
+	}
+	for i := 0; i < 100; i++ {
+		replacement, replacementChannel := newAttempt()
+		if err := replacement.start(ctx, replacementChannel); err != nil {
+			t.Fatalf("replacement %d: %v", i+1, err)
+		}
+		if got := fixture.session.SubscriberCount(); got != 1 {
+			t.Fatalf("replacement %d subscriber count=%d want=1", i+1, got)
+		}
+		if got := fixture.session.DriverClientID(); got != "logical-soak-client" {
+			t.Fatalf("replacement %d driver=%q", i+1, got)
+		}
+		currentChannel.mu.Lock()
+		oldClosed := currentChannel.closed
+		currentChannel.mu.Unlock()
+		if !oldClosed {
+			t.Fatalf("replacement %d left old route open", i+1)
+		}
+		if err := current.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+			Type: proto.TypeIn, SessionID: fixture.session.ID, Payload: []byte("stale"),
+		})); err == nil {
+			t.Fatalf("replacement %d accepted stale input", i+1)
+		}
+		payload := []byte{byte(i)}
+		if err := replacement.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
+			Type: proto.TypeIn, SessionID: fixture.session.ID, Payload: payload,
+		})); err != nil {
+			t.Fatalf("replacement %d input: %v", i+1, err)
+		}
+		select {
+		case frame := <-fixture.session.Inbound():
+			if !bytes.Equal(frame.Payload, payload) {
+				t.Fatalf("replacement %d payload=%v want=%v", i+1, frame.Payload, payload)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("replacement %d input was not delivered", i+1)
+		}
+
+		current.close(true)
+		if got := fixture.app.currentPeerHostRouteLease(key); got != replacement {
+			t.Fatalf("replacement %d lost lease after late close", i+1)
+		}
+		current, currentChannel = replacement, replacementChannel
+	}
+	if len(subscriberCounts) != 1 || subscriberCounts[0] != 1 {
+		t.Fatalf("subscriber count transitions=%v want [1]", subscriberCounts)
+	}
+}
+
 func TestPeerHostRouteLeaseKeepsDifferentClientInstancesIndependent(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionView)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -71,7 +71,10 @@ Implementation status: the Peer-only `Rendezvous direct -> Quick Tunnel WSS` han
 The availability decision is a bounded token-free Go capability query; endpoints and membership tokens
 remain outside the renderer. Existing generation/cursor guards prove stale OUT is dropped, replay is
 deduplicated, and queued input is released only on the replacement route's `DIRECT_READY`. Relay fallback,
-cross-principal handover, cooldown-based Direct failback and full route-flap soak remain future slices.
+cross-principal handover and cooldown-based Direct failback remain future slices. Deterministic client and
+host soak tests now force 100 route replacements: the client retains one instance/cursor, drops duplicate
+and stale OUT, and emits each queued write once; the host keeps one subscriber/driver lease and permanently
+rejects every superseded route. Cross-process NAT/network-switch soak remains an exit-gate task.
 
 ## PR 4.3+ - Capability expansion
 

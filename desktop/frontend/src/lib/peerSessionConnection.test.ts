@@ -261,6 +261,55 @@ describe('PeerSessionConnection', () => {
     expect(resolveQuickTunnelFallback).toHaveBeenCalledOnce()
   })
 
+  it('preserves cursor and single-writer semantics across 100 forced route handovers', () => {
+    const transports: FakeTransport[] = []
+    const outputs: string[] = []
+    const connection = new PeerSessionConnection(sessionID, {
+      onOutput: (data) => outputs.push(decodeText(data)),
+    }, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    const clientInstanceId = transports[0].options.clientInstanceId
+
+    for (let seq = 1; seq <= 100; seq++) {
+      const previous = transports[seq - 1]
+      previous.options.callbacks.onFrame(out(seq, `out-${seq}`))
+
+      const route = seq % 2 === 0 ? 'direct' : 'quick_tunnel'
+      connection.setRoute(route)
+      connection.claimDriver()
+      connection.sendResize(80 + seq, 24)
+      connection.sendInput(`in-${seq}`)
+
+      const replacement = transports[seq]
+      expect(previous.closed).toBe(true)
+      expect(replacement.options).toMatchObject({ route, sinceSeq: seq, clientInstanceId })
+      previous.options.callbacks.onFrame(out(1000 + seq, `late-${seq}`))
+      replacement.options.callbacks.onAuthenticated?.()
+      replacement.options.callbacks.onFrame(out(seq, `duplicate-${seq}`))
+      replacement.options.callbacks.onReady(seq)
+
+      const sent = replacement.sent.map(decodeFrame)
+      expect(sent.map((frame) => frame.type)).toEqual([
+        TYPE.CLAIM_DRIVER,
+        TYPE.RESIZE,
+        TYPE.IN,
+      ])
+      expect(decodeText(sent[2].payload)).toBe(`in-${seq}`)
+    }
+
+    expect(outputs).toEqual(Array.from({ length: 100 }, (_, index) => `out-${index + 1}`))
+    connection.detach()
+  })
+
   it('keeps an honest ICE failure visible while retrying the Rendezvous route', async () => {
     const transports: FakeTransport[] = []
     const routes: Array<{ route: string; fallbackReason?: string }> = []

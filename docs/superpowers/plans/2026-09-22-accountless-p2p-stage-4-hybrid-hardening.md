@@ -222,8 +222,11 @@ The receiving device promotes its local grant only after both public keys match 
 revoked, or stale grants fail closed and require a new invitation. Epoch-key renewal now advances sync and vault
 together every 30 days when the genesis creator next opens an authenticated config exchange. Historical rotation
 envelopes remain the source for old record keys; the Go owner can retain multiple authenticated key candidates
-for a concurrent epoch and AEAD-select the matching one, while all new writes use the canonical head. The
-hardening item remains open for trust export/import and its packaged recovery verification.
+for a concurrent epoch and AEAD-select the matching one, while all new writes use the canonical head. Desktop
+trust recovery now exports only an Argon2id + XChaCha20-Poly1305 encrypted package: store keys are regenerated,
+epoch keys are recovered from signed envelopes, and invitation secrets plus live replica cursors are excluded.
+Import refuses to overwrite an existing identity and validates the full trust chain before secure-storage writes.
+The hardening item remains open only for packaged recovery verification on a signed desktop build.
 
 ## Stage Exit Gate
 

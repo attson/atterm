@@ -57,6 +57,8 @@ export function ExportConfig(arg1:boolean):Promise<string>;
 
 export function ExportDiagnostics(arg1:string):Promise<string>;
 
+export function ExportPeerTrustBackup(arg1:string):Promise<string>;
+
 export function FetchRelayMe():Promise<main.RelayMe>;
 
 export function ForceRedownload(arg1:string):Promise<void>;
@@ -176,6 +178,8 @@ export function GetWebglRendererEnabled():Promise<boolean>;
 export function HasAccountKey():Promise<boolean>;
 
 export function ImportPeerConnectionBundle(arg1:string):Promise<main.PeerRouteImportResult>;
+
+export function ImportPeerTrustBackup(arg1:string,arg2:string):Promise<main.PeerSpaceStatus>;
 
 export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 

@@ -7,6 +7,7 @@ import { usePlatform } from '../platform'
 import { QRScanner } from '../platform/qrScanner'
 import type { PeerConfigSyncStatus, PeerConnectionPreview, PeerInvitation, PeerLANConfig, PeerMember, PeerQuickTunnelStatus, PeerRendezvousConfig, PeerRendezvousStatus, PeerSpaceStatus } from '../platform/types'
 import PeerMembersSection from './PeerMembersSection.vue'
+import PeerTrustBackupSection from './PeerTrustBackupSection.vue'
 import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
 
 const { t } = useI18n()
@@ -518,6 +519,14 @@ async function createPeerSpace(): Promise<void> {
   }
 }
 
+async function onTrustBackupRestored(restored: PeerSpaceStatus): Promise<void> {
+  status.value = restored
+  bundleInput.value = ''
+  previewedBundle.value = ''
+  preview.value = null
+  await loadConfiguredPeerData()
+}
+
 function parseSessionScope(value: string): string[] {
   const seen = new Set<string>()
   return value.split(/[\s,]+/).filter((sessionID) => {
@@ -770,6 +779,11 @@ function permissionLabel(permission: string): string {
           </div>
         </dl>
       </section>
+
+      <PeerTrustBackupSection
+        v-if="platform.caps.wailsBindings && platform.peer?.exportTrustBackup"
+        :configured="true"
+      />
 
       <section class="peer-section" data-testid="peer-rendezvous-section">
         <div class="section-heading">
@@ -1460,6 +1474,12 @@ function permissionLabel(permission: string): string {
     </template>
 
     <template v-else>
+      <PeerTrustBackupSection
+        v-if="platform.caps.wailsBindings && platform.peer?.importTrustBackup"
+        :configured="false"
+        @restored="onTrustBackupRestored"
+      />
+
       <section class="peer-section create-space-section">
         <h3>{{ t('settings.peer.create.title') }}</h3>
         <p class="hint">{{ t('settings.peer.create.hint') }}</p>

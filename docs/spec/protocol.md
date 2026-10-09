@@ -1025,6 +1025,19 @@ record 原地新增 ECDH key pair，不轮换 signing key 或 `peer_id`。iOS v2
 private key 只序列化到 Keychain，运行时重新导入为 non-exportable key；v1 迁移同样只新增
 wrapping identity。
 
+Desktop 可显式导出 v1 Peer trust recovery package。外层 JSON 只包含版本、固定 Argon2id
+参数（64 MiB、3 iterations、1 thread）、随机 16-byte salt、XChaCha20-Poly1305 nonce 与
+ciphertext；AAD 固定为 `atterm-peer-trust-backup-v1`。密文内只保存 signing/wrapping private
+key 与已验证的 Peer trust state。`peer store key` 不导出，恢复时重新生成；sync/vault epoch
+key 不导出，恢复时使用 wrapping private key 从 signed `akr1` recipient envelope 或 `ake1`
+bootstrap envelope 重新解封。导出快照主动清除未核销 invitation（含 pairing secret）、pending
+config import 与 config acknowledgement cursor，避免恢复旧快照后重放邀请或错误推进 tombstone
+清理水位。导入只允许本机尚无 Peer Space、identity/store key secure-storage slot 为空且目标
+config replica 目录不存在时执行；先在 Go 内存完成 genesis、当前 membership、revocation、rotation
+和 epoch envelope 验证，再写 secure storage。中途失败会删除本次创建的 exact store 文件和 key
+slots。renderer 只接触用户输入的恢复口令和整包密文，不接触解密后的 private/epoch/store key。
+Web 与 iOS identity 是 non-exportable key，不提供该 Desktop recovery 入口。
+
 首次加入通过 signed `atc1` 中的 Quick Tunnel 或 Manual LAN origin 上
 `POST /peer/v1/join` 完成；Rendezvous 不承载 bootstrap secret 交换。HTTP body 只暴露版本、
 `invite_id`、XChaCha20-Poly1305 nonce 和 ciphertext；完整 `apj1`、`atp1`、pairing secret、

@@ -400,6 +400,23 @@ export const zhCN = {
     peer: {
       connectedTitle: "已加入 Peer Space",
       connectedHint: "这台设备使用独立于 Relay 账户的 Peer Space 信任关系。",
+      backup: {
+        title: "Peer Space 恢复",
+        exportHint: "导出使用恢复口令加密的身份备份。文件不包含明文私钥、store key 或 epoch key。",
+        importHint: "从加密恢复包恢复原设备身份和 Peer Space 信任关系。",
+        passphrase: "恢复口令（至少 12 个字符）",
+        confirmPassphrase: "确认恢复口令",
+        mismatch: "两次输入的恢复口令不一致。",
+        export: "导出加密恢复包",
+        exporting: "正在加密…",
+        exported: "恢复包已保存到 {path}",
+        exportFailed: "无法导出 Peer Space 恢复包。",
+        chooseFile: "选择恢复包",
+        import: "恢复 Peer Space",
+        importing: "正在验证并恢复…",
+        importFailed: "恢复失败。请检查文件、恢复口令和成员授权是否仍有效。",
+        restoreWarning: "恢复会复用备份中的设备身份。请只在原设备已不可用时使用，避免两个设备同时持有同一身份。",
+      },
       create: {
         title: "创建 Peer Space",
         hint: "在这台设备上建立不依赖账户的信任空间。其他设备尚未就绪时，也可以先签发邀请。",

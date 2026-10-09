@@ -326,6 +326,9 @@ export interface PeerBridge {
   acceptPendingConfig(): Promise<PeerConfigSyncStatus>
   discardPendingConfig(): Promise<PeerConfigSyncStatus>
   createSpace(): Promise<PeerSpaceStatus>
+  /** Desktop-only encrypted identity recovery. Browser keys are non-exportable. */
+  exportTrustBackup?(passphrase: string): Promise<string>
+  importTrustBackup?(encoded: string, passphrase: string): Promise<PeerSpaceStatus>
   previewConnectionBundle(raw: string): Promise<PeerConnectionPreview>
   joinSpace(req: { connection_bundle: string; expected_fingerprint: string }): Promise<PeerSpaceStatus>
   importConnectionBundle(raw: string): Promise<PeerRouteImportResult>

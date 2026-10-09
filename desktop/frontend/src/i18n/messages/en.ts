@@ -433,6 +433,23 @@ export const en = {
     peer: {
       connectedTitle: "Connected to a Peer Space",
       connectedHint: "This device uses Peer Space trust independently of any Relay account.",
+      backup: {
+        title: "Peer Space recovery",
+        exportHint: "Export an identity backup encrypted with a recovery passphrase. The file contains no plaintext private, store, or epoch keys.",
+        importHint: "Restore the original device identity and Peer Space trust from an encrypted recovery package.",
+        passphrase: "Recovery passphrase (12 characters minimum)",
+        confirmPassphrase: "Confirm recovery passphrase",
+        mismatch: "The recovery passphrases do not match.",
+        export: "Export encrypted recovery package",
+        exporting: "Encrypting…",
+        exported: "Recovery package saved to {path}",
+        exportFailed: "Could not export the Peer Space recovery package.",
+        chooseFile: "Choose recovery package",
+        import: "Restore Peer Space",
+        importing: "Verifying and restoring…",
+        importFailed: "Restore failed. Check the file, passphrase, and whether the membership is still active.",
+        restoreWarning: "Restoring reuses the backed-up device identity. Use it only when the original device is unavailable so two devices do not hold the same identity.",
+      },
       create: {
         title: "Create a Peer Space",
         hint: "Start an accountless trust group on this device. You can pre-sign invitations before other devices are ready.",

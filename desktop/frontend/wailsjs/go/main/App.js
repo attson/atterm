@@ -106,6 +106,10 @@ export function ExportDiagnostics(arg1) {
   return window['go']['main']['App']['ExportDiagnostics'](arg1);
 }
 
+export function ExportPeerTrustBackup(arg1) {
+  return window['go']['main']['App']['ExportPeerTrustBackup'](arg1);
+}
+
 export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
 }
@@ -344,6 +348,10 @@ export function HasAccountKey() {
 
 export function ImportPeerConnectionBundle(arg1) {
   return window['go']['main']['App']['ImportPeerConnectionBundle'](arg1);
+}
+
+export function ImportPeerTrustBackup(arg1, arg2) {
+  return window['go']['main']['App']['ImportPeerTrustBackup'](arg1, arg2);
 }
 
 export function ImportSSHHosts(arg1) {

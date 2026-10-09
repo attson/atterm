@@ -12,7 +12,7 @@ vi.mock('../i18n/useI18n', () => ({
 
 const { fakePlatform, qrScanner } = vi.hoisted(() => ({
   fakePlatform: {
-    caps: { capacitor: false },
+    caps: { capacitor: false, wailsBindings: true },
     system: {
       setClipboardText: vi.fn(),
     },
@@ -22,6 +22,8 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
       acceptPendingConfig: vi.fn(),
       discardPendingConfig: vi.fn(),
       createSpace: vi.fn(),
+      exportTrustBackup: vi.fn(),
+      importTrustBackup: vi.fn(),
       previewConnectionBundle: vi.fn(),
       joinSpace: vi.fn(),
       importConnectionBundle: vi.fn(),
@@ -107,11 +109,14 @@ const preview = {
 beforeEach(() => {
   vi.clearAllMocks()
   fakePlatform.caps.capacitor = false
+  fakePlatform.caps.wailsBindings = true
   fakePlatform.peer.status.mockResolvedValue(emptyStatus)
   fakePlatform.peer.configSyncStatus.mockResolvedValue(pendingSyncStatus)
   fakePlatform.peer.acceptPendingConfig.mockResolvedValue({ ...pendingSyncStatus, pending_import_records: 0 })
   fakePlatform.peer.discardPendingConfig.mockResolvedValue({ ...pendingSyncStatus, pending_import_records: 0 })
   fakePlatform.peer.createSpace.mockResolvedValue(configuredStatus)
+  fakePlatform.peer.exportTrustBackup.mockResolvedValue('/tmp/atterm-peer-trust.json')
+  fakePlatform.peer.importTrustBackup.mockResolvedValue(configuredStatus)
   fakePlatform.peer.previewConnectionBundle.mockResolvedValue(preview)
   fakePlatform.peer.joinSpace.mockResolvedValue(configuredStatus)
   fakePlatform.peer.importConnectionBundle.mockResolvedValue({
@@ -246,6 +251,44 @@ describe('SettingsPeer', () => {
 
     expect(wrapper.get('[data-testid="peer-configured"]').text()).toContain(configuredStatus.space_id)
     expect(wrapper.find('[data-testid="peer-bundle-input"]').exists()).toBe(false)
+  })
+
+  it('exports encrypted trust only after matching recovery passphrases', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const wrapper = await mountReady()
+
+    await wrapper.get('[data-testid="peer-backup-passphrase"]').setValue('correct horse battery staple')
+    await wrapper.get('[data-testid="peer-backup-confirmation"]').setValue('does not match this value')
+    expect(wrapper.get('[data-testid="peer-backup-export"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="peer-backup-confirmation"]').setValue('correct horse battery staple')
+    await wrapper.get('[data-testid="peer-backup-export"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.exportTrustBackup).toHaveBeenCalledWith('correct horse battery staple')
+    expect(wrapper.get('[data-testid="peer-backup-success"]').text()).toContain('/tmp/atterm-peer-trust.json')
+  })
+
+  it('restores an encrypted trust package only on an unconfigured desktop', async () => {
+    const wrapper = await mountReady()
+    const input = wrapper.get('[data-testid="peer-backup-file"]')
+    const file = new File(['encrypted-peer-backup'], 'peer-backup.json', { type: 'application/json' })
+    Object.defineProperty(file, 'text', { configurable: true, value: vi.fn().mockResolvedValue('encrypted-peer-backup') })
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [file] })
+    await input.trigger('change')
+    await wrapper.get('[data-testid="peer-backup-import-passphrase"]').setValue('correct horse battery staple')
+    await wrapper.get('[data-testid="peer-backup-import"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.importTrustBackup).toHaveBeenCalledWith('encrypted-peer-backup', 'correct horse battery staple')
+    expect(wrapper.get('[data-testid="peer-configured"]').text()).toContain(configuredStatus.space_id)
+    expect(wrapper.find('[data-testid="peer-backup-import"]').exists()).toBe(false)
+  })
+
+  it('does not expose identity recovery on platforms with non-exportable browser keys', async () => {
+    fakePlatform.caps.wailsBindings = false
+    const wrapper = await mountReady()
+    expect(wrapper.find('[data-testid="peer-trust-backup"]').exists()).toBe(false)
   })
 
   it('imports a ticketless member route without re-entering the join flow', async () => {

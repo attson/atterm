@@ -229,13 +229,25 @@ func joinEndpoint(bundle peerproto.VerifiedConnectionBundle, override string, al
 				break
 			}
 		}
+		if base == "" {
+			for _, route := range bundle.Document.Routes {
+				if route.Kind == peerproto.RouteManualLAN {
+					base = route.URL
+					break
+				}
+			}
+		}
 	}
 	parsed, err := url.Parse(base)
 	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Host == "" {
 		return "", errors.New("quicktunnel: invalid join route")
 	}
 	if parsed.Scheme != "https" {
-		if !allowInsecure || parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname()) {
+		manualLAN := false
+		for _, route := range bundle.Document.Routes {
+			manualLAN = manualLAN || route.Kind == peerproto.RouteManualLAN && route.URL == base
+		}
+		if parsed.Scheme != "http" || !manualLAN && (!allowInsecure || !isLoopbackHost(parsed.Hostname())) {
 			return "", errors.New("quicktunnel: insecure join route")
 		}
 	}

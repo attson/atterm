@@ -124,11 +124,17 @@ do not enter the Peer path.
 
 - User-configured TURN, visibly labelled relayed ICE path。
 - LAN/mDNS route hints。
-- Manual host/port + fingerprint。
+- [x] Manual host/port + fingerprint: explicit IPv4 listener, signed `manual_lan` bootstrap,
+  locally persisted endpoint/fingerprint binding, authenticated catalog/config control route and native
+  terminal route are implemented. Discovery runs in parallel with Rendezvous and deduplicates by
+  `session_id`; the same membership handshake, encrypted records and route lease remain authoritative。
 - IPv6 direct candidates。
 - Completely no-public-infrastructure mode。
 
 Every route reuses Peer membership/handshake/record encryption; none creates a new trust model.
+Manual LAN can perform invitation redemption, catalog and config exchange with Relay, Rendezvous, STUN
+and Quick Tunnel disabled. The stage exit checkbox remains open until the packaged two-device terminal
+attach flow is exercised with all public services disabled.
 
 ## Hardening Program
 

@@ -37,8 +37,9 @@ type peerRendezvousHost struct {
 }
 
 type peerDiscoveredSession struct {
-	info   proto.SessionInfo
-	remote rendezvousclient.PeerRoute
+	info      proto.SessionInfo
+	remote    rendezvousclient.PeerRoute
+	manualURL string
 }
 
 func newPeerRendezvousHost(ctx context.Context, app *App, host *relayHost, presence rendezvousclient.PresenceConfig, webRTC webrtc.Configuration) (*peerRendezvousHost, error) {
@@ -260,31 +261,75 @@ func (h *peerRendezvousHost) discoveredSession(sessionID uuid.UUID) (peerDiscove
 	return session, ok
 }
 
-// ListPeerSessions discovers active, authorized Peer sessions through the
-// current Rendezvous route. The returned JSON matches proto.SessionInfo[] so
+// ListPeerSessions discovers active, authorized Peer sessions through all
+// configured Peer routes. The returned JSON matches proto.SessionInfo[] so
 // the renderer can merge it with its existing sidebar model.
 func (a *App) ListPeerSessions() (string, error) {
 	if a == nil || a.ctx == nil {
 		return "", rendezvousclient.ErrServiceUnavailable
 	}
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
 	a.peerRendezvousMu.Lock()
 	lifecycle := a.peerRendezvous
 	a.peerRendezvousMu.Unlock()
-	if lifecycle == nil {
-		return "", rendezvousclient.ErrServiceUnavailable
+	var active *peerRendezvousHost
+	if lifecycle != nil {
+		lifecycle.mu.Lock()
+		active = lifecycle.active
+		lifecycle.mu.Unlock()
 	}
-	lifecycle.mu.Lock()
-	active := lifecycle.active
-	lifecycle.mu.Unlock()
-	if active == nil {
-		return "", rendezvousclient.ErrServiceUnavailable
+	type discoveryResult struct {
+		manual   bool
+		sessions []proto.SessionInfo
+		err      error
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
-	defer cancel()
-	sessions, err := active.discoverSessions(ctx)
-	if err != nil {
-		return "", err
+	resultCount := 1
+	if active != nil {
+		resultCount++
 	}
+	results := make(chan discoveryResult, resultCount)
+	go func() {
+		sessions, err := a.discoverPeerLANSessions(ctx)
+		results <- discoveryResult{manual: true, sessions: sessions, err: err}
+	}()
+	if active != nil {
+		go func() {
+			sessions, err := active.discoverSessions(ctx)
+			results <- discoveryResult{sessions: sessions, err: err}
+		}()
+	}
+	var manualSessions, rendezvousSessions []proto.SessionInfo
+	var discoveryErr error
+	for range resultCount {
+		result := <-results
+		if result.err != nil {
+			discoveryErr = errors.Join(discoveryErr, result.err)
+			continue
+		}
+		if result.manual {
+			manualSessions = result.sessions
+		} else {
+			rendezvousSessions = result.sessions
+		}
+	}
+	byID := make(map[string]proto.SessionInfo, len(manualSessions)+len(rendezvousSessions))
+	for _, session := range manualSessions {
+		byID[session.ID] = session
+	}
+	// Preserve the established Rendezvous entry when the same session is
+	// reachable through both discovery paths.
+	for _, session := range rendezvousSessions {
+		byID[session.ID] = session
+	}
+	if len(byID) == 0 && discoveryErr != nil {
+		return "", discoveryErr
+	}
+	sessions := make([]proto.SessionInfo, 0, len(byID))
+	for _, session := range byID {
+		sessions = append(sessions, session)
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
 	encoded, err := json.Marshal(sessions)
 	if err != nil {
 		return "", err

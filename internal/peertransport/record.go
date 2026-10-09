@@ -47,18 +47,25 @@ const (
 	// message. It shares the authenticated Peer record layer but never enters
 	// the terminal proto.Frame stream or PTY subscriber lifecycle.
 	RecordService RecordKind = 13
+	// RecordCatalogRequest and RecordCatalogResponse carry a paginated session
+	// directory on an authenticated control route. They use the existing
+	// control-message fragment namespace but never grant terminal authority.
+	RecordCatalogRequest  RecordKind = 14
+	RecordCatalogResponse RecordKind = 15
 )
 
 func (k RecordKind) valid() bool {
-	return k >= RecordFrame && k <= RecordService
+	return k >= RecordFrame && k <= RecordCatalogResponse
 }
 
 func (k RecordKind) configMessage() bool {
-	return k >= RecordConfigInventory && k <= RecordConfigAck
+	return k >= RecordConfigInventory && k <= RecordConfigAck ||
+		k == RecordCatalogRequest || k == RecordCatalogResponse
 }
 
 func (k RecordKind) dataChannelMessage() bool {
-	return k >= RecordFrame && k <= RecordConfigFragment || k == RecordService
+	return k >= RecordFrame && k <= RecordConfigFragment ||
+		k >= RecordService && k <= RecordCatalogResponse
 }
 
 // IsConfigMessage reports whether a record carries one complete config

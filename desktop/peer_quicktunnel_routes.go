@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/attson/atterm/internal/peerproto"
@@ -24,6 +26,7 @@ type peerQuickTunnelRoute struct {
 type PeerRouteImportResult struct {
 	IssuerPeerID string `json:"issuer_peer_id"`
 	QuickTunnel  bool   `json:"quick_tunnel"`
+	ManualLAN    bool   `json:"manual_lan"`
 	ExpiresAt    int64  `json:"expires_at"`
 }
 
@@ -31,6 +34,7 @@ type PeerRouteImportResult struct {
 // entry without exposing temporary endpoints or membership credentials.
 type PeerSessionRouteStatus struct {
 	Direct      bool `json:"direct"`
+	LAN         bool `json:"lan"`
 	QuickTunnel bool `json:"quick_tunnel"`
 }
 
@@ -79,11 +83,20 @@ func (a *App) importPeerConnectionBundle(raw, expectedIssuerPeerID string) (Peer
 		ExpiresAt:    bundle.Document.ExpiresAt,
 	}
 	var route peerQuickTunnelRoute
+	var manualRoute peerproto.ConnectionRoute
 	for _, candidate := range bundle.Document.Routes {
 		if candidate.Kind == peerproto.RouteQuickTunnel {
 			route = peerQuickTunnelRoute{URL: candidate.URL, ExpiresAt: bundle.Document.ExpiresAt}
 			result.QuickTunnel = true
-			break
+		}
+		if candidate.Kind == peerproto.RouteManualLAN {
+			manualRoute = candidate
+			result.ManualLAN = true
+		}
+	}
+	if result.ManualLAN {
+		if err := a.savePeerManualLANRoute(result.IssuerPeerID, manualRoute.URL); err != nil {
+			return PeerRouteImportResult{}, errPeerConnectionBundleImportRejected
 		}
 	}
 	a.peerRouteMu.Lock()
@@ -106,24 +119,31 @@ func (a *App) GetPeerSessionRouteStatus(sessionID string) PeerSessionRouteStatus
 	if err != nil {
 		return PeerSessionRouteStatus{}
 	}
+	status := PeerSessionRouteStatus{}
+	var discovered peerDiscoveredSession
 	a.peerRendezvousMu.Lock()
 	lifecycle := a.peerRendezvous
 	a.peerRendezvousMu.Unlock()
-	if lifecycle == nil {
-		return PeerSessionRouteStatus{}
+	if lifecycle != nil {
+		lifecycle.mu.Lock()
+		host := lifecycle.active
+		lifecycle.mu.Unlock()
+		if host != nil {
+			if session, ok := host.discoveredSession(id); ok {
+				discovered = session
+				status.Direct = host.route != nil
+			}
+		}
 	}
-	lifecycle.mu.Lock()
-	host := lifecycle.active
-	lifecycle.mu.Unlock()
-	if host == nil {
-		return PeerSessionRouteStatus{}
+	if manual, ok := a.peerManualDiscoveredSession(id); ok {
+		status.LAN = manual.manualURL != ""
+		if discovered.remote.PeerID == "" {
+			discovered = manual
+		}
 	}
-	discovered, ok := host.discoveredSession(id)
-	if !ok {
-		return PeerSessionRouteStatus{}
+	if discovered.remote.PeerID != "" {
+		_, status.QuickTunnel = a.peerQuickTunnelRouteAvailable(discovered.remote.PeerID)
 	}
-	status := PeerSessionRouteStatus{Direct: host.route != nil}
-	_, status.QuickTunnel = a.peerQuickTunnelRouteAvailable(discovered.remote.PeerID)
 	return status
 }
 
@@ -160,6 +180,53 @@ func (a *App) rememberPeerQuickTunnelRoute(bundle peerproto.VerifiedConnectionBu
 	}
 	a.peerRoutes[bundle.Document.IssuerPeerID] = peerQuickTunnelRoute{URL: route.URL, ExpiresAt: bundle.Document.ExpiresAt}
 	a.peerRouteMu.Unlock()
+}
+
+func (a *App) rememberPeerManualLANRoute(bundle peerproto.VerifiedConnectionBundle) {
+	for _, route := range bundle.Document.Routes {
+		if route.Kind != peerproto.RouteManualLAN {
+			continue
+		}
+		if err := a.savePeerManualLANRoute(bundle.Document.IssuerPeerID, route.URL); err != nil {
+			logWarn("peer-lan", "retain authenticated manual route: %v", err)
+		}
+		return
+	}
+}
+
+func (a *App) savePeerManualLANRoute(peerID, rawURL string) error {
+	if a == nil || a.cfgStore == nil {
+		return errors.New("config store not ready")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.Port() == "" {
+		return errors.New("invalid authenticated manual LAN route")
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("invalid authenticated manual LAN port")
+	}
+	host, err := canonicalPeerLANHost(parsed.Hostname())
+	if err != nil {
+		return err
+	}
+	cfg := a.cfgStore.Get()
+	next := make([]PeerManualLANRoute, 0, len(cfg.PeerLANRoutes)+1)
+	replaced := false
+	for _, existing := range cfg.PeerLANRoutes {
+		existingPeerID, fingerprintErr := peerIDFromFingerprint(existing.Fingerprint)
+		if fingerprintErr == nil && existingPeerID == peerID {
+			replaced = true
+			continue
+		}
+		next = append(next, existing)
+	}
+	if !replaced && len(next) >= 32 {
+		return errors.New("manual LAN route limit exceeded")
+	}
+	next = append(next, PeerManualLANRoute{Host: host, Port: port, Fingerprint: peerFingerprint(peerID)})
+	cfg.PeerLANRoutes = next
+	return a.cfgStore.Set(cfg)
 }
 
 func (a *App) peerQuickTunnelRoute(peerID string) (peerQuickTunnelRoute, error) {

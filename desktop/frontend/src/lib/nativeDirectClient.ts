@@ -25,7 +25,7 @@ export type NativeDirectClientOptions = Omit<DirectClientOptions, 'accountKey'> 
   route?: NativePeerRoute
 }
 
-export type NativePeerRoute = 'direct' | 'quick_tunnel'
+export type NativePeerRoute = 'direct' | 'lan' | 'quick_tunnel'
 
 function asError(value: unknown): Error {
   if (value instanceof Error) return value
@@ -41,7 +41,7 @@ function decodeBase64(value: string): Uint8Array {
 }
 
 function diagnostics(event: NativeDirectEvent): DirectTransportDiagnostics | null {
-  const route = event.route === 'direct' || event.route === 'quick_tunnel' ? event.route : undefined
+  const route = event.route === 'direct' || event.route === 'lan' || event.route === 'quick_tunnel' ? event.route : undefined
   const state = event.ice_state
   const iceState = state === 'new' || state === 'checking' || state === 'connected' || state === 'completed' ||
       state === 'failed' || state === 'disconnected' || state === 'closed' ? state : undefined

@@ -155,7 +155,7 @@ export interface ConnectionHandlers {
   onDriverChange?: (driverClientID: string, isMe: boolean, driverClientName: string) => void;
 }
 
-export type SessionRoute = "relay" | "connecting-direct" | "direct" | "connecting-quick-tunnel" | "quick-tunnel";
+export type SessionRoute = "relay" | "connecting-direct" | "direct" | "connecting-lan" | "lan" | "connecting-quick-tunnel" | "quick-tunnel";
 export type DirectFallbackReason =
   | "account_key_unavailable"
   | "signal_endpoint_unavailable"

@@ -107,6 +107,8 @@ export function GetPasteboardFileURLs():Promise<Array<string>>;
 
 export function GetPeerConfigSyncStatus():Promise<main.PeerConfigSyncStatus>;
 
+export function GetPeerLANConfig():Promise<main.PeerLANConfig>;
+
 export function GetPeerQuickTunnelStatus():Promise<main.PeerQuickTunnelStatus>;
 
 export function GetPeerRendezvousConfig():Promise<main.PeerRendezvousConfig>;
@@ -314,6 +316,8 @@ export function SetLocalePreference(arg1:string):Promise<void>;
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
+
+export function SetPeerLANConfig(arg1:main.SetPeerLANConfigReq):Promise<void>;
 
 export function SetPeerRendezvousConfig(arg1:main.SetPeerRendezvousConfigReq):Promise<void>;
 

@@ -148,6 +148,8 @@ const routeLabel = computed(() => {
         : t("terminal.route.connectingDirect");
     case "connecting-quick-tunnel": return t("terminal.route.connectingQuickTunnel");
     case "quick-tunnel": return t("terminal.route.quickTunnel");
+    case "connecting-lan": return t("terminal.route.connectingLAN");
+    case "lan": return t("terminal.route.lan");
     case "direct": return t("terminal.route.direct");
     default: return t("terminal.route.relay");
   }
@@ -350,13 +352,13 @@ const replayInputGuard = createReplayInputGuard();
 
 async function loadPeerRouteStatus(): Promise<PeerSessionRouteStatus> {
   const getStatus = platform.peer?.getSessionRouteStatus;
-  if (!props.peerDirect || !getStatus) return { direct: false, quick_tunnel: false };
+  if (!props.peerDirect || !getStatus) return { direct: false, lan: false, quick_tunnel: false };
   if (peerRouteStatusPromise) return peerRouteStatusPromise;
   let timeout: number | null = null;
   const request = Promise.race([
-    getStatus(props.sessionId).catch(() => ({ direct: false, quick_tunnel: false })),
+    getStatus(props.sessionId).catch(() => ({ direct: false, lan: false, quick_tunnel: false })),
     new Promise<PeerSessionRouteStatus>((resolve) => {
-      timeout = window.setTimeout(() => resolve({ direct: false, quick_tunnel: false }), 1000);
+      timeout = window.setTimeout(() => resolve({ direct: false, lan: false, quick_tunnel: false }), 1000);
     }),
   ]).then((next) => {
     peerQuickTunnelAvailable.value = next.quick_tunnel;
@@ -3549,6 +3551,12 @@ watch(
 }
 :global(.session-route-indicator.route-direct) {
   color: #3fb950;
+}
+:global(.session-route-indicator.route-connecting-lan) {
+  color: #d29922;
+}
+:global(.session-route-indicator.route-lan) {
+  color: #58a6ff;
 }
 .viewer-overlay {
   position: absolute;

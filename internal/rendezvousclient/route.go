@@ -37,11 +37,9 @@ const (
 	routeMaxMetadataSize   = 1024
 )
 
-var configSyncSessionID = uuid.MustParse("ffffffff-ffff-4fff-bfff-ffffffffffff")
-
 // ConfigSyncSessionID is a reserved transcript namespace for authenticated
 // config-only attempts. It never names a terminal session or subscriber.
-func ConfigSyncSessionID() uuid.UUID { return configSyncSessionID }
+func ConfigSyncSessionID() uuid.UUID { return peertransport.ConfigSyncSessionID() }
 
 const (
 	routeKindOpen            = "open"
@@ -1263,7 +1261,7 @@ func membershipAllowsSession(membership peerproto.VerifiedGrant, sessionID uuid.
 }
 
 func membershipAllowsRoute(membership peerproto.VerifiedGrant, sessionID uuid.UUID) bool {
-	return sessionID == configSyncSessionID || membershipAllowsSession(membership, sessionID)
+	return sessionID == peertransport.ConfigSyncSessionID() || membershipAllowsSession(membership, sessionID)
 }
 
 func permissionWithin(effective peertransport.Permission, granted peerproto.Permission) bool {

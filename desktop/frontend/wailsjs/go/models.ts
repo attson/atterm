@@ -1007,6 +1007,65 @@ export namespace main {
 	        this.revoked_at = source["revoked_at"];
 	    }
 	}
+	export class PeerManualLANRoute {
+	    host: string;
+	    port: number;
+	    fingerprint: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerManualLANRoute(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.fingerprint = source["fingerprint"];
+	    }
+	}
+	export class PeerLANConfig {
+	    enabled: boolean;
+	    advertise_host: string;
+	    port: number;
+	    routes: PeerManualLANRoute[];
+	    running: boolean;
+	    listen_address?: string;
+	    last_error?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerLANConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.advertise_host = source["advertise_host"];
+	        this.port = source["port"];
+	        this.routes = this.convertValues(source["routes"], PeerManualLANRoute);
+	        this.running = source["running"];
+	        this.listen_address = source["listen_address"];
+	        this.last_error = source["last_error"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
 	export class PeerMember {
 	    peer_id: string;
 	    grant_serial: string;
@@ -1118,6 +1177,7 @@ export namespace main {
 	export class PeerRouteImportResult {
 	    issuer_peer_id: string;
 	    quick_tunnel: boolean;
+	    manual_lan: boolean;
 	    expires_at: number;
 
 	    static createFrom(source: any = {}) {
@@ -1128,11 +1188,13 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.issuer_peer_id = source["issuer_peer_id"];
 	        this.quick_tunnel = source["quick_tunnel"];
+	        this.manual_lan = source["manual_lan"];
 	        this.expires_at = source["expires_at"];
 	    }
 	}
 	export class PeerSessionRouteStatus {
 	    direct: boolean;
+	    lan: boolean;
 	    quick_tunnel: boolean;
 
 	    static createFrom(source: any = {}) {
@@ -1142,6 +1204,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.direct = source["direct"];
+	        this.lan = source["lan"];
 	        this.quick_tunnel = source["quick_tunnel"];
 	    }
 	}
@@ -1853,6 +1916,42 @@ export namespace main {
 	        this.env = source["env"];
 	        this.sync_env = source["sync_env"];
 	    }
+	}
+	export class SetPeerLANConfigReq {
+	    enabled: boolean;
+	    advertise_host: string;
+	    port: number;
+	    routes: PeerManualLANRoute[];
+
+	    static createFrom(source: any = {}) {
+	        return new SetPeerLANConfigReq(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.advertise_host = source["advertise_host"];
+	        this.port = source["port"];
+	        this.routes = this.convertValues(source["routes"], PeerManualLANRoute);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class SetPeerRendezvousConfigReq {
 	    mode: string;

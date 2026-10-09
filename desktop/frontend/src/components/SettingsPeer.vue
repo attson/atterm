@@ -1,11 +1,11 @@
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Check, Copy, Database, Download, Play, Plus, QrCode, RadioTower, RefreshCw, Save, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
+import { Cable, Check, Copy, Database, Download, Play, Plus, QrCode, RadioTower, RefreshCw, Save, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
 import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
 import { QRScanner } from '../platform/qrScanner'
-import type { PeerConfigSyncStatus, PeerConnectionPreview, PeerInvitation, PeerMember, PeerQuickTunnelStatus, PeerRendezvousConfig, PeerRendezvousStatus, PeerSpaceStatus } from '../platform/types'
+import type { PeerConfigSyncStatus, PeerConnectionPreview, PeerInvitation, PeerLANConfig, PeerMember, PeerQuickTunnelStatus, PeerRendezvousConfig, PeerRendezvousStatus, PeerSpaceStatus } from '../platform/types'
 import PeerMembersSection from './PeerMembersSection.vue'
 import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
 
@@ -21,7 +21,7 @@ const routeCopying = ref(false)
 const routeCopied = ref(false)
 const routeImporting = ref(false)
 const routeBundleInput = ref('')
-const routeImportResult = ref<'quick_tunnel' | 'no_quick_tunnel' | ''>('')
+const routeImportResult = ref<'quick_tunnel' | 'manual_lan' | 'no_route' | ''>('')
 const creatingSpace = ref(false)
 const invitationsLoading = ref(false)
 const invitationCreating = ref(false)
@@ -31,6 +31,7 @@ const memberActionID = ref('')
 const configSyncLoading = ref(false)
 const configSyncAction = ref<'accept' | 'discard' | 'sync' | ''>('')
 const rendezvousBusy = ref<'save' | 'reconnect' | ''>('')
+const lanBusy = ref(false)
 const discardPendingConfirming = ref(false)
 const copiedInvitationID = ref('')
 const error = ref('')
@@ -44,6 +45,16 @@ const rendezvousMode = ref<'disabled' | 'official' | 'custom'>('disabled')
 const rendezvousURL = ref('')
 const rendezvousSTUNMode = ref<'default' | 'custom' | 'disabled'>('default')
 const rendezvousSTUNURLs = ref('')
+const lanEnabled = ref(false)
+const lanAdvertiseHost = ref('')
+const lanPort = ref('8484')
+const lanRunning = ref(false)
+const lanListenAddress = ref('')
+const lanLastError = ref('')
+const lanRoutes = ref<Array<{ host: string; port: number; fingerprint: string }>>([])
+const lanRouteHost = ref('')
+const lanRoutePort = ref('8484')
+const lanRouteFingerprint = ref('')
 let rendezvousStatusPoll: ReturnType<typeof setInterval> | undefined
 let rendezvousStatusPolling = false
 const bundleInput = ref('')
@@ -58,7 +69,10 @@ const inviteSessionScope = ref('')
 
 const canPreview = computed(() => bundleInput.value.trim() !== '' && !previewing.value && !joining.value)
 const hasPublishedMemberRoute = computed(() => Boolean(
-  tunnelStatus.value?.running || rendezvousStatus.value?.state === 'online',
+  tunnelStatus.value?.running || rendezvousStatus.value?.state === 'online' || lanRunning.value,
+))
+const hasPublishedBootstrapRoute = computed(() => Boolean(
+  tunnelStatus.value?.running || lanRunning.value,
 ))
 const hasQuickTunnelHost = computed(() => Boolean(
   platform.peer?.getQuickTunnelStatus
@@ -66,6 +80,7 @@ const hasQuickTunnelHost = computed(() => Boolean(
   && platform.peer.stopQuickTunnel
   && platform.peer.createConnectionBundle,
 ))
+const hasLANHost = computed(() => Boolean(platform.peer?.getLANConfig && platform.peer.setLANConfig))
 const fingerprint = computed(() => {
   const hash = status.value?.genesis_hash?.trim()
   if (!hash) return ''
@@ -140,13 +155,14 @@ async function loadConfiguredPeerData(): Promise<void> {
   invitationsLoading.value = true
   membersLoading.value = true
   configSyncLoading.value = true
-  const [tunnelResult, invitationResult, memberResult, configSyncResult, rendezvousConfigResult, rendezvousStatusResult] = await Promise.allSettled([
+  const [tunnelResult, invitationResult, memberResult, configSyncResult, rendezvousConfigResult, rendezvousStatusResult, lanConfigResult] = await Promise.allSettled([
     peer.getQuickTunnelStatus?.() ?? Promise.resolve(null),
     peer.listInvitations(),
     peer.listMembers(),
     peer.configSyncStatus(),
     peer.getRendezvousConfig(),
     peer.getRendezvousStatus(),
+    peer.getLANConfig?.() ?? Promise.resolve(null),
   ])
   if (tunnelResult.status === 'fulfilled') {
     tunnelStatus.value = tunnelResult.value
@@ -181,6 +197,66 @@ async function loadConfiguredPeerData(): Promise<void> {
   } else {
     error.value = t('settings.peer.errors.rendezvousStatus')
   }
+  if (lanConfigResult.status === 'fulfilled' && lanConfigResult.value) {
+    applyLANConfig(lanConfigResult.value)
+  } else if (peer.getLANConfig) {
+    error.value = t('settings.peer.errors.lanStatus')
+  }
+}
+
+function applyLANConfig(config: PeerLANConfig): void {
+  lanEnabled.value = config.enabled
+  lanAdvertiseHost.value = config.advertise_host || ''
+  lanPort.value = String(config.port || 8484)
+  lanRunning.value = config.running
+  lanListenAddress.value = config.listen_address || ''
+  lanLastError.value = config.last_error || ''
+  lanRoutes.value = (config.routes || []).map(route => ({
+    host: route.host,
+    port: route.port,
+    fingerprint: route.fingerprint,
+  }))
+}
+
+async function persistLANConfig(routes = lanRoutes.value): Promise<boolean> {
+  const peer = platform.peer
+  const save = peer?.setLANConfig
+  const load = peer?.getLANConfig
+  if (!save || !load || lanBusy.value) return false
+  error.value = ''
+  lanBusy.value = true
+  try {
+    await save({
+      enabled: lanEnabled.value,
+      advertise_host: lanAdvertiseHost.value.trim(),
+      port: Math.trunc(Number(lanPort.value)),
+      routes,
+    })
+    applyLANConfig(await load())
+    return true
+  } catch {
+    error.value = t('settings.peer.errors.lanSave')
+    return false
+  } finally {
+    lanBusy.value = false
+  }
+}
+
+async function addLANRoute(): Promise<void> {
+  const route = {
+    host: lanRouteHost.value.trim(),
+    port: Math.trunc(Number(lanRoutePort.value)),
+    fingerprint: lanRouteFingerprint.value.trim(),
+  }
+  if (!route.host || !route.fingerprint) return
+  if (await persistLANConfig([...lanRoutes.value, route])) {
+    lanRouteHost.value = ''
+    lanRouteFingerprint.value = ''
+  }
+}
+
+async function removeLANRoute(index: number): Promise<void> {
+  await persistLANConfig(lanRoutes.value.filter((_, routeIndex) => routeIndex !== index))
 }
 
 function applyRendezvousConfig(config: PeerRendezvousConfig): void {
@@ -381,7 +457,7 @@ async function importMemberRoute(): Promise<void> {
   try {
     const result = await peer.importConnectionBundle(raw)
     routeBundleInput.value = ''
-    routeImportResult.value = result.quick_tunnel ? 'quick_tunnel' : 'no_quick_tunnel'
+    routeImportResult.value = result.quick_tunnel ? 'quick_tunnel' : result.manual_lan ? 'manual_lan' : 'no_route'
   } catch {
     error.value = t('settings.peer.errors.routeImport')
   } finally {
@@ -473,7 +549,7 @@ async function copyInvitationRoute(invitation: PeerInvitation): Promise<void> {
   const createBundle = platform.peer?.createConnectionBundle
   if (
     !createBundle
-    || !tunnelStatus.value?.running
+    || !hasPublishedBootstrapRoute.value
     || tunnelBusy.value
     || !invitation.token
     || invitationState(invitation) !== 'open'
@@ -772,6 +848,105 @@ function permissionLabel(permission: string): string {
         <p class="hint privacy-note">{{ t('settings.peer.rendezvous.privacy') }}</p>
       </section>
 
+      <section v-if="hasLANHost" class="peer-section" data-testid="peer-lan-section">
+        <div class="section-heading">
+          <Cable :size="17" aria-hidden="true" />
+          <div>
+            <h3>{{ t('settings.peer.lan.title') }}</h3>
+            <p class="hint">{{ t('settings.peer.lan.hint') }}</p>
+          </div>
+        </div>
+        <label class="checkbox-row">
+          <input v-model="lanEnabled" data-testid="peer-lan-enabled" type="checkbox" :disabled="lanBusy" />
+          <span>
+            <strong>{{ t('settings.peer.lan.enable') }}</strong>
+            <small>{{ t('settings.peer.lan.enableHint') }}</small>
+          </span>
+        </label>
+        <div class="rendezvous-form-grid">
+          <div class="form-field">
+            <label class="field-label" for="peer-lan-advertise-host">{{ t('settings.peer.lan.advertiseHost') }}</label>
+            <input
+              id="peer-lan-advertise-host"
+              v-model="lanAdvertiseHost"
+              data-testid="peer-lan-advertise-host"
+              type="text"
+              inputmode="url"
+              autocomplete="off"
+              spellcheck="false"
+              :placeholder="t('settings.peer.lan.advertiseHostPlaceholder')"
+              :disabled="lanBusy"
+            />
+          </div>
+          <div class="form-field">
+            <label class="field-label" for="peer-lan-port">{{ t('settings.peer.lan.port') }}</label>
+            <input id="peer-lan-port" v-model="lanPort" data-testid="peer-lan-port" type="number" min="1" max="65535" :disabled="lanBusy" />
+          </div>
+        </div>
+        <div class="actions rendezvous-actions">
+          <button type="button" class="primary-action" data-testid="peer-lan-save" :disabled="lanBusy" @click="persistLANConfig()">
+            <Save :size="14" aria-hidden="true" />
+            {{ lanBusy ? t('settings.peer.lan.saving') : t('settings.peer.lan.save') }}
+          </button>
+          <div class="tunnel-status-row" data-testid="peer-lan-status">
+            <span class="status-dot" :class="{ active: lanRunning, failed: lanEnabled && Boolean(lanLastError) }" aria-hidden="true" />
+            <span>{{ lanRunning ? t('settings.peer.lan.running') : lanEnabled ? t('settings.peer.lan.stopped') : t('common.disabled') }}</span>
+          </div>
+        </div>
+        <code v-if="lanListenAddress" class="route-url published-route">{{ lanListenAddress }}</code>
+        <p v-if="lanLastError" class="inline-error">{{ t('settings.peer.lan.error') }}</p>
+        <p class="hint privacy-note">{{ t('settings.peer.lan.privacy') }}</p>
+
+        <div class="lan-route-editor">
+          <h4>{{ t('settings.peer.lan.routesTitle') }}</h4>
+          <div class="lan-route-grid">
+            <div class="form-field">
+              <label class="field-label" for="peer-lan-route-host">{{ t('settings.peer.lan.routeHost') }}</label>
+              <input id="peer-lan-route-host" v-model="lanRouteHost" data-testid="peer-lan-route-host" type="text" autocomplete="off" spellcheck="false" placeholder="192.168.1.24" :disabled="lanBusy" />
+            </div>
+            <div class="form-field">
+              <label class="field-label" for="peer-lan-route-port">{{ t('settings.peer.lan.port') }}</label>
+              <input id="peer-lan-route-port" v-model="lanRoutePort" data-testid="peer-lan-route-port" type="number" min="1" max="65535" :disabled="lanBusy" />
+            </div>
+            <div class="form-field">
+              <label class="field-label" for="peer-lan-route-fingerprint">{{ t('settings.peer.lan.fingerprint') }}</label>
+              <input id="peer-lan-route-fingerprint" v-model="lanRouteFingerprint" data-testid="peer-lan-route-fingerprint" type="text" autocomplete="off" spellcheck="false" placeholder="SHA256:..." :disabled="lanBusy" />
+            </div>
+            <button
+              type="button"
+              class="icon-action lan-route-add"
+              data-testid="peer-lan-route-add"
+              :disabled="lanBusy || !lanRouteHost.trim() || !lanRouteFingerprint.trim()"
+              :aria-label="t('settings.peer.lan.addRoute')"
+              :title="t('settings.peer.lan.addRoute')"
+              @click="addLANRoute"
+            >
+              <Plus :size="15" aria-hidden="true" />
+            </button>
+          </div>
+          <div v-if="lanRoutes.length" class="lan-route-list">
+            <div v-for="(route, index) in lanRoutes" :key="route.fingerprint" class="lan-route-row">
+              <div>
+                <code>{{ route.host }}:{{ route.port }}</code>
+                <small>{{ route.fingerprint }}</small>
+              </div>
+              <button
+                type="button"
+                class="icon-action"
+                data-testid="peer-lan-route-remove"
+                :disabled="lanBusy"
+                :aria-label="t('settings.peer.lan.removeRoute')"
+                :title="t('settings.peer.lan.removeRoute')"
+                @click="removeLANRoute(index)"
+              >
+                <Trash2 :size="14" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+          <p v-else class="hint">{{ t('settings.peer.lan.routesEmpty') }}</p>
+        </div>
+      </section>
+
       <section class="peer-section" data-testid="peer-config-sync">
         <div class="sync-heading">
           <div class="section-heading sync-title">
@@ -951,7 +1126,9 @@ function permissionLabel(permission: string): string {
         <p v-if="routeImportResult" class="success-note" data-testid="peer-route-import-success">
           {{ routeImportResult === 'quick_tunnel'
             ? t('settings.peer.routeImport.quickTunnelReady')
-            : t('settings.peer.routeImport.quickTunnelRemoved') }}
+            : routeImportResult === 'manual_lan'
+              ? t('settings.peer.routeImport.lanReady')
+              : t('settings.peer.routeImport.routeRemoved') }}
         </p>
       </section>
 
@@ -1148,8 +1325,8 @@ function permissionLabel(permission: string): string {
                 type="button"
                 class="secondary-action"
                 data-testid="peer-copy-invitation"
-                :disabled="!tunnelStatus?.running || !invitation.token || tunnelBusy || Boolean(invitationActionID)"
-                :title="!tunnelStatus?.running ? t('settings.peer.invitations.startTunnelFirst') : undefined"
+                :disabled="!hasPublishedBootstrapRoute || !invitation.token || tunnelBusy || Boolean(invitationActionID)"
+                :title="!hasPublishedBootstrapRoute ? t('settings.peer.invitations.startTunnelFirst') : undefined"
                 @click="copyInvitationRoute(invitation)"
               >
                 <Copy :size="14" aria-hidden="true" />
@@ -1433,6 +1610,7 @@ function permissionLabel(permission: string): string {
 }
 textarea,
 input[type="number"],
+input[type="text"],
 input[type="url"] {
   box-sizing: border-box;
   width: 100%;
@@ -1450,17 +1628,20 @@ textarea {
   resize: vertical;
 }
 input[type="number"],
+input[type="text"],
 input[type="url"] {
   height: 32px;
   padding-block: 6px;
 }
 textarea:focus,
 input[type="number"]:focus,
+input[type="text"]:focus,
 input[type="url"]:focus {
   box-shadow: 0 0 0 2px var(--accent);
 }
 textarea:disabled,
 input[type="number"]:disabled,
+input[type="text"]:disabled,
 input[type="url"]:disabled {
   opacity: 0.6;
 }
@@ -1504,6 +1685,61 @@ input[type="url"]:disabled {
 .privacy-note {
   padding-left: 9px;
   border-left: 2px solid var(--border);
+}
+.lan-route-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.lan-route-editor h4 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.lan-route-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 92px minmax(180px, 1.5fr) 32px;
+  align-items: end;
+  gap: 8px;
+}
+.lan-route-add {
+  width: 32px;
+  padding: 0;
+}
+.lan-route-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+.lan-route-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.lan-route-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.lan-route-row code,
+.lan-route-row small {
+  overflow-wrap: anywhere;
+}
+.lan-route-row code {
+  color: var(--fg);
+  font-size: 12px;
+}
+.lan-route-row small {
+  color: var(--fg-dim);
+  font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .published-route {
   display: block;
@@ -1751,6 +1987,7 @@ button:disabled {
   }
   .invitation-form-grid,
   .rendezvous-form-grid,
+  .lan-route-grid,
   .capability-options {
     grid-template-columns: minmax(0, 1fr);
   }

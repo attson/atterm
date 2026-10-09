@@ -73,6 +73,7 @@ type peerQuickTunnelHost struct {
 
 	mu       sync.Mutex
 	attempts map[*quicktunnel.SignalChannel]*peerHostAttempt
+	controls map[*quicktunnel.SignalChannel]*peerLANControlHostAttempt
 }
 
 // peerHostRuntime owns the transport-independent authorization and local
@@ -119,6 +120,7 @@ func newPeerQuickTunnelHost(app *App, host *relayHost) (*peerQuickTunnelHost, er
 	peerHost := &peerQuickTunnelHost{
 		app: app, host: host, runtime: &peerHostRuntime{app: app, host: host},
 		attempts: make(map[*quicktunnel.SignalChannel]*peerHostAttempt),
+		controls: make(map[*quicktunnel.SignalChannel]*peerLANControlHostAttempt),
 	}
 	handler, err := quicktunnel.NewPeerHandler(quicktunnel.HostConfig{
 		Authorize: peerHost.authorize,
@@ -175,7 +177,13 @@ func (h *peerQuickTunnelHost) authorize(ctx context.Context, request quicktunnel
 	if err := ctx.Err(); err != nil {
 		return quicktunnel.HostAuthorization{}, err
 	}
-	authorization, err := h.runtime.authorize(request.ClientPeerID, request.SessionID)
+	var authorization peerHostAuthorization
+	var err error
+	if request.SessionID == peertransport.ConfigSyncSessionID() {
+		authorization, err = h.runtime.authorizeConfig(request.ClientPeerID)
+	} else {
+		authorization, err = h.runtime.authorize(request.ClientPeerID, request.SessionID)
+	}
 	if err != nil {
 		return quicktunnel.HostAuthorization{}, quicktunnel.ErrUnauthorized
 	}
@@ -406,6 +414,10 @@ func peerPermissionName(permission peertransport.Permission) string {
 
 func (h *peerQuickTunnelHost) onAuthenticated(signal *quicktunnel.SignalChannel) {
 	binding := signal.Binding()
+	if binding.SessionID == peertransport.ConfigSyncSessionID() {
+		h.onLANControlAuthenticated(signal)
+		return
+	}
 	permission := peerPermissionName(binding.Permission)
 	if binding.AttemptID == uuid.Nil || binding.SessionID == uuid.Nil || permission == "" {
 		_ = signal.Close()
@@ -472,6 +484,10 @@ func (h *peerQuickTunnelHost) onAuthenticated(signal *quicktunnel.SignalChannel)
 }
 
 func (h *peerQuickTunnelHost) onSignalClosed(signal *quicktunnel.SignalChannel, _ error) {
+	if control := h.takeControl(signal); control != nil {
+		control.close(false)
+		return
+	}
 	if attempt := h.takeAttempt(signal); attempt != nil {
 		attempt.close(false)
 	}
@@ -1250,7 +1266,7 @@ func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, 
 	if local == nil {
 		return "", errors.New("local Peer membership is not active")
 	}
-	routes := make([]peerproto.ConnectionRoute, 0, 2)
+	routes := make([]peerproto.ConnectionRoute, 0, 3)
 	if status.Running && status.PublicURL != "" {
 		routes = append(routes, peerproto.ConnectionRoute{Kind: peerproto.RouteQuickTunnel, URL: status.PublicURL})
 	}
@@ -1260,12 +1276,15 @@ func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, 
 	if route, ok := rendezvousLifecycle.connectionRoute(); ok {
 		routes = append(routes, route)
 	}
+	if route, ok := h.app.peerLANConnectionRoute(); ok {
+		routes = append(routes, route)
+	}
 	if len(routes) == 0 {
 		return "", errors.New("Peer connection has no published route")
 	}
 	if invitationToken != "" {
-		if !status.Running || status.PublicURL == "" {
-			return "", errors.New("first Peer join still requires a published Quick Tunnel route")
+		if !connectionRoutesContain(routes, peerproto.RouteQuickTunnel) && !connectionRoutesContain(routes, peerproto.RouteManualLAN) {
+			return "", errors.New("first Peer join requires Quick Tunnel or a manual LAN route")
 		}
 		open := false
 		for _, invitation := range state.Invitations {
@@ -1286,6 +1305,15 @@ func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, 
 	return peerproto.NewMemberConnectionBundle(identity, genesis, local.Token, routes, now, peerQuickTunnelBundleValidity)
 }
 
+func connectionRoutesContain(routes []peerproto.ConnectionRoute, kind peerproto.RouteKind) bool {
+	for _, route := range routes {
+		if route.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *peerQuickTunnelHost) Stop() error {
 	h.mu.Lock()
 	attempts := make([]*peerHostAttempt, 0, len(h.attempts))
@@ -1293,13 +1321,24 @@ func (h *peerQuickTunnelHost) Stop() error {
 		delete(h.attempts, signal)
 		attempts = append(attempts, attempt)
 	}
+	controls := make([]*peerLANControlHostAttempt, 0, len(h.controls))
+	for signal, control := range h.controls {
+		delete(h.controls, signal)
+		controls = append(controls, control)
+	}
 	h.mu.Unlock()
 	var wait sync.WaitGroup
-	wait.Add(len(attempts))
+	wait.Add(len(attempts) + len(controls))
 	for _, attempt := range attempts {
 		go func() {
 			defer wait.Done()
 			attempt.close(true)
+		}()
+	}
+	for _, control := range controls {
+		go func() {
+			defer wait.Done()
+			control.close(true)
 		}()
 	}
 	wait.Wait()

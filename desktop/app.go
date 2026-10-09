@@ -399,6 +399,10 @@ type App struct {
 	peerRendezvousReconcileMu sync.Mutex
 	peerRendezvousMu          sync.Mutex
 	peerRendezvous            *peerRendezvousLifecycle
+	peerLANMu                 sync.Mutex
+	peerLAN                   *peerLANListener
+	peerManualCatalogMu       sync.Mutex
+	peerManualCatalog         map[uuid.UUID]peerDiscoveredSession
 
 	startupFatalMu sync.RWMutex
 	startupFatal   StartupError
@@ -623,6 +627,9 @@ func (a *App) startup(ctx context.Context) {
 	// Feishu integration: choose mode based on relay login state.
 	a.startFeishu(ctx, cfg)
 	a.reconcilePeerRendezvous(cfg)
+	if err := a.reconcilePeerLAN(cfg); err != nil && cfg.PeerLANEnabled {
+		logWarn("peer-lan", "start manual Peer listener: %v", err)
+	}
 }
 
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
@@ -634,6 +641,7 @@ func (a *App) shutdown(ctx context.Context) {
 		}
 	}
 	a.stopPeerRendezvous()
+	a.stopPeerLAN()
 	a.stopNativeDirectClients()
 	a.stopPeerNativeDirectClients()
 	a.mu.Lock()

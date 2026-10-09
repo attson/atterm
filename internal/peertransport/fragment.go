@@ -66,8 +66,9 @@ func FragmentFrame(messageID uint64, frame []byte) ([][]byte, error) {
 	return fragments, nil
 }
 
-// FragmentConfigMessage splits one config logical message while preserving its
-// original kind. Its header cannot be parsed as a terminal fragment.
+// FragmentConfigMessage splits one control-plane logical message while
+// preserving its original kind. Its header cannot be parsed as a terminal
+// fragment. The historical name remains for wire compatibility.
 func FragmentConfigMessage(kind RecordKind, messageID uint64, message []byte) ([][]byte, error) {
 	if !kind.configMessage() || len(message) <= MaxRecordPlaintext || len(message) > MaxConfigMessageSize {
 		return nil, fmt.Errorf("%w: config kind %d size %d", ErrInvalidFragment, kind, len(message))

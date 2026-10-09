@@ -497,7 +497,7 @@ command、cwd、env、startup command 等执行字段。
   frame header 使用该 **anchor session id**。anchor 只提供 membership/session-scope/route-lease
   授权与响应路由；新建 session 不继承它的 PTY、driver 或 replay 状态。
 - Peer client 为一次操作建立临时 terminal route，但不 claim driver、不发 `IN`/`RESIZE`；Direct
-  可用时优先 Direct，否则使用当前已验签 Quick Tunnel hint。当前目标 host 至少要有一个可发现
+  可用时优先 Direct，否则使用当前已验签 Quick Tunnel hint 或本地已验证 Manual LAN route。当前目标 host 至少要有一个可发现
   session；零会话 host 的创建需要未来独立 host control channel。
 - effective permission 必须是 `control` 或 `full`。owner host 在收请求、worker 真正 fork 前和发
   response 前分别重验 exact active membership、双方 session scope、owner 当前 policy 与 route
@@ -988,12 +988,13 @@ Rendezvous 地址；后续连接地址放在独立的 signed `ConnectionBundle`�
 邀请核销后，route refresh bundle 省略一次性 ticket，只用持久 issuer membership 建链；连接
 client 仍须在 handshake 证明自己的有效 membership。因此 invitation 过期或已消费都不要求
 重签 membership。bundle 默认有效 10 分钟、最长 24
-小时，且绝不超过 invitation 到期时间。当前 route kind 是 `quick_tunnel` 与
-`rendezvous`：Quick Tunnel 只接受无 userinfo/port/query/fragment、root path 且 hostname
+小时，且绝不超过 invitation 到期时间。当前 route kind 是 `quick_tunnel`、`rendezvous` 与
+`manual_lan`：Quick Tunnel 只接受无 userinfo/port/query/fragment、root path 且 hostname
 恰为单个合法 DNS label 的 `https://<label>.trycloudflare.com`；Rendezvous 只接受
 `https`/`wss` service origin（只含 scheme + host + 可选 port，root path）且必须携带 32-byte
-opaque topic。客户端统一从 origin 派生 `/v1/connect`，不允许 route 自带 API path。URL 轮换只
-创建新的 `atc1`，不创建 invitation 或 membership。
+opaque topic；Manual LAN 只接受带显式端口、无 userinfo/path/query/fragment 的
+`http://<host>:<port>`。客户端统一从 origin 派生固定 Peer API path，不允许 route 自带 API path。
+URL 轮换只创建新的 `atc1`，不创建 invitation 或 membership。
 
 新设备生成自己的 P-256 signing identity 和独立 P-256 ECDH wrapping identity 后，将完整
 `atp1` invitation、subject peer/signing public key、wrapping public key、32-byte nonce 和创建
@@ -1014,14 +1015,17 @@ record 原地新增 ECDH key pair，不轮换 signing key 或 `peer_id`。iOS v2
 private key 只序列化到 Keychain，运行时重新导入为 non-exportable key；v1 迁移同样只新增
 wrapping identity。
 
-首次加入通过 Quick Tunnel 同源的 `POST /peer/v1/join` 完成。HTTP body 只暴露版本、
+首次加入通过 signed `atc1` 中的 Quick Tunnel 或 Manual LAN origin 上
+`POST /peer/v1/join` 完成；Rendezvous 不承载 bootstrap secret 交换。HTTP body 只暴露版本、
 `invite_id`、XChaCha20-Poly1305 nonce 和 ciphertext；完整 `apj1`、`atp1`、pairing secret、
 membership 与 epoch envelope 都不会以明文经过 tunnel。request/response key 分别由
 HKDF-SHA256(`pairing_secret`, salt=`invite_id`,
 info=`atterm-quick-tunnel-join-v1\x00<direction>`) 派生，AAD 为
 `atterm-quick-tunnel-join-v1\x00<direction>\x00<invite_id>`，两个方向不能互换重放。
-生产客户端只使用签名 `atc1` 中的 HTTPS Quick Tunnel route；HTTP override 仅允许 loopback
-测试。服务端所有失败统一返回拒绝，不暴露 invitation 是否存在、已消费或已撤销。
+生产客户端只使用签名 `atc1` 中的 HTTPS Quick Tunnel 或 HTTP Manual LAN route；任意未签名
+HTTP override 仍只允许 loopback 测试。Manual LAN 的明文 HTTP 只提供 reachability，join body
+仍由 pairing secret 端到端加密，后续连接还必须完成 membership handshake。服务端所有失败统一
+返回拒绝，不暴露 invitation 是否存在、已消费或已撤销。
 
 解密后的响应只包含完整 genesis、新签 membership、membership directory、revocations、
 epoch rotations，以及为新设备 wrapping key 单独封装的当前 `ake1` bootstrap envelopes。
@@ -1114,6 +1118,8 @@ terminal subscriber lifecycle。
 | `SIGNAL` | `0x0b` | JSON `Signal{v,type,payload}`，仅用于加密后的 SDP/ICE |
 | `SIGNAL_FRAGMENT` | `0x0c` | 分片后的单个 signaling message |
 | `SERVICE` | `0x0d` | 独立 Remote Web Preview multiplex message，不进入 terminal frame |
+| `CATALOG_REQUEST` | `0x0e` | reserved control route 上的 JSON `{v}` 目录请求 |
+| `CATALOG_RESPONSE` | `0x0f` | filtered Peer session catalog，不创建 terminal subscriber |
 
 单个 record plaintext 上限仍是 16 KiB。超过上限的配置消息用独立格式分片：
 
@@ -1122,7 +1128,7 @@ terminal subscriber lifecycle。
 offset(be32) || total(be32) || data
 ```
 
-`original_kind` 只允许 `0x07..0x09`；`total` 必须大于 16 KiB 且不超过 16 MiB。固定
+`original_kind` 只允许 `0x07..0x09` 或 `0x0e..0x0f`；`total` 必须大于 16 KiB 且不超过 16 MiB。固定
 `0xffffffff` 同时使 config fragment 无法被 terminal fragment reassembler 接受。terminal 与
 config 各自只允许一个连续消息重组，状态完全分离；乱序、交错、超时、越界、未知类型、AEAD
 篡改或上层 JSON/授权失败都关闭当前 Peer route，不把 payload 投递到另一逻辑通道。
@@ -1160,9 +1166,12 @@ low-S P1363 signature，并验证 client/host membership 均锚定到同一 gene
 private key 只签名、不跨算法复用为 ECDH，兼容 WebCrypto non-exportable ECDSA key。proof
 长度由 authenticator 声明，所以 Relay v0.6 的现有 wire bytes 不变。
 
-### Quick Tunnel Peer signaling
+### Quick Tunnel / Manual LAN Peer signaling
 
-Quick Tunnel 本机 gateway 只在 `GET /peer/v1/connect` 接受 WebSocket，并要求
+两种 reachability route 复用同一个 bounded Peer HTTP/WebSocket handler。Quick Tunnel 的 loopback
+gateway 由 `cloudflared` 发布；Manual LAN listener 只在用户显式启用后绑定 IPv4
+`0.0.0.0:<port>`，signed bundle 发布用户填写的 host 与该端口。gateway 只在
+`GET /peer/v1/connect` 接受 WebSocket，并要求
 `Sec-WebSocket-Protocol: atterm-peer-v1`。Cloudflare 可见的首条 text message 是有界路由信封：
 
 ```json
@@ -1217,15 +1226,26 @@ host/client attempt。offer/answer 只经上述 encrypted signal record 交换�
 
 收到 `wss_ready` 后，同一 WebSocket 切换到 WSS data 模式，复用首次 signaling membership
 handshake 已派生的 traffic key、nonce counter 和 exact remote membership，不再执行第二次
-handshake。此后只接受 `FRAME`..`CONFIG_FRAGMENT`（`0x01..0x0a`）和独立 `SERVICE`（`0x0d`），
+handshake。此后只接受 `FRAME`..`CONFIG_FRAGMENT`（`0x01..0x0a`）、独立 `SERVICE`（`0x0d`）
+以及 reserved control route 上的 `CATALOG_REQUEST/RESPONSE`（`0x0e..0x0f`），
 任何 signaling record 或未知类型都 fail closed。terminal/config 的 fragmentation 与 reassembly 规则和 DataChannel
 完全相同；配置授权仍绑定 handshake 的 exact membership。WSS writer 使用有界队列，在每个
 encrypted record 边界按 `input/control > terminal output > Preview service > config sync` 调度；同一 fragmented
 logical message 内保持同级连续，允许更高优先级 record 在 terminal/config 两套独立 reassembler
 之间抢占。Cloudflare 只能观察连接元数据、时序和 ciphertext size，不能读取 record plaintext。
 
+Manual LAN endpoint 与 device fingerprint `SHA256:<peer_id>` 只作为本地持久化的可达性绑定：
+每次连接仍从当前 deny-wins active membership 解析该 peer 的精确 token/wrapping key，endpoint
+返回的 identity 或 membership 不匹配就 fail closed。明文 LAN WebSocket 上的 handshake proof、
+XChaCha20-Poly1305 record layer、sequence 和 fragment 规则与 Quick Tunnel 完全相同，终端/配置
+内容不以明文出现。reserved `ConfigSyncSessionID` control transcript 只允许 config anti-entropy
+和经双方 scope/permission 过滤的 catalog；它禁止 terminal frame、PTY subscriber/driver、FS worker
+和 Preview service。多个 Manual LAN route 与 Rendezvous discovery 并行；同一 `session_id` 同时被
+发现时保留 Rendezvous catalog entry，避免改变已建立的 direct route 语义。
+
 Desktop 只在显式调用 `StartPeerQuickTunnel` 后启动 `cloudflared`，不会随 app 启动自动发布
-公网入口。gateway 挂载上述 Peer handler；DataChannel 第二次 membership handshake 完成后，
+公网入口；Manual LAN listener 同样必须在 Settings 显式开启，停止 Quick Tunnel 不关闭它。
+gateway 挂载上述 Peer handler；DataChannel 第二次 membership handshake 完成后，
 Desktop 以 `WithoutAutoDrive` 订阅请求的本地 session，转发初始 scrollback/实时
 `OUT`/`META`/`CLOSE`，并在 replay end 后发送 `DIRECT_READY`。账户无关 record layer 已提供
 应用加密，所以 terminal frame 不再叠加 Relay `account_key` 信封；入站 frame 也不走 Relay
@@ -1239,7 +1259,7 @@ owner policy 与当前 route lease，并在投递前校验 JSON、image MIME、�
 信封。配置 anti-entropy 同时绑定到同一 authenticated membership，但使用独立 config
 callback，绝不创建第二个 terminal subscriber。
 
-Quick Tunnel WSS 与 Rendezvous Pion host 共用进程内的 authenticated Peer route lease。租约键为
+Quick Tunnel WSS、Manual LAN WSS 与 Rendezvous Pion host 共用进程内的 authenticated Peer route lease。租约键为
 `(remote_peer_id, session_id, client_instance_id)`：同一 Peer 的不同设备或 pane 可以各自 attach，
 同一逻辑客户端的新 route 则必须先重新验证 exact active membership、session scope 和 permission，
 完成 scrollback catch-up 后才原子替换旧 subscriber。若旧 subscriber 是 driver，新的 subscriber
@@ -1248,12 +1268,14 @@ Quick Tunnel WSS 与 Rendezvous Pion host 共用进程内的 authenticated Peer 
 权限；旧连接迟到的 close 只能释放自己，不能删除新租约。并发的陈旧候选不能覆盖已经获胜的
 route。该规则只约束 host 本地 attachment，不增加 frame/record 类型。
 
-Peer client 默认仍先尝试 Rendezvous direct。Direct 遇到
+Peer client 默认请求 direct；有 Rendezvous catalog 时先尝试 Rendezvous Pion，没有 Rendezvous
+route 而会话来自 Manual LAN catalog 时，Go 将请求解析为 LAN WSS。Direct 遇到
 `signal_endpoint_unavailable` / `webrtc_unavailable` / `timeout` / `host_unavailable` / `ice_failed` /
 `direct_disconnected` / `transport_error` 时，会用最多 1 秒向 Go 查询 token-free route capability；
-只有目标 session 仍在 authenticated catalog 且对应 signed Quick Tunnel hint 当前有效，才自动以
-同一 `client_instance_id` 和 last committed OUT seq 建立 Quick Tunnel。查询和 handover 期间冻结
-`IN`/`RESIZE`/`CLAIM_DRIVER`，旧 generation callback 全部丢弃，Quick Tunnel replay 按 OUT seq 去重
+只有目标 session 仍在 authenticated catalog 且对应 signed Quick Tunnel 或本地已验证 Manual LAN
+hint 当前有效，才自动以
+同一 `client_instance_id` 和 last committed OUT seq 建立对应 WSS route。查询和 handover 期间冻结
+`IN`/`RESIZE`/`CLAIM_DRIVER`，旧 generation callback 全部丢弃，WSS replay 按 OUT seq 去重
 后才恢复写入。`authentication_failed` / `protocol_error` / `backpressure` 等安全或完整性错误不得通过
 换路降级。回退到 Quick Tunnel 并稳定 ready 后，client 至少等待 30 秒才重新查询 Direct capability；
 不可用或候选失败会按 30 秒起步指数退避，最长 5 分钟。只有 capability 仍有效才以相同
@@ -1272,8 +1294,9 @@ generation 改变或 native transport 拒绝入队时，client 明确返回失�
 
 `CreatePeerConnectionBundle(invitation)` 只接受本地加密账本中仍开放、未消费、未撤销、未过期且
 由当前 active local membership 签发的 invitation；首次加入的 bundle 必须发布当前 Quick Tunnel
-URL，也可以附带 Rendezvous hint。空 invitation 生成 member reconnect bundle，可发布 Quick
-Tunnel + Rendezvous 或仅 Rendezvous route。route/presence 轮换只生成新的 bundle id/route，
+或 Manual LAN URL，也可以附带 Rendezvous hint。空 invitation 生成 member reconnect bundle，可发布
+Quick Tunnel、Rendezvous、Manual LAN 的任意可用组合，但仅有 Rendezvous 时不能完成首次核销。
+route/presence 轮换只生成新的 bundle id/route，
 genesis、ticket 和 durable membership 不变。`StopPeerQuickTunnel` 关闭 active Pion/subscriber、
 loopback gateway 和 `cloudflared`，但不删除 Peer trust，可再次显式启动。WSS fallback 与
 Rendezvous Pion route 都复用上述同一个 Session attach、权限热检查和 config anti-entropy 路径；
@@ -1439,19 +1462,21 @@ channel；v1 `catalog_response` 不携带 `ConnectionBundle`。只有用户选�
 
 `catalog_response_routes` 仅在 offset 0 的第一页增加 `connection_bundle`，后续页必须省略。host
 每次第一页请求都重新生成由当前 active local membership 签名的无 ticket member reconnect bundle；
-它可包含当前 Quick Tunnel + Rendezvous route，也可只含 Rendezvous route。该字段与 session metadata
+它可包含当前 Quick Tunnel、Rendezvous 与 Manual LAN route 的任意可用组合。该字段与 session metadata
 一起位于 pairwise XChaCha20-Poly1305 信封内，Rendezvous 只能看到不超过 64 KiB 的 ciphertext。
 client 在接受该 host 的目录前，必须独立验证 bundle 属于当前 genesis、issuer 精确 membership 仍在
 deny-wins active set，且 issuer Peer ID 等于被请求的 Peer；通过后只原子替换该 issuer 的进程内
-Quick Tunnel hint，不持久化 URL/token，也不暴露给 renderer。空 bundle 只可能来自 v1 fallback，
+Quick Tunnel hint，并按 issuer fingerprint 在本地配置中新增或替换 Manual LAN endpoint；两类
+endpoint 都不暴露给 renderer。Quick Tunnel URL/token 不落盘，Manual LAN host/port/fingerprint
+则作为用户可编辑的本地 reachability 配置持久化。空 bundle 只可能来自 v1 fallback，
 此时保留现有 hint 直到自身 expiry。此分发不创建 Pion attempt、terminal subscriber 或 config
 channel，也不因 bundle 到达而主动切换 terminal route；只有之后发生上述可恢复 Direct 故障时，
-client 才重新查询 capability 并执行自动 Quick Tunnel handover。用户仍可在失败界面显式选择重试。
+client 才重新查询 capability 并执行对应 WSS route 的自动 handover。用户仍可在失败界面显式选择重试。
 
 发送 `open` 后，Rendezvous ACK 为 `queued` 映射 `peer offline`；连接、写入、ACK 超时或 host
 容量问题映射 `service unavailable`；Pion ICE/transport 建链失败映射 `ICE failed`；membership、
 session scope、permission 或 attempt 校验失败映射 `authentication failed`。这些类别用于调用方
-决定是否退避或尝试已启用的 Quick Tunnel；Rendezvous 本身不提供 data fallback。
+决定是否退避或尝试已启用的 Quick Tunnel / Manual LAN WSS route；Rendezvous 本身不提供 data fallback。
 
 稳定错误码为 `unauthorized`、`invalid_message`、`message_too_large`、
 `presence_conflict`、`topic_capacity`、`mailbox_capacity`、`rate_limited` 和
@@ -1487,8 +1512,10 @@ Desktop 启用 Rendezvous 且已有 Peer Space 时会注册 host presence；单�
 `invalid_config | registration_timeout | authentication_failed | service_unavailable |
 registration_failed` 稳定码。诊断导出只包含 service origin 与聚合状态，不包含 topic、presence id、
 Peer id、SDP/ICE 或 payload。成员重连的
-`ConnectionBundle` 可同时携带 Quick Tunnel 与 Rendezvous，也可以只携带 Rendezvous；首次邀请
-核销仍必须包含可用 Quick Tunnel route，Rendezvous 不承担 bootstrap secret 交换。registration
+`ConnectionBundle` 可同时携带 Quick Tunnel、Rendezvous 与 Manual LAN；首次邀请核销必须包含
+可用 Quick Tunnel 或 Manual LAN route，Rendezvous 不承担 bootstrap secret 交换。只启用 Manual
+LAN 时，bootstrap、目录、配置同步与终端 attach 都不联系 Relay、Rendezvous、STUN、Cloudflare
+或任何其它公网服务。registration
 在线期间 Desktop 每 3 秒把当前 host presence 与 signed membership、durable acknowledgement
 vector 重新规划，按小 Space 全连接/大 Space bounded fanout 维护 config-only Pion 通道；presence
 离线、fanout 轮换或 registration 结束会关闭不再需要的 outbound 通道。

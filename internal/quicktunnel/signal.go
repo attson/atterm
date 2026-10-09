@@ -475,6 +475,9 @@ func permissionAllowed(effective peertransport.Permission, granted peerproto.Per
 }
 
 func sessionAllowed(membership peerproto.VerifiedGrant, sessionID uuid.UUID) bool {
+	if sessionID == peertransport.ConfigSyncSessionID() {
+		return true
+	}
 	allowed := membership.Document.AllowedSessionIDs
 	if len(allowed) == 0 {
 		return true

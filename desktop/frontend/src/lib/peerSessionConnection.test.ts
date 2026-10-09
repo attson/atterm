@@ -903,6 +903,29 @@ describe('PeerSessionConnection', () => {
     expect(routes.at(-1)).toMatchObject({ route: 'quick-tunnel' })
   })
 
+  it('labels an authenticated Manual LAN route', () => {
+    const transports: FakeTransport[] = []
+    const routes: Array<{ route: string }> = []
+    const connection = new PeerSessionConnection(sessionID, {
+      onRouteChange: (diagnostics) => routes.push(diagnostics),
+    }, {
+      route: 'lan',
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    expect(transports[0].options.route).toBe('lan')
+    expect(routes.at(-1)).toMatchObject({ route: 'connecting-lan' })
+    transports[0].options.callbacks.onDiagnostics?.({ route: 'lan' })
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onReady(0)
+    expect(routes.at(-1)).toMatchObject({ route: 'lan' })
+  })
+
   it('creates a session from only host and profile ids and resolves the matching response', async () => {
     const transports: FakeTransport[] = []
     const connection = new PeerSessionConnection(sessionID, {}, {

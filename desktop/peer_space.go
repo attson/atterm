@@ -178,6 +178,7 @@ func (a *App) CreatePeerSpace() (PeerSpaceStatus, error) {
 	}
 	if a.cfgStore != nil {
 		a.reconcilePeerRendezvous(a.cfgStore.Get())
+		a.reconcilePeerLAN(a.cfgStore.Get())
 	}
 	return status, nil
 }

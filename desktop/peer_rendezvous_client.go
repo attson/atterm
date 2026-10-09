@@ -22,6 +22,7 @@ const peerNativeDirectMaxAttempts = 16
 
 const (
 	peerNativeRouteDirect      = "direct"
+	peerNativeRouteLAN         = "lan"
 	peerNativeRouteQuickTunnel = "quick_tunnel"
 )
 
@@ -37,6 +38,7 @@ type peerNativeDirectClient struct {
 	remote           rendezvousclient.PeerRoute
 	route            string
 	quickRoute       peerQuickTunnelRoute
+	manualURL        string
 
 	mu              sync.Mutex
 	attempt         *peertransport.PionClientAttempt
@@ -71,23 +73,32 @@ func (a *App) StartPeerNativeDirect(req NativeDirectStartRequest) error {
 	if route == "" {
 		route = peerNativeRouteDirect
 	}
-	if route != peerNativeRouteDirect && route != peerNativeRouteQuickTunnel {
+	if route != peerNativeRouteDirect && route != peerNativeRouteLAN && route != peerNativeRouteQuickTunnel {
 		return errors.New("unsupported Peer native route")
 	}
+	var host *peerRendezvousHost
+	var discovered peerDiscoveredSession
+	var ok bool
 	a.peerRendezvousMu.Lock()
 	lifecycle := a.peerRendezvous
 	a.peerRendezvousMu.Unlock()
-	if lifecycle == nil {
-		return rendezvousclient.ErrServiceUnavailable
+	if lifecycle != nil {
+		lifecycle.mu.Lock()
+		host = lifecycle.active
+		lifecycle.mu.Unlock()
 	}
-	lifecycle.mu.Lock()
-	host := lifecycle.active
-	lifecycle.mu.Unlock()
-	if host == nil || route == peerNativeRouteDirect && host.route == nil {
-		return rendezvousclient.ErrServiceUnavailable
+	if host != nil {
+		discovered, ok = host.discoveredSession(sessionID)
 	}
-	discovered, ok := host.discoveredSession(sessionID)
-	if !ok {
+	manual, manualOK := a.peerManualDiscoveredSession(sessionID)
+	if route == peerNativeRouteDirect && (!ok || host == nil || host.route == nil) && manualOK {
+		route, discovered, ok = peerNativeRouteLAN, manual, true
+	} else if route == peerNativeRouteLAN {
+		discovered, ok = manual, manualOK
+	} else if !ok && manualOK {
+		discovered, ok = manual, true
+	}
+	if !ok || route == peerNativeRouteDirect && (host == nil || host.route == nil) {
 		return errors.New("Peer session is no longer discoverable")
 	}
 	var quickRoute peerQuickTunnelRoute
@@ -103,6 +114,7 @@ func (a *App) StartPeerNativeDirect(req NativeDirectStartRequest) error {
 		sessionID: sessionID, sinceSeq: req.SinceSeq,
 		clientInstanceID: req.ClientInstanceID, remote: discovered.remote,
 		route: route, quickRoute: quickRoute,
+		manualURL: discovered.manualURL,
 	}
 	a.peerNativeMu.Lock()
 	if a.peerNative == nil {
@@ -189,6 +201,9 @@ func (c *peerNativeDirectClient) run() error {
 	if c.route == peerNativeRouteQuickTunnel {
 		return c.runQuickTunnel(state.GenesisToken, identity, local.Token, remote.Token)
 	}
+	if c.route == peerNativeRouteLAN {
+		return c.runLAN(state.GenesisToken, identity, local.Token, remote.Token)
+	}
 	attempt, err := c.host.route.Dial(c.ctx, rendezvousclient.ClientAttemptConfig{
 		Remote: c.remote, Identity: identity, GenesisToken: state.GenesisToken,
 		ClientMembershipToken: local.Token, HostMembershipToken: remote.Token,
@@ -219,8 +234,19 @@ func (c *peerNativeDirectClient) run() error {
 }
 
 func (c *peerNativeDirectClient) runQuickTunnel(genesisToken string, identity *peercrypto.Identity, localMembership, remoteMembership string) error {
+	return c.runWebSocketRoute(c.quickRoute.URL, false, genesisToken, identity, localMembership, remoteMembership)
+}
+
+func (c *peerNativeDirectClient) runLAN(genesisToken string, identity *peercrypto.Identity, localMembership, remoteMembership string) error {
+	if c.manualURL == "" {
+		return errors.New("manual Peer LAN route unavailable")
+	}
+	return c.runWebSocketRoute(c.manualURL, true, genesisToken, identity, localMembership, remoteMembership)
+}
+
+func (c *peerNativeDirectClient) runWebSocketRoute(url string, allowInsecure bool, genesisToken string, identity *peercrypto.Identity, localMembership, remoteMembership string) error {
 	signal, err := quicktunnel.Dial(c.ctx, quicktunnel.ClientConfig{
-		URL: c.quickRoute.URL, Identity: identity, GenesisToken: genesisToken,
+		URL: url, AllowInsecure: allowInsecure, Identity: identity, GenesisToken: genesisToken,
 		ClientMembershipToken: localMembership, HostMembershipToken: remoteMembership,
 		SessionID: c.sessionID, ClientInstanceID: c.clientInstanceID,
 		OnClosed: func(_ *quicktunnel.SignalChannel, closeErr error) {
@@ -267,7 +293,7 @@ func (c *peerNativeDirectClient) onAuthenticated(channel peerQuickTunnelChannel)
 	c.config = config
 	c.authenticated = true
 	c.mu.Unlock()
-	if c.route == peerNativeRouteQuickTunnel {
+	if c.route == peerNativeRouteQuickTunnel || c.route == peerNativeRouteLAN {
 		c.emit(NativeDirectEvent{Kind: "diagnostics", Route: c.route})
 	}
 	c.emit(NativeDirectEvent{Kind: "authenticated"})

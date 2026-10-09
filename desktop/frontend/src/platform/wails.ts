@@ -44,6 +44,8 @@ import {
   SetPeerRendezvousConfig,
   GetPeerRendezvousStatus,
   ReconnectPeerRendezvous,
+  GetPeerLANConfig,
+  SetPeerLANConfig,
   SyncPeerConfigNow,
   StartPeerQuickTunnel,
   StopPeerQuickTunnel,
@@ -83,7 +85,7 @@ let cachedAccountKey: Uint8Array | null = null
 
 const peerNativeBridge = {
   on: (event: string, handler: (data: unknown) => void) => EventsOn(event, handler as (...data: unknown[]) => void),
-  start: (req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: 'direct' | 'quick_tunnel' }) => StartPeerNativeDirect(req),
+  start: (req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: 'direct' | 'lan' | 'quick_tunnel' }) => StartPeerNativeDirect(req),
   send: (id: string, frame: number[]) => SendPeerNativeDirectFrame(id, frame),
   stop: (id: string) => StopPeerNativeDirect(id),
 }
@@ -384,6 +386,8 @@ export function createWailsPlatform(): Platform {
       setRendezvousConfig: (req) => SetPeerRendezvousConfig(new WailsModels.SetPeerRendezvousConfigReq(req)),
       getRendezvousStatus: () => GetPeerRendezvousStatus(),
       reconnectRendezvous: () => ReconnectPeerRendezvous(),
+      getLANConfig: () => GetPeerLANConfig(),
+      setLANConfig: (req) => SetPeerLANConfig(new WailsModels.SetPeerLANConfigReq(req)),
       syncConfigNow: () => SyncPeerConfigNow(),
       getQuickTunnelStatus: () => GetPeerQuickTunnelStatus(),
       startQuickTunnel: () => StartPeerQuickTunnel(),

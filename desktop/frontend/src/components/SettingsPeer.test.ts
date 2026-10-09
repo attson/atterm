@@ -38,6 +38,8 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
       getQuickTunnelStatus: vi.fn(),
       startQuickTunnel: vi.fn(),
       stopQuickTunnel: vi.fn(),
+      getLANConfig: vi.fn(),
+      setLANConfig: vi.fn(),
       createConnectionBundle: vi.fn(),
     },
   },
@@ -122,6 +124,10 @@ beforeEach(() => {
     public_url: 'https://route.trycloudflare.com',
   })
   fakePlatform.peer.stopQuickTunnel.mockResolvedValue(undefined)
+  fakePlatform.peer.getLANConfig.mockResolvedValue({
+    enabled: false, advertise_host: '', port: 8484, routes: [], running: false,
+  })
+  fakePlatform.peer.setLANConfig.mockResolvedValue(undefined)
   fakePlatform.peer.createConnectionBundle.mockResolvedValue('atc1.member-route.signature')
   fakePlatform.peer.createInvitations.mockResolvedValue([])
   fakePlatform.peer.listInvitations.mockResolvedValue([])
@@ -523,7 +529,7 @@ describe('SettingsPeer', () => {
     expect(wrapper.get('[data-testid="peer-tunnel-copy-route"]').text()).toContain('settings.peer.tunnel.copied')
   })
 
-  it('keeps first-join invitation bundles Quick Tunnel-only when Rendezvous is online', async () => {
+  it('keeps first-join invitation bundles disabled when only Rendezvous is online', async () => {
     fakePlatform.peer.status.mockResolvedValue(configuredStatus)
     fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
       mode: 'official', state: 'online', url: 'https://rendezvous.atterm.dev', reachable_peers: 1,
@@ -539,6 +545,81 @@ describe('SettingsPeer', () => {
     await copy.trigger('click')
     await flushPromises()
     expect(fakePlatform.peer.createConnectionBundle).not.toHaveBeenCalled()
+  })
+
+  it('copies a first-join invitation when Manual LAN is the published bootstrap route', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getLANConfig.mockResolvedValue({
+      enabled: true,
+      advertise_host: '192.168.1.24',
+      port: 8484,
+      routes: [],
+      running: true,
+      listen_address: '0.0.0.0:8484',
+    })
+    fakePlatform.peer.listInvitations.mockResolvedValue([{
+      invite_id: 'invite-lan', batch_id: 'batch-lan', token: 'atp1.lan-ticket', expires_at: 1_898_156_800,
+    }])
+    fakePlatform.peer.createConnectionBundle.mockResolvedValue('atc1.lan-first-join.signature')
+    const wrapper = await mountReady()
+    const copy = wrapper.get('[data-testid="peer-copy-invitation"]')
+
+    expect(copy.attributes('disabled')).toBeUndefined()
+    await copy.trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.createConnectionBundle).toHaveBeenCalledWith('atp1.lan-ticket')
+    expect(fakePlatform.system.setClipboardText).toHaveBeenCalledWith('atc1.lan-first-join.signature')
+  })
+
+  it('saves the Manual LAN listener and adds then removes a fingerprint route', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const disabled = { enabled: false, advertise_host: '', port: 8484, routes: [], running: false }
+    const enabled = {
+      enabled: true,
+      advertise_host: '192.168.1.24',
+      port: 9444,
+      routes: [],
+      running: true,
+      listen_address: '0.0.0.0:9444',
+    }
+    const withRoute = {
+      ...enabled,
+      routes: [{ host: '192.168.1.25', port: 8484, fingerprint: 'SHA256:remote-peer' }],
+    }
+    fakePlatform.peer.getLANConfig
+      .mockResolvedValueOnce(disabled)
+      .mockResolvedValueOnce(enabled)
+      .mockResolvedValueOnce(withRoute)
+      .mockResolvedValueOnce(enabled)
+    const wrapper = await mountReady()
+
+    await wrapper.get('[data-testid="peer-lan-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="peer-lan-advertise-host"]').setValue('192.168.1.24')
+    await wrapper.get('[data-testid="peer-lan-port"]').setValue('9444')
+    await wrapper.get('[data-testid="peer-lan-save"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.setLANConfig).toHaveBeenLastCalledWith({
+      enabled: true, advertise_host: '192.168.1.24', port: 9444, routes: [],
+    })
+
+    await wrapper.get('[data-testid="peer-lan-route-host"]').setValue('192.168.1.25')
+    await wrapper.get('[data-testid="peer-lan-route-port"]').setValue('8484')
+    await wrapper.get('[data-testid="peer-lan-route-fingerprint"]').setValue('SHA256:remote-peer')
+    await wrapper.get('[data-testid="peer-lan-route-add"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.setLANConfig).toHaveBeenLastCalledWith({
+      enabled: true,
+      advertise_host: '192.168.1.24',
+      port: 9444,
+      routes: [{ host: '192.168.1.25', port: 8484, fingerprint: 'SHA256:remote-peer' }],
+    })
+
+    await wrapper.get('[data-testid="peer-lan-route-remove"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.setLANConfig).toHaveBeenLastCalledWith({
+      enabled: true, advertise_host: '192.168.1.24', port: 9444, routes: [],
+    })
   })
 
   it('copies a member reconnect bundle when Rendezvous is online without Quick Tunnel', async () => {

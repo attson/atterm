@@ -74,9 +74,11 @@ func (a *App) JoinPeerSpace(req JoinPeerSpaceReq) (PeerSpaceStatus, error) {
 	if err == nil {
 		if inspectErr == nil {
 			a.rememberPeerQuickTunnelRoute(bundle)
+			a.rememberPeerManualLANRoute(bundle)
 		}
 		if a.cfgStore != nil {
 			a.reconcilePeerRendezvous(a.cfgStore.Get())
+			a.reconcilePeerLAN(a.cfgStore.Get())
 		}
 	}
 	return status, err
@@ -96,6 +98,14 @@ func (m *peerSpaceManager) inspectConnectionBundle(raw string) (peerproto.Verifi
 		if candidate.Kind == peerproto.RouteQuickTunnel {
 			route = candidate
 			break
+		}
+	}
+	if route.URL == "" {
+		for _, candidate := range bundle.Document.Routes {
+			if candidate.Kind == peerproto.RouteManualLAN {
+				route = candidate
+				break
+			}
 		}
 	}
 	if route.URL == "" {

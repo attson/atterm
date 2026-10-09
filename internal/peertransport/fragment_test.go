@@ -108,6 +108,31 @@ func TestConfigFragmentRoundTripKeepsLogicalKind(t *testing.T) {
 	}
 }
 
+func TestCatalogResponseUsesIsolatedControlFragmentation(t *testing.T) {
+	payload := bytes.Repeat([]byte("catalog-entry"), 4096)
+	fragments, err := FragmentConfigMessage(RecordCatalogResponse, 92, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reassembler ConfigReassembler
+	var got []byte
+	for index, fragment := range fragments {
+		kind, message, complete, err := reassembler.Add(fragment, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if complete {
+			if index != len(fragments)-1 || kind != RecordCatalogResponse {
+				t.Fatalf("completed index=%d kind=%d", index, kind)
+			}
+			got = message
+		}
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("catalog response reassembly mismatch")
+	}
+}
+
 func TestConfigFragmentsAreIsolatedFromTerminalReassembly(t *testing.T) {
 	payload := bytes.Repeat([]byte{0x42}, MaxRecordPlaintext+1)
 	fragments, err := FragmentConfigMessage(RecordConfigBatch, 7, payload)

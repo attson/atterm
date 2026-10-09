@@ -378,6 +378,11 @@ func TestConnectionBundleRejectsInsecureOrMutatedRoutes(t *testing.T) {
 		{Kind: RouteRendezvous, URL: "https://rendezvous.example", Topic: "short"},
 		{Kind: RouteRendezvous, URL: "https://:443", Topic: encode(make([]byte, 32))},
 		{Kind: RouteRendezvous, URL: "https://rendezvous.example/v1", Topic: encode(make([]byte, 32))},
+		{Kind: RouteManualLAN, URL: "https://192.168.1.4:8484"},
+		{Kind: RouteManualLAN, URL: "http://192.168.1.4"},
+		{Kind: RouteManualLAN, URL: "http://192.168.1.4:8484/path"},
+		{Kind: RouteManualLAN, URL: "http://user@192.168.1.4:8484"},
+		{Kind: RouteManualLAN, URL: "http://[2001:db8::1]:0"},
 	} {
 		if _, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{route}, now, 0); err == nil {
 			t.Fatalf("accepted invalid route: %+v", route)
@@ -398,5 +403,25 @@ func TestConnectionBundleRejectsInsecureOrMutatedRoutes(t *testing.T) {
 	parts[1] = base64.RawURLEncoding.EncodeToString(raw)
 	if _, err := VerifyConnectionBundle(strings.Join(parts, "."), now); err == nil {
 		t.Fatal("mutated connection bundle verified")
+	}
+}
+
+func TestConnectionBundleAcceptsSignedManualLANRoute(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	invitations, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, routeURL := range []string{"http://192.168.1.4:8484", "http://[2001:db8::1]:8484"} {
+		token, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{{
+			Kind: RouteManualLAN, URL: routeURL,
+		}}, now, 0)
+		if err != nil {
+			t.Fatalf("route %q: %v", routeURL, err)
+		}
+		verified, err := VerifyConnectionBundle(token, now)
+		if err != nil || verified.Document.Routes[0].URL != routeURL {
+			t.Fatalf("verified route=%+v err=%v", verified.Document.Routes, err)
+		}
 	}
 }

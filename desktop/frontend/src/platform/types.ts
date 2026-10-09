@@ -33,6 +33,7 @@ export type PeerMember = _Models.PeerMember
 export type PeerConnectionPreview = _Models.PeerConnectionPreview
 export type PeerRendezvousConfig = _Models.PeerRendezvousConfig
 export type PeerRendezvousStatus = _Models.PeerRendezvousStatus
+export type PeerLANConfig = _Models.PeerLANConfig
 export type PeerRouteImportResult = _Models.PeerRouteImportResult
 export type PeerSessionRouteStatus = _Models.PeerSessionRouteStatus
 
@@ -343,6 +344,13 @@ export interface PeerBridge {
   }): Promise<void>
   getRendezvousStatus(): Promise<PeerRendezvousStatus>
   reconnectRendezvous(): Promise<PeerRendezvousStatus>
+  getLANConfig?(): Promise<PeerLANConfig>
+  setLANConfig?(req: {
+    enabled: boolean
+    advertise_host: string
+    port: number
+    routes: Array<{ host: string; port: number; fingerprint: string }>
+  }): Promise<void>
   syncConfigNow(): Promise<PeerConfigSyncStatus>
   listSessions?(): Promise<RemoteSession[]>
   getSessionRouteStatus?(sessionID: string): Promise<PeerSessionRouteStatus>

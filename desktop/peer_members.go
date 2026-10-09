@@ -54,6 +54,7 @@ func (a *App) RevokePeerMember(peerID string) error {
 	a.revalidatePeerQuickTunnelAttempts()
 	if a.cfgStore != nil {
 		a.reconcilePeerRendezvous(a.cfgStore.Get())
+		a.reconcilePeerLAN(a.cfgStore.Get())
 	}
 	return nil
 }

@@ -93,6 +93,12 @@ type appConfig struct {
 	PeerRendezvousURL  string   `json:"peer_rendezvous_url,omitempty"`
 	PeerSTUNMode       string   `json:"peer_stun_mode,omitempty"`
 	PeerSTUNURLs       []string `json:"peer_stun_urls,omitempty"`
+	// Manual LAN reachability is local-only. Endpoints and listener choices
+	// are never replicated because they describe this installation's network.
+	PeerLANEnabled       bool                 `json:"peer_lan_enabled,omitempty"`
+	PeerLANAdvertiseHost string               `json:"peer_lan_advertise_host,omitempty"`
+	PeerLANPort          int                  `json:"peer_lan_port,omitempty"`
+	PeerLANRoutes        []PeerManualLANRoute `json:"peer_lan_routes,omitempty"`
 	// LocalePreference controls UI language. Empty means "system" so older
 	// configs keep following the OS/browser language after upgrade.
 	LocalePreference string `json:"locale_preference,omitempty"`

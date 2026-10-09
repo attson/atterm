@@ -33,7 +33,16 @@ type Gateway struct {
 // exposes nothing, so transport lifecycle work cannot accidentally publish a
 // diagnostic or default mux before the authenticated Peer handler is wired.
 func OpenGateway(handler http.Handler) (*Gateway, error) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	return OpenGatewayAt("tcp4", "127.0.0.1:0", handler)
+}
+
+// OpenGatewayAt starts the same bounded Peer HTTP endpoint on an explicit
+// address. Callers use it only after a user enables a manual LAN listener.
+func OpenGatewayAt(network, address string, handler http.Handler) (*Gateway, error) {
+	if network != "tcp4" && network != "tcp6" {
+		return nil, errors.New("unsupported Peer gateway network")
+	}
+	listener, err := net.Listen(network, address)
 	if err != nil {
 		return nil, err
 	}

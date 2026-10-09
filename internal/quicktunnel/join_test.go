@@ -120,6 +120,19 @@ func TestJoinRedeemsEncryptedRequestAndResponse(t *testing.T) {
 	if bytes.Contains(requestBody, []byte(invitations[0])) || bytes.Contains(requestBody, []byte(redeemed)) || bytes.Contains(requestBody, []byte(ticket.PairingSecret)) {
 		t.Fatal("join HTTP body exposed invitation, join request, or pairing secret plaintext")
 	}
+
+	manualBundle, err := peerproto.NewConnectionBundle(hostIdentity, genesis, invitations[0], []peerproto.ConnectionRoute{{
+		Kind: peerproto.RouteManualLAN, URL: server.URL,
+	}}, now, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = Join(ctx, JoinClientConfig{
+		BundleToken: manualBundle, Identity: clientIdentity, WrappingPublicKey: clientWrapping.PublicBytes(),
+	})
+	if err != nil || !bytes.Equal(mustJSON(t, got), mustJSON(t, want)) {
+		t.Fatalf("manual LAN join bootstrap=%+v err=%v", got, err)
+	}
 }
 
 func TestJoinRejectsTamperedCiphertextBeforeRedemption(t *testing.T) {

@@ -939,20 +939,22 @@ export class PeerSessionConnection {
     return left.length === right.length && left.every((value, index) => value === right[index])
   }
 
-  private connectingRoute(): 'connecting-direct' | 'connecting-quick-tunnel' {
+  private connectingRoute(): 'connecting-direct' | 'connecting-lan' | 'connecting-quick-tunnel' {
+    if (this.diagnostics?.route === 'lan' || this.route === 'lan') return 'connecting-lan'
     return this.diagnostics?.route === 'quick_tunnel' || this.route === 'quick_tunnel'
       ? 'connecting-quick-tunnel'
       : 'connecting-direct'
   }
 
-  private connectedRoute(): 'direct' | 'quick-tunnel' {
+  private connectedRoute(): 'direct' | 'lan' | 'quick-tunnel' {
+    if (this.diagnostics?.route === 'lan' || this.route === 'lan') return 'lan'
     return this.diagnostics?.route === 'quick_tunnel' || this.route === 'quick_tunnel'
       ? 'quick-tunnel'
       : 'direct'
   }
 
-  private emitRoute(route: 'connecting-direct' | 'direct' | 'connecting-quick-tunnel' | 'quick-tunnel'): void {
-    const setupTimeMs = route === 'direct' || route === 'quick-tunnel' ? Math.max(0, Math.round(performance.now() - this.startedAt)) : undefined
+  private emitRoute(route: 'connecting-direct' | 'direct' | 'connecting-lan' | 'lan' | 'connecting-quick-tunnel' | 'quick-tunnel'): void {
+    const setupTimeMs = route === 'direct' || route === 'lan' || route === 'quick-tunnel' ? Math.max(0, Math.round(performance.now() - this.startedAt)) : undefined
     this.handlers.onRouteChange?.({
       route,
       ...(this.diagnostics?.iceState ? { iceState: this.diagnostics.iceState } : {}),

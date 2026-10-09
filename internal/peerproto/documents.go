@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,6 +133,7 @@ type RouteKind string
 const (
 	RouteQuickTunnel RouteKind = "quick_tunnel"
 	RouteRendezvous  RouteKind = "rendezvous"
+	RouteManualLAN   RouteKind = "manual_lan"
 )
 
 // ConnectionRoute is a replaceable reachability hint. It never grants access
@@ -816,6 +818,16 @@ func validateConnectionRoutes(routes []ConnectionRoute) error {
 			}
 			if _, err := decodeSized(route.Topic, 32, "Rendezvous topic"); err != nil {
 				return err
+			}
+		case RouteManualLAN:
+			if parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.Port() == "" ||
+				parsed.Path != "" && parsed.Path != "/" || parsed.RawPath != "" || parsed.ForceQuery ||
+				parsed.RawFragment != "" || route.Topic != "" {
+				return fmt.Errorf("%w: manual LAN route", ErrInvalidDocument)
+			}
+			port, err := strconv.Atoi(parsed.Port())
+			if err != nil || port < 1 || port > 65535 {
+				return fmt.Errorf("%w: manual LAN route port", ErrInvalidDocument)
 			}
 		default:
 			return fmt.Errorf("%w: connection route kind", ErrInvalidDocument)

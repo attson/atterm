@@ -206,6 +206,10 @@ export function GetPeerConfigSyncStatus() {
   return window['go']['main']['App']['GetPeerConfigSyncStatus']();
 }
 
+export function GetPeerLANConfig() {
+  return window['go']['main']['App']['GetPeerLANConfig']();
+}
+
 export function GetPeerQuickTunnelStatus() {
   return window['go']['main']['App']['GetPeerQuickTunnelStatus']();
 }
@@ -620,6 +624,10 @@ export function SetLoggingConfig(arg1) {
 
 export function SetNotificationsEnabled(arg1) {
   return window['go']['main']['App']['SetNotificationsEnabled'](arg1);
+}
+
+export function SetPeerLANConfig(arg1) {
+  return window['go']['main']['App']['SetPeerLANConfig'](arg1);
 }
 
 export function SetPeerRendezvousConfig(arg1) {

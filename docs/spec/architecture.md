@@ -415,10 +415,12 @@ fanout 轮换时关闭。其下层 `internal/rendezvousclient/route.go` 在单�
 XChaCha20-Poly1305 信封，再接入 Stage 1 的 Pion transport。Rendezvous 只能看到 opaque
 topic/presence/message id 和 ciphertext；membership token 只进入 DataChannel 内的第二次身份握手。
 
-同一条加密 route 还承载分页的 `catalog_request/catalog_response`。host 在每次目录请求时重新按
+同一条加密 route 还承载分页的 `catalog_request/catalog_response`。Manual LAN 使用保留的 control
+session transcript 承载同义的 `CATALOG_REQUEST/CATALOG_RESPONSE` record。host 在每次目录请求时重新按
 active membership、撤销、双方 session scope、双方 permission ceiling 和 owner
 `remote_permission` 过滤本机会话；目录查询不创建 Pion attempt 或 terminal subscriber。
-Desktop 每 3 秒向当前可解析的 host presence 拉取目录，把成功结果缓存为
+Desktop 每 3 秒向当前可解析的 host presence 拉取目录，同时并行查询本地配置中的 Manual LAN
+routes，把成功结果缓存为
 `session_id -> Peer route`，并以 session id 为权威和 Relay 会话合并到侧栏；同一 session 同时存在
 时 Relay 条目覆盖 Peer 条目。用户点开 Peer-only 条目后，renderer 只把 session id、replay cursor
 和 client instance id 交给 Go，Go 从缓存取 route、从 Peer store 重读 identity/membership/scope，
@@ -456,24 +458,27 @@ lease 做授权，但只在本地配置中按 `profile_id` 解析 shell/cwd/env/
 发布一个可发现 session；支持零会话 host 需要后续独立 control channel，不能把 `host_id` 当成
 session id 或绕过 session-scope 授权。
 
-同一 native Peer transport API 也接受显式 `quick_tunnel` route kind，但 renderer 不提供 URL、
+同一 native Peer transport API 接受 `direct`、`lan` 和 `quick_tunnel` route kind，但 renderer 不提供 URL、
 membership token 或任何 Relay/account credential。首次加入成功后，Go 只在内存保留已验签 bundle
-中的 Quick Tunnel URL、签发 Peer 和到期时间；使用前再次确认该 Peer 仍在当前 deny-wins active
-membership 集合中，并要求目标 session 已由上述 Rendezvous 目录发现。WSS 路径复用相同的
+中的 Quick Tunnel URL、签发 Peer 和到期时间；Manual LAN host/port 则按 issuer
+`SHA256:<peer_id>` 指纹写入本地配置，用户可编辑或删除。使用任一路径前都会再次确认该 Peer 仍在
+当前 deny-wins active membership 集合中，并要求目标 session 已由 Rendezvous 或 Manual LAN 的
+authenticated catalog 发现。WSS 路径复用相同的
 membership handshake、加密 terminal/config records 和 subscriber 生命周期。默认 route 仍是
-Rendezvous direct。已有成员可在 Settings 手动导入无 ticket 的 signed
+direct；Rendezvous 可用时对应 Pion，否则 Manual LAN catalog entry 解析为 LAN WSS。已有成员可在 Settings 手动导入无 ticket 的 signed
 reconnect bundle；Desktop 要求 bundle 属于当前 genesis、issuer 的精确 membership token 仍在
-deny-wins active set 中，再原子替换仅存在 Go 内存的 Quick Tunnel route。新 bundle 不含 Quick
-Tunnel 时会删除该 issuer 的旧 route。当前 Rendezvous catalog 已提供可选 v2 能力探测：
+deny-wins active set 中，再原子替换仅存在 Go 内存的 Quick Tunnel route，并新增或替换本地持久化
+的 Manual LAN route。新 bundle 不含 Quick Tunnel 时会删除该 issuer 的旧 Quick Tunnel route，
+但不会隐式删除用户保存的 Manual LAN endpoint。当前 Rendezvous catalog 已提供可选 v2 能力探测：
 `catalog_request_routes/catalog_response_routes` 在 pairwise encrypted catalog 第一页携带最新 signed
 member reconnect bundle；旧 host 忽略探测，client 在 750 ms 后回退 v1 并缓存该能力结果。Desktop
 先按现有 session scope/permission 验证目录，再独立验证 bundle 的 current genesis、精确 active
 issuer membership 与目标 Peer ID，成功后原子替换或删除该 issuer 的内存 route。v1 fallback 不改
-已有 route，URL/token 不落盘、不进入 renderer、日志或诊断。Peer terminal 重连失败且目标 session
-仍在已认证目录中时，renderer 只能查询 `direct/quick_tunnel` 可用性布尔值。对 ICE、Rendezvous
+已有 route，Quick Tunnel URL/token 不落盘，任何 endpoint 都不进入 renderer、日志或诊断。Peer terminal 重连失败且目标 session
+仍在已认证目录中时，renderer 只能查询 `direct/lan/quick_tunnel` 可用性布尔值。对 ICE、Rendezvous
 可达性、timeout 或已建立 route 断开等可恢复故障，client 最多等待该本地查询 1 秒；若 Go 重新
-确认 signed Quick Tunnel hint 有效，就携带同一 client instance 与 last committed OUT seq 自动
-handover。认证、协议、backpressure 错误不允许换路降级。切到 Quick Tunnel 后至少稳定 30 秒才会
+确认 signed Quick Tunnel hint 或本地已验证 Manual LAN route 有效，就携带同一 client instance 与
+last committed OUT seq 自动 handover 到对应 WSS route。认证、协议、backpressure 错误不允许换路降级。切到 Quick Tunnel 后至少稳定 30 秒才会
 重新查询 Direct；失败以 30 秒到 5 分钟指数冷却。Direct 候选沿用相同 identity/cursor，host 通过
 replacing subscriber 原子迁移 lease，client 在 `DIRECT_READY` 前冻结写入并对双路 OUT 按 seq 去重；
 候选失败时关闭旧路并按 cursor 重连 Quick Tunnel，避免把输入异步排入已被 host 撤权的 transport。
@@ -494,9 +499,16 @@ Quick Tunnel 共用 `peerHostRuntime`，所以 session scope、effective permiss
 单 terminal subscriber 和 `peerConfigChannel` 的规则完全相同。成员撤销会先更新 governance/
 epoch，再重建 registration，使旧 topic/presence 与既有 attempt 一起失效。
 
-Rendezvous 生命周期是附加能力：启动或重连失败不阻塞桌面启动，本地 terminal、Relay 与 Quick
-Tunnel 不读取它的状态。成员 reconnect bundle 可发布 Quick Tunnel + Rendezvous 或仅
-Rendezvous route；首次 invitation redemption 仍固定经 Quick Tunnel。自动规划会为可达成员建立
+Manual LAN listener 是独立、显式启用的本地能力：绑定 IPv4 `0.0.0.0:<port>`，但在 signed bundle
+中发布用户填写的 host；停止 Quick Tunnel 不影响它。保存的 host/port 只提供 reachability，设备
+指纹必须精确绑定当前 active membership，随后仍执行四步 membership handshake 和 encrypted record
+layer。LAN control route 可做配置 anti-entropy 与 filtered catalog，但不会创建 PTY subscriber、driver、
+文件 worker 或 Preview service。只启用 Manual LAN 时，邀请核销、目录、同步和终端 attach 均不访问
+Relay、Rendezvous、STUN、Cloudflare 或其它公网服务。
+
+Rendezvous 生命周期是附加能力：启动或重连失败不阻塞桌面启动，本地 terminal、Relay、Manual LAN 与 Quick
+Tunnel 不读取它的状态。成员 reconnect bundle 可发布 Quick Tunnel、Rendezvous、Manual LAN 的任意
+可用组合；首次 invitation redemption 需要 Quick Tunnel 或 Manual LAN，不能只靠 Rendezvous。自动规划会为可达成员建立
 config-only Pion 通道，Settings 的手动同步则在所有已完成 membership handshake 的 terminal 或
 config-only channel 上重新发送 inventory；无认证通道时明确失败。两条路径都不创建 terminal
 subscriber 或隐藏的中心上传路径。成员目录中的“最近直连交换”来自各设备持久化的

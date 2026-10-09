@@ -155,7 +155,7 @@ so public-route suppression is exercised rather than simulated by clearing every
   handshake state machines, encrypted records, isolated terminal/config/signal reassembly, config
   operations/snapshots/compatibility state, and pairwise encrypted signaling envelopes。
 - [ ] NAT matrix: host、srflx、symmetric、UDP blocked、network switch。
-- [ ] Chaos: Relay/Rendezvous restart、Quick URL rotation、route flap、late frames。
+- [x] Chaos: Relay/Rendezvous restart、Quick URL rotation、route flap、late frames。
 - [ ] Soak: large scrollback + config snapshot + mobile reconnect。
 - [ ] Resource bounds: connections、reassembly、op log、tombstones。
 - [ ] Grant/key expiry renewal and trust export/import without plaintext private keys。
@@ -185,12 +185,19 @@ Each cycle dispatches late frames, ready/authentication callbacks, failures and 
 the retired Direct transport and Relay socket while the replacement Relay is still ambiguous. The test
 proves the committed OUT cursor remains monotonic with one delivery per sequence, queued input stays frozen
 until replay completes, one route owns every input, and stale callbacks cannot allocate extra fallback
-sockets. Relay process restart remains before the Chaos item can close.
+sockets.
+
+Relay restart chaos now keeps one stable public endpoint in front of two real `relay.Server` generations
+sharing the same user database. The test terminates every upgraded connection, holds the service unavailable
+through a failed reconnect attempt, then proves the desktop uplink republishes the same live local session
+to the fresh in-memory registry. A new remote viewer attaches and completes terminal input/output after the
+restart, while connection health records the recovery. This closes the deterministic Chaos matrix; packaged
+and real-network behavior remains covered by the separate NAT and soak gates.
 
 ## Stage Exit Gate
 
 - [ ] Same session is shown once across available route candidates.
-- [ ] 100 forced handovers have no OUT gaps/duplicates and no duplicate IN.
+- [x] 100 forced handovers have no OUT gaps/duplicates and no duplicate IN.
 - [ ] Direct success removes high-volume bytes from Relay/Quick paths.
 - [ ] Every expanded capability has transport and desktop enforcement tests.
 - [ ] Peer-only mode never requires Relay login/account key.

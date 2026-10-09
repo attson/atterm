@@ -133,8 +133,10 @@ do not enter the Peer path.
 
 Every route reuses Peer membership/handshake/record encryption; none creates a new trust model.
 Manual LAN can perform invitation redemption, catalog and config exchange with Relay, Rendezvous, STUN
-and Quick Tunnel disabled. The stage exit checkbox remains open until the packaged two-device terminal
-attach flow is exercised with all public services disabled.
+and Quick Tunnel disabled. A hermetic dual-identity integration test now exercises the production TCP
+listener, signed invitation redemption, reserved control catalog/config exchange, terminal replay,
+driver claim, input delivery and subscriber cleanup with every public route disabled. The stage exit
+checkbox remains open until the same flow is exercised on two packaged desktop installations.
 
 ## Hardening Program
 

@@ -226,7 +226,10 @@ for a concurrent epoch and AEAD-select the matching one, while all new writes us
 trust recovery now exports only an Argon2id + XChaCha20-Poly1305 encrypted package: store keys are regenerated,
 epoch keys are recovered from signed envelopes, and invitation secrets plus live replica cursors are excluded.
 Import refuses to overwrite an existing identity and validates the full trust chain before secure-storage writes.
-The hardening item remains open only for packaged recovery verification on a signed desktop build.
+A deterministic fresh-install recovery test now proves the restored member can complete the signed membership
+handshake with another active member, exchange the real config anti-entropy inventory/batch/ack flow, project a
+remote preference and persist both durable exchange cursors. The hardening item remains open only for packaged
+cross-machine recovery verification on a signed desktop build.
 
 ## Stage Exit Gate
 

@@ -20,6 +20,7 @@ import (
 )
 
 type peerJoinFixture struct {
+	source      *App
 	bundle      string
 	bootstrap   quicktunnel.JoinBootstrap
 	identity    *peercrypto.Identity
@@ -119,7 +120,7 @@ func newPeerJoinFixtureWithSessionScope(t *testing.T, allowedSessionIDs []string
 		return bootstrap, nil
 	}
 	return peerJoinFixture{
-		bundle: bundle, bootstrap: bootstrap, identity: identity, wrapping: wrapping, now: now,
+		source: source, bundle: bundle, bootstrap: bootstrap, identity: identity, wrapping: wrapping, now: now,
 		fingerprint: "SHA256:" + genesis.Hash, destination: &App{ctx: context.Background(), peerSpace: manager},
 		storePath: storePath, keyringPath: keyringPath,
 	}

@@ -198,8 +198,11 @@ The shared desktop/web/Capacitor `PeerSessionConnection` now has a deterministic
 8 MiB scrollback replay arrives in 4,096 sequenced chunks before ready, followed by 32 suspend/resume cycles.
 Every replacement route starts from the committed cursor, rejects late and duplicate OUT from retired routes,
 and releases one queued driver claim, resize and input only after replay readiness. The Soak item remains open
-until a large config snapshot runs over a real Peer route and packaged iOS foreground/background recovery is
-measured rather than simulated through the shared connection lifecycle.
+until packaged iOS foreground/background recovery is measured rather than simulated through the shared
+connection lifecycle. A separate config-only soak now sends a roughly 400 KiB compacted snapshot through an
+authenticated Pion route. It crosses multiple anti-entropy batches and encrypted transport fragments, drops
+the first durable ACK, resumes from the exact outstanding batch, converges once, and keeps the terminal
+subscriber lifecycle untouched throughout.
 
 ## Stage Exit Gate
 

@@ -169,6 +169,12 @@ attempt before a fresh connection succeeds. The NAT matrix remains open until pa
 Chromium/WebKit/iOS clients pass the same cases on real networks; this virtual coverage does not
 replace release soak or device testing.
 
+Rendezvous restart chaos now runs through the production desktop lifecycle against two generations
+of the real in-memory service behind one stable endpoint. The test disconnects every active socket,
+holds the endpoint unavailable until the client reports a bounded retry, then proves it registers a
+fresh host route with cleared failure state after the service returns. Relay restart, Quick Tunnel URL
+rotation, route flapping and cross-route late-frame chaos remain before the Chaos item can close.
+
 ## Stage Exit Gate
 
 - [ ] Same session is shown once across available route candidates.

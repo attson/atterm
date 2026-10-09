@@ -84,6 +84,38 @@ func TestStartPeerNativeDirectRejectsUnknownOrUnverifiedRoutes(t *testing.T) {
 	}
 }
 
+func TestStartPeerNativeDirectLANOnlyAllowsLANAndRejectsPublicRoutes(t *testing.T) {
+	sessionID := uuid.New()
+	app := newRelayTestApp(t)
+	app.replacePeerManualCatalog(map[uuid.UUID]peerDiscoveredSession{
+		sessionID: {
+			remote:    rendezvousclient.PeerRoute{PeerID: "peer-host"},
+			manualURL: "http://127.0.0.1:1",
+		},
+	})
+	cfg := app.cfgStore.Get()
+	cfg.PeerLANOnly = true
+	if err := app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	request := NativeDirectStartRequest{
+		ID: uuid.NewString(), SessionID: sessionID.String(), ClientInstanceID: "peer-client",
+	}
+	for _, route := range []string{peerNativeRouteDirect, peerNativeRouteQuickTunnel} {
+		request.ID = uuid.NewString()
+		request.Route = route
+		if err := app.StartPeerNativeDirect(request); !errors.Is(err, errPeerLANOnlyPublicRoute) {
+			t.Fatalf("route %q error=%v", route, err)
+		}
+	}
+	request.ID = uuid.NewString()
+	request.Route = peerNativeRouteLAN
+	if err := app.StartPeerNativeDirect(request); err != nil {
+		t.Fatalf("manual LAN route rejected: %v", err)
+	}
+	app.stopPeerNativeDirectClients()
+}
+
 func TestNativeDirectStartRequestExposesNoEndpointOrCredential(t *testing.T) {
 	payload, err := json.Marshal(NativeDirectStartRequest{
 		ID: uuid.NewString(), SessionID: uuid.NewString(), ClientInstanceID: "peer-client",

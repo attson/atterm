@@ -1024,6 +1024,7 @@ export namespace main {
 	    }
 	}
 	export class PeerLANConfig {
+	    lan_only: boolean;
 	    enabled: boolean;
 	    auto_discovery: boolean;
 	    advertise_host: string;
@@ -1041,6 +1042,7 @@ export namespace main {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lan_only = source["lan_only"];
 	        this.enabled = source["enabled"];
 	        this.auto_discovery = source["auto_discovery"];
 	        this.advertise_host = source["advertise_host"];
@@ -1932,6 +1934,7 @@ export namespace main {
 	    }
 	}
 	export class SetPeerLANConfigReq {
+	    lan_only: boolean;
 	    enabled: boolean;
 	    auto_discovery: boolean;
 	    advertise_host: string;
@@ -1944,6 +1947,7 @@ export namespace main {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lan_only = source["lan_only"];
 	        this.enabled = source["enabled"];
 	        this.auto_discovery = source["auto_discovery"];
 	        this.advertise_host = source["advertise_host"];

@@ -96,8 +96,10 @@ type appConfig struct {
 	PeerTURNEnabled    bool     `json:"peer_turn_enabled,omitempty"`
 	PeerTURNURLs       []string `json:"peer_turn_urls,omitempty"`
 	PeerTURNUsername   string   `json:"peer_turn_username,omitempty"`
-	// Manual LAN reachability is local-only. Endpoints and listener choices
-	// are never replicated because they describe this installation's network.
+	// Peer LAN-only policy and Manual LAN reachability are local-only. They are
+	// never replicated because they describe this installation's network and
+	// whether it may contact public Peer reachability services.
+	PeerLANOnly          bool                 `json:"peer_lan_only,omitempty"`
 	PeerLANEnabled       bool                 `json:"peer_lan_enabled,omitempty"`
 	PeerLANAutoDiscovery bool                 `json:"peer_lan_auto_discovery,omitempty"`
 	PeerLANAdvertiseHost string               `json:"peer_lan_advertise_host,omitempty"`

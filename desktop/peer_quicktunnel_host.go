@@ -1240,7 +1240,10 @@ func publicPeerQuickTunnelStatus(status quicktunnel.Status) PeerQuickTunnelStatu
 }
 
 func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, error) {
+	h.app.peerPublicRouteMu.Lock()
+	defer h.app.peerPublicRouteMu.Unlock()
 	status := h.tunnel.Status()
+	lanOnly := h.app.peerLANOnly()
 	manager, err := h.app.peerManager()
 	if err != nil {
 		return "", err
@@ -1267,14 +1270,16 @@ func (h *peerQuickTunnelHost) ConnectionBundle(invitationToken string) (string, 
 		return "", errors.New("local Peer membership is not active")
 	}
 	routes := make([]peerproto.ConnectionRoute, 0, 3)
-	if status.Running && status.PublicURL != "" {
+	if !lanOnly && status.Running && status.PublicURL != "" {
 		routes = append(routes, peerproto.ConnectionRoute{Kind: peerproto.RouteQuickTunnel, URL: status.PublicURL})
 	}
-	h.app.peerRendezvousMu.Lock()
-	rendezvousLifecycle := h.app.peerRendezvous
-	h.app.peerRendezvousMu.Unlock()
-	if route, ok := rendezvousLifecycle.connectionRoute(); ok {
-		routes = append(routes, route)
+	if !lanOnly {
+		h.app.peerRendezvousMu.Lock()
+		rendezvousLifecycle := h.app.peerRendezvous
+		h.app.peerRendezvousMu.Unlock()
+		if route, ok := rendezvousLifecycle.connectionRoute(); ok {
+			routes = append(routes, route)
+		}
 	}
 	if route, ok := h.app.peerLANConnectionRoute(); ok {
 		routes = append(routes, route)
@@ -1415,6 +1420,11 @@ func (a *App) ensurePeerQuickTunnelHost() (*peerQuickTunnelHost, error) {
 
 // StartPeerQuickTunnel explicitly publishes the local Peer gateway.
 func (a *App) StartPeerQuickTunnel() (PeerQuickTunnelStatus, error) {
+	a.peerPublicRouteMu.Lock()
+	defer a.peerPublicRouteMu.Unlock()
+	if a.peerLANOnly() {
+		return PeerQuickTunnelStatus{}, errPeerLANOnlyPublicRoute
+	}
 	host, err := a.ensurePeerQuickTunnelHost()
 	if err != nil {
 		return PeerQuickTunnelStatus{}, err
@@ -1429,16 +1439,19 @@ func (a *App) StartPeerQuickTunnel() (PeerQuickTunnelStatus, error) {
 // StopPeerQuickTunnel removes the public route without deleting Peer trust.
 func (a *App) StopPeerQuickTunnel() error {
 	a.mu.Lock()
-	host, _ := a.quickTunnel.(*peerQuickTunnelHost)
+	lifecycle := a.quickTunnel
 	a.mu.Unlock()
-	if host == nil {
+	if lifecycle == nil {
 		return nil
 	}
-	return host.Stop()
+	return lifecycle.Stop()
 }
 
 // GetPeerQuickTunnelStatus returns an idle status before first explicit start.
 func (a *App) GetPeerQuickTunnelStatus() PeerQuickTunnelStatus {
+	if a.peerLANOnly() {
+		return PeerQuickTunnelStatus{}
+	}
 	a.mu.Lock()
 	host, _ := a.quickTunnel.(*peerQuickTunnelHost)
 	a.mu.Unlock()

@@ -513,6 +513,14 @@ layer。LAN control route 可做配置 anti-entropy 与 filtered catalog，但�
 文件 worker 或 Preview service。只启用 Manual LAN 时，邀请核销、目录、同步和终端 attach 均不访问
 Relay、Rendezvous、STUN、Cloudflare 或其它公网服务。
 
+Desktop 还提供本机持久化的 `peer_lan_only` 路由策略。启用时先成功停止已运行的 Quick
+Tunnel，随后提交策略，并关闭现有 Peer client 与 Rendezvous lifecycle；之后 Quick Tunnel
+启动、Rendezvous 注册/重连、Direct Pion 与缓存 Quick Tunnel route 都在 Go 边界 fail closed。
+Manual LAN listener、mDNS、已验证手动地址、邀请核销、catalog 与 config anti-entropy 继续工作。
+关闭策略会用原有配置恢复 Rendezvous，策略切换不会删除 Rendezvous/STUN/TURN/Quick Tunnel
+设置。该策略只约束 Peer reachability；Relay 账户路径独立，若用户希望整个应用不连接账户
+Relay，必须另行暂停 Relay。它也不宣称阻止更新、飞书或其它非 Peer HTTP 流量。
+
 同一 listener 可由用户额外开启 mDNS/DNS-SD 自动发现。Desktop 以 `_atterm-peer._tcp` 发布当前
 sync epoch 派生的短期 opaque tag 和 IPv4 A 或 IPv6 AAAA listener metadata；link-local IPv6 responder
 只绑定 configured zone 对应接口，浏览端保留接收接口 zone。不发布 `peer_id`、Space ID、设备指纹、

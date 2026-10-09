@@ -546,6 +546,7 @@ export const zhCN = {
         reconnect: "重新连接 Rendezvous",
         state: {
           disabled: "已关闭",
+          suppressed: "已被仅局域网模式停用",
           waiting: "等待 Peer Space 就绪",
           connecting: "正在注册…",
           online: "已注册",
@@ -570,6 +571,7 @@ export const zhCN = {
         running: "已发布",
         stopping: "正在停止…",
         start: "启动 Quick Tunnel",
+        lanOnlyBlocked: "关闭仅局域网模式后才能启动 Quick Tunnel",
         stop: "停止",
         copyRoute: "复制成员连接包",
         copying: "正在生成…",
@@ -579,6 +581,9 @@ export const zhCN = {
       lan: {
         title: "局域网（LAN）",
         hint: "同一网络内的成员设备可通过自动发现或已保存地址直接连接。",
+        only: "Peer 连接仅使用局域网",
+        onlyHint: "启用后停用 Rendezvous、STUN/TURN 和 Quick Tunnel，但保留已有设置；手动局域网路径和 mDNS 仍可使用。",
+        onlyRelayHint: "Relay 账户是独立通道。如需让整个应用断开账户 Relay，请同时在 Relay 设置中暂停连接。",
         enable: "在当前网络接受 Peer 连接",
         enableHint: "会打开一个本地 TCP 端口；任何会话可见前仍必须通过 Peer membership 和加密握手认证。",
         autoDiscovery: "使用 mDNS 自动发现 Peer 设备",

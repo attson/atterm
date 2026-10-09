@@ -350,6 +350,7 @@ export interface PeerBridge {
   reconnectRendezvous(): Promise<PeerRendezvousStatus>
   getLANConfig?(): Promise<PeerLANConfig>
   setLANConfig?(req: {
+    lan_only: boolean
     enabled: boolean
     auto_discovery: boolean
     advertise_host: string

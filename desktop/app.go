@@ -396,6 +396,7 @@ type App struct {
 	// only Relay mode and should not create Peer identity or keyring entries.
 	peerSpaceMu               sync.Mutex
 	peerSpace                 *peerSpaceManager
+	peerPublicRouteMu         sync.Mutex
 	peerRendezvousReconcileMu sync.Mutex
 	peerRendezvousMu          sync.Mutex
 	peerRendezvous            *peerRendezvousLifecycle

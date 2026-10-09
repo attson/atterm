@@ -1521,6 +1521,13 @@ Desktop 将 STUN 和 TURN 作为两个独立 `ICEServer` 交给 Pion，TURN cred
 layer 仍是授权和内容保密边界。selected candidate pair 任一侧为 `relay` 时，客户端必须明确显示为
 `TURN relay`，不能继续标成普通 direct；这些披露在启用前必须由 UI 明示。
 
+`peer_lan_only` 是 Desktop 本机策略，不是 wire 字段，也不进入 Relay prefs、Peer config
+replication 或配置导出。开启时 Desktop 必须先停止 Quick Tunnel，失败则不得提交策略；提交后
+停止 Rendezvous 和既有 Peer client，并拒绝新的 `direct` / `quick_tunnel` route。缓存或新导入的
+Quick Tunnel hint 不得在策略开启时变成可用 candidate，`ConnectionBundle` 只可发布当前 Manual
+LAN route。mDNS 与 Manual LAN 的 handshake、record、权限和 route lease 契约不变。关闭策略后
+恢复已保存的 Rendezvous/STUN/TURN 设置。Relay 账户连接不属于这个 Peer 策略，需独立暂停。
+
 Browser/WebView 在生成 Peer identity 或创建 `RTCPeerConnection` 前必须依次验证 secure
 context、`crypto.subtle` 与 `RTCPeerConnection`，并映射成稳定状态
 `insecure_context`、`webcrypto_unavailable`、`webrtc_unavailable`。独立黑盒验收入口
@@ -1529,7 +1536,8 @@ health、challenge、presence、delivery、mailbox、dedupe、size limit 与 met
 
 Desktop 启用 Rendezvous 且已有 Peer Space 时会注册 host presence；单次注册超时为 10 秒，失败
 按 500 ms 到 8 s 指数退避，连接断开或进入下一个 15 分钟 presence slot 时重新注册。Settings
-运行状态使用 `disabled | waiting | connecting | online | error`，错误只暴露
+运行状态使用 `disabled | suppressed | waiting | connecting | online | error`；`suppressed` 表示
+Rendezvous 配置仍保留但当前被 `peer_lan_only` 策略停用。错误只暴露
 `invalid_config | registration_timeout | authentication_failed | service_unavailable |
 registration_failed` 稳定码。诊断导出只包含 service origin 与聚合状态，不包含 topic、presence id、
 Peer id、SDP/ICE 或 payload。成员重连的

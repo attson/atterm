@@ -125,7 +125,7 @@ beforeEach(() => {
   })
   fakePlatform.peer.stopQuickTunnel.mockResolvedValue(undefined)
   fakePlatform.peer.getLANConfig.mockResolvedValue({
-    enabled: false, auto_discovery: false, advertise_host: '', port: 8484, routes: [], running: false, discovery_running: false,
+    lan_only: false, enabled: false, auto_discovery: false, advertise_host: '', port: 8484, routes: [], running: false, discovery_running: false,
   })
   fakePlatform.peer.setLANConfig.mockResolvedValue(undefined)
   fakePlatform.peer.createConnectionBundle.mockResolvedValue('atc1.member-route.signature')
@@ -607,7 +607,7 @@ describe('SettingsPeer', () => {
 
   it('saves the Manual LAN listener and adds then removes a fingerprint route', async () => {
     fakePlatform.peer.status.mockResolvedValue(configuredStatus)
-    const disabled = { enabled: false, auto_discovery: false, advertise_host: '', port: 8484, routes: [], running: false, discovery_running: false }
+    const disabled = { lan_only: false, enabled: false, auto_discovery: false, advertise_host: '', port: 8484, routes: [], running: false, discovery_running: false }
     const enabled = {
       enabled: true,
       auto_discovery: true,
@@ -639,7 +639,7 @@ describe('SettingsPeer', () => {
     await wrapper.get('[data-testid="peer-lan-save"]').trigger('click')
     await flushPromises()
     expect(fakePlatform.peer.setLANConfig).toHaveBeenLastCalledWith({
-      enabled: true, auto_discovery: true, advertise_host: '192.168.1.24', port: 9444, routes: [],
+      lan_only: false, enabled: true, auto_discovery: true, advertise_host: '192.168.1.24', port: 9444, routes: [],
     })
     expect(wrapper.get('[data-testid="peer-lan-discovery-status"]').text()).toContain('settings.peer.lan.discoveryRunning')
 
@@ -650,6 +650,7 @@ describe('SettingsPeer', () => {
     await flushPromises()
     expect(fakePlatform.peer.setLANConfig).toHaveBeenLastCalledWith({
       enabled: true,
+      lan_only: false,
       auto_discovery: true,
       advertise_host: '192.168.1.24',
       port: 9444,
@@ -659,8 +660,47 @@ describe('SettingsPeer', () => {
     await wrapper.get('[data-testid="peer-lan-route-remove"]').trigger('click')
     await flushPromises()
     expect(fakePlatform.peer.setLANConfig).toHaveBeenLastCalledWith({
-      enabled: true, auto_discovery: true, advertise_host: '192.168.1.24', port: 9444, routes: [],
+      lan_only: false, enabled: true, auto_discovery: true, advertise_host: '192.168.1.24', port: 9444, routes: [],
     })
+  })
+
+  it('enforces LAN-only controls while keeping Manual LAN available', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getLANConfig.mockResolvedValue({
+      lan_only: true,
+      enabled: true,
+      auto_discovery: true,
+      advertise_host: '192.168.1.24',
+      port: 8484,
+      routes: [],
+      running: true,
+      discovery_running: true,
+      listen_address: '0.0.0.0:8484',
+    })
+    fakePlatform.peer.getRendezvousConfig.mockResolvedValue({
+      mode: 'official', url: 'https://rendezvous.atterm.dev', websocket_url: '', health_url: '',
+      stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+      turn_enabled: false, turn_urls: [], turn_username: '', turn_credential_configured: false,
+    })
+    fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
+      mode: 'official', state: 'suppressed', reachable_peers: 0,
+    })
+    const wrapper = await mountReady()
+
+    expect((wrapper.get('[data-testid="peer-lan-only"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.get('[data-testid="peer-rendezvous-save"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="peer-rendezvous-reconnect"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="peer-tunnel-start"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="peer-lan-enabled"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="peer-lan-route-host"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('settings.peer.lan.onlyRelayHint')
+
+    await wrapper.get('[data-testid="peer-lan-save"]').trigger('click')
+    await flushPromises()
+    expect(fakePlatform.peer.setLANConfig).toHaveBeenLastCalledWith(expect.objectContaining({
+      lan_only: true,
+      enabled: true,
+    }))
   })
 
   it('copies a member reconnect bundle when Rendezvous is online without Quick Tunnel', async () => {

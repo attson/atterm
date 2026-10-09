@@ -579,6 +579,7 @@ export const en = {
         reconnect: "Reconnect Rendezvous",
         state: {
           disabled: "Disabled",
+          suppressed: "Disabled by LAN-only mode",
           waiting: "Waiting for Peer Space",
           connecting: "Registering…",
           online: "Registered",
@@ -603,6 +604,7 @@ export const en = {
         running: "Published",
         stopping: "Stopping…",
         start: "Start Quick Tunnel",
+        lanOnlyBlocked: "Disable LAN-only mode before starting Quick Tunnel",
         stop: "Stop",
         copyRoute: "Copy member connection",
         copying: "Preparing…",
@@ -612,6 +614,9 @@ export const en = {
       lan: {
         title: "Local network (LAN)",
         hint: "Connect member devices directly on the same network, using automatic discovery or a saved address.",
+        only: "Use only local-network routes for Peer connections",
+        onlyHint: "Disables Rendezvous, STUN/TURN, and Quick Tunnel while preserving their settings. Manual LAN and mDNS remain available.",
+        onlyRelayHint: "Your Relay account is separate. Pause it in Relay settings if this app must also disconnect from the account relay.",
         enable: "Accept Peer connections on this network",
         enableHint: "Opens a local TCP port. Peer membership and the encrypted handshake are still required before any session is exposed.",
         autoDiscovery: "Discover Peer devices automatically with mDNS",

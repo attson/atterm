@@ -84,8 +84,9 @@ func (a *App) importPeerConnectionBundle(raw, expectedIssuerPeerID string) (Peer
 	}
 	var route peerQuickTunnelRoute
 	var manualRoute peerproto.ConnectionRoute
+	lanOnly := a.peerLANOnly()
 	for _, candidate := range bundle.Document.Routes {
-		if candidate.Kind == peerproto.RouteQuickTunnel {
+		if candidate.Kind == peerproto.RouteQuickTunnel && !lanOnly {
 			route = peerQuickTunnelRoute{URL: candidate.URL, ExpiresAt: bundle.Document.ExpiresAt}
 			result.QuickTunnel = true
 		}
@@ -124,7 +125,7 @@ func (a *App) GetPeerSessionRouteStatus(sessionID string) PeerSessionRouteStatus
 	a.peerRendezvousMu.Lock()
 	lifecycle := a.peerRendezvous
 	a.peerRendezvousMu.Unlock()
-	if lifecycle != nil {
+	if lifecycle != nil && !a.peerLANOnly() {
 		lifecycle.mu.Lock()
 		host := lifecycle.active
 		lifecycle.mu.Unlock()
@@ -161,7 +162,7 @@ func (a *App) peerQuickTunnelRouteAvailable(peerID string) (peerQuickTunnelRoute
 }
 
 func (a *App) rememberPeerQuickTunnelRoute(bundle peerproto.VerifiedConnectionBundle) {
-	if a == nil || bundle.Document.IssuerPeerID == "" || bundle.Document.ExpiresAt <= time.Now().Unix() {
+	if a == nil || a.peerLANOnly() || bundle.Document.IssuerPeerID == "" || bundle.Document.ExpiresAt <= time.Now().Unix() {
 		return
 	}
 	var route peerproto.ConnectionRoute
@@ -230,6 +231,9 @@ func (a *App) savePeerManualLANRoute(peerID, rawURL string) error {
 }
 
 func (a *App) peerQuickTunnelRoute(peerID string) (peerQuickTunnelRoute, error) {
+	if a.peerLANOnly() {
+		return peerQuickTunnelRoute{}, errPeerLANOnlyPublicRoute
+	}
 	now := time.Now().Unix()
 	a.peerRouteMu.Lock()
 	route, ok := a.peerRoutes[peerID]

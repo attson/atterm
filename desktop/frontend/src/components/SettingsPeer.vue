@@ -50,6 +50,7 @@ const rendezvousTURNURLs = ref('')
 const rendezvousTURNUsername = ref('')
 const rendezvousTURNCredential = ref('')
 const rendezvousTURNCredentialConfigured = ref(false)
+const lanOnly = ref(false)
 const lanEnabled = ref(false)
 const lanAutoDiscovery = ref(false)
 const lanAdvertiseHost = ref('')
@@ -77,10 +78,12 @@ const inviteSessionScope = ref('')
 
 const canPreview = computed(() => bundleInput.value.trim() !== '' && !previewing.value && !joining.value)
 const hasPublishedMemberRoute = computed(() => Boolean(
-  tunnelStatus.value?.running || rendezvousStatus.value?.state === 'online' || lanRunning.value,
+  lanRunning.value || (!lanOnly.value && (
+    tunnelStatus.value?.running || rendezvousStatus.value?.state === 'online'
+  )),
 ))
 const hasPublishedBootstrapRoute = computed(() => Boolean(
-  tunnelStatus.value?.running || lanRunning.value,
+  lanRunning.value || (!lanOnly.value && tunnelStatus.value?.running),
 ))
 const hasQuickTunnelHost = computed(() => Boolean(
   platform.peer?.getQuickTunnelStatus
@@ -213,6 +216,7 @@ async function loadConfiguredPeerData(): Promise<void> {
 }
 
 function applyLANConfig(config: PeerLANConfig): void {
+  lanOnly.value = Boolean(config.lan_only)
   lanEnabled.value = config.enabled
   lanAutoDiscovery.value = config.auto_discovery
   lanAdvertiseHost.value = config.advertise_host || ''
@@ -238,6 +242,7 @@ async function persistLANConfig(routes = lanRoutes.value): Promise<boolean> {
   lanBusy.value = true
   try {
     await save({
+      lan_only: lanOnly.value,
       enabled: lanEnabled.value,
       auto_discovery: lanAutoDiscovery.value,
       advertise_host: lanAdvertiseHost.value.trim(),
@@ -245,6 +250,14 @@ async function persistLANConfig(routes = lanRoutes.value): Promise<boolean> {
       routes,
     })
     applyLANConfig(await load())
+    if (lanOnly.value) {
+      tunnelStatus.value = { running: false, starting: false }
+      rendezvousStatus.value = {
+        mode: rendezvousMode.value,
+        state: 'suppressed',
+        reachable_peers: 0,
+      }
+    }
     return true
   } catch {
     error.value = t('settings.peer.errors.lanSave')
@@ -289,7 +302,7 @@ function parseSTUNURLs(value: string): string[] {
 
 async function saveRendezvousConfig(): Promise<void> {
   const peer = platform.peer
-  if (!peer || rendezvousBusy.value) return
+  if (!peer || rendezvousBusy.value || lanOnly.value) return
   error.value = ''
   rendezvousBusy.value = 'save'
   try {
@@ -319,7 +332,7 @@ async function saveRendezvousConfig(): Promise<void> {
 
 async function reconnectRendezvous(): Promise<void> {
   const peer = platform.peer
-  if (!peer || rendezvousBusy.value || rendezvousMode.value === 'disabled') return
+  if (!peer || rendezvousBusy.value || rendezvousMode.value === 'disabled' || lanOnly.value) return
   error.value = ''
   rendezvousBusy.value = 'reconnect'
   try {
@@ -347,6 +360,7 @@ async function syncConfigNow(): Promise<void> {
 }
 
 function rendezvousStateLabel(state: string | undefined): string {
+  if (state === 'suppressed') return t('settings.peer.rendezvous.state.suppressed')
   if (state === 'online') return t('settings.peer.rendezvous.state.online')
   if (state === 'connecting') return t('settings.peer.rendezvous.state.connecting')
   if (state === 'waiting') return t('settings.peer.rendezvous.state.waiting')
@@ -420,7 +434,7 @@ function onBundleInput(): void {
 
 async function startQuickTunnel(): Promise<void> {
   const start = platform.peer?.startQuickTunnel
-  if (!start || tunnelBusy.value) return
+  if (!start || tunnelBusy.value || lanOnly.value) return
   error.value = ''
   routeCopied.value = false
   copiedInvitationID.value = ''
@@ -867,7 +881,7 @@ function permissionLabel(permission: string): string {
             type="button"
             class="primary-action"
             data-testid="peer-rendezvous-save"
-            :disabled="Boolean(rendezvousBusy)"
+            :disabled="Boolean(rendezvousBusy) || lanOnly"
             @click="saveRendezvousConfig"
           >
             <Save :size="15" aria-hidden="true" />
@@ -878,7 +892,7 @@ function permissionLabel(permission: string): string {
             type="button"
             class="icon-action"
             data-testid="peer-rendezvous-reconnect"
-            :disabled="Boolean(rendezvousBusy)"
+            :disabled="Boolean(rendezvousBusy) || lanOnly"
             :aria-label="t('settings.peer.rendezvous.reconnect')"
             :title="t('settings.peer.rendezvous.reconnect')"
             @click="reconnectRendezvous"
@@ -927,6 +941,14 @@ function permissionLabel(permission: string): string {
             <p class="hint">{{ t('settings.peer.lan.hint') }}</p>
           </div>
         </div>
+        <label class="checkbox-row lan-only-toggle">
+          <input v-model="lanOnly" data-testid="peer-lan-only" type="checkbox" :disabled="lanBusy" />
+          <span>
+            <strong>{{ t('settings.peer.lan.only') }}</strong>
+            <small>{{ t('settings.peer.lan.onlyHint') }}</small>
+            <small>{{ t('settings.peer.lan.onlyRelayHint') }}</small>
+          </span>
+        </label>
         <label class="checkbox-row">
           <input v-model="lanEnabled" data-testid="peer-lan-enabled" type="checkbox" :disabled="lanBusy" />
           <span>
@@ -1245,7 +1267,8 @@ function permissionLabel(permission: string): string {
             type="button"
             class="primary-action"
             data-testid="peer-tunnel-start"
-            :disabled="tunnelBusy"
+            :disabled="tunnelBusy || lanOnly"
+            :title="lanOnly ? t('settings.peer.tunnel.lanOnlyBlocked') : t('settings.peer.tunnel.start')"
             @click="startQuickTunnel"
           >
             <Play :size="15" aria-hidden="true" />

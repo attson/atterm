@@ -571,7 +571,7 @@ Quick Tunnel accountless release gate 到此：明确临时 URL 与至少两台�
 ### P9 - Capability expansion and hardening
 
 - [ ] paste、file explorer、session create、preview 各自单独开放权限。
-- [ ] optional TURN、IPv6、完全无公网模式；Manual LAN 与 epoch-scoped mDNS discovery 已实现。
+- [ ] optional TURN、IPv6、Manual LAN、epoch-scoped mDNS discovery 与本机 LAN-only 公网路径抑制策略已实现；仍需完成打包端实机与 hardening gate。
 - [ ] fuzz/NAT/chaos/soak、资源上限、grant/key renewal、battery/data measurement。
 
 ## 11. Test Strategy

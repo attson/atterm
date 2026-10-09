@@ -134,14 +134,19 @@ do not enter the Peer path.
 - [x] IPv6 direct candidates: explicit IPv6 advertised hosts select a `tcp6 [::]` listener, signed and
   discovered routes use bracketed URLs, mDNS publishes/accepts AAAA, and link-local candidates preserve
   the interface zone without changing membership authorization。
-- Completely no-public-infrastructure mode。
+- [x] Completely no-public-infrastructure mode: a persistent local LAN-only policy preserves public
+  route settings but transactionally stops Quick Tunnel, suppresses Rendezvous/STUN/TURN, rejects Direct
+  and cached/imported Quick Tunnel candidates, and keeps Manual LAN plus mDNS operational. Relay account
+  connectivity remains an explicit, separate user control。
 
 Every route reuses Peer membership/handshake/record encryption; none creates a new trust model.
 Manual LAN can perform invitation redemption, catalog and config exchange with Relay, Rendezvous, STUN
 and Quick Tunnel disabled. A hermetic dual-identity integration test now exercises the production TCP
 listener, signed invitation redemption, reserved control catalog/config exchange, terminal replay,
 driver claim, input delivery and subscriber cleanup with every public route disabled. The stage exit
-checkbox remains open until the same flow is exercised on two packaged desktop installations.
+checkbox remains open until the same flow is exercised on two packaged desktop installations. The E2E
+now enables the production LAN-only policy while leaving the stored Rendezvous/STUN configuration active,
+so public-route suppression is exercised rather than simulated by clearing every setting.
 
 ## Hardening Program
 

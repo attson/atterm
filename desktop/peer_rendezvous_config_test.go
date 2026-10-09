@@ -72,6 +72,10 @@ func TestPeerRendezvousConfigStaysOutOfReplicationAndExport(t *testing.T) {
 	}
 
 	cfg := app.cfgStore.Get()
+	cfg.PeerLANOnly = true
+	if err := app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
 	if len(cfg.PrefsMeta) != 0 {
 		t.Fatalf("Rendezvous update scheduled Relay prefs sync: %+v", cfg.PrefsMeta)
 	}
@@ -92,7 +96,7 @@ func TestPeerRendezvousConfigStaysOutOfReplicationAndExport(t *testing.T) {
 	}
 	for _, localValue := range []string{
 		"local-only-rendezvous.example", "local-only-stun.example", "local-only-turn.example",
-		"local-turn-user", "local-turn-secret",
+		"local-turn-user", "local-turn-secret", "peer_lan_only",
 	} {
 		if strings.Contains(string(encoded), localValue) {
 			t.Fatalf("local reachability config escaped into replication/export: %s", localValue)

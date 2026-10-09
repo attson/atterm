@@ -58,6 +58,8 @@ func (a *App) StartPeerNativeDirect(req NativeDirectStartRequest) error {
 	if a == nil || a.ctx == nil {
 		return errors.New("Peer direct client unavailable")
 	}
+	a.peerPublicRouteMu.Lock()
+	defer a.peerPublicRouteMu.Unlock()
 	id, err := uuid.Parse(req.ID)
 	if err != nil || id == uuid.Nil {
 		return errors.New("invalid Peer direct attempt id")
@@ -75,6 +77,9 @@ func (a *App) StartPeerNativeDirect(req NativeDirectStartRequest) error {
 	}
 	if route != peerNativeRouteDirect && route != peerNativeRouteLAN && route != peerNativeRouteQuickTunnel {
 		return errors.New("unsupported Peer native route")
+	}
+	if route != peerNativeRouteLAN && a.peerLANOnly() {
+		return errPeerLANOnlyPublicRoute
 	}
 	var host *peerRendezvousHost
 	var discovered peerDiscoveredSession

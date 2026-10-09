@@ -44,13 +44,13 @@ func testPeerLANOnlyInvitationCatalogAndTerminalAttach(t *testing.T, network, ad
 
 	cfg := fixture.app.cfgStore.Get()
 	cfg.RelayURL = ""
-	cfg.PeerRendezvousMode = "disabled"
-	cfg.PeerSTUNMode = "disabled"
+	cfg.PeerRendezvousMode = "official"
+	cfg.PeerSTUNMode = "default"
 	if err := fixture.app.cfgStore.Set(cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.app.SetPeerLANConfig(SetPeerLANConfigReq{
-		Enabled: true, AdvertiseHost: advertiseHost, Port: port,
+		Enabled: true, LANOnly: true, AdvertiseHost: advertiseHost, Port: port,
 	}); err != nil {
 		t.Fatal(err)
 	}

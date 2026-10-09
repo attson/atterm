@@ -152,6 +152,57 @@ func TestGetPeerSessionRouteStatusRequiresAuthenticatedCatalogEntry(t *testing.T
 	}
 }
 
+func TestPeerLANOnlyHidesCachedPublicRoutesButKeepsManualLAN(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	state, err := fixture.app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app.peerRoutes = map[string]peerQuickTunnelRoute{
+		fixture.clientIdentity.PeerID(): {
+			URL: "https://cached.trycloudflare.com", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		},
+	}
+	fixture.app.peerRendezvous = &peerRendezvousLifecycle{active: &peerRendezvousHost{
+		route: &rendezvousclient.Route{},
+		catalog: map[uuid.UUID]peerDiscoveredSession{
+			fixture.session.ID: {remote: rendezvousclient.PeerRoute{PeerID: fixture.clientIdentity.PeerID()}},
+		},
+	}}
+	fixture.app.replacePeerManualCatalog(map[uuid.UUID]peerDiscoveredSession{
+		fixture.session.ID: {
+			remote:    rendezvousclient.PeerRoute{PeerID: fixture.clientIdentity.PeerID()},
+			manualURL: "http://192.168.1.25:8484",
+		},
+	})
+	cfg := fixture.app.cfgStore.Get()
+	cfg.PeerLANOnly = true
+	if err := fixture.app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fixture.app.peerQuickTunnelRoute(fixture.clientIdentity.PeerID()); !errors.Is(err, errPeerLANOnlyPublicRoute) {
+		t.Fatalf("cached Quick Tunnel route error=%v", err)
+	}
+	if got := fixture.app.GetPeerSessionRouteStatus(fixture.session.ID.String()); got.Direct || got.QuickTunnel || !got.LAN {
+		t.Fatalf("LAN-only route status=%+v", got)
+	}
+	bundle := newPeerMemberRouteBundle(t, fixture, genesis, []peerproto.ConnectionRoute{{
+		Kind: peerproto.RouteQuickTunnel, URL: "https://ignored.trycloudflare.com",
+	}})
+	result, err := fixture.app.ImportPeerConnectionBundle(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.QuickTunnel {
+		t.Fatalf("LAN-only import activated Quick Tunnel: %+v", result)
+	}
+}
+
 func newPeerMemberRouteBundle(t *testing.T, fixture peerQuickTunnelFixture, genesis peerproto.VerifiedGenesis, routes []peerproto.ConnectionRoute) string {
 	t.Helper()
 	token, err := peerproto.NewMemberConnectionBundle(

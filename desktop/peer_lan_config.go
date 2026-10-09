@@ -23,6 +23,8 @@ const defaultPeerLANPort = 8484
 
 const peerLANMDNSBrowseTimeout = 600 * time.Millisecond
 
+var errPeerLANOnlyPublicRoute = errors.New("public Peer routes are disabled by LAN-only mode")
+
 // PeerManualLANRoute is a local reachability hint bound to one active Peer
 // identity. The fingerprint is the expected device signing-key digest, not a
 // password or authorization token.
@@ -34,6 +36,7 @@ type PeerManualLANRoute struct {
 
 // PeerLANConfig is the user-visible local listener, discovery state and route list.
 type PeerLANConfig struct {
+	LANOnly            bool                 `json:"lan_only"`
 	Enabled            bool                 `json:"enabled"`
 	AutoDiscovery      bool                 `json:"auto_discovery"`
 	AdvertiseHost      string               `json:"advertise_host"`
@@ -47,6 +50,7 @@ type PeerLANConfig struct {
 }
 
 type SetPeerLANConfigReq struct {
+	LANOnly       bool                 `json:"lan_only"`
 	Enabled       bool                 `json:"enabled"`
 	AutoDiscovery bool                 `json:"auto_discovery"`
 	AdvertiseHost string               `json:"advertise_host"`
@@ -81,7 +85,7 @@ func (a *App) GetPeerLANConfig() (PeerLANConfig, error) {
 		port = defaultPeerLANPort
 	}
 	result := PeerLANConfig{
-		Enabled: cfg.PeerLANEnabled, AutoDiscovery: cfg.PeerLANAutoDiscovery,
+		LANOnly: cfg.PeerLANOnly, Enabled: cfg.PeerLANEnabled, AutoDiscovery: cfg.PeerLANAutoDiscovery,
 		AdvertiseHost: cfg.PeerLANAdvertiseHost, Port: port,
 		Routes: append([]PeerManualLANRoute(nil), cfg.PeerLANRoutes...),
 	}
@@ -123,16 +127,39 @@ func (a *App) SetPeerLANConfig(req SetPeerLANConfigReq) error {
 	if err != nil {
 		return err
 	}
+	a.peerPublicRouteMu.Lock()
 	cfg := a.cfgStore.Get()
+	wasLANOnly := cfg.PeerLANOnly
+	if req.LANOnly && !wasLANOnly {
+		if err := a.StopPeerQuickTunnel(); err != nil {
+			a.peerPublicRouteMu.Unlock()
+			return fmt.Errorf("stop Quick Tunnel before enabling LAN-only mode: %w", err)
+		}
+	}
+	cfg.PeerLANOnly = req.LANOnly
 	cfg.PeerLANEnabled = req.Enabled
 	cfg.PeerLANAutoDiscovery = req.AutoDiscovery
 	cfg.PeerLANAdvertiseHost = advertiseHost
 	cfg.PeerLANPort = port
 	cfg.PeerLANRoutes = routes
 	if err := a.cfgStore.Set(cfg); err != nil {
+		a.peerPublicRouteMu.Unlock()
 		return err
 	}
-	return a.reconcilePeerLAN(cfg)
+	if req.LANOnly {
+		a.stopPeerNativeDirectClients()
+		a.stopPeerRendezvous()
+	}
+	a.peerPublicRouteMu.Unlock()
+	lanErr := a.reconcilePeerLAN(cfg)
+	if wasLANOnly && !req.LANOnly {
+		a.reconcilePeerRendezvous(cfg)
+	}
+	return lanErr
+}
+
+func (a *App) peerLANOnly() bool {
+	return a != nil && a.cfgStore != nil && a.cfgStore.Get().PeerLANOnly
 }
 
 func (a *App) validatePeerLANRoutes(routes []PeerManualLANRoute) ([]PeerManualLANRoute, error) {

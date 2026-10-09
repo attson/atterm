@@ -69,8 +69,14 @@ func (a *App) reconcilePeerRendezvous(cfg appConfig) {
 	if a == nil || a.ctx == nil || a.host == nil {
 		return
 	}
+	a.peerPublicRouteMu.Lock()
+	defer a.peerPublicRouteMu.Unlock()
 	a.peerRendezvousReconcileMu.Lock()
 	defer a.peerRendezvousReconcileMu.Unlock()
+	if cfg.PeerLANOnly {
+		a.stopPeerRendezvousLocked()
+		return
+	}
 	resolved, err := a.resolveStoredPeerRendezvousConfig(cfg)
 	if err != nil {
 		logWarn("rendezvous", "configuration rejected: %v", err)
@@ -292,6 +298,13 @@ func (a *App) GetPeerRendezvousStatus() PeerRendezvousStatus {
 		return PeerRendezvousStatus{Mode: string(rendezvousclient.ModeDisabled), State: "disabled"}
 	}
 	cfg := a.cfgStore.Get()
+	if cfg.PeerLANOnly {
+		mode := cfg.PeerRendezvousMode
+		if mode == "" || mode == string(rendezvousclient.ModeDisabled) {
+			return PeerRendezvousStatus{Mode: string(rendezvousclient.ModeDisabled), State: "disabled"}
+		}
+		return PeerRendezvousStatus{Mode: mode, State: "suppressed"}
+	}
 	resolved, err := a.resolveStoredPeerRendezvousConfig(cfg)
 	if err != nil {
 		return PeerRendezvousStatus{Mode: cfg.PeerRendezvousMode, State: "error", LastErrorCode: "invalid_config"}
@@ -315,6 +328,9 @@ func (a *App) ReconnectPeerRendezvous() (PeerRendezvousStatus, error) {
 		return PeerRendezvousStatus{}, errors.New("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
+	if cfg.PeerLANOnly {
+		return a.GetPeerRendezvousStatus(), nil
+	}
 	if _, err := a.resolveStoredPeerRendezvousConfig(cfg); err != nil {
 		return PeerRendezvousStatus{}, err
 	}

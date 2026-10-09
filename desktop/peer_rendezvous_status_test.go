@@ -50,6 +50,36 @@ func TestPeerRendezvousStatusProjectsLifecycleWithoutOpaqueRoutingData(t *testin
 	}
 }
 
+func TestPeerLANOnlySuppressesRendezvousWithoutDeletingConfiguration(t *testing.T) {
+	app := newRelayTestApp(t)
+	cfg := app.cfgStore.Get()
+	cfg.PeerRendezvousMode = "official"
+	cfg.PeerSTUNMode = "default"
+	cfg.PeerLANOnly = true
+	if err := app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	app.reconcilePeerRendezvous(cfg)
+	if app.peerRendezvous != nil {
+		t.Fatal("Rendezvous lifecycle started while LAN-only policy was enabled")
+	}
+	if got := app.GetPeerRendezvousStatus(); got.Mode != "official" || got.State != "suppressed" {
+		t.Fatalf("LAN-only Rendezvous status=%+v", got)
+	}
+
+	if err := app.SetPeerLANConfig(SetPeerLANConfigReq{LANOnly: false}); err != nil {
+		t.Fatal(err)
+	}
+	persisted := app.cfgStore.Get()
+	if persisted.PeerRendezvousMode != "official" || persisted.PeerSTUNMode != "default" {
+		t.Fatalf("LAN-only transition changed Rendezvous config: %+v", persisted)
+	}
+	if got := app.GetPeerRendezvousStatus(); got.Mode != "official" || got.State != "waiting" {
+		t.Fatalf("restored Rendezvous status=%+v", got)
+	}
+}
+
 func TestPeerRendezvousLifecycleReportsRegistrationTimeoutAndRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	lifecycle := &peerRendezvousLifecycle{

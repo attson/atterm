@@ -1519,6 +1519,27 @@ func (f *fakePeerQuickTunnelManager) Stop() error {
 }
 func (f *fakePeerQuickTunnelManager) Status() quicktunnel.Status { return f.status }
 
+func TestPeerLANOnlyRejectsQuickTunnelStart(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	fake := &fakePeerQuickTunnelManager{status: quicktunnel.Status{
+		Running: true, PublicURL: "https://lan-only-blocked.trycloudflare.com",
+	}}
+	fixture.peerHost.tunnel = fake
+	fixture.app.quickTunnel = fixture.peerHost
+	cfg := fixture.app.cfgStore.Get()
+	cfg.PeerLANOnly = true
+	if err := fixture.app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fixture.app.StartPeerQuickTunnel(); !errors.Is(err, errPeerLANOnlyPublicRoute) {
+		t.Fatalf("Quick Tunnel start error=%v", err)
+	}
+	if fake.starts != 0 {
+		t.Fatalf("Quick Tunnel started %d times in LAN-only mode", fake.starts)
+	}
+}
+
 func waitForPeerSubscribers(t *testing.T, sess *session.Session, want int) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

@@ -22,6 +22,8 @@ var ErrDirectTransport = errors.New("peertransport: direct transport failed")
 // PionHostConfig contains one authorized host attempt. SendSignal must enqueue
 // bounded signaling messages without logging their payloads.
 type PionHostConfig struct {
+	// API supplies endpoint-specific Pion settings. Nil uses production defaults.
+	API             *webrtc.API
 	Authorization   Authorization
 	Authenticator   HandshakeAuthenticator
 	WebRTC          webrtc.Configuration
@@ -72,7 +74,7 @@ func NewPionHostAttempt(parent context.Context, cfg PionHostConfig) (*PionHostAt
 	if err != nil {
 		return nil, err
 	}
-	pc, err := webrtc.NewPeerConnection(cfg.WebRTC)
+	pc, err := newPeerConnection(cfg.API, cfg.WebRTC)
 	if err != nil {
 		return nil, fmt.Errorf("%w: create peer connection: %v", ErrDirectTransport, err)
 	}
@@ -92,6 +94,13 @@ func NewPionHostAttempt(parent context.Context, cfg PionHostConfig) (*PionHostAt
 		a.finish(context.Cause(ctx))
 	}()
 	return a, nil
+}
+
+func newPeerConnection(api *webrtc.API, config webrtc.Configuration) (*webrtc.PeerConnection, error) {
+	if api != nil {
+		return api.NewPeerConnection(config)
+	}
+	return webrtc.NewPeerConnection(config)
 }
 
 // HandleSignal applies one Relay-routed offer or ICE message. The v0.6 client

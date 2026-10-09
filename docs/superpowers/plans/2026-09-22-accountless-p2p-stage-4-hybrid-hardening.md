@@ -161,6 +161,14 @@ so public-route suppression is exercised rather than simulated by clearing every
 - [ ] Grant/key expiry renewal and trust export/import without plaintext private keys。
 - [ ] Battery/data measurement across desktop idle、iOS foreground and Web background。
 
+The native Pion path now has a hermetic virtual-network matrix that exercises the production
+client/host attempts and authenticated DataChannel handshake with host candidates, plus STUN
+server-reflexive candidate gathering and endpoint-independent NAT traversal. It verifies symmetric
+NAT and UDP-blocked routes fail closed, and proves that a network disconnect closes the current
+attempt before a fresh connection succeeds. The NAT matrix remains open until packaged
+Chromium/WebKit/iOS clients pass the same cases on real networks; this virtual coverage does not
+replace release soak or device testing.
+
 ## Stage Exit Gate
 
 - [ ] Same session is shown once across available route candidates.

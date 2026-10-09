@@ -12,6 +12,8 @@ import (
 
 // PionClientConfig contains one authorized client attempt.
 type PionClientConfig struct {
+	// API supplies endpoint-specific Pion settings. Nil uses production defaults.
+	API             *webrtc.API
 	Authorization   Authorization
 	Authenticator   HandshakeAuthenticator
 	WebRTC          webrtc.Configuration
@@ -61,7 +63,7 @@ func NewPionClientAttempt(parent context.Context, cfg PionClientConfig) (*PionCl
 	if err != nil {
 		return nil, err
 	}
-	pc, err := webrtc.NewPeerConnection(cfg.WebRTC)
+	pc, err := newPeerConnection(cfg.API, cfg.WebRTC)
 	if err != nil {
 		return nil, fmt.Errorf("%w: create peer connection: %v", ErrDirectTransport, err)
 	}

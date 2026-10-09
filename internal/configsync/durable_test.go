@@ -335,6 +335,55 @@ func TestDurableReplicaCompactionSerializesWithCrossProcessAppend(t *testing.T) 
 	}
 }
 
+func TestDurableReplicaPrunesOnlyCausallyStableTombstones(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	store := openTestDurable(t, path, spaceID)
+	set, _, err := store.Append(identity, testConfigMutation("theme", KindSet, "dark"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Append(identity, testConfigMutation("theme", KindDelete, "")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, _, err := store.CompactForBounds(identity, 100, 1<<20, VersionVector{identity.PeerID(): 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Compacted || result.PrunedTombstones != 0 {
+		t.Fatalf("unstable tombstone compacted: %+v", result)
+	}
+	if record, ok := store.Get("preferences", "theme"); !ok || !record.Deleted {
+		t.Fatalf("unstable tombstone missing: %+v present=%t", record, ok)
+	}
+
+	result, _, err = store.CompactForBounds(identity, 100, 1<<20, store.Vector())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted || result.PrunedTombstones != 1 {
+		t.Fatalf("stable tombstone result=%+v", result)
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	if record, ok := reopened.Get("preferences", "theme"); ok {
+		t.Fatalf("pruned tombstone still materialized: %+v", record)
+	}
+	if applied, _, err := reopened.Apply(set.Token); err != nil || !applied.Duplicate || applied.Stored {
+		t.Fatalf("covered stale set replay result=%+v err=%v", applied, err)
+	}
+	if _, ok := reopened.Get("preferences", "theme"); ok {
+		t.Fatal("covered stale set resurrected pruned tombstone")
+	}
+	if operation, _, err := reopened.Append(identity, testConfigMutation("theme", KindSet, "light")); err != nil || operation.Document.Counter != 3 {
+		t.Fatalf("causal resurrection operation=%+v err=%v", operation.Document, err)
+	}
+	if record, ok := reopened.Get("preferences", "theme"); !ok || record.Deleted || string(record.Payload) != "light" {
+		t.Fatalf("causal resurrection record=%+v present=%t", record, ok)
+	}
+}
+
 func TestDurableReplicaFailsClosedOnCorruptState(t *testing.T) {
 	spaceID := uuid.NewString()
 	path := filepath.Join(t.TempDir(), "config-replica.json")

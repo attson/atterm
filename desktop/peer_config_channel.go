@@ -217,7 +217,15 @@ func (c *peerConfigChannel) recordExchange(acknowledged configsync.VersionVector
 	if err != nil {
 		return err
 	}
-	return manager.store.RecordConfigExchange(c.remotePeerID, acknowledged.Clone(), manager.now())
+	if err := manager.store.RecordConfigExchange(c.remotePeerID, acknowledged.Clone(), manager.now()); err != nil {
+		return err
+	}
+	runtime, err := manager.ensureConfigReplica()
+	if err != nil {
+		return err
+	}
+	_, err = runtime.pruneStableTombstones()
+	return err
 }
 
 func (c *peerConfigChannel) localInventory() (configsync.AntiEntropyInventory, error) {

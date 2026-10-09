@@ -49,6 +49,13 @@ type SyncState struct {
 	Ack      DurableAck `json:"ack"`
 }
 
+// CompactionResult reports whether a bounded compaction replaced durable state
+// and how many causally stable tombstones were omitted from its snapshot.
+type CompactionResult struct {
+	Compacted        bool
+	PrunedTombstones int
+}
+
 // EncryptedMutation pairs one plaintext mutation with its current epoch key.
 // Batches may contain both sync and vault records without exposing either key
 // to the compatibility adapter.
@@ -298,15 +305,25 @@ func (d *DurableReplica) Compact(identity *peercrypto.Identity) (string, Durable
 // lock, so concurrent processes cannot append between the size check and the
 // compaction boundary.
 func (d *DurableReplica) CompactIfNeeded(identity *peercrypto.Identity, maxTailOps, maxTailBytes int) (bool, DurableAck, error) {
+	result, ack, err := d.CompactForBounds(identity, maxTailOps, maxTailBytes, nil)
+	return result.Compacted, ack, err
+}
+
+// CompactForBounds compacts an oversized tail and may omit tombstones covered
+// by stable. Callers must derive stable as the component-wise acknowledgement
+// floor of every currently active replica.
+func (d *DurableReplica) CompactForBounds(identity *peercrypto.Identity, maxTailOps, maxTailBytes int, stable VersionVector) (CompactionResult, DurableAck, error) {
 	if identity == nil || maxTailOps <= 0 || maxTailBytes <= 0 {
-		return false, DurableAck{}, ErrDurableStoreInvalid
+		return CompactionResult{}, DurableAck{}, ErrDurableStoreInvalid
 	}
-	compacted := false
+	stable = stable.Clone()
+	result := CompactionResult{}
 	ack, err := d.mutate(func(replica *Replica, state *durableState) (bool, error) {
-		if !configTailExceedsBounds(*state, maxTailOps, maxTailBytes) {
+		prunable := replica.prunableTombstones(stable)
+		if !configTailExceedsBounds(*state, maxTailOps, maxTailBytes) && prunable == 0 {
 			return false, nil
 		}
-		created, err := replica.SignSnapshot(identity)
+		created, pruned, err := replica.signSnapshot(identity, stable)
 		if err != nil {
 			return false, err
 		}
@@ -319,10 +336,11 @@ func (d *DurableReplica) CompactIfNeeded(identity *peercrypto.Identity, maxTailO
 		}
 		replica.replaceState(rebuilt)
 		*state = next
-		compacted = true
+		result.Compacted = true
+		result.PrunedTombstones = pruned
 		return true, nil
 	})
-	return compacted, ack, err
+	return result, ack, err
 }
 
 // NeedsCompaction is a lock-local fast path. CompactIfNeeded always rechecks
@@ -334,6 +352,17 @@ func (d *DurableReplica) NeedsCompaction(maxTailOps, maxTailBytes int) bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return configTailExceedsBounds(d.state, maxTailOps, maxTailBytes)
+}
+
+// NeedsTombstonePruning reports whether stable covers at least one current
+// remove-wins marker. CompactForBounds rechecks this under the file lock.
+func (d *DurableReplica) NeedsTombstonePruning(stable VersionVector) bool {
+	if d == nil || stable == nil {
+		return false
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.replica.prunableTombstones(stable) != 0
 }
 
 func configTailExceedsBounds(state durableState, maxTailOps, maxTailBytes int) bool {

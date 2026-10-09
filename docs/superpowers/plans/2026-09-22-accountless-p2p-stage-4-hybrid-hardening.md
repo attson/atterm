@@ -157,7 +157,7 @@ so public-route suppression is exercised rather than simulated by clearing every
 - [ ] NAT matrix: host、srflx、symmetric、UDP blocked、network switch。
 - [x] Chaos: Relay/Rendezvous restart、Quick URL rotation、route flap、late frames。
 - [ ] Soak: large scrollback + config snapshot + mobile reconnect。
-- [ ] Resource bounds: connections、reassembly、op log、tombstones。
+- [x] Resource bounds: connections、reassembly、op log、tombstones。
 - [ ] Grant/key expiry renewal and trust export/import without plaintext private keys。
 - [ ] Battery/data measurement across desktop idle、iOS foreground and Web background。
 
@@ -208,10 +208,12 @@ The durable Peer config tail now compacts automatically at 512 operations or 8 M
 The threshold decision is rechecked under the cross-process file lock, and the signed snapshot retains the
 causal cover vector while the operation tail is removed. A returning device with an older non-empty replica
 can atomically rebase only when that cover vector includes all of its durable history; an unshared local
-branch fails closed instead of being discarded. Together with the 32 MiB snapshot and 64 MiB durable-store
-hard caps this bounds ordinary op-log growth. The Resource bounds item remains open until tombstones have an
-acknowledgement-aware retention rule; deleting them solely by age would permit a stale active member to
-resurrect a concurrently removed record.
+branch fails closed instead of being discarded. Tombstones are omitted only at the component-wise durable
+acknowledgement floor of every active member. A missing or lagging member ACK retains the remove-wins marker;
+after pruning, the compacted vector still rejects covered stale-set replay while a causally newer set can
+recreate the record. The 32 MiB snapshot, 64 MiB durable store, bounded operation tail, one in-flight
+reassembly per logical stream, 16 MiB message caps, and existing per-route/server connection ceilings close
+the deterministic Resource bounds gate. Packaged memory and energy behavior remains in the Battery/data gate.
 
 ## Stage Exit Gate
 

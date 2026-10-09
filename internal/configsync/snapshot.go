@@ -53,13 +53,22 @@ type VerifiedSnapshot struct {
 // replica with counter gaps cannot be snapshotted because its apparent winner
 // may still depend on a missing earlier operation.
 func (r *Replica) SignSnapshot(identity *peercrypto.Identity) (string, error) {
+	token, _, err := r.signSnapshot(identity, nil)
+	return token, err
+}
+
+func (r *Replica) signSnapshot(identity *peercrypto.Identity, stable VersionVector) (string, int, error) {
 	if identity == nil {
-		return "", fmt.Errorf("%w: missing identity", ErrInvalidSnapshot)
+		return "", 0, fmt.Errorf("%w: missing identity", ErrInvalidSnapshot)
 	}
 	r.mu.RLock()
 	if !r.vector.Covers(r.maxCounters) {
 		r.mu.RUnlock()
-		return "", ErrIncompleteHistory
+		return "", 0, ErrIncompleteHistory
+	}
+	if stable != nil && (validateAntiEntropyVector(stable) != nil || !r.vector.Covers(stable)) {
+		r.mu.RUnlock()
+		return "", 0, fmt.Errorf("%w: stable vector", ErrInvalidSnapshot)
 	}
 	doc := Snapshot{
 		V:                snapshotVersion,
@@ -71,7 +80,12 @@ func (r *Replica) SignSnapshot(identity *peercrypto.Identity) (string, error) {
 		CoverVector:      r.vector.Clone(),
 	}
 	recordOps := make([]VerifiedOp, 0, len(r.view))
+	prunedTombstones := 0
 	for _, op := range r.view {
+		if op.Document.Kind == KindDelete && stable[op.Document.ActorDeviceID] >= op.Document.Counter {
+			prunedTombstones++
+			continue
+		}
 		recordOps = append(recordOps, op)
 	}
 	retainedByID := make(map[string]VerifiedOp, len(r.retained))
@@ -104,7 +118,23 @@ func (r *Replica) SignSnapshot(identity *peercrypto.Identity) (string, error) {
 		doc.RetainedOps = []string{}
 	}
 	doc.CreatedHLC = r.clock.Tick()
-	return signSnapshotDocument(doc, identity)
+	token, err := signSnapshotDocument(doc, identity)
+	return token, prunedTombstones, err
+}
+
+func (r *Replica) prunableTombstones(stable VersionVector) int {
+	if stable == nil {
+		return 0
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	count := 0
+	for _, op := range r.view {
+		if op.Document.Kind == KindDelete && stable[op.Document.ActorDeviceID] >= op.Document.Counter {
+			count++
+		}
+	}
+	return count
 }
 
 // VerifySnapshot validates the outer signature, vector, ordering, and every

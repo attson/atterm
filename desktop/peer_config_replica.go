@@ -20,6 +20,7 @@ type peerConfigReplica struct {
 	replica  *configsync.DurableReplica
 	identity *peercrypto.Identity
 	keys     map[configsync.KeyClass]configsync.EpochKey
+	manager  *peerSpaceManager
 }
 
 const (
@@ -77,7 +78,7 @@ func (m *peerSpaceManager) ensureConfigReplica() (*peerConfigReplica, error) {
 		return nil, fmt.Errorf("open Peer Space config replica: %w", err)
 	}
 	runtime := &peerConfigReplica{
-		spaceID: genesis.Document.SpaceID, replica: replica, identity: identity, keys: keys,
+		spaceID: genesis.Document.SpaceID, replica: replica, identity: identity, keys: keys, manager: m,
 	}
 	m.configReplica = runtime
 	return runtime, nil
@@ -320,10 +321,60 @@ func (r *peerConfigReplica) compactIfNeeded() (bool, error) {
 	if !r.replica.NeedsCompaction(peerConfigCompactTailOperations, peerConfigCompactTailBytes) {
 		return false, nil
 	}
-	compacted, _, err := r.replica.CompactIfNeeded(
-		r.identity, peerConfigCompactTailOperations, peerConfigCompactTailBytes,
+	stable, err := r.manager.stableConfigVector(r)
+	if err != nil {
+		return false, err
+	}
+	result, _, err := r.replica.CompactForBounds(
+		r.identity, peerConfigCompactTailOperations, peerConfigCompactTailBytes, stable,
 	)
-	return compacted, err
+	return result.Compacted, err
+}
+
+func (r *peerConfigReplica) pruneStableTombstones() (int, error) {
+	stable, err := r.manager.stableConfigVector(r)
+	if err != nil {
+		return 0, err
+	}
+	if !r.replica.NeedsTombstonePruning(stable) {
+		return 0, nil
+	}
+	result, _, err := r.replica.CompactForBounds(
+		r.identity, peerConfigCompactTailOperations, peerConfigCompactTailBytes, stable,
+	)
+	return result.PrunedTombstones, err
+}
+
+func (m *peerSpaceManager) stableConfigVector(runtime *peerConfigReplica) (configsync.VersionVector, error) {
+	state, err := m.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return nil, err
+	}
+	active, err := activePeerMemberships(state, genesis, m.now())
+	if err != nil {
+		return nil, err
+	}
+	stable := runtime.replica.Vector()
+	localPeerID := runtime.identity.PeerID()
+	for _, membership := range active {
+		peerID := membership.Document.SubjectPeerID
+		if peerID == localPeerID {
+			continue
+		}
+		acknowledged := state.ConfigSyncPeers[peerID].Acknowledged
+		for actor, counter := range stable {
+			if acknowledged[actor] == 0 {
+				delete(stable, actor)
+			} else if acknowledged[actor] < counter {
+				stable[actor] = acknowledged[actor]
+			}
+		}
+	}
+	return stable, nil
 }
 
 func peerLocalCollectionsForKey(relayKey string) ([]string, error) {

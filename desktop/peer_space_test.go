@@ -417,6 +417,78 @@ func TestPeerConfigReplicaCompactsBoundedOperationTail(t *testing.T) {
 	}
 }
 
+func TestPeerConfigReplicaPrunesTombstoneAtActiveMemberAckFloor(t *testing.T) {
+	app, now := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	state, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creator, err := peerproto.VerifyGrant(state.LocalMembership, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remotes := make([]*peercrypto.Identity, 2)
+	for index := range remotes {
+		remotes[index], err = peercrypto.GenerateIdentity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrapping, wrappingErr := peercrypto.GenerateWrappingIdentity()
+		if wrappingErr != nil {
+			t.Fatal(wrappingErr)
+		}
+		membership := issueTestPeerMembership(t, runtime.identity, genesis, creator, remotes[index], wrapping, now)
+		if _, err := app.peerSpace.store.ApplyMemberships([]string{membership.Token}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := runtime.keys[configsync.KeyClassSync]
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, key, configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion, Collection: configsync.CollectionQuickTemplate,
+		RecordID: "removed-template", Kind: configsync.KindSet, Payload: json.RawMessage(`{"command":"true","name":"Removed"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, key, configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion, Collection: configsync.CollectionQuickTemplate,
+		RecordID: "removed-template", Kind: configsync.KindDelete,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	vector := runtime.replica.Vector()
+	if pruned, err := runtime.pruneStableTombstones(); err != nil || pruned != 0 {
+		t.Fatalf("unacknowledged prune=%d err=%v", pruned, err)
+	}
+	if err := app.peerSpace.store.RecordConfigExchange(remotes[0].PeerID(), vector, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.peerSpace.store.RecordConfigExchange(remotes[1].PeerID(), configsync.VersionVector{
+		runtime.identity.PeerID(): vector[runtime.identity.PeerID()] - 1,
+	}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if pruned, err := runtime.pruneStableTombstones(); err != nil || pruned != 0 {
+		t.Fatalf("partially acknowledged prune=%d err=%v", pruned, err)
+	}
+	app.peerSpace.now = func() time.Time { return now.Add(2 * time.Minute) }
+	channel := &peerConfigChannel{app: app, remotePeerID: remotes[1].PeerID()}
+	if err := channel.recordExchange(vector); err != nil {
+		t.Fatal(err)
+	}
+	if record, ok := runtime.replica.Get(configsync.CollectionQuickTemplate, "removed-template"); ok {
+		t.Fatalf("stable tombstone still materialized: %+v", record)
+	}
+}
+
 func TestPeerConfigReplicaRelayImportFiltersSecretsAndCapabilities(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	app.cfgStore = &configStore{cfg: appConfig{}}

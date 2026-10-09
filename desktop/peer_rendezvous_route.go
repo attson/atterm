@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/peerproto"
+	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/rendezvous"
@@ -385,6 +386,7 @@ func (h *peerRendezvousHost) authorize(ctx context.Context, request rendezvouscl
 			}
 		},
 		OnConfigMessage: attempt.handleConfigMessage,
+		OnTraffic:       h.app.recordPeerTraffic(peertraffic.RouteDirect),
 		OnClosed: func(_ error) {
 			h.removeAttempt(request.AttemptID)
 		},

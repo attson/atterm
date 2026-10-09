@@ -10,6 +10,7 @@ import (
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerdiscovery"
 	"github.com/attson/atterm/internal/peerproto"
+	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/rendezvous"
 	"github.com/attson/atterm/internal/rendezvousclient"
@@ -76,6 +77,7 @@ func (h *peerRendezvousHost) authorizeConfig(ctx context.Context, request rendez
 			go h.removeConfigAttempt(request.AttemptID, true)
 		},
 		OnConfigMessage: attempt.handleConfigMessage,
+		OnTraffic:       h.app.recordPeerTraffic(peertraffic.RouteDirect),
 		OnClosed: func(error) {
 			h.removeConfigAttempt(request.AttemptID, false)
 		},
@@ -274,6 +276,7 @@ func (c *peerRendezvousConfigClient) run() {
 			c.finish(true)
 		},
 		OnConfigMessage: c.handleConfigMessage,
+		OnTraffic:       c.host.app.recordPeerTraffic(peertraffic.RouteDirect),
 		OnClosed:        func(error) { c.finish(false) },
 	})
 	if err != nil {

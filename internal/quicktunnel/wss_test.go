@@ -24,6 +24,7 @@ func TestWSSFallbackCarriesEncryptedTerminalAndConfigRecords(t *testing.T) {
 	clientRecords := make(chan wssTestRecord, 2)
 	hostConfig := make(chan wssTestRecord, 1)
 	bindErrors := make(chan error, 1)
+	var hostTraffic, clientTraffic wssTrafficTotals
 	handler := newSignalTestHandler(t, peers, HostConfig{
 		OnAuthenticated: func(signal *SignalChannel) {
 			if err := signal.BindWSSFallback(WSSFallbackConfig{
@@ -35,6 +36,7 @@ func TestWSSFallbackCarriesEncryptedTerminalAndConfigRecords(t *testing.T) {
 					hostConfig <- wssTestRecord{kind: kind, payload: append([]byte(nil), payload...)}
 					return nil
 				},
+				OnTraffic: hostTraffic.observe,
 			}); err != nil {
 				bindErrors <- err
 			}
@@ -52,6 +54,7 @@ func TestWSSFallbackCarriesEncryptedTerminalAndConfigRecords(t *testing.T) {
 		OnRecord: func(kind peertransport.RecordKind, payload []byte) {
 			clientRecords <- wssTestRecord{kind: kind, payload: append([]byte(nil), payload...)}
 		},
+		OnTraffic: clientTraffic.observe,
 	}); err != nil {
 		t.Fatalf("bind client fallback: %v", err)
 	}
@@ -108,6 +111,24 @@ func TestWSSFallbackCarriesEncryptedTerminalAndConfigRecords(t *testing.T) {
 	}
 	if got := receiveWSSRecord(t, ctx, hostRecords); got.kind != peertransport.RecordService || !bytes.Equal(got.payload, servicePayload) {
 		t.Fatalf("host service record kind=%d payload=%x", got.kind, got.payload)
+	}
+	frameFragments, err := peertransport.FragmentFrame(1, largeFrame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configFragments, err := peertransport.FragmentConfigMessage(peertransport.RecordConfigInventory, 1, largeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSent := wssExpectedTraffic([][]byte{[]byte("client-control"), servicePayload}, configFragments)
+	hostSent := wssExpectedTraffic(nil, frameFragments)
+	if got := clientTraffic.snapshot(); got.sentBytes != clientSent.bytes || got.sentRecords != clientSent.records ||
+		got.receivedBytes != hostSent.bytes || got.receivedRecords != hostSent.records {
+		t.Fatalf("client WSS traffic=%+v want sent=%+v received=%+v", got, clientSent, hostSent)
+	}
+	if got := hostTraffic.snapshot(); got.sentBytes != hostSent.bytes || got.sentRecords != hostSent.records ||
+		got.receivedBytes != clientSent.bytes || got.receivedRecords != clientSent.records {
+		t.Fatalf("host WSS traffic=%+v want sent=%+v received=%+v", got, hostSent, clientSent)
 	}
 	if err := clientSignal.SendSignal(ctx, Signal{Type: SignalICEEnd}); !errors.Is(err, peertransport.ErrDirectTransport) {
 		t.Fatalf("signal after fallback error = %v, want ErrDirectTransport", err)
@@ -202,6 +223,56 @@ func TestWSSWriterPrioritizesControlThenTerminalThenServiceThenConfig(t *testing
 type wssTestRecord struct {
 	kind    peertransport.RecordKind
 	payload []byte
+}
+
+type wssTrafficTotals struct {
+	mu              sync.Mutex
+	sentBytes       int
+	receivedBytes   int
+	sentRecords     int
+	receivedRecords int
+}
+
+func (t *wssTrafficTotals) observe(direction peertransport.TrafficDirection, size int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if direction == peertransport.TrafficSent {
+		t.sentBytes += size
+		t.sentRecords++
+	} else {
+		t.receivedBytes += size
+		t.receivedRecords++
+	}
+}
+
+func (t *wssTrafficTotals) snapshot() wssTrafficSnapshot {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return wssTrafficSnapshot{
+		sentBytes: t.sentBytes, receivedBytes: t.receivedBytes,
+		sentRecords: t.sentRecords, receivedRecords: t.receivedRecords,
+	}
+}
+
+type wssTrafficSnapshot struct {
+	sentBytes       int
+	receivedBytes   int
+	sentRecords     int
+	receivedRecords int
+}
+
+type wssTrafficExpectation struct {
+	bytes   int
+	records int
+}
+
+func wssExpectedTraffic(plain [][]byte, fragmented [][]byte) wssTrafficExpectation {
+	const encryptedRecordOverhead = 30
+	total := wssTrafficExpectation{records: len(plain) + len(fragmented)}
+	for _, payload := range append(plain, fragmented...) {
+		total.bytes += encryptedRecordOverhead + len(payload)
+	}
+	return total
 }
 
 func receiveWSSRecord(t *testing.T, ctx context.Context, records <-chan wssTestRecord) wssTestRecord {

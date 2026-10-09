@@ -21,6 +21,7 @@ type PionHostBridgeConfig struct {
 	OnAuthenticated func(*peertransport.PionHostChannel)
 	OnRecord        func(peertransport.RecordKind, []byte)
 	OnConfigMessage func(peertransport.RecordKind, []byte) error
+	OnTraffic       peertransport.TrafficObserver
 	OnClosed        func(error)
 }
 
@@ -32,6 +33,7 @@ type PionClientBridgeConfig struct {
 	OnAuthenticated func(*peertransport.PionClientChannel)
 	OnRecord        func(peertransport.RecordKind, []byte)
 	OnConfigMessage func(peertransport.RecordKind, []byte) error
+	OnTraffic       peertransport.TrafficObserver
 	OnDiagnostics   func(iceState, candidateType string)
 	OnClosed        func(error)
 }
@@ -66,6 +68,7 @@ func (c *SignalChannel) BridgePionHost(parent context.Context, cfg PionHostBridg
 		},
 		OnRecord:        cfg.OnRecord,
 		OnConfigMessage: cfg.OnConfigMessage,
+		OnTraffic:       cfg.OnTraffic,
 		OnClosed: func(err error) {
 			link.pionClosed()
 			if cfg.OnClosed != nil {
@@ -122,6 +125,7 @@ func (c *SignalChannel) BridgePionClient(parent context.Context, cfg PionClientB
 		},
 		OnRecord:        cfg.OnRecord,
 		OnConfigMessage: cfg.OnConfigMessage,
+		OnTraffic:       cfg.OnTraffic,
 		OnDiagnostics:   cfg.OnDiagnostics,
 		OnClosed: func(err error) {
 			link.pionClosed()

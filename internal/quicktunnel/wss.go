@@ -27,6 +27,7 @@ type WSSFallbackConfig struct {
 	OnAuthenticated func(*WSSChannel)
 	OnRecord        func(peertransport.RecordKind, []byte)
 	OnConfigMessage func(peertransport.RecordKind, []byte) error
+	OnTraffic       peertransport.TrafficObserver
 }
 
 // WSSChannel carries the existing encrypted terminal/config record protocol on
@@ -37,6 +38,7 @@ type WSSChannel struct {
 	remoteMembership string
 	onRecord         func(peertransport.RecordKind, []byte)
 	onConfigMessage  func(peertransport.RecordKind, []byte) error
+	onTraffic        peertransport.TrafficObserver
 	writer           *wssWriter
 	nextMessageID    atomic.Uint64
 	receiveMu        sync.Mutex
@@ -147,7 +149,7 @@ func (c *SignalChannel) activateWSSFallback() (*WSSChannel, error) {
 	cfg := *c.fallbackCfg
 	channel := &WSSChannel{
 		signal: c, role: c.role, remoteMembership: c.remoteMembership,
-		onRecord: cfg.OnRecord, onConfigMessage: cfg.OnConfigMessage,
+		onRecord: cfg.OnRecord, onConfigMessage: cfg.OnConfigMessage, onTraffic: cfg.OnTraffic,
 	}
 	channel.writer = newWSSWriter(c.done, channel.writeRecord)
 	c.fallback = channel

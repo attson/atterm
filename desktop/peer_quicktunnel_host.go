@@ -17,6 +17,7 @@ import (
 
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
+	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/quicktunnel"
@@ -459,6 +460,7 @@ func (h *peerQuickTunnelHost) onAuthenticated(signal *quicktunnel.SignalChannel)
 				}
 			},
 			OnConfigMessage: attempt.handleConfigMessage,
+			OnTraffic:       h.app.recordPeerTraffic(peertraffic.RouteGateway),
 		},
 		OnAuthenticated: func(channel *peertransport.PionHostChannel) {
 			if err := attempt.start(parent, channel); err != nil {
@@ -473,6 +475,7 @@ func (h *peerQuickTunnelHost) onAuthenticated(signal *quicktunnel.SignalChannel)
 			}
 		},
 		OnConfigMessage: attempt.handleConfigMessage,
+		OnTraffic:       h.app.recordPeerTraffic(peertraffic.RouteDirect),
 	})
 	if err != nil {
 		h.removeAttempt(signal)

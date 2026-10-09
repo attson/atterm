@@ -21,6 +21,7 @@ type PionClientConfig struct {
 	OnAuthenticated func(*PionClientChannel)
 	OnRecord        func(RecordKind, []byte)
 	OnConfigMessage func(RecordKind, []byte) error
+	OnTraffic       TrafficObserver
 	OnDiagnostics   func(iceState, candidateType string)
 	OnClosed        func(error)
 }
@@ -259,6 +260,9 @@ func (c *PionClientChannel) receive(record []byte) error {
 	if !kind.dataChannelMessage() {
 		return fmt.Errorf("%w: record kind %d is not valid on DataChannel", ErrDirectTransport, kind)
 	}
+	if c.attempt.cfg.OnTraffic != nil {
+		c.attempt.cfg.OnTraffic(TrafficReceived, len(record))
+	}
 	if kind == RecordFragment {
 		frame, complete, err := c.reassembler.Add(plaintext, time.Now())
 		if err != nil || !complete {
@@ -378,6 +382,9 @@ func (c *PionClientChannel) sendRecordLocked(ctx context.Context, kind RecordKin
 	}
 	if err := c.dc.Send(record); err != nil {
 		return fmt.Errorf("%w: send record: %v", ErrDirectTransport, err)
+	}
+	if c.attempt.cfg.OnTraffic != nil {
+		c.attempt.cfg.OnTraffic(TrafficSent, len(record))
 	}
 	return nil
 }

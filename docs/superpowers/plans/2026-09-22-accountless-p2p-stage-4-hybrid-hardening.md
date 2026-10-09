@@ -161,6 +161,15 @@ so public-route suppression is exercised rather than simulated by clearing every
 - [ ] Grant/key expiry renewal and trust export/import without plaintext private keys。
 - [ ] Battery/data measurement across desktop idle、iOS foreground and Web background。
 
+Desktop now has a privacy-preserving local Peer traffic meter as the first data-measurement slice. It counts
+exact authenticated encrypted application-record bytes and records for Direct Pion, Quick Tunnel WSS and Manual
+LAN WSS, including terminal, config sync, file and Preview traffic. Handshake/signaling bytes and lower-layer
+overhead are excluded. UTC-day route aggregates are retained for 180 days in a mode-0600 local file and exposed
+through a bounded 90-day read-only Wails query; Peer/session identities, addresses and credentials are never
+stored. The shared host WSS handler is honestly classified as `gateway` because it cannot distinguish a public
+Quick Tunnel request from a Manual LAN request. The personal Settings dashboard and packaged-device energy/data
+measurement remain separate release slices, so the Battery/data gate stays open.
+
 The native Pion path now has a hermetic virtual-network matrix that exercises the production
 client/host attempts and authenticated DataChannel handshake with host candidates, plus STUN
 server-reflexive candidate gathering and endpoint-independent NAT traversal. It verifies symmetric

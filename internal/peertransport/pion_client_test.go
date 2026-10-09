@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,6 +77,7 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 	clientReady := make(chan uint64, 1)
 	clientAuthenticated := make(chan struct{}, 1)
 	hostAuthenticated := make(chan *PionHostChannel, 1)
+	var clientTraffic, hostTraffic testTrafficTotals
 	largeConfig := bytes.Repeat([]byte("config"), 4096)
 	serviceID := uuid.New()
 	clientServiceMessage, err := EncodeServiceMessage(ServiceMessage{
@@ -131,6 +133,7 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 			hostConfig <- payload
 			return nil
 		},
+		OnTraffic: hostTraffic.observe,
 		OnClosed: func(closeErr error) {
 			if closeErr != nil && ctx.Err() == nil {
 				nonBlockingTestError(errCh, closeErr)
@@ -185,6 +188,7 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 			clientConfig <- payload
 			return nil
 		},
+		OnTraffic: clientTraffic.observe,
 		OnClosed: func(closeErr error) {
 			if closeErr != nil && ctx.Err() == nil {
 				nonBlockingTestError(errCh, closeErr)
@@ -259,4 +263,72 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 			gotClientService = true
 		}
 	}
+
+	clientConfigFragments, err := FragmentConfigMessage(RecordConfigBatch, 1, largeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostConfigFragments, err := FragmentConfigMessage(RecordConfigInventory, 1, largeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSent := trafficForPlaintexts([][]byte{[]byte("client input"), clientServiceMessage}, clientConfigFragments)
+	hostSent := trafficForPlaintexts([][]byte{make([]byte, 8), []byte("host output"), hostServiceMessage}, hostConfigFragments)
+	if got := clientTraffic.snapshot(); got.sentBytes != clientSent.bytes || got.sentRecords != clientSent.records ||
+		got.receivedBytes != hostSent.bytes || got.receivedRecords != hostSent.records {
+		t.Fatalf("client traffic=%+v want sent=%+v received=%+v", got, clientSent, hostSent)
+	}
+	if got := hostTraffic.snapshot(); got.sentBytes != hostSent.bytes || got.sentRecords != hostSent.records ||
+		got.receivedBytes != clientSent.bytes || got.receivedRecords != clientSent.records {
+		t.Fatalf("host traffic=%+v want sent=%+v received=%+v", got, hostSent, clientSent)
+	}
+}
+
+type testTrafficTotals struct {
+	mu              sync.Mutex
+	sentBytes       int
+	receivedBytes   int
+	sentRecords     int
+	receivedRecords int
+}
+
+func (t *testTrafficTotals) observe(direction TrafficDirection, size int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if direction == TrafficSent {
+		t.sentBytes += size
+		t.sentRecords++
+	} else {
+		t.receivedBytes += size
+		t.receivedRecords++
+	}
+}
+
+func (t *testTrafficTotals) snapshot() testTrafficSnapshot {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return testTrafficSnapshot{
+		sentBytes: t.sentBytes, receivedBytes: t.receivedBytes,
+		sentRecords: t.sentRecords, receivedRecords: t.receivedRecords,
+	}
+}
+
+type testTrafficSnapshot struct {
+	sentBytes       int
+	receivedBytes   int
+	sentRecords     int
+	receivedRecords int
+}
+
+type expectedTraffic struct {
+	bytes   int
+	records int
+}
+
+func trafficForPlaintexts(plain [][]byte, fragmented [][]byte) expectedTraffic {
+	total := expectedTraffic{records: len(plain) + len(fragmented)}
+	for _, payload := range append(plain, fragmented...) {
+		total.bytes += recordHeaderSize + len(payload) + recordTagSize
+	}
+	return total
 }

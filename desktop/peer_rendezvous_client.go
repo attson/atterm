@@ -12,6 +12,7 @@ import (
 
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
+	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/quicktunnel"
 	"github.com/attson/atterm/internal/rendezvousclient"
@@ -213,8 +214,10 @@ func (c *peerNativeDirectClient) run() error {
 		Remote: c.remote, Identity: identity, GenesisToken: state.GenesisToken,
 		ClientMembershipToken: local.Token, HostMembershipToken: remote.Token,
 		SessionID: c.sessionID, ClientInstanceID: c.clientInstanceID,
-		OnAuthenticated: func(channel *peertransport.PionClientChannel) { c.onAuthenticated(channel) }, OnRecord: c.handleRecord,
+		OnAuthenticated: func(channel *peertransport.PionClientChannel) { c.onAuthenticated(channel) },
+		OnRecord:        c.handleRecord,
 		OnConfigMessage: c.handleConfigMessage,
+		OnTraffic:       c.app.recordPeerTraffic(peertraffic.RouteDirect),
 		OnDiagnostics: func(iceState, candidateType string) {
 			c.emit(NativeDirectEvent{Kind: "diagnostics", Route: peerNativeRouteDirect, ICEState: iceState, CandidateType: candidateType})
 		},
@@ -271,9 +274,15 @@ func (c *peerNativeDirectClient) runWebSocketRoute(url string, allowInsecure boo
 	}
 	c.signal = signal
 	c.mu.Unlock()
+	route := peertraffic.RouteQuickTunnel
+	if c.route == peerNativeRouteLAN {
+		route = peertraffic.RouteLAN
+	}
 	if err := signal.BindWSSFallback(quicktunnel.WSSFallbackConfig{
 		OnAuthenticated: func(channel *quicktunnel.WSSChannel) { c.onAuthenticated(channel) },
-		OnRecord:        c.handleRecord, OnConfigMessage: c.handleConfigMessage,
+		OnRecord:        c.handleRecord,
+		OnConfigMessage: c.handleConfigMessage,
+		OnTraffic:       c.app.recordPeerTraffic(route),
 	}); err != nil {
 		return err
 	}

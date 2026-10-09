@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/peerproto"
+	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/quicktunnel"
@@ -79,6 +80,7 @@ func (h *peerQuickTunnelHost) onLANControlAuthenticated(signal *quicktunnel.Sign
 				go h.removeControl(signal, true)
 			},
 			OnConfigMessage: attempt.handleControlMessage,
+			OnTraffic:       h.app.recordPeerTraffic(peertraffic.RouteGateway),
 		},
 		OnAuthenticated: func(channel *peertransport.PionHostChannel) {
 			if err := attempt.start(channel); err != nil {
@@ -89,6 +91,7 @@ func (h *peerQuickTunnelHost) onLANControlAuthenticated(signal *quicktunnel.Sign
 			go h.removeControl(signal, true)
 		},
 		OnConfigMessage: attempt.handleControlMessage,
+		OnTraffic:       h.app.recordPeerTraffic(peertraffic.RouteDirect),
 	})
 	if err != nil {
 		h.removeControl(signal, true)
@@ -356,6 +359,7 @@ func (a *App) fetchPeerLANCatalog(parent context.Context, route resolvedPeerLANR
 			}
 			return configChannel.Handle(ctx, kind, payload)
 		},
+		OnTraffic: a.recordPeerTraffic(peertraffic.RouteLAN),
 	}); err != nil {
 		return nil, err
 	}

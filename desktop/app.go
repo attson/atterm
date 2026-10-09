@@ -23,6 +23,7 @@ import (
 	"github.com/attson/atterm/desktop/hookinstall"
 	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/logging"
+	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
@@ -406,6 +407,7 @@ type App struct {
 	peerLANBrowse             peerLANBrowseFunc
 	peerManualCatalogMu       sync.Mutex
 	peerManualCatalog         map[uuid.UUID]peerDiscoveredSession
+	peerTraffic               *peertraffic.Store
 
 	startupFatalMu sync.RWMutex
 	startupFatal   StartupError
@@ -506,6 +508,11 @@ func (a *App) observeConfigStore() {
 // exists yet — they seed the first run.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if traffic, err := newPeerTrafficStore(); err != nil {
+		logWarn("peer-traffic", "initialize local meter: %v", err)
+	} else {
+		a.peerTraffic = traffic
+	}
 	wailsruntime.OnNotificationResponse(ctx, a.handleNotificationResponse)
 	a.pluginFS.setupWatcher(ctx)
 	// cfgStore must be ready before startRelayHost — the relay host's
@@ -647,6 +654,11 @@ func (a *App) shutdown(ctx context.Context) {
 	a.stopPeerLAN()
 	a.stopNativeDirectClients()
 	a.stopPeerNativeDirectClients()
+	if a.peerTraffic != nil {
+		if err := a.peerTraffic.Flush(); err != nil {
+			logWarn("peer-traffic", "flush on app shutdown: %v", err)
+		}
+	}
 	a.mu.Lock()
 	if a.uplinkCancel != nil {
 		a.uplinkCancel()

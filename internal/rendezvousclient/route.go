@@ -90,6 +90,7 @@ type HostCallbacks struct {
 	OnAuthenticated func(*peertransport.PionHostChannel)
 	OnRecord        func(peertransport.RecordKind, []byte)
 	OnConfigMessage func(peertransport.RecordKind, []byte) error
+	OnTraffic       peertransport.TrafficObserver
 	OnClosed        func(error)
 }
 
@@ -166,6 +167,7 @@ type ClientAttemptConfig struct {
 	OnAuthenticated       func(*peertransport.PionClientChannel)
 	OnRecord              func(peertransport.RecordKind, []byte)
 	OnConfigMessage       func(peertransport.RecordKind, []byte) error
+	OnTraffic             peertransport.TrafficObserver
 	OnDiagnostics         func(iceState, candidateType string)
 	OnClosed              func(error)
 }
@@ -350,7 +352,7 @@ func (r *Route) Dial(ctx context.Context, cfg ClientAttemptConfig) (*peertranspo
 			return r.sendSignal(cfg.Remote, attemptID, signalType, payload)
 		},
 		OnAuthenticated: cfg.OnAuthenticated, OnRecord: cfg.OnRecord,
-		OnConfigMessage: cfg.OnConfigMessage,
+		OnConfigMessage: cfg.OnConfigMessage, OnTraffic: cfg.OnTraffic,
 		OnDiagnostics: func(iceState, candidateType string) {
 			if iceState == webrtc.ICEConnectionStateFailed.String() {
 				r.mu.Lock()
@@ -843,7 +845,7 @@ func (r *Route) handleOpen(remote PeerRoute, message routeWireMessage) {
 			return r.sendSignal(remote, message.AttemptID, signalType, payload)
 		},
 		OnAuthenticated: callbacks.OnAuthenticated, OnRecord: callbacks.OnRecord,
-		OnConfigMessage: callbacks.OnConfigMessage,
+		OnConfigMessage: callbacks.OnConfigMessage, OnTraffic: callbacks.OnTraffic,
 		OnClosed: func(closeErr error) {
 			r.removeHost(message.AttemptID, false)
 			if callbacks.OnClosed != nil {

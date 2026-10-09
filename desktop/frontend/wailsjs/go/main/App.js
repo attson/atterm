@@ -234,6 +234,10 @@ export function GetPeerSpaceStatus() {
   return window['go']['main']['App']['GetPeerSpaceStatus']();
 }
 
+export function GetPeerTraffic(arg1, arg2) {
+  return window['go']['main']['App']['GetPeerTraffic'](arg1, arg2);
+}
+
 export function GetPinnedSessionIds() {
   return window['go']['main']['App']['GetPinnedSessionIds']();
 }

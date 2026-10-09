@@ -538,6 +538,17 @@ config-only channel 上重新发送 inventory；无认证通道时明确失败�
 subscriber 或隐藏的中心上传路径。成员目录中的“最近直连交换”来自各设备持久化的
 `ConfigSyncPeers.LastExchangeAt`，不是 Rendezvous 提供的在线/last-seen 权威状态。
 
+无账户 Peer 路径的流量统计保存在每台桌面设备本地的 `peer-traffic.json`，不依赖 Relay
+账户或中心采集。计量点位于 membership handshake 之后的 encrypted record layer：Pion
+DataChannel、Quick Tunnel WSS 和 Manual LAN WSS 只在 record 成功发送，或 AEAD 验证并确认
+为 data record 后，累计密文 record 的方向、字节数和条数。握手、Rendezvous/ICE 信令、失败
+写入以及底层 IP/SCTP/WebSocket 开销不计入，因此该指标用于比较 atterm Peer 有效传输量，
+不是网络账单值。数据仅按 UTC 日和 `direct` / `quick_tunnel` / `lan` / `gateway` 路由类别聚合，
+保留 180 天；不写入 Peer ID、session ID、IP、endpoint、membership 或凭证。共享 host WSS
+handler 同时服务 Quick Tunnel 与 Manual LAN，无法可靠区分来源时使用 `gateway`，不伪造路由
+精度。Desktop 的 `GetPeerTraffic(from,to)` 提供最多 90 个 UTC 日的只读查询并在返回前原子落盘；
+应用正常关闭时也会尽力 flush，失败不阻塞本地终端或关闭流程。
+
 ## Relay 多实例架构
 
 跨机 HA / 就近节点路由通过 realm identity + instance registry 实现（v0.3.x，全部合入

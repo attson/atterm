@@ -121,6 +121,8 @@ export function GetPeerSessionRouteStatus(arg1:string):Promise<main.PeerSessionR
 
 export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
 
+export function GetPeerTraffic(arg1:string,arg2:string):Promise<Array<main.PeerTrafficRow>>;
+
 export function GetPinnedSessionIds():Promise<Array<string>>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;

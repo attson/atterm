@@ -174,6 +174,9 @@ func (c *SignalChannel) writeRecord(ctx context.Context, kind peertransport.Reco
 	if err := c.conn.Write(ctx, websocket.MessageBinary, record); err != nil {
 		return fmt.Errorf("write encrypted signal: %w", err)
 	}
+	if fallback := c.activeWSSFallback(); fallback != nil && kind.IsDataMessage() && fallback.onTraffic != nil {
+		fallback.onTraffic(peertransport.TrafficSent, len(record))
+	}
 	return nil
 }
 
@@ -195,6 +198,9 @@ func (c *SignalChannel) readLoop(ctx context.Context) error {
 		if fallback := c.activeWSSFallback(); fallback != nil {
 			if !kind.IsDataMessage() {
 				return fmt.Errorf("%w: record kind %d is not valid on WSS fallback", peertransport.ErrDirectTransport, kind)
+			}
+			if fallback.onTraffic != nil {
+				fallback.onTraffic(peertransport.TrafficReceived, len(record))
 			}
 			if err := fallback.receive(kind, plaintext); err != nil {
 				return err

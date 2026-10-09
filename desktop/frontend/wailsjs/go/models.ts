@@ -1254,6 +1254,30 @@ export namespace main {
 	        this.expired_invitations = source["expired_invitations"];
 	    }
 	}
+	export class PeerTrafficRow {
+	    day: string;
+	    route: string;
+	    bytes_sent: number;
+	    bytes_received: number;
+	    records_sent: number;
+	    records_received: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerTrafficRow(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.day = source["day"];
+	        this.route = source["route"];
+	        this.bytes_sent = source["bytes_sent"];
+	        this.bytes_received = source["bytes_received"];
+	        this.records_sent = source["records_sent"];
+	        this.records_received = source["records_received"];
+	    }
+	}
 	export class WidgetConfig {
 	    enabled: boolean;
 	    aiOnly: boolean;

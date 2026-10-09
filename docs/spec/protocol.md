@@ -1000,7 +1000,17 @@ URL 轮换只创建新的 `atc1`，不创建 invitation 或 membership。
 `atp1` invitation、subject peer/signing public key、wrapping public key、32-byte nonce 和创建
 时间放入 `apj1`，并以 subject signing private key 签名。签发设备验证 invitation chain、
 subject key proof 与 wrapping public key，且只接受 ticket 指定的 `redemption_peer_id`，随后
-签发持久 `apm1` membership。JoinRequest 只在创建时间前后 5 分钟内有效。
+签发默认 90 天有效的 `apm1` membership。creator 的 genesis-bound self membership 不过期，
+避免根信任锚依赖循环续期。JoinRequest 只在创建时间前后 5 分钟内有效。
+
+当前有效 grant 进入最后 30 天（或旧版本 grant 没有 `expires_at`）时，已认证 config channel
+允许另一名 active inviter 签发 renewal。renewal 生成新 serial，并逐字节保留 subject signing
+public key、wrapping public key、permission、session scope、invite/secret-sync capability；有效期默认
+再延长 90 天、最长 365 天，且不能超过 issuer 自身的有效期。设备不能自续期，已过期、member/grant
+deny-wins 撤销或非 canonical 的旧 grant 不能续期，只能重新走 invitation。renewal 作为普通 `apm1`
+候选通过现有 anti-entropy 下发，不新增 `proto.Type` 或 Peer record kind。接收端只有在 `peer_id` 以及
+signing/wrapping public key 都与本机 identity 一致时，才原子提升 `LocalMembership`；key 变化整批
+fail closed，private key 和 epoch key 均不进入 renewal token。
 
 签发设备在本地加密账本中用跨进程原子锁核销 `invite_id`，并将已签发 membership 与核销
 记录一同原子落盘。同一 subject 重试返回第一次签发的同一 membership；其它 subject 重放
@@ -1038,7 +1048,7 @@ query 携带。epoch keys 先写 secure storage，最后才一次性创建加密
 解封失败都不能留下已初始化 Space。bootstrap envelopes 也保存在加密 store 中，Keychain
 epoch entry 丢失后可重新解封恢复。
 
-Peer Space 的加密本地 state schema v6 包含 grow-only `memberships[]` 目录（最多 256 个候选）
+Peer Space 的加密本地 state schema v7 包含 grow-only `memberships[]` 目录（最多 256 个候选）
 和 recipient-bound `epoch_envelopes[]`。
 新建 Space、邀请核销和读取 v1-v4 state 时，都会从 local membership、已核销 invitation 以及
 每个 token 内嵌的 issuer chain 补齐目录；真实 genesis 下每个 token 必须按签发时刻验证完整签名
@@ -1058,7 +1068,7 @@ fail closed。设备保留全部 token 供后续 anti-entropy，并从中派生 
 redemption ledger 只把 actor membership 与本机 membership 完全一致的 batch 撤销应用到未消费
 ticket。已消费 invitation 对应的 membership 不会因 batch 撤销失效，必须显式发布 member/grant
 撤销。当前 membership 目录、撤销日志和派生集合随加密 `peer-space.json` 原子持久化。明文 state
-schema 为 v6；读取 v1-v5 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏
+schema 为 v7；读取 v1-v6 后在下一次写入时迁移，外层加密 envelope 与 AAD 保持 v1，避免破坏
 已有本地 Space。
 
 Desktop 发起 `member` 撤销时，必须在同一个 Peer store 文件事务内持久化 `arv1`，并基于已应用

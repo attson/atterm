@@ -66,6 +66,15 @@ func newPeerConfigChannel(app *App, transport peerConfigTransport) (*peerConfigC
 // Start advertises the receiver's durable frontier. Both authenticated peers
 // call Start, allowing each direction to converge independently.
 func (c *peerConfigChannel) Start(ctx context.Context) error {
+	if c.receiver != nil {
+		manager, err := c.app.peerManager()
+		if err != nil {
+			return err
+		}
+		if _, err := manager.renewMembershipIfNeeded(c.receiver.remote); err != nil {
+			return err
+		}
+	}
 	inventory, err := c.localInventory()
 	if err != nil {
 		return err

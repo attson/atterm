@@ -165,6 +165,62 @@ func TestJoinRequestAndIssuedMembership(t *testing.T) {
 	if !bytes.Equal(membership.WrappingPublicKey, joiningWrapping.PublicBytes()) {
 		t.Fatal("issued membership did not copy the join wrapping public key")
 	}
+	if membership.Document.ExpiresAt != now.Add(DefaultMembershipValidity).Unix() {
+		t.Fatalf("membership expiry=%d", membership.Document.ExpiresAt)
+	}
+
+	renewedAt := now.Add(60 * 24 * time.Hour)
+	renewedToken, err := RenewMembership(issuerIdentity, genesis, issuerMembership, membership, renewedAt, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := VerifyGrant(renewedToken, genesis, now.Add(100*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.Document.Serial == membership.Document.Serial ||
+		renewed.Document.SubjectPeerID != membership.Document.SubjectPeerID ||
+		renewed.Document.SubjectPublicKey != membership.Document.SubjectPublicKey ||
+		renewed.Document.SubjectWrappingPublicKey != membership.Document.SubjectWrappingPublicKey ||
+		renewed.Document.Permission != membership.Document.Permission ||
+		renewed.Document.CanSyncSecrets != membership.Document.CanSyncSecrets ||
+		renewed.Document.ExpiresAt != renewedAt.Add(DefaultMembershipValidity).Unix() {
+		t.Fatalf("renewed membership changed identity or capabilities: %+v", renewed.Document)
+	}
+	if _, err := RenewMembership(joiningIdentity, genesis, membership, membership, renewedAt, 0); !errors.Is(err, ErrRenewalDenied) {
+		t.Fatalf("self renewal error=%v", err)
+	}
+}
+
+func TestRenewMembershipRejectsExpiredSubject(t *testing.T) {
+	issuerIdentity, genesis, issuerMembership, now := newTestSpace(t)
+	tokens, err := NewInvitationBatch(issuerIdentity, genesis, issuerMembership, now, InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestToken, err := NewJoinRequest(subject, newTestWrappingIdentity(t).PublicBytes(), tokens[0], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := VerifyJoinRequest(requestToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membershipToken, err := IssueMembership(issuerIdentity, genesis, issuerMembership, request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership, err := VerifyGrant(membershipToken, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RenewMembership(issuerIdentity, genesis, issuerMembership, membership, now.Add(DefaultMembershipValidity), 0); !errors.Is(err, ErrRenewalDenied) {
+		t.Fatalf("expired renewal error=%v", err)
+	}
 }
 
 func TestVerifyGrantAtIssuanceRetainsExpiredMembership(t *testing.T) {

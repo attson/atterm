@@ -24,6 +24,13 @@ import (
 const (
 	Version = 1
 
+	// DefaultMembershipValidity bounds newly issued and renewed non-root
+	// memberships. The creator's genesis-bound self membership remains
+	// non-expiring so renewal never depends on a circular root grant.
+	DefaultMembershipValidity = 90 * 24 * time.Hour
+	// MaxMembershipValidity caps caller-selected renewal lifetimes.
+	MaxMembershipValidity = 365 * 24 * time.Hour
+
 	genesisPrefix     = "apg1"
 	membershipPrefix  = "apm1"
 	invitationPrefix  = "atp1"
@@ -35,6 +42,7 @@ const (
 var (
 	ErrInvalidDocument = errors.New("peerproto: invalid document")
 	ErrExpired         = errors.New("peerproto: document expired")
+	ErrRenewalDenied   = errors.New("peerproto: membership renewal denied")
 )
 
 type Permission string
@@ -683,6 +691,7 @@ func IssueMembership(identity *peercrypto.Identity, genesis VerifiedGenesis, iss
 		IssuerPeerID:             identity.PeerID(),
 		IssuerMembership:         issuer.Token,
 		IssuedAt:                 now.Unix(),
+		ExpiresAt:                membershipExpiry(now, issuer, DefaultMembershipValidity),
 		Permission:               join.Ticket.Permission,
 		AllowedSessionIDs:        append([]string(nil), join.Ticket.AllowedSessionIDs...),
 		CanInvite:                join.Ticket.CanInvite,
@@ -690,6 +699,75 @@ func IssueMembership(identity *peercrypto.Identity, genesis VerifiedGenesis, iss
 		DelegationDepth:          issuer.Document.DelegationDepth + 1,
 	}
 	return signDocument(membershipPrefix, doc, identity)
+}
+
+// RenewMembership replaces one still-active non-root grant without changing
+// the subject's signing key, wrapping key, or capabilities. A fresh serial
+// makes renewal auditable and keeps old grant revocations unambiguous.
+func RenewMembership(identity *peercrypto.Identity, genesis VerifiedGenesis, issuer, subject VerifiedGrant, now time.Time, validFor time.Duration) (string, error) {
+	if identity == nil || identity.PeerID() == subject.Document.SubjectPeerID {
+		return "", ErrRenewalDenied
+	}
+	verifiedIssuer, err := VerifyGrant(issuer.Token, genesis, now)
+	if err != nil || verifiedIssuer.Document.SubjectPeerID != identity.PeerID() {
+		return "", ErrRenewalDenied
+	}
+	verifiedSubject, err := VerifyGrant(subject.Token, genesis, now)
+	if err != nil || verifiedSubject.Document.SubjectPeerID == genesis.Document.CreatorPeerID {
+		return "", ErrRenewalDenied
+	}
+	issuer = verifiedIssuer
+	subject = verifiedSubject
+	if !issuer.Document.CanInvite || issuer.Document.DelegationDepth >= 8 ||
+		permissionRank(subject.Document.Permission) > permissionRank(issuer.Document.Permission) ||
+		(subject.Document.CanSyncSecrets && !issuer.Document.CanSyncSecrets) ||
+		!scopeSubset(subject.Document.AllowedSessionIDs, issuer.Document.AllowedSessionIDs) {
+		return "", ErrRenewalDenied
+	}
+	if validFor == 0 {
+		validFor = DefaultMembershipValidity
+	}
+	if validFor < 24*time.Hour || validFor > MaxMembershipValidity {
+		return "", fmt.Errorf("%w: renewal validity", ErrInvalidDocument)
+	}
+	expiresAt := membershipExpiry(now, issuer, validFor)
+	if expiresAt <= now.Unix() {
+		return "", ErrRenewalDenied
+	}
+	doc := DeviceGrant{
+		V:                        Version,
+		Serial:                   uuid.NewString(),
+		SpaceID:                  genesis.Document.SpaceID,
+		SpaceGenesisHash:         genesis.Hash,
+		SubjectPeerID:            subject.Document.SubjectPeerID,
+		SubjectPublicKey:         subject.Document.SubjectPublicKey,
+		SubjectWrappingPublicKey: subject.Document.SubjectWrappingPublicKey,
+		IssuerPeerID:             identity.PeerID(),
+		IssuerMembership:         issuer.Token,
+		IssuedAt:                 now.Unix(),
+		ExpiresAt:                expiresAt,
+		Permission:               subject.Document.Permission,
+		AllowedSessionIDs:        append([]string(nil), subject.Document.AllowedSessionIDs...),
+		CanInvite:                subject.Document.CanInvite,
+		CanSyncSecrets:           subject.Document.CanSyncSecrets,
+		DelegationDepth:          issuer.Document.DelegationDepth + 1,
+	}
+	token, err := signDocument(membershipPrefix, doc, identity)
+	if err != nil {
+		return "", err
+	}
+	if _, err := VerifyGrant(token, genesis, now); err != nil {
+		return "", fmt.Errorf("verify renewed membership: %w", err)
+	}
+	return token, nil
+}
+
+func membershipExpiry(now time.Time, issuer VerifiedGrant, validFor time.Duration) int64 {
+	expiresAt := now.Add(validFor).Unix()
+	if issuer.Document.ExpiresAt != 0 && issuer.Document.ExpiresAt < expiresAt {
+		return issuer.Document.ExpiresAt
+	}
+	return expiresAt
 }
 
 func signDocument(prefix string, doc any, identity *peercrypto.Identity) (string, error) {

@@ -13,6 +13,8 @@ import (
 
 var errCannotRevokeLocalPeer = errors.New("cannot revoke the local Peer member")
 
+const peerMembershipRenewBefore = 30 * 24 * time.Hour
+
 // PeerMember is the non-secret directory projection exposed to Settings.
 type PeerMember struct {
 	PeerID            string   `json:"peer_id"`
@@ -149,6 +151,52 @@ func canonicalPeerMemberships(state peerstore.State, genesis peerproto.VerifiedG
 		memberships = append(memberships, membership)
 	}
 	return memberships, nil
+}
+
+// renewMembershipIfNeeded opportunistically issues a fresh grant before an
+// authenticated remote expires. Delivery uses the existing membership
+// anti-entropy stream, so renewal does not add another credential channel.
+func (m *peerSpaceManager) renewMembershipIfNeeded(remote peerproto.VerifiedGrant) (bool, error) {
+	state, err := m.store.Load()
+	if err != nil {
+		return false, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return false, err
+	}
+	now := m.now()
+	active, err := activePeerMemberships(state, genesis, now)
+	if err != nil {
+		return false, err
+	}
+	target := membershipForPeerID(active, remote.Document.SubjectPeerID)
+	if target == nil || target.Token != remote.Token {
+		return false, nil
+	}
+	if target.Document.ExpiresAt != 0 && target.Document.ExpiresAt > now.Add(peerMembershipRenewBefore).Unix() {
+		return false, nil
+	}
+	identity, err := m.loadIdentity()
+	if err != nil {
+		return false, err
+	}
+	actor := membershipForPeerID(active, identity.PeerID())
+	if actor == nil || actor.Document.SubjectPeerID == target.Document.SubjectPeerID {
+		return false, nil
+	}
+	token, err := peerproto.RenewMembership(identity, genesis, *actor, *target, now, peerproto.DefaultMembershipValidity)
+	if errors.Is(err, peerproto.ErrRenewalDenied) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	stored, err := m.store.ApplyMemberships([]string{token}, now)
+	if err != nil {
+		return false, err
+	}
+	return stored != 0, nil
 }
 
 func (m *peerSpaceManager) revokeMember(peerID string) error {

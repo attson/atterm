@@ -126,6 +126,69 @@ func TestActivePeerMembershipsExcludeExpiredDirectoryEntries(t *testing.T) {
 	}
 }
 
+func TestPeerMembershipRenewalStartsOnlyInsideWindow(t *testing.T) {
+	app, now := newTestPeerApp(t)
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creator, err := app.peerSpace.loadIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	creatorMembership, err := peerproto.VerifyGrant(state.LocalMembership, genesis, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteMembership := issueTestPeerMembership(t, creator, genesis, creatorMembership, remote, remoteWrapping, now)
+	if _, err := app.peerSpace.store.ApplyMemberships([]string{remoteMembership.Token}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	app.peerSpace.now = func() time.Time { return now.Add(59 * 24 * time.Hour) }
+	if renewed, err := app.peerSpace.renewMembershipIfNeeded(remoteMembership); err != nil || renewed {
+		t.Fatalf("early renewal=%t err=%v", renewed, err)
+	}
+	app.peerSpace.now = func() time.Time { return now.Add(61 * 24 * time.Hour) }
+	if renewed, err := app.peerSpace.renewMembershipIfNeeded(remoteMembership); err != nil || !renewed {
+		t.Fatalf("due renewal=%t err=%v", renewed, err)
+	}
+	updated, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := activePeerMemberships(updated, genesis, app.peerSpace.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := membershipForPeerID(active, remote.PeerID())
+	if renewed == nil || renewed.Token == remoteMembership.Token ||
+		renewed.Document.SubjectPublicKey != remoteMembership.Document.SubjectPublicKey ||
+		renewed.Document.SubjectWrappingPublicKey != remoteMembership.Document.SubjectWrappingPublicKey ||
+		renewed.Document.Permission != remoteMembership.Document.Permission ||
+		renewed.Document.ExpiresAt != app.peerSpace.now().Add(peerproto.DefaultMembershipValidity).Unix() {
+		t.Fatalf("renewed membership=%+v", renewed)
+	}
+	if again, err := app.peerSpace.renewMembershipIfNeeded(remoteMembership); err != nil || again {
+		t.Fatalf("stale grant renewed again=%t err=%v", again, err)
+	}
+}
+
 func issueTestPeerMembership(
 	t *testing.T,
 	issuer *peercrypto.Identity,

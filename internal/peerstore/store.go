@@ -39,14 +39,15 @@ const (
 )
 
 var (
-	ErrNotInitialized  = errors.New("peerstore: not initialized")
-	ErrAlreadyExists   = errors.New("peerstore: space already exists")
-	ErrInviteInvalid   = errors.New("peerstore: invitation invalid")
-	ErrInviteConsumed  = errors.New("peerstore: invitation already consumed")
-	ErrInviteRevoked   = errors.New("peerstore: invitation revoked")
-	ErrPendingExists   = errors.New("peerstore: pending config import already exists")
-	ErrMembershipFork  = errors.New("peerstore: membership serial fork")
-	ErrMembershipLimit = errors.New("peerstore: membership candidate limit reached")
+	ErrNotInitialized           = errors.New("peerstore: not initialized")
+	ErrAlreadyExists            = errors.New("peerstore: space already exists")
+	ErrInviteInvalid            = errors.New("peerstore: invitation invalid")
+	ErrInviteConsumed           = errors.New("peerstore: invitation already consumed")
+	ErrInviteRevoked            = errors.New("peerstore: invitation revoked")
+	ErrPendingExists            = errors.New("peerstore: pending config import already exists")
+	ErrMembershipFork           = errors.New("peerstore: membership serial fork")
+	ErrMembershipLimit          = errors.New("peerstore: membership candidate limit reached")
+	ErrLocalMembershipKeyChange = errors.New("peerstore: local membership key changed")
 )
 
 var storeAAD = []byte("atterm-peer-store-v1")
@@ -719,11 +720,38 @@ func materializeMemberships(state *State) error {
 		}
 		return left.Token < right.Token
 	})
+	local, err := peerproto.VerifyGrantAtIssuance(state.LocalMembership, genesis)
+	if err != nil {
+		return fmt.Errorf("peerstore: verify local membership: %w", err)
+	}
+	canonicalLocal := local
+	for _, membership := range memberships {
+		if membership.Document.SubjectPeerID != local.Document.SubjectPeerID {
+			continue
+		}
+		if !bytes.Equal(membership.PublicKey, local.PublicKey) || !bytes.Equal(membership.WrappingPublicKey, local.WrappingPublicKey) {
+			return ErrLocalMembershipKeyChange
+		}
+		if membershipCanonicalAfter(membership, canonicalLocal) {
+			canonicalLocal = membership
+		}
+	}
+	state.LocalMembership = canonicalLocal.Token
 	state.Memberships = make([]string, len(memberships))
 	for index := range memberships {
 		state.Memberships[index] = memberships[index].Token
 	}
 	return nil
+}
+
+func membershipCanonicalAfter(candidate, current peerproto.VerifiedGrant) bool {
+	if candidate.Document.IssuedAt != current.Document.IssuedAt {
+		return candidate.Document.IssuedAt > current.Document.IssuedAt
+	}
+	if candidate.Document.Serial != current.Document.Serial {
+		return candidate.Document.Serial < current.Document.Serial
+	}
+	return candidate.Token < current.Token
 }
 
 func deduplicateStrings(values []string) []string {

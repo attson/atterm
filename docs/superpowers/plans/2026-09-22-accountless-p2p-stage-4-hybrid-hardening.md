@@ -215,6 +215,13 @@ recreate the record. The 32 MiB snapshot, 64 MiB durable store, bounded operatio
 reassembly per logical stream, 16 MiB message caps, and existing per-route/server connection ceilings close
 the deterministic Resource bounds gate. Packaged memory and energy behavior remains in the Battery/data gate.
 
+New non-root memberships now expire after 90 days and are renewed during an authenticated config exchange
+inside a 30-day window. A renewal preserves the subject signing/wrapping public keys and exact capabilities,
+uses a fresh serial, cannot be self-issued, and is distributed as an ordinary membership anti-entropy item.
+The receiving device promotes its local grant only after both public keys match its existing identity. Expired,
+revoked, or stale grants fail closed and require a new invitation. The hardening item remains open until periodic
+epoch-key renewal and encrypted trust export/import are implemented.
+
 ## Stage Exit Gate
 
 - [ ] Same session is shown once across available route candidates.

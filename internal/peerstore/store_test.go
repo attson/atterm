@@ -19,6 +19,8 @@ import (
 
 type membershipStoreFixture struct {
 	creator           *peercrypto.Identity
+	child             *peercrypto.Identity
+	childWrapping     *peercrypto.WrappingIdentity
 	genesis           peerproto.VerifiedGenesis
 	creatorMembership peerproto.VerifiedGrant
 	childMembership   string
@@ -73,7 +75,8 @@ func newMembershipStoreFixture(t *testing.T) membershipStoreFixture {
 		t.Fatal(err)
 	}
 	return membershipStoreFixture{
-		creator: creator, genesis: genesis, creatorMembership: creatorMembership,
+		creator: creator, child: child, childWrapping: childWrapping,
+		genesis: genesis, creatorMembership: creatorMembership,
 		childMembership: childMembership, now: now,
 	}
 }
@@ -235,6 +238,70 @@ func TestApplyMembershipsIsAtomicIdempotentAndRejectsSerialFork(t *testing.T) {
 	}
 	if len(state.Memberships) != 2 {
 		t.Fatalf("failed apply changed directory: %v", state.Memberships)
+	}
+}
+
+func TestApplyMembershipsPromotesLocalRenewalAndRejectsWrappingKeyChange(t *testing.T) {
+	fixture := newMembershipStoreFixture(t)
+	store, _ := testStore(t)
+	if err := store.Initialize(State{
+		GenesisToken: fixture.genesis.Token, LocalMembership: fixture.childMembership,
+		CreatedAt: fixture.now.Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := peerproto.VerifyGrant(fixture.childMembership, fixture.genesis, fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewedAt := fixture.now.Add(60 * 24 * time.Hour)
+	renewed, err := peerproto.RenewMembership(
+		fixture.creator, fixture.genesis, fixture.creatorMembership, child, renewedAt, 0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := store.ApplyMemberships([]string{renewed}, renewedAt); err != nil || stored != 1 {
+		t.Fatalf("apply renewal stored=%d err=%v", stored, err)
+	}
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LocalMembership != renewed {
+		t.Fatal("new canonical grant did not replace local membership")
+	}
+
+	changedAt := renewedAt.Add(time.Minute)
+	tickets, err := peerproto.NewInvitationBatch(fixture.creator, fixture.genesis, fixture.creatorMembership, changedAt, peerproto.InvitationOptions{Count: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementWrapping, err := peercrypto.GenerateWrappingIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinToken, err := peerproto.NewJoinRequest(fixture.child, replacementWrapping.PublicBytes(), tickets[0], changedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	join, err := peerproto.VerifyJoinRequest(joinToken, fixture.genesis, changedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := peerproto.IssueMembership(fixture.creator, fixture.genesis, fixture.creatorMembership, join, changedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := store.ApplyMemberships([]string{changed}, changedAt); !errors.Is(err, ErrLocalMembershipKeyChange) || stored != 0 {
+		t.Fatalf("wrapping key change stored=%d err=%v", stored, err)
+	}
+	after, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.LocalMembership != renewed {
+		t.Fatal("rejected wrapping key change altered local membership")
 	}
 }
 

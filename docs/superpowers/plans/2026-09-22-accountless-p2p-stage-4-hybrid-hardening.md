@@ -194,6 +194,13 @@ to the fresh in-memory registry. A new remote viewer attaches and completes term
 restart, while connection health records the recovery. This closes the deterministic Chaos matrix; packaged
 and real-network behavior remains covered by the separate NAT and soak gates.
 
+The shared desktop/web/Capacitor `PeerSessionConnection` now has a deterministic mobile-lifecycle soak: an
+8 MiB scrollback replay arrives in 4,096 sequenced chunks before ready, followed by 32 suspend/resume cycles.
+Every replacement route starts from the committed cursor, rejects late and duplicate OUT from retired routes,
+and releases one queued driver claim, resize and input only after replay readiness. The Soak item remains open
+until a large config snapshot runs over a real Peer route and packaged iOS foreground/background recovery is
+measured rather than simulated through the shared connection lifecycle.
+
 ## Stage Exit Gate
 
 - [ ] Same session is shown once across available route candidates.

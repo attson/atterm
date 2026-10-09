@@ -880,6 +880,80 @@ describe('PeerSessionConnection', () => {
     expect(transports[1].options.sinceSeq).toBe(12)
   })
 
+  it('soaks a large replay across repeated mobile-style suspend and resume', () => {
+    const transports: FakeTransport[] = []
+    let outputFrames = 0
+    let outputBytes = 0
+    const connection = new PeerSessionConnection(sessionID, {
+      onOutput: (data) => {
+        outputFrames++
+        outputBytes += data.length
+      },
+    }, {
+      clientName: 'mobile-soak',
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    let current = transports[0]
+    const clientInstanceId = current.options.clientInstanceId
+    current.options.callbacks.onAuthenticated?.()
+
+    const replayChunk = 'x'.repeat(2 * 1024)
+    const replayFrames = 4096
+    let seq = 0
+    for (; seq < replayFrames; seq++) {
+      current.options.callbacks.onFrame(out(seq + 1, replayChunk))
+    }
+    current.options.callbacks.onReady(seq)
+
+    expect(outputFrames).toBe(replayFrames)
+    expect(outputBytes).toBe(replayFrames * replayChunk.length)
+
+    const resumeCycles = 32
+    for (let cycle = 0; cycle < resumeCycles; cycle++) {
+      connection.suspend()
+      expect(current.closed).toBe(true)
+
+      expect(connection.claimDriver()).toBe(false)
+      connection.sendResize(80 + cycle, 24 + cycle)
+      connection.sendInput(`mobile-input-${cycle}`)
+      current.options.callbacks.onFrame(out(seq + 1, `late-${cycle}`))
+
+      connection.attach()
+      const replacement = transports.at(-1)!
+      expect(replacement.options).toMatchObject({ sinceSeq: seq, clientInstanceId })
+      expect(replacement.sent).toHaveLength(0)
+
+      replacement.options.callbacks.onAuthenticated?.()
+      replacement.options.callbacks.onFrame(out(seq, `duplicate-${cycle}`))
+      seq++
+      const resumedOutput = `resumed-${cycle}`
+      replacement.options.callbacks.onFrame(out(seq, resumedOutput))
+      replacement.options.callbacks.onReady(seq)
+
+      const sent = replacement.sent.map(decodeFrame)
+      expect(sent.map((frame) => frame.type)).toEqual([
+        TYPE.CLAIM_DRIVER,
+        TYPE.RESIZE,
+        TYPE.IN,
+      ])
+      expect(decodeText(sent[2].payload)).toBe(`mobile-input-${cycle}`)
+      current = replacement
+    }
+
+    expect(transports).toHaveLength(resumeCycles + 1)
+    expect(outputFrames).toBe(replayFrames + resumeCycles)
+    expect(outputBytes).toBe(replayFrames * replayChunk.length +
+      Array.from({ length: resumeCycles }, (_, cycle) => `resumed-${cycle}`.length)
+        .reduce((total, length) => total + length, 0))
+    connection.detach()
+  }, 10_000)
+
   it('labels an explicitly selected Quick Tunnel route without automatic fallback', () => {
     const transports: FakeTransport[] = []
     const routes: Array<{ route: string }> = []

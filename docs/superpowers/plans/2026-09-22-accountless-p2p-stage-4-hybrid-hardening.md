@@ -204,6 +204,15 @@ authenticated Pion route. It crosses multiple anti-entropy batches and encrypted
 the first durable ACK, resumes from the exact outstanding batch, converges once, and keeps the terminal
 subscriber lifecycle untouched throughout.
 
+The durable Peer config tail now compacts automatically at 512 operations or 8 MiB, whichever comes first.
+The threshold decision is rechecked under the cross-process file lock, and the signed snapshot retains the
+causal cover vector while the operation tail is removed. A returning device with an older non-empty replica
+can atomically rebase only when that cover vector includes all of its durable history; an unshared local
+branch fails closed instead of being discarded. Together with the 32 MiB snapshot and 64 MiB durable-store
+hard caps this bounds ordinary op-log growth. The Resource bounds item remains open until tombstones have an
+acknowledgement-aware retention rule; deleting them solely by age would permit a stale active member to
+resurrect a concurrently removed record.
+
 ## Stage Exit Gate
 
 - [ ] Same session is shown once across available route candidates.

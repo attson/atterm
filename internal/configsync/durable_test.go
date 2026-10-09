@@ -243,6 +243,98 @@ func TestDurableReplicaRejectsSnapshotThatDoesNotCoverLocalBranch(t *testing.T) 
 	}
 }
 
+func TestDurableReplicaCompactsTailAtConfiguredBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		maxTailOps   int
+		maxTailBytes int
+	}{
+		{name: "operations", maxTailOps: 2, maxTailBytes: 1 << 20},
+		{name: "bytes", maxTailOps: 100, maxTailBytes: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spaceID := uuid.NewString()
+			path := filepath.Join(t.TempDir(), "config-replica.json")
+			identity := testIdentity(t)
+			store := openTestDurable(t, path, spaceID)
+			if _, _, _, err := store.BootstrapEncrypted(identity, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.Append(identity, testConfigMutation("theme", KindSet, "dark")); err != nil {
+				t.Fatal(err)
+			}
+			compacted, _, err := store.CompactIfNeeded(identity, tc.maxTailOps, tc.maxTailBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "operations" && compacted {
+				t.Fatal("operation tail compacted below bound")
+			}
+			if tc.name == "operations" {
+				if _, _, err := store.Append(identity, testConfigMutation("locale", KindSet, "zh-CN")); err != nil {
+					t.Fatal(err)
+				}
+				compacted, _, err = store.CompactIfNeeded(identity, tc.maxTailOps, tc.maxTailBytes)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !compacted {
+				t.Fatal("tail did not compact at configured bound")
+			}
+			reopened := openTestDurable(t, path, spaceID)
+			state := reopened.StateForPeer(nil)
+			if state.Snapshot == "" || len(state.Ops) != 0 {
+				t.Fatalf("bounded compact state snapshot=%t ops=%d", state.Snapshot != "", len(state.Ops))
+			}
+			if _, _, seeded, err := reopened.BootstrapEncrypted(identity, nil); err != nil || seeded {
+				t.Fatalf("bounded compaction lost bootstrap marker: seeded=%t err=%v", seeded, err)
+			}
+		})
+	}
+
+	store := openTestDurable(t, filepath.Join(t.TempDir(), "invalid.json"), uuid.NewString())
+	if compacted, _, err := store.CompactIfNeeded(nil, 1, 1); !errors.Is(err, ErrDurableStoreInvalid) || compacted {
+		t.Fatalf("invalid compaction compacted=%t err=%v", compacted, err)
+	}
+}
+
+func TestDurableReplicaCompactionSerializesWithCrossProcessAppend(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	compactor := openTestDurable(t, path, spaceID)
+	if _, _, err := compactor.Append(identity, testConfigMutation("theme", KindSet, "dark")); err != nil {
+		t.Fatal(err)
+	}
+	appender := openTestDurable(t, path, spaceID)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() {
+		<-start
+		_, _, err := compactor.CompactIfNeeded(identity, 1, 1<<20)
+		errs <- err
+	}()
+	go func() {
+		<-start
+		_, _, err := appender.Append(identity, testConfigMutation("locale", KindSet, "zh-CN"))
+		errs <- err
+	}()
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reopened := openTestDurable(t, path, spaceID)
+	theme, themeOK := reopened.Get("preferences", "theme")
+	locale, localeOK := reopened.Get("preferences", "locale")
+	if !themeOK || !localeOK || string(theme.Payload) != "dark" || string(locale.Payload) != "zh-CN" || reopened.Vector()[identity.PeerID()] != 2 {
+		t.Fatalf("serialized compaction records theme=%+v locale=%+v vector=%v", theme, locale, reopened.Vector())
+	}
+}
+
 func TestDurableReplicaFailsClosedOnCorruptState(t *testing.T) {
 	spaceID := uuid.NewString()
 	path := filepath.Join(t.TempDir(), "config-replica.json")

@@ -63,6 +63,9 @@ func (a *App) bootstrapPeerConfig(manager *peerSpaceManager) (recordCount int, s
 	if err != nil {
 		return 0, false, err
 	}
+	if _, err := runtime.compactIfNeeded(); err != nil {
+		return 0, false, fmt.Errorf("compact bootstrapped Peer config: %w", err)
+	}
 	return len(records), seeded, nil
 }
 

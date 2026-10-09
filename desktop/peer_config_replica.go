@@ -22,6 +22,11 @@ type peerConfigReplica struct {
 	keys     map[configsync.KeyClass]configsync.EpochKey
 }
 
+const (
+	peerConfigCompactTailOperations = 512
+	peerConfigCompactTailBytes      = 8 << 20
+)
+
 func (m *peerSpaceManager) ensureConfigReplica() (*peerConfigReplica, error) {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
@@ -305,7 +310,20 @@ func (r *peerConfigReplica) appendPeerConfigMutations(label string, mutations []
 	if err != nil {
 		return 0, fmt.Errorf("append %s: %w", label, err)
 	}
+	if _, err := r.compactIfNeeded(); err != nil {
+		return len(operations), fmt.Errorf("compact %s: %w", label, err)
+	}
 	return len(operations), nil
+}
+
+func (r *peerConfigReplica) compactIfNeeded() (bool, error) {
+	if !r.replica.NeedsCompaction(peerConfigCompactTailOperations, peerConfigCompactTailBytes) {
+		return false, nil
+	}
+	compacted, _, err := r.replica.CompactIfNeeded(
+		r.identity, peerConfigCompactTailOperations, peerConfigCompactTailBytes,
+	)
+	return compacted, err
 }
 
 func peerLocalCollectionsForKey(relayKey string) ([]string, error) {

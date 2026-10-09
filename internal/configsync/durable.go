@@ -293,6 +293,63 @@ func (d *DurableReplica) Compact(identity *peercrypto.Identity) (string, Durable
 	return snapshot, ack, err
 }
 
+// CompactIfNeeded replaces the operation tail with a signed snapshot when
+// either bound is reached. The decision and replacement share the durable file
+// lock, so concurrent processes cannot append between the size check and the
+// compaction boundary.
+func (d *DurableReplica) CompactIfNeeded(identity *peercrypto.Identity, maxTailOps, maxTailBytes int) (bool, DurableAck, error) {
+	if identity == nil || maxTailOps <= 0 || maxTailBytes <= 0 {
+		return false, DurableAck{}, ErrDurableStoreInvalid
+	}
+	compacted := false
+	ack, err := d.mutate(func(replica *Replica, state *durableState) (bool, error) {
+		if !configTailExceedsBounds(*state, maxTailOps, maxTailBytes) {
+			return false, nil
+		}
+		created, err := replica.SignSnapshot(identity)
+		if err != nil {
+			return false, err
+		}
+		next := d.emptyState()
+		next.LocalBootstrapComplete = state.LocalBootstrapComplete
+		next.Snapshot = created
+		rebuilt, err := d.buildReplica(next)
+		if err != nil {
+			return false, fmt.Errorf("verify bounded config snapshot: %w", err)
+		}
+		replica.replaceState(rebuilt)
+		*state = next
+		compacted = true
+		return true, nil
+	})
+	return compacted, ack, err
+}
+
+// NeedsCompaction is a lock-local fast path. CompactIfNeeded always rechecks
+// under the cross-process file lock before replacing durable state.
+func (d *DurableReplica) NeedsCompaction(maxTailOps, maxTailBytes int) bool {
+	if d == nil || maxTailOps <= 0 || maxTailBytes <= 0 {
+		return false
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return configTailExceedsBounds(d.state, maxTailOps, maxTailBytes)
+}
+
+func configTailExceedsBounds(state durableState, maxTailOps, maxTailBytes int) bool {
+	if len(state.Ops) >= maxTailOps {
+		return true
+	}
+	bytes := 0
+	for _, token := range state.Ops {
+		bytes += len(token)
+		if bytes >= maxTailBytes {
+			return true
+		}
+	}
+	return false
+}
+
 // Vector returns the current durable causal frontier.
 func (d *DurableReplica) Vector() VersionVector {
 	d.mu.RLock()

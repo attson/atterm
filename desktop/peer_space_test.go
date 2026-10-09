@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -384,6 +385,35 @@ func TestPeerConfigReplicaAppendsOnlyChangedLocalRecords(t *testing.T) {
 	}
 	if got := runtime.replica.Vector()[status.PeerID]; got != before+5 {
 		t.Fatalf("local diff advanced vector to %d want=%d", got, before+5)
+	}
+}
+
+func TestPeerConfigReplicaCompactsBoundedOperationTail(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	mutations := make([]configsync.RecordMutation, peerConfigCompactTailOperations)
+	for index := range mutations {
+		mutations[index] = configsync.RecordMutation{
+			Collection: configsync.CollectionQuickTemplate,
+			RecordID:   fmt.Sprintf("bounded-%04d", index),
+			Kind:       configsync.KindSet,
+			KeyClass:   configsync.KeyClassSync,
+			Payload:    json.RawMessage(`{"command":"true","name":"Bounded"}`),
+		}
+	}
+	if operations, err := runtime.appendPeerConfigMutations("bounded tail test", mutations); err != nil || operations != len(mutations) {
+		t.Fatalf("bounded append operations=%d err=%v", operations, err)
+	}
+	state := runtime.replica.StateForPeer(configsync.VersionVector{})
+	if state.Snapshot == "" || len(state.Ops) != 0 {
+		t.Fatalf("bounded Peer state snapshot=%t ops=%d", state.Snapshot != "", len(state.Ops))
+	}
+	if got := len(runtime.replica.Records(configsync.CollectionQuickTemplate)); got != len(mutations) {
+		t.Fatalf("compacted records=%d want=%d", got, len(mutations))
 	}
 }
 

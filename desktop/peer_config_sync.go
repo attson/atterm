@@ -160,6 +160,9 @@ func (r *peerConfigSyncReceiver) persistPending() error {
 			if _, _, err := runtime.replica.Apply(item.Token); err != nil {
 				return fmt.Errorf("apply Peer config operation: %w", err)
 			}
+			if _, err := runtime.compactIfNeeded(); err != nil {
+				return fmt.Errorf("compact received Peer config: %w", err)
+			}
 			r.configDirty = true
 		case configsync.AntiEntropyRevocation:
 			if _, err := r.manager.store.ApplyRevocations([]string{item.Token}, r.manager.now()); err != nil {

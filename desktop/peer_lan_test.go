@@ -49,6 +49,62 @@ func TestPeerLANConfigRejectsUnknownFingerprintAndCanonicalizesAddresses(t *test
 	}
 }
 
+func TestCanonicalPeerLANHostPreservesSafeIPv6Zone(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: "[2001:0DB8::1]", want: "2001:db8::1"},
+		{raw: "[fe80::1%en0]", want: "fe80::1%en0"},
+		{raw: "fe80::1%25", want: "fe80::1%25"},
+	} {
+		got, err := canonicalPeerLANHost(test.raw)
+		if err != nil || got != test.want {
+			t.Fatalf("canonicalPeerLANHost(%q)=%q, %v; want %q", test.raw, got, err, test.want)
+		}
+	}
+	for _, raw := range []string{
+		"2001:db8::1%en0",
+		"fe80::1%",
+		"fe80::1%en 0",
+		"fe80::1%en0/1",
+	} {
+		if _, err := canonicalPeerLANHost(raw); err == nil {
+			t.Fatalf("canonicalPeerLANHost(%q) accepted invalid zone", raw)
+		}
+	}
+}
+
+func TestPeerLANListenTargetFollowsAdvertisedAddressFamily(t *testing.T) {
+	for _, test := range []struct {
+		host, network, address string
+	}{
+		{host: "127.0.0.1", network: "tcp4", address: "0.0.0.0:8484"},
+		{host: "peer-box.local", network: "tcp4", address: "0.0.0.0:8484"},
+		{host: "2001:db8::1", network: "tcp6", address: "[::]:8484"},
+		{host: "fe80::1%en0", network: "tcp6", address: "[::]:8484"},
+	} {
+		network, address := peerLANListenTarget(test.host, 8484)
+		if network != test.network || address != test.address {
+			t.Fatalf("peerLANListenTarget(%q)=(%q, %q); want (%q, %q)", test.host, network, address, test.network, test.address)
+		}
+	}
+}
+
+func TestPeerLANAdvertisementIPsAcceptExplicitIPv6(t *testing.T) {
+	for _, host := range []string{"2001:db8::24", "fe80::24%en0"} {
+		ips, err := peerLANAdvertisementIPs(host)
+		if err != nil || len(ips) != 1 || !ips[0].Equal(net.ParseIP(strings.Split(host, "%")[0])) {
+			t.Fatalf("peerLANAdvertisementIPs(%q)=%v, %v", host, ips, err)
+		}
+	}
+	for _, host := range []string{"::", "ff02::fb"} {
+		if _, err := peerLANAdvertisementIPs(host); err == nil {
+			t.Fatalf("peerLANAdvertisementIPs(%q) accepted a non-unicast address", host)
+		}
+	}
+}
+
 func TestPeerLANControlCatalogIsAuthenticatedWithoutTerminalSubscriber(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	server := httptest.NewServer(fixture.peerHost.handler)
@@ -193,6 +249,11 @@ func TestPeerLANAutoDiscoveryPublishesOpaqueTagAndStopsWithConfig(t *testing.T) 
 	if err != nil || defaultAdvertisement.Port != defaultPeerLANPort {
 		t.Fatalf("default advertisement=%+v err=%v", defaultAdvertisement, err)
 	}
+	ipv6Advertisement, err := fixture.app.peerLANAdvertisement(appConfig{PeerLANAdvertiseHost: "fe80::24%en0"})
+	if err != nil || ipv6Advertisement.InterfaceZone != "en0" || len(ipv6Advertisement.IPs) != 1 ||
+		!ipv6Advertisement.IPs[0].Equal(net.ParseIP("fe80::24")) {
+		t.Fatalf("IPv6 advertisement=%+v err=%v", ipv6Advertisement, err)
+	}
 	expectedTag, err := peerlan.DeriveTag(key, genesis.Document.SpaceID, localIdentity.PeerID())
 	if err != nil {
 		t.Fatal(err)
@@ -293,6 +354,64 @@ func TestPeerLANAutoDiscoveryMatchesActiveMembersAndManualRouteWins(t *testing.T
 	}
 }
 
+func TestPeerLANAutoDiscoveryBuildsIPv6Routes(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	state, err := fixture.app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := loadPeerEpochKey(genesis.Document.SpaceID, configsync.KeyClassSync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteTag, err := peerlan.DeriveTag(key, genesis.Document.SpaceID, fixture.clientIdentity.PeerID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app.peerLANBrowse = func(context.Context, time.Duration) ([]peerlan.Entry, error) {
+		return []peerlan.Entry{{
+			Tag: remoteTag, IP: net.ParseIP("fe80::10"), Zone: "en0", Port: 8484,
+		}}, nil
+	}
+	cfg := fixture.app.cfgStore.Get()
+	cfg.PeerLANAutoDiscovery = true
+	if err := fixture.app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := fixture.app.resolvedPeerLANRoutes(context.Background())
+	if err != nil || len(routes) != 1 || routes[0].URL != "http://[fe80::10%25en0]:8484" {
+		t.Fatalf("discovered IPv6 routes=%+v err=%v", routes, err)
+	}
+}
+
+func TestPeerLANIPv6ListenerAndPublishedRoute(t *testing.T) {
+	host := "2001:db8::24"
+	port, ok := freeTCPPortForNetwork(t, "tcp6")
+	if !ok {
+		t.Skip("IPv6 listener is unavailable")
+	}
+
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	if err := fixture.app.SetPeerLANConfig(SetPeerLANConfigReq{
+		Enabled: true, AdvertiseHost: host, Port: port,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(fixture.app.stopPeerLAN)
+	config, err := fixture.app.GetPeerLANConfig()
+	if err != nil || !config.Running || !strings.HasPrefix(config.ListenAddress, "[::]:") {
+		t.Fatalf("IPv6 LAN config=%+v err=%v", config, err)
+	}
+	route, ok := fixture.app.peerLANConnectionRoute()
+	if !ok || route.URL != peerLANEndpointURL(host, port) {
+		t.Fatalf("IPv6 LAN route=%+v ok=%t", route, ok)
+	}
+}
+
 func TestStoppingQuickTunnelLeavesPeerLANListenerRunning(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	request := SetPeerLANConfigReq{Enabled: true, AdvertiseHost: "127.0.0.1", Port: freeTCPPort(t)}
@@ -343,9 +462,22 @@ func TestPeerManualLANRouteLimitAllowsReplacementButRejectsNewPeer(t *testing.T)
 
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
-	gateway, err := quicktunnel.OpenGatewayAt("tcp4", "127.0.0.1:0", nil)
+	port, ok := freeTCPPortForNetwork(t, "tcp4")
+	if !ok {
+		t.Fatal("IPv4 loopback is unavailable")
+	}
+	return port
+}
+
+func freeTCPPortForNetwork(t *testing.T, network string) (int, bool) {
+	t.Helper()
+	address := "127.0.0.1:0"
+	if network == "tcp6" {
+		address = "[::]:0"
+	}
+	gateway, err := quicktunnel.OpenGatewayAt(network, address, nil)
 	if err != nil {
-		t.Fatal(err)
+		return 0, false
 	}
 	_, portText, err := net.SplitHostPort(gateway.Address())
 	if err != nil {
@@ -360,5 +492,66 @@ func freeTCPPort(t *testing.T) int {
 	if err := gateway.Close(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	return port
+	return port, true
+}
+
+func peerLANReachableIPv6TestHost() (string, bool) {
+	if peerLANIPv6HostIsReachable("::1") {
+		return "::1", true
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", false
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err != nil || ip.To4() != nil || ip.To16() == nil || ip.IsUnspecified() || ip.IsMulticast() {
+				continue
+			}
+			host := ip.String()
+			if ip.IsLinkLocalUnicast() {
+				host += "%" + iface.Name
+			}
+			if peerLANIPv6HostIsReachable(host) {
+				return host, true
+			}
+		}
+	}
+	return "", false
+}
+
+func peerLANIPv6HostIsReachable(host string) bool {
+	listener, err := net.Listen("tcp6", "[::]:0")
+	if err != nil {
+		return false
+	}
+	defer listener.Close()
+	done := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			_ = connection.Close()
+		}
+		done <- acceptErr
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+	connection, err := net.DialTimeout("tcp6", net.JoinHostPort(host, strconv.Itoa(port)), 250*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	select {
+	case err := <-done:
+		return err == nil
+	case <-time.After(time.Second):
+		return false
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -30,15 +31,17 @@ const (
 
 // Advertisement is one local Peer listener published through DNS-SD.
 type Advertisement struct {
-	Tag  string
-	Port int
-	IPs  []net.IP
+	Tag           string
+	Port          int
+	IPs           []net.IP
+	InterfaceZone string
 }
 
 // Entry is an untrusted DNS-SD reachability result.
 type Entry struct {
 	Tag  string
 	IP   net.IP
+	Zone string
 	Port int
 }
 
@@ -75,11 +78,14 @@ func Publish(ad Advertisement) (Publisher, error) {
 	}
 	ips := make([]net.IP, 0, len(ad.IPs))
 	for _, ip := range ad.IPs {
-		ipv4 := ip.To4()
-		if ipv4 == nil || ipv4.IsUnspecified() || ipv4.IsMulticast() {
+		canonical := ip.To4()
+		if canonical == nil {
+			canonical = ip.To16()
+		}
+		if canonical == nil || canonical.IsUnspecified() || canonical.IsMulticast() {
 			return nil, errors.New("peer LAN advertisement IP is invalid")
 		}
-		ips = append(ips, append(net.IP(nil), ipv4...))
+		ips = append(ips, append(net.IP(nil), canonical...))
 	}
 	instance := "atterm-" + ad.Tag
 	service, err := mdns.NewMDNSService(
@@ -89,13 +95,30 @@ func Publish(ad Advertisement) (Publisher, error) {
 	if err != nil {
 		return nil, err
 	}
-	server, err := mdns.NewServer(&mdns.Config{
-		Zone: service, Logger: log.New(io.Discard, "", 0),
-	})
+	serverConfig := &mdns.Config{Zone: service, Logger: log.New(io.Discard, "", 0)}
+	if ad.InterfaceZone != "" {
+		iface, err := interfaceForZone(ad.InterfaceZone)
+		if err != nil {
+			return nil, fmt.Errorf("peer LAN advertisement interface: %w", err)
+		}
+		serverConfig.Iface = iface
+	}
+	server, err := mdns.NewServer(serverConfig)
 	if err != nil {
 		return nil, err
 	}
 	return mdnsPublisher{server: server}, nil
+}
+
+func interfaceForZone(zone string) (*net.Interface, error) {
+	if iface, err := net.InterfaceByName(zone); err == nil {
+		return iface, nil
+	}
+	index, err := strconv.Atoi(zone)
+	if err != nil || index < 1 {
+		return nil, errors.New("unknown interface zone")
+	}
+	return net.InterfaceByIndex(index)
 }
 
 // Browse queries the local multicast domain for Peer listeners. Returned
@@ -108,7 +131,6 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Entry, error) {
 	params := mdns.DefaultParams(ServiceName)
 	params.Timeout = timeout
 	params.Entries = entries
-	params.DisableIPv6 = true
 	params.Logger = log.New(io.Discard, "", 0)
 	queryDone := make(chan error, 1)
 	go func() { queryDone <- mdns.QueryContext(ctx, params) }()
@@ -121,7 +143,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Entry, error) {
 			if !ok || len(result) >= maxBrowseEntries {
 				continue
 			}
-			key := entry.Tag + "|" + entry.IP.String() + "|" + strconv.Itoa(entry.Port)
+			key := entryKey(entry)
 			if _, exists := seen[key]; exists {
 				continue
 			}
@@ -137,7 +159,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Entry, error) {
 				if !ok || len(result) >= maxBrowseEntries {
 					continue
 				}
-				key := entry.Tag + "|" + entry.IP.String() + "|" + strconv.Itoa(entry.Port)
+				key := entryKey(entry)
 				if _, exists := seen[key]; exists {
 					continue
 				}
@@ -156,6 +178,9 @@ sortResults:
 		if result[i].IP.String() != result[j].IP.String() {
 			return result[i].IP.String() < result[j].IP.String()
 		}
+		if result[i].Zone != result[j].Zone {
+			return result[i].Zone < result[j].Zone
+		}
 		return result[i].Port < result[j].Port
 	})
 	return result, nil
@@ -171,8 +196,7 @@ func (p mdnsPublisher) Close() error {
 }
 
 func parseEntry(raw *mdns.ServiceEntry) (Entry, bool) {
-	if raw == nil || raw.Port < 1 || raw.Port > 65535 || raw.AddrV4 == nil ||
-		raw.AddrV4.IsUnspecified() || raw.AddrV4.IsMulticast() {
+	if raw == nil || raw.Port < 1 || raw.Port > 65535 {
 		return Entry{}, false
 	}
 	version, tag := "", ""
@@ -191,7 +215,42 @@ func parseEntry(raw *mdns.ServiceEntry) (Entry, bool) {
 	if version != "1" || !validTag(tag) {
 		return Entry{}, false
 	}
-	return Entry{Tag: tag, IP: append(net.IP(nil), raw.AddrV4...), Port: raw.Port}, true
+	if ipv4 := raw.AddrV4.To4(); ipv4 != nil && !ipv4.IsUnspecified() && !ipv4.IsMulticast() {
+		return Entry{Tag: tag, IP: append(net.IP(nil), ipv4...), Port: raw.Port}, true
+	}
+	if raw.AddrV6IPAddr == nil {
+		return Entry{}, false
+	}
+	ipv6 := raw.AddrV6IPAddr.IP
+	if ipv6 == nil || ipv6.To4() != nil || ipv6.To16() == nil || ipv6.IsUnspecified() || ipv6.IsMulticast() {
+		return Entry{}, false
+	}
+	zone := raw.AddrV6IPAddr.Zone
+	if ipv6.IsLinkLocalUnicast() && !validZone(zone) {
+		return Entry{}, false
+	}
+	if !ipv6.IsLinkLocalUnicast() {
+		zone = ""
+	}
+	return Entry{Tag: tag, IP: append(net.IP(nil), ipv6.To16()...), Zone: zone, Port: raw.Port}, true
+}
+
+func entryKey(entry Entry) string {
+	return entry.Tag + "|" + entry.IP.String() + "%" + entry.Zone + "|" + strconv.Itoa(entry.Port)
+}
+
+func validZone(zone string) bool {
+	if zone == "" || len(zone) > 64 {
+		return false
+	}
+	for _, char := range zone {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' ||
+			char == '-' || char == '_' || char == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validTag(tag string) bool {

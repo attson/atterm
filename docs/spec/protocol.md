@@ -1169,8 +1169,10 @@ private key 只签名、不跨算法复用为 ECDH，兼容 WebCrypto non-export
 ### Quick Tunnel / Manual LAN Peer signaling
 
 两种 reachability route 复用同一个 bounded Peer HTTP/WebSocket handler。Quick Tunnel 的 loopback
-gateway 由 `cloudflared` 发布；Manual LAN listener 只在用户显式启用后绑定 IPv4
-`0.0.0.0:<port>`，signed bundle 发布用户填写的 host 与该端口。gateway 只在
+gateway 由 `cloudflared` 发布；Manual LAN listener 只在用户显式启用后绑定与 advertised host
+一致的地址族：IPv4/hostname 使用 `tcp4 0.0.0.0:<port>`，显式 IPv6 使用 `tcp6 [::]:<port>`；
+signed bundle 发布用户填写的 host 与该端口，IPv6 literal 使用 bracketed URL，link-local zone
+按 RFC 6874 编码为 `%25<interface>`。gateway 只在
 `GET /peer/v1/connect` 接受 WebSocket，并要求
 `Sec-WebSocket-Protocol: atterm-peer-v1`。Cloudflare 可见的首条 text message 是有界路由信封：
 
@@ -1243,10 +1245,11 @@ XChaCha20-Poly1305 record layer、sequence 和 fragment 规则与 Quick Tunnel �
 和 Preview service。多个 Manual LAN route 与 Rendezvous discovery 并行；同一 `session_id` 同时被
 发现时保留 Rendezvous catalog entry，避免改变已建立的 direct route 语义。
 
-可选 LAN 自动发现使用 DNS-SD service `_atterm-peer._tcp.local.`，当前只发布/接受 IPv4。TXT 只含
+可选 LAN 自动发现使用 DNS-SD service `_atterm-peer._tcp.local.`，发布和接受 IPv4 A 或 IPv6 AAAA；
+link-local IPv6 responder 限制在 configured zone 对应接口，浏览候选保留接收接口 zone。TXT 只含
 `v=1` 与 `tag=<32 lowercase hex>`；tag 定义为
 `HMAC-SHA256(sync_epoch_key, "atterm-peer-mdns-v1" || 0x00 || decimal(epoch) || 0x00 || space_id || 0x00 || peer_id)[:16]`。
-SRV/A 记录提供 port/IP，但不得加入稳定 `peer_id`、Space ID、fingerprint、membership token、ticket、
+SRV 与 A/AAAA 记录提供 port/IP，但不得加入稳定 `peer_id`、Space ID、fingerprint、membership token、ticket、
 epoch key 或其它凭证。浏览端为每个当前 active remote membership 派生 tag，只接受精确匹配的结果；
 旧 epoch、已撤销成员和未知 tag 均忽略。结果只保存在进程内存，Manual LAN 持久化 route 对同一 peer
 优先。DNS-SD responder 和网络返回均不可信，命中后仍必须完成上述四步 membership handshake 并核对

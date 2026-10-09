@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -239,8 +241,12 @@ func (a *App) resolvedPeerLANRoutes(ctx context.Context) ([]resolvedPeerLANRoute
 					if _, exists := byPeer[peerID]; exists {
 						continue
 					}
+					entryHost := entry.IP.String()
+					if entry.Zone != "" {
+						entryHost += "%" + entry.Zone
+					}
 					byPeer[peerID] = resolvedPeerLANRoute{
-						URL:    "http://" + net.JoinHostPort(entry.IP.String(), strconv.Itoa(entry.Port)),
+						URL:    peerLANEndpointURL(entryHost, entry.Port),
 						PeerID: peerID, Membership: active[peerID],
 					}
 				}
@@ -306,8 +312,14 @@ func canonicalPeerLANHost(raw string) (string, error) {
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.String(), nil
+	if address, err := netip.ParseAddr(host); err == nil {
+		address = address.Unmap()
+		if zone := address.Zone(); zone != "" {
+			if !address.Is6() || !address.IsLinkLocalUnicast() || !validPeerLANZone(zone) {
+				return "", errors.New("invalid manual LAN IPv6 zone")
+			}
+		}
+		return address.String(), nil
 	}
 	if strings.HasSuffix(host, ".") {
 		host = strings.TrimSuffix(host, ".")
@@ -327,6 +339,32 @@ func canonicalPeerLANHost(raw string) (string, error) {
 		}
 	}
 	return strings.ToLower(host), nil
+}
+
+func validPeerLANZone(zone string) bool {
+	if zone == "" || len(zone) > 64 {
+		return false
+	}
+	for _, char := range zone {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' ||
+			char == '-' || char == '_' || char == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func peerLANListenTarget(advertiseHost string, port int) (network, address string) {
+	network, bindHost := "tcp4", "0.0.0.0"
+	if ip, err := netip.ParseAddr(advertiseHost); err == nil && ip.Is6() {
+		network, bindHost = "tcp6", "::"
+	}
+	return network, net.JoinHostPort(bindHost, strconv.Itoa(port))
+}
+
+func peerLANEndpointURL(host string, port int) string {
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, strconv.Itoa(port))}).String()
 }
 
 func peerFingerprint(peerID string) string { return "SHA256:" + peerID }
@@ -378,7 +416,8 @@ func (a *App) reconcilePeerLAN(cfg appConfig) error {
 	if port == 0 {
 		port = defaultPeerLANPort
 	}
-	gateway, err := quicktunnel.OpenGatewayAt("tcp4", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)), host.handler)
+	network, address := peerLANListenTarget(cfg.PeerLANAdvertiseHost, port)
+	gateway, err := quicktunnel.OpenGatewayAt(network, address, host.handler)
 	if err != nil {
 		lifecycle.lastError = "listen_failed"
 		a.setPeerLANLifecycle(lifecycle)
@@ -438,15 +477,21 @@ func (a *App) peerLANAdvertisement(cfg appConfig) (peerlan.Advertisement, error)
 	if port == 0 {
 		port = defaultPeerLANPort
 	}
-	return peerlan.Advertisement{Tag: tag, Port: port, IPs: ips}, nil
+	interfaceName := ""
+	if address, parseErr := netip.ParseAddr(cfg.PeerLANAdvertiseHost); parseErr == nil {
+		interfaceName = address.Zone()
+	}
+	return peerlan.Advertisement{Tag: tag, Port: port, IPs: ips, InterfaceZone: interfaceName}, nil
 }
 
 func peerLANAdvertisementIPs(advertiseHost string) ([]net.IP, error) {
-	if ip := net.ParseIP(strings.TrimSpace(advertiseHost)); ip != nil {
-		if ipv4 := ip.To4(); ipv4 != nil && !ipv4.IsUnspecified() && !ipv4.IsMulticast() {
-			return []net.IP{append(net.IP(nil), ipv4...)}, nil
+	if address, err := netip.ParseAddr(strings.TrimSpace(advertiseHost)); err == nil {
+		address = address.Unmap()
+		ip := net.IP(address.AsSlice())
+		if !ip.IsUnspecified() && !ip.IsMulticast() {
+			return []net.IP{append(net.IP(nil), ip...)}, nil
 		}
-		return nil, errors.New("Peer LAN mDNS currently requires an IPv4 listener address")
+		return nil, errors.New("Peer LAN mDNS requires a unicast listener address")
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -509,7 +554,7 @@ func (a *App) peerLANConnectionRoute() (peerproto.ConnectionRoute, bool) {
 	}
 	return peerproto.ConnectionRoute{
 		Kind: peerproto.RouteManualLAN,
-		URL:  "http://" + net.JoinHostPort(host, strconv.Itoa(cfg.PeerLANPort)),
+		URL:  peerLANEndpointURL(host, cfg.PeerLANPort),
 	}, true
 }
 

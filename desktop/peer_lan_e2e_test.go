@@ -19,6 +19,23 @@ import (
 // keeps every public reachability mechanism disabled so regressions cannot be
 // hidden by Rendezvous, STUN, Quick Tunnel, or Relay fallback.
 func TestPeerLANOnlyInvitationCatalogAndTerminalAttach(t *testing.T) {
+	t.Run("IPv4", func(t *testing.T) {
+		testPeerLANOnlyInvitationCatalogAndTerminalAttach(t, "tcp4", "127.0.0.1")
+	})
+	t.Run("IPv6", func(t *testing.T) {
+		host, ok := peerLANReachableIPv6TestHost()
+		if !ok {
+			t.Skip("no locally reachable IPv6 address is available")
+		}
+		testPeerLANOnlyInvitationCatalogAndTerminalAttach(t, "tcp6", host)
+	})
+}
+
+func testPeerLANOnlyInvitationCatalogAndTerminalAttach(t *testing.T, network, advertiseHost string) {
+	port, ok := freeTCPPortForNetwork(t, network)
+	if !ok {
+		t.Skipf("%s listener is unavailable", network)
+	}
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	fixture.app.ctx = context.Background()
 	fixture.app.mu.Lock()
@@ -33,7 +50,7 @@ func TestPeerLANOnlyInvitationCatalogAndTerminalAttach(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := fixture.app.SetPeerLANConfig(SetPeerLANConfigReq{
-		Enabled: true, AdvertiseHost: "127.0.0.1", Port: freeTCPPort(t),
+		Enabled: true, AdvertiseHost: advertiseHost, Port: port,
 	}); err != nil {
 		t.Fatal(err)
 	}

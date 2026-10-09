@@ -412,7 +412,11 @@ func TestConnectionBundleAcceptsSignedManualLANRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, routeURL := range []string{"http://192.168.1.4:8484", "http://[2001:db8::1]:8484"} {
+	for _, routeURL := range []string{
+		"http://192.168.1.4:8484",
+		"http://[2001:db8::1]:8484",
+		"http://[fe80::1%25en0]:8484",
+	} {
 		token, err := NewConnectionBundle(issuerIdentity, genesis, invitations[0], []ConnectionRoute{{
 			Kind: RouteManualLAN, URL: routeURL,
 		}}, now, 0)

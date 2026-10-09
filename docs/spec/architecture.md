@@ -499,15 +499,17 @@ Quick Tunnel 共用 `peerHostRuntime`，所以 session scope、effective permiss
 单 terminal subscriber 和 `peerConfigChannel` 的规则完全相同。成员撤销会先更新 governance/
 epoch，再重建 registration，使旧 topic/presence 与既有 attempt 一起失效。
 
-Manual LAN listener 是独立、显式启用的本地能力：绑定 IPv4 `0.0.0.0:<port>`，但在 signed bundle
-中发布用户填写的 host；停止 Quick Tunnel 不影响它。保存的 host/port 只提供 reachability，设备
+Manual LAN listener 是独立、显式启用的本地能力：IPv4/hostname advertised host 绑定
+`tcp4 0.0.0.0:<port>`，显式 IPv6 host 绑定 `tcp6 [::]:<port>`，并在 signed bundle 中发布用户填写的
+host；IPv6 literal 使用 bracketed URL，link-local 地址保留接口 zone。停止 Quick Tunnel 不影响它。保存的 host/port 只提供 reachability，设备
 指纹必须精确绑定当前 active membership，随后仍执行四步 membership handshake 和 encrypted record
 layer。LAN control route 可做配置 anti-entropy 与 filtered catalog，但不会创建 PTY subscriber、driver、
 文件 worker 或 Preview service。只启用 Manual LAN 时，邀请核销、目录、同步和终端 attach 均不访问
 Relay、Rendezvous、STUN、Cloudflare 或其它公网服务。
 
 同一 listener 可由用户额外开启 mDNS/DNS-SD 自动发现。Desktop 以 `_atterm-peer._tcp` 发布当前
-sync epoch 派生的短期 opaque tag 和 IPv4 listener metadata，不发布 `peer_id`、Space ID、设备指纹、
+sync epoch 派生的短期 opaque tag 和 IPv4 A 或 IPv6 AAAA listener metadata；link-local IPv6 responder
+只绑定 configured zone 对应接口，浏览端保留接收接口 zone。不发布 `peer_id`、Space ID、设备指纹、
 membership、凭证或 endpoint token；浏览结果只在进程内存中存在。客户端只把能映射到当前 active
 membership 的 tag 转为候选地址，未知/旧 epoch tag 直接忽略，且本机已保存的 Manual LAN route 优先。
 mDNS 是不可信 reachability hint，不改变四步 membership handshake、identity 校验、授权重验或 encrypted

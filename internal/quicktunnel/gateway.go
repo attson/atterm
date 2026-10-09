@@ -18,8 +18,8 @@ const (
 	gatewayMaxHeaderBytes    = 1 << 20
 )
 
-// Gateway is an HTTP endpoint bound to an ephemeral IPv4 loopback port.
-// cloudflared is the only intended non-local path to it.
+// Gateway is a bounded Peer HTTP endpoint. OpenGateway uses an ephemeral IPv4
+// loopback port; OpenGatewayAt may expose an explicitly configured LAN socket.
 type Gateway struct {
 	listener net.Listener
 	server   *http.Server
@@ -76,7 +76,7 @@ func (g *Gateway) Address() string {
 	return g.listener.Addr().String()
 }
 
-// Origin returns the HTTP origin passed to cloudflared.
+// Origin returns the HTTP origin for this gateway.
 func (g *Gateway) Origin() string {
 	return "http://" + g.Address()
 }

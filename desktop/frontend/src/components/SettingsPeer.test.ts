@@ -598,6 +598,9 @@ describe('SettingsPeer', () => {
       .mockResolvedValueOnce(enabled)
     const wrapper = await mountReady()
 
+    expect(wrapper.get('[data-testid="peer-lan-advertise-host"]').attributes('placeholder')).toBe('settings.peer.lan.advertiseHostPlaceholder')
+    expect(wrapper.get('[data-testid="peer-lan-route-host"]').attributes('placeholder')).toBe('settings.peer.lan.routeHostPlaceholder')
+
     await wrapper.get('[data-testid="peer-lan-enabled"]').setValue(true)
     await wrapper.get('[data-testid="peer-lan-auto-discovery"]').setValue(true)
     await wrapper.get('[data-testid="peer-lan-advertise-host"]').setValue('192.168.1.24')

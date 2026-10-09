@@ -921,7 +921,7 @@ function permissionLabel(permission: string): string {
           <div class="lan-route-grid">
             <div class="form-field">
               <label class="field-label" for="peer-lan-route-host">{{ t('settings.peer.lan.routeHost') }}</label>
-              <input id="peer-lan-route-host" v-model="lanRouteHost" data-testid="peer-lan-route-host" type="text" autocomplete="off" spellcheck="false" placeholder="192.168.1.24" :disabled="lanBusy" />
+              <input id="peer-lan-route-host" v-model="lanRouteHost" data-testid="peer-lan-route-host" type="text" autocomplete="off" spellcheck="false" :placeholder="t('settings.peer.lan.routeHostPlaceholder')" :disabled="lanBusy" />
             </div>
             <div class="form-field">
               <label class="field-label" for="peer-lan-route-port">{{ t('settings.peer.lan.port') }}</label>

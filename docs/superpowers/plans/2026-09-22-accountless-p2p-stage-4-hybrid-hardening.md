@@ -126,11 +126,13 @@ do not enter the Peer path.
 - [x] LAN/mDNS route hints: optional DNS-SD `_atterm-peer._tcp` advertisement and browsing use an
   epoch-scoped opaque tag; only active members can resolve it, results remain memory-only, Manual LAN
   routes take precedence, and the membership handshake remains authoritative。
-- [x] Manual host/port + fingerprint: explicit IPv4 listener, signed `manual_lan` bootstrap,
+- [x] Manual host/port + fingerprint: explicit IPv4/IPv6 listener, signed `manual_lan` bootstrap,
   locally persisted endpoint/fingerprint binding, authenticated catalog/config control route and native
   terminal route are implemented. Discovery runs in parallel with Rendezvous and deduplicates by
   `session_id`; the same membership handshake, encrypted records and route lease remain authoritative。
-- IPv6 direct candidates。
+- [x] IPv6 direct candidates: explicit IPv6 advertised hosts select a `tcp6 [::]` listener, signed and
+  discovered routes use bracketed URLs, mDNS publishes/accepts AAAA, and link-local candidates preserve
+  the interface zone without changing membership authorization。
 - Completely no-public-infrastructure mode。
 
 Every route reuses Peer membership/handshake/record encryption; none creates a new trust model.

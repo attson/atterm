@@ -178,8 +178,14 @@ Quick Tunnel URL rotation now has a deterministic process-level chaos test: afte
 the first URL, the test kills that process, verifies the manager removes the stale public URL and local
 gateway, then explicitly starts a fresh process that publishes a different URL. Existing signed bundle,
 Rendezvous catalog and client cache tests cover distribution and atomic replacement of that new hint.
-The manager remains intentionally user-started rather than silently restarting cloudflared. Relay restart,
-route flapping and cross-route late-frame chaos remain before the Chaos item can close.
+The manager remains intentionally user-started rather than silently restarting cloudflared.
+
+Route-flap chaos now drives the production `SessionConnection` through 100 Direct-to-Relay handovers.
+Each cycle dispatches late frames, ready/authentication callbacks, failures and close/replay callbacks from
+the retired Direct transport and Relay socket while the replacement Relay is still ambiguous. The test
+proves the committed OUT cursor remains monotonic with one delivery per sequence, queued input stays frozen
+until replay completes, one route owns every input, and stale callbacks cannot allocate extra fallback
+sockets. Relay process restart remains before the Chaos item can close.
 
 ## Stage Exit Gate
 

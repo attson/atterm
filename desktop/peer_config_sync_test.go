@@ -165,7 +165,11 @@ func TestPeerConfigSyncFailedAdoptionDoesNotCaptureOrProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := runtime.keys[configsync.KeyClassSync]
-	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, key, configsync.Mutation{
+	localIdentity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.replica.AppendEncrypted(localIdentity, key, configsync.Mutation{
 		SchemaVersion: configsync.SchemaVersion, Collection: configsync.CollectionPreferences,
 		RecordID: "terminal_theme", Kind: configsync.KindSet, Payload: json.RawMessage(`"destination"`),
 	}); err != nil {
@@ -174,7 +178,7 @@ func TestPeerConfigSyncFailedAdoptionDoesNotCaptureOrProject(t *testing.T) {
 	state, _ := source.peerSpace.store.Load()
 	receiver, _ := destination.newPeerConfigSyncReceiver(state.LocalMembership)
 	batch := peerConfigSyncBatch(t, source, configsync.VersionVector{}, nil, nil)
-	if _, err := receiver.Add(batch); !errors.Is(err, configsync.ErrReplicaNotEmpty) {
+	if _, err := receiver.Add(batch); !errors.Is(err, configsync.ErrSnapshotNotCovered) {
 		t.Fatalf("non-empty adoption error=%v", err)
 	}
 	if destination.cfgStore.Get().TerminalTheme != "local-theme" {
@@ -182,6 +186,60 @@ func TestPeerConfigSyncFailedAdoptionDoesNotCaptureOrProject(t *testing.T) {
 	}
 	if _, ok, err := destination.peerSpace.loadPendingPeerConfig(); err != nil || ok {
 		t.Fatalf("failed adoption captured pending config: ok=%t err=%v", ok, err)
+	}
+}
+
+func TestPeerConfigSyncRebasesCoveredExistingSnapshot(t *testing.T) {
+	isolateConfigDir(t)
+	source, _ := newTestPeerApp(t)
+	source.cfgStore = &configStore{cfg: appConfig{TerminalTheme: "nord"}}
+	if _, err := source.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	firstSnapshot, _, err := source.peerSpace.configReplica.replica.Compact(source.peerSpace.configReplica.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destination := newPeerConfigSyncDestination(t, source)
+	destination.cfgStore = &configStore{cfg: appConfig{TerminalTheme: "local-theme", TerminalFontSize: 12}}
+	destinationRuntime, err := destination.peerSpace.ensureConfigReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destinationRuntime.replica.AdoptSnapshot(firstSnapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceRuntime := source.peerSpace.configReplica
+	if _, _, err := sourceRuntime.replica.AppendEncrypted(sourceRuntime.identity, sourceRuntime.keys[configsync.KeyClassSync], configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion,
+		Collection:    configsync.CollectionPreferences,
+		RecordID:      "terminal_font_size",
+		Kind:          configsync.KindSet,
+		Payload:       json.RawMessage(`18`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sourceRuntime.replica.Compact(sourceRuntime.identity); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := source.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver, err := destination.newPeerConfigSyncReceiver(state.LocalMembership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := peerConfigSyncBatch(t, source, destinationRuntime.replica.Vector(), nil, nil)
+	ack, err := receiver.Add(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ack.Done || destination.cfgStore.Get().TerminalTheme != "nord" || destination.cfgStore.Get().TerminalFontSize != 18 {
+		t.Fatalf("rebased config ack=%+v config=%+v", ack, destination.cfgStore.Get())
 	}
 }
 

@@ -237,6 +237,35 @@ func (d *DurableReplica) AdoptSnapshot(token string) (DurableAck, error) {
 	})
 }
 
+// RebaseSnapshot atomically replaces an existing replica only when the signed
+// snapshot covers every operation already durable locally. A peer with an
+// unshared branch must first replicate that branch; dropping it would turn
+// compaction into silent data loss.
+func (d *DurableReplica) RebaseSnapshot(token string) (DurableAck, error) {
+	return d.mutate(func(replica *Replica, state *durableState) (bool, error) {
+		if state.Snapshot == token {
+			return false, nil
+		}
+		verified, err := VerifySnapshot(token)
+		if err != nil || verified.Document.SpaceID != d.spaceID || verified.Document.SchemaVersion != d.schema {
+			return false, ErrInvalidSnapshot
+		}
+		if !verified.Document.CoverVector.Covers(replica.Vector()) {
+			return false, ErrSnapshotNotCovered
+		}
+		next := d.emptyState()
+		next.LocalBootstrapComplete = state.LocalBootstrapComplete
+		next.Snapshot = token
+		rebuilt, err := d.buildReplica(next)
+		if err != nil {
+			return false, fmt.Errorf("verify rebased replica: %w", err)
+		}
+		replica.replaceState(rebuilt)
+		*state = next
+		return true, nil
+	})
+}
+
 // Compact writes a new signed snapshot and removes all covered tail ops in the
 // same atomic file replacement.
 func (d *DurableReplica) Compact(identity *peercrypto.Identity) (string, DurableAck, error) {

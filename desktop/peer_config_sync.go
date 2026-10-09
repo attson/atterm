@@ -228,8 +228,8 @@ func (r *peerConfigSyncReceiver) persistSnapshot(token string) error {
 		}
 		r.pendingLocalRecords = count
 	}
-	if _, err := runtime.replica.AdoptSnapshot(token); err != nil {
-		return fmt.Errorf("adopt Peer config snapshot: %w", err)
+	if _, err := runtime.replica.RebaseSnapshot(token); err != nil {
+		return fmt.Errorf("rebase Peer config snapshot: %w", err)
 	}
 	return nil
 }

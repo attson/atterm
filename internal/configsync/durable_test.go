@@ -162,6 +162,87 @@ func TestDurableReplicaAdoptsSnapshotBeforeTail(t *testing.T) {
 	}
 }
 
+func TestDurableReplicaRebasesCoveredHistoryAtomically(t *testing.T) {
+	spaceID := uuid.NewString()
+	creator := testIdentity(t)
+	peer := testIdentity(t)
+	source := openTestDurable(t, filepath.Join(t.TempDir(), "source.json"), spaceID)
+	destinationPath := filepath.Join(t.TempDir(), "destination.json")
+	destination := openTestDurable(t, destinationPath, spaceID)
+
+	first, _, err := source.Append(creator, testConfigMutation("theme", KindSet, "dark"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := destination.Apply(first.Token); err != nil {
+		t.Fatal(err)
+	}
+	local, _, err := destination.Append(peer, testConfigMutation("locale", KindSet, "zh-CN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := source.Apply(local.Token); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := source.Compact(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ack, err := destination.RebaseSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ack.Vector, source.Vector()) {
+		t.Fatalf("rebase ack=%v source=%v", ack.Vector, source.Vector())
+	}
+	reopened := openTestDurable(t, destinationPath, spaceID)
+	theme, _ := reopened.Get("preferences", "theme")
+	locale, _ := reopened.Get("preferences", "locale")
+	if string(theme.Payload) != "dark" || string(locale.Payload) != "zh-CN" || reopened.Vector().Compare(source.Vector()) != VectorEqual {
+		t.Fatalf("rebased records theme=%+v locale=%+v vector=%v", theme, locale, reopened.Vector())
+	}
+}
+
+func TestDurableReplicaRejectsSnapshotThatDoesNotCoverLocalBranch(t *testing.T) {
+	spaceID := uuid.NewString()
+	creator := testIdentity(t)
+	peer := testIdentity(t)
+	source := openTestDurable(t, filepath.Join(t.TempDir(), "source.json"), spaceID)
+	destinationPath := filepath.Join(t.TempDir(), "destination.json")
+	destination := openTestDurable(t, destinationPath, spaceID)
+
+	if _, _, err := source.Append(creator, testConfigMutation("theme", KindSet, "dark")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := source.Compact(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := destination.Append(peer, testConfigMutation("locale", KindSet, "zh-CN")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := destination.RebaseSnapshot(snapshot); !errors.Is(err, ErrSnapshotNotCovered) {
+		t.Fatalf("uncovered rebase error=%v", err)
+	}
+	after, err := os.ReadFile(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("rejected snapshot changed durable replica")
+	}
+	locale, ok := destination.Get("preferences", "locale")
+	if !ok || string(locale.Payload) != "zh-CN" || destination.Vector()[peer.PeerID()] != 1 {
+		t.Fatalf("rejected snapshot changed in-memory replica: record=%+v vector=%v", locale, destination.Vector())
+	}
+}
+
 func TestDurableReplicaFailsClosedOnCorruptState(t *testing.T) {
 	spaceID := uuid.NewString()
 	path := filepath.Join(t.TempDir(), "config-replica.json")

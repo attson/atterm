@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	ErrWrongSpace        = errors.New("configsync: operation belongs to another space")
-	ErrReplicaNotEmpty   = errors.New("configsync: snapshot requires an empty replica")
-	ErrIncompleteHistory = errors.New("configsync: operation history has counter gaps")
+	ErrWrongSpace         = errors.New("configsync: operation belongs to another space")
+	ErrReplicaNotEmpty    = errors.New("configsync: snapshot requires an empty replica")
+	ErrSnapshotNotCovered = errors.New("configsync: snapshot does not cover local replica")
+	ErrIncompleteHistory  = errors.New("configsync: operation history has counter gaps")
 )
 
 // ApplyResult describes whether an inbound token changed durable replica

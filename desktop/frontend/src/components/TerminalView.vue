@@ -150,7 +150,9 @@ const routeLabel = computed(() => {
     case "quick-tunnel": return t("terminal.route.quickTunnel");
     case "connecting-lan": return t("terminal.route.connectingLAN");
     case "lan": return t("terminal.route.lan");
-    case "direct": return t("terminal.route.direct");
+    case "direct": return routeDiagnostics.value.candidateType === "relay"
+      ? t("terminal.route.turnRelay")
+      : t("terminal.route.direct");
     default: return t("terminal.route.relay");
   }
 });

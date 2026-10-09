@@ -49,6 +49,23 @@ func TestResolveConfigModesAndEndpoints(t *testing.T) {
 			cfg:  Config{Mode: ModeDisabled, STUNMode: STUNModeDisabled},
 			want: ResolvedConfig{Mode: ModeDisabled, STUNMode: STUNModeDisabled, STUNURLs: []string{}},
 		},
+		{
+			name: "TURN is canonicalized separately from STUN",
+			cfg: Config{
+				Mode: ModeOfficial, TURNEnabled: true,
+				TURNURLs:     []string{"turn:TURN.EXAMPLE.COM:3478?transport=udp", "turns:secure.example.com:5349?transport=tcp"},
+				TURNUsername: " device-user ", TURNCredential: "secret value",
+			},
+			want: ResolvedConfig{
+				Mode: ModeOfficial, BaseURL: OfficialURL,
+				WebSocketURL: "wss://rendezvous.atterm.dev/v1/connect",
+				HealthURL:    "https://rendezvous.atterm.dev/healthz",
+				STUNMode:     STUNModeDefault, STUNURLs: []string{DefaultSTUNURL},
+				TURNEnabled:  true,
+				TURNURLs:     []string{"turn:turn.example.com:3478?transport=udp", "turns:secure.example.com:5349?transport=tcp"},
+				TURNUsername: "device-user", TURNCredential: "secret value",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,6 +77,47 @@ func TestResolveConfigModesAndEndpoints(t *testing.T) {
 				t.Fatalf("ResolveConfig()=%+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveConfigRejectsInvalidTURNConfiguration(t *testing.T) {
+	valid := Config{
+		TURNEnabled: true, TURNURLs: []string{"turn:turn.example.com:3478"},
+		TURNUsername: "user", TURNCredential: "secret",
+	}
+	for _, mutate := range []func(*Config){
+		func(cfg *Config) { cfg.TURNURLs = nil },
+		func(cfg *Config) { cfg.TURNURLs = []string{"stun:stun.example.com:3478"} },
+		func(cfg *Config) { cfg.TURNURLs = []string{"turn:user@turn.example.com:3478"} },
+		func(cfg *Config) { cfg.TURNURLs = []string{"turn:turn.example.com:3478/path"} },
+		func(cfg *Config) { cfg.TURNURLs = []string{"turn:turn.example.com:3478?token=secret"} },
+		func(cfg *Config) { cfg.TURNURLs = []string{"turn:turn.example.com:3478?transport=sctp"} },
+		func(cfg *Config) { cfg.TURNURLs = []string{"turns:turn.example.com:5349?transport=udp"} },
+		func(cfg *Config) { cfg.TURNURLs = []string{"turn:turn.example.com:70000"} },
+		func(cfg *Config) { cfg.TURNURLs = []string{"turn:turn.example.com:3478", "TURN:TURN.EXAMPLE.COM:3478"} },
+		func(cfg *Config) { cfg.TURNUsername = "" },
+		func(cfg *Config) { cfg.TURNCredential = "" },
+	} {
+		cfg := valid
+		cfg.TURNURLs = append([]string(nil), valid.TURNURLs...)
+		mutate(&cfg)
+		if _, err := ResolveConfig(cfg, false); err == nil {
+			t.Fatalf("accepted invalid TURN config: %+v", cfg)
+		}
+	}
+}
+
+func TestResolveConfigPreservesDisabledTURNAddressWithoutCredential(t *testing.T) {
+	got, err := ResolveConfig(Config{
+		TURNURLs:     []string{"turn:TURN.EXAMPLE.COM:3478?transport=tcp"},
+		TURNUsername: " saved-user ",
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TURNEnabled || !reflect.DeepEqual(got.TURNURLs, []string{"turn:turn.example.com:3478?transport=tcp"}) ||
+		got.TURNUsername != "saved-user" || got.TURNCredential != "" {
+		t.Fatalf("disabled TURN config=%+v", got)
 	}
 }
 

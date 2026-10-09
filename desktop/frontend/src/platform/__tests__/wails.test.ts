@@ -62,7 +62,8 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   ImportPeerConnectionBundle: vi.fn().mockResolvedValue({ issuer_peer_id: 'peer-2', quick_tunnel: true, expires_at: 20 }),
   GetPeerRendezvousConfig: vi.fn().mockResolvedValue({
     mode: 'disabled', url: '', websocket_url: '', health_url: '', stun_mode: 'default',
-    stun_urls: ['stun:stun.cloudflare.com:3478'],
+    stun_urls: ['stun:stun.cloudflare.com:3478'], turn_enabled: false, turn_urls: [],
+    turn_username: '', turn_credential_configured: false,
   }),
   SetPeerRendezvousConfig: vi.fn().mockResolvedValue(undefined),
   GetPeerRendezvousStatus: vi.fn().mockResolvedValue({ mode: 'disabled', state: 'disabled', reachable_peers: 0 }),
@@ -371,6 +372,7 @@ describe('createWailsPlatform', () => {
 
     await p.peer!.setRendezvousConfig({
       mode: 'official', url: '', stun_mode: 'default', stun_urls: [],
+      turn_enabled: false, turn_urls: [], turn_username: '', turn_credential: '',
     })
     expect(SetPeerRendezvousConfig).toHaveBeenCalledWith(expect.objectContaining({ mode: 'official' }))
 

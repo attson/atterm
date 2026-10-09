@@ -137,6 +137,7 @@ beforeEach(() => {
   fakePlatform.peer.getRendezvousConfig.mockResolvedValue({
     mode: 'disabled', url: '', websocket_url: '', health_url: '',
     stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+    turn_enabled: false, turn_urls: [], turn_username: '', turn_credential_configured: false,
   })
   fakePlatform.peer.setRendezvousConfig.mockResolvedValue(undefined)
   fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
@@ -302,6 +303,7 @@ describe('SettingsPeer', () => {
       websocket_url: 'wss://rendezvous.atterm.dev/v1/connect',
       health_url: 'https://rendezvous.atterm.dev/healthz',
       stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+      turn_enabled: false, turn_urls: [], turn_username: '', turn_credential_configured: false,
     })
     fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
       mode: 'official', state: 'online', url: 'https://rendezvous.atterm.dev',
@@ -335,7 +337,35 @@ describe('SettingsPeer', () => {
     expect(fakePlatform.peer.setRendezvousConfig).toHaveBeenCalledWith({
       mode: 'custom', url: 'https://rv.example.com', stun_mode: 'custom',
       stun_urls: ['stun:one.example.com:3478', 'stuns:two.example.com:5349'],
+      turn_enabled: false, turn_urls: [], turn_username: '', turn_credential: '',
     })
+  })
+
+  it('configures TURN without reading back or overwriting a saved credential', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getRendezvousConfig.mockResolvedValue({
+      mode: 'official', url: 'https://rendezvous.atterm.dev', websocket_url: '', health_url: '',
+      stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+      turn_enabled: true, turn_urls: ['turn:turn.example.com:3478?transport=tcp'],
+      turn_username: 'turn-user', turn_credential_configured: true,
+    })
+    const wrapper = await mountReady()
+
+    const credential = wrapper.get('[data-testid="peer-rendezvous-turn-credential"]')
+    expect((credential.element as HTMLInputElement).value).toBe('')
+    expect(credential.attributes('placeholder')).toBe('settings.peer.rendezvous.turn.keepCredential')
+    expect(wrapper.get('[data-testid="peer-rendezvous-turn-privacy"]').text()).toContain('settings.peer.rendezvous.turn.privacy')
+
+    await wrapper.get('[data-testid="peer-rendezvous-turn-username"]').setValue('updated-user')
+    await wrapper.get('[data-testid="peer-rendezvous-save"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.setRendezvousConfig).toHaveBeenCalledWith(expect.objectContaining({
+      turn_enabled: true,
+      turn_urls: ['turn:turn.example.com:3478?transport=tcp'],
+      turn_username: 'updated-user',
+      turn_credential: '',
+    }))
   })
 
   it('reconnects Rendezvous and requests config sync through authenticated peers', async () => {
@@ -343,6 +373,7 @@ describe('SettingsPeer', () => {
     fakePlatform.peer.getRendezvousConfig.mockResolvedValue({
       mode: 'official', url: 'https://rendezvous.atterm.dev', websocket_url: '', health_url: '',
       stun_mode: 'default', stun_urls: ['stun:stun.cloudflare.com:3478'],
+      turn_enabled: false, turn_urls: [], turn_username: '', turn_credential_configured: false,
     })
     fakePlatform.peer.getRendezvousStatus.mockResolvedValue({
       mode: 'official', state: 'error', url: 'https://rendezvous.atterm.dev',

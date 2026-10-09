@@ -38,6 +38,26 @@ func TestPionConfigCallbackFailureFailsClosed(t *testing.T) {
 	}
 }
 
+func TestSelectedCandidateTypeReportsEitherRelayedSide(t *testing.T) {
+	tests := []struct {
+		name   string
+		local  *webrtc.ICECandidate
+		remote *webrtc.ICECandidate
+		want   string
+	}{
+		{name: "local relay", local: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeRelay}, remote: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeHost}, want: "relay"},
+		{name: "remote relay", local: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeHost}, remote: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeRelay}, want: "relay"},
+		{name: "direct keeps local type", local: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeSrflx}, remote: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeHost}, want: "srflx"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := selectedCandidateType(&webrtc.ICECandidatePair{Local: tt.local, Remote: tt.remote}); got != tt.want {
+				t.Fatalf("selectedCandidateType()=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

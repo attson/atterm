@@ -127,12 +127,16 @@ contract 会验证 health、subprotocol、challenge、presence、在线投递、
 ## STUN 与隐私边界
 
 默认 STUN 是 `stun:stun.cloudflare.com:3478`。可改为一个或多个 `stun:`/`stuns:` 地址，
-也可禁用。当前版本明确拒绝 `turn:`/`turns:`：Rendezvous 不是 TURN，受限 NAT 下直连仍可能失败。
+也可禁用。Rendezvous 本身不是 TURN，也不会转发终端数据；受限 NAT 下需要中继时，用户可在桌面
+设置中单独填写自有的外部 `turn:`/`turns:` 服务、用户名和密码。密码只保存在本机系统钥匙串，
+不会发给 Rendezvous、同步到 Peer Space 或进入配置导出。实际选中 TURN candidate 时客户端会把
+链路标为 `TURN relay`。
 
 可观察元数据：
 
 - Rendezvous 可看到来源 IP、opaque topic/presence、消息大小和时间，但看不到加密后的 SDP/ICE 内容；
 - STUN 服务可看到来源 IP 和请求时间；
+- 用户配置的 TURN 服务可看到双方 IP、请求时间和加密后的 WebRTC 流量大小，但看不到 Peer 成员密钥或终端明文；
 - WebRTC 对端会获得建立直连所需的 ICE candidate 地址；
 - `/metrics` 与服务日志不包含 topic、presence、公钥、message id 或 payload。
 

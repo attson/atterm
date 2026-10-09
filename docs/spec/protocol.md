@@ -1509,9 +1509,17 @@ transcript，官方和自建部署使用完全相同的签名与 wire 契约。
 
 STUN 配置模式是 `default | custom | disabled`。默认值为
 `stun:stun.cloudflare.com:3478`；custom 只接受最多 8 个无 credentials/query 的
-`stun:`/`stuns:` URL。当前不接受 `turn:`/`turns:`，也不把 Rendezvous 描述为 TURN。STUN
-服务可观察来源 IP/时序，WebRTC 对端会获得建连所需的 candidate 地址；这些披露在启用前必须
-由客户端 UI 明示。
+`stun:`/`stuns:` URL。TURN 是另一组显式启用的本地配置，接受最多 8 个 `turn:`/`turns:` URL；
+URL 不得内嵌 credentials、path 或 fragment，query 只允许 `transport=udp|tcp`，其中 `turns:`
+只允许 `transport=tcp`。启用时 username
+与 credential 必填，credential 只存系统钥匙串；空 credential 的更新表示保留已存值，关闭 TURN
+会删除它。Rendezvous 服务本身不提供 TURN，也不接收这些配置或凭据。
+
+Desktop 将 STUN 和 TURN 作为两个独立 `ICEServer` 交给 Pion，TURN credentials 绝不附到 STUN
+条目。STUN 服务可观察来源 IP/时序，WebRTC 对端会获得建连所需的 candidate 地址；TURN 被 ICE
+选中时会额外观察双方 IP、时序和密文流量，但 Peer membership handshake 与 encrypted record
+layer 仍是授权和内容保密边界。selected candidate pair 任一侧为 `relay` 时，客户端必须明确显示为
+`TURN relay`，不能继续标成普通 direct；这些披露在启用前必须由 UI 明示。
 
 Browser/WebView 在生成 Peer identity 或创建 `RTCPeerConnection` 前必须依次验证 secure
 context、`crypto.subtle` 与 `RTCPeerConnection`，并映射成稳定状态

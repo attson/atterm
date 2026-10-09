@@ -1139,6 +1139,10 @@ export namespace main {
 	    health_url: string;
 	    stun_mode: string;
 	    stun_urls: string[];
+	    turn_enabled: boolean;
+	    turn_urls: string[];
+	    turn_username: string;
+	    turn_credential_configured: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new PeerRendezvousConfig(source);
@@ -1152,6 +1156,10 @@ export namespace main {
 	        this.health_url = source["health_url"];
 	        this.stun_mode = source["stun_mode"];
 	        this.stun_urls = source["stun_urls"];
+	        this.turn_enabled = source["turn_enabled"];
+	        this.turn_urls = source["turn_urls"];
+	        this.turn_username = source["turn_username"];
+	        this.turn_credential_configured = source["turn_credential_configured"];
 	    }
 	}
 	export class PeerRendezvousStatus {
@@ -1966,6 +1974,10 @@ export namespace main {
 	    url: string;
 	    stun_mode: string;
 	    stun_urls: string[];
+	    turn_enabled: boolean;
+	    turn_urls: string[];
+	    turn_username: string;
+	    turn_credential: string;
 
 	    static createFrom(source: any = {}) {
 	        return new SetPeerRendezvousConfigReq(source);
@@ -1977,6 +1989,10 @@ export namespace main {
 	        this.url = source["url"];
 	        this.stun_mode = source["stun_mode"];
 	        this.stun_urls = source["stun_urls"];
+	        this.turn_enabled = source["turn_enabled"];
+	        this.turn_urls = source["turn_urls"];
+	        this.turn_username = source["turn_username"];
+	        this.turn_credential = source["turn_credential"];
 	    }
 	}
 

@@ -341,6 +341,10 @@ export interface PeerBridge {
     url: string
     stun_mode: 'default' | 'custom' | 'disabled'
     stun_urls: string[]
+    turn_enabled: boolean
+    turn_urls: string[]
+    turn_username: string
+    turn_credential: string
   }): Promise<void>
   getRendezvousStatus(): Promise<PeerRendezvousStatus>
   reconnectRendezvous(): Promise<PeerRendezvousStatus>

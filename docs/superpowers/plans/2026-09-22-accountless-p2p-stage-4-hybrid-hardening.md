@@ -122,7 +122,8 @@ do not enter the Peer path.
 
 ## PR 4.x - Additional reachability
 
-- User-configured TURN, visibly labelled relayed ICE path。
+- [x] User-configured TURN: local-only URLs/username plus a keychain credential are injected as a
+  separate Pion ICE server, and a selected `relay` candidate is visibly labelled `TURN relay`。
 - [x] LAN/mDNS route hints: optional DNS-SD `_atterm-peer._tcp` advertisement and browsing use an
   epoch-scoped opaque tag; only active members can resolve it, results remain memory-only, Manual LAN
   routes take precedence, and the membership handshake remains authoritative。

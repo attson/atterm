@@ -47,6 +47,11 @@ describe("TerminalView direct transport plumbing", () => {
     expect(source).toContain('props.peerDirect && routeDiagnostics.value.fallbackReason');
   });
 
+  test("labels a selected relay ICE candidate as TURN relay", () => {
+    expect(source).toContain('routeDiagnostics.value.candidateType === "relay"');
+    expect(source).toContain('t("terminal.route.turnRelay")');
+  });
+
   test("offers Quick Tunnel only after the native route cache confirms it", () => {
     expect(source).toContain('data-testid="peer-quick-tunnel-retry"');
     expect(source).toContain('platform.peer?.getSessionRouteStatus');

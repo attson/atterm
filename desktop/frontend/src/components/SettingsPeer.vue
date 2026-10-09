@@ -45,6 +45,11 @@ const rendezvousMode = ref<'disabled' | 'official' | 'custom'>('disabled')
 const rendezvousURL = ref('')
 const rendezvousSTUNMode = ref<'default' | 'custom' | 'disabled'>('default')
 const rendezvousSTUNURLs = ref('')
+const rendezvousTURNEnabled = ref(false)
+const rendezvousTURNURLs = ref('')
+const rendezvousTURNUsername = ref('')
+const rendezvousTURNCredential = ref('')
+const rendezvousTURNCredentialConfigured = ref(false)
 const lanEnabled = ref(false)
 const lanAutoDiscovery = ref(false)
 const lanAdvertiseHost = ref('')
@@ -271,6 +276,11 @@ function applyRendezvousConfig(config: PeerRendezvousConfig): void {
   rendezvousURL.value = config.url || ''
   rendezvousSTUNMode.value = config.stun_mode as typeof rendezvousSTUNMode.value
   rendezvousSTUNURLs.value = (config.stun_urls || []).join('\n')
+  rendezvousTURNEnabled.value = Boolean(config.turn_enabled)
+  rendezvousTURNURLs.value = (config.turn_urls || []).join('\n')
+  rendezvousTURNUsername.value = config.turn_username || ''
+  rendezvousTURNCredential.value = ''
+  rendezvousTURNCredentialConfigured.value = Boolean(config.turn_credential_configured)
 }
 
 function parseSTUNURLs(value: string): string[] {
@@ -288,6 +298,10 @@ async function saveRendezvousConfig(): Promise<void> {
       url: rendezvousURL.value.trim(),
       stun_mode: rendezvousSTUNMode.value,
       stun_urls: rendezvousSTUNMode.value === 'custom' ? parseSTUNURLs(rendezvousSTUNURLs.value) : [],
+      turn_enabled: rendezvousTURNEnabled.value,
+      turn_urls: parseSTUNURLs(rendezvousTURNURLs.value),
+      turn_username: rendezvousTURNUsername.value.trim(),
+      turn_credential: rendezvousTURNCredential.value,
     })
     const [config, nextStatus] = await Promise.all([
       peer.getRendezvousConfig(),
@@ -798,6 +812,56 @@ function permissionLabel(permission: string): string {
             spellcheck="false"
           />
         </div>
+        <label class="checkbox-row turn-toggle">
+          <input v-model="rendezvousTURNEnabled" data-testid="peer-rendezvous-turn-enabled" type="checkbox" :disabled="Boolean(rendezvousBusy)" />
+          <span>
+            <strong>{{ t('settings.peer.rendezvous.turn.enable') }}</strong>
+            <small>{{ t('settings.peer.rendezvous.turn.enableHint') }}</small>
+          </span>
+        </label>
+        <template v-if="rendezvousTURNEnabled">
+          <div class="form-field">
+            <label class="field-label" for="peer-rendezvous-turn-urls">{{ t('settings.peer.rendezvous.turn.urls') }}</label>
+            <textarea
+              id="peer-rendezvous-turn-urls"
+              v-model="rendezvousTURNURLs"
+              data-testid="peer-rendezvous-turn-urls"
+              rows="2"
+              placeholder="turn:turn.example.com:3478?transport=udp"
+              :disabled="Boolean(rendezvousBusy)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <div class="rendezvous-form-grid">
+            <div class="form-field">
+              <label class="field-label" for="peer-rendezvous-turn-username">{{ t('settings.peer.rendezvous.turn.username') }}</label>
+              <input
+                id="peer-rendezvous-turn-username"
+                v-model="rendezvousTURNUsername"
+                data-testid="peer-rendezvous-turn-username"
+                type="text"
+                :disabled="Boolean(rendezvousBusy)"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+            <div class="form-field">
+              <label class="field-label" for="peer-rendezvous-turn-credential">{{ t('settings.peer.rendezvous.turn.credential') }}</label>
+              <input
+                id="peer-rendezvous-turn-credential"
+                v-model="rendezvousTURNCredential"
+                data-testid="peer-rendezvous-turn-credential"
+                type="password"
+                :placeholder="t(rendezvousTURNCredentialConfigured ? 'settings.peer.rendezvous.turn.keepCredential' : 'settings.peer.rendezvous.turn.credentialPlaceholder')"
+                :disabled="Boolean(rendezvousBusy)"
+                autocomplete="new-password"
+                spellcheck="false"
+              />
+            </div>
+          </div>
+          <p class="hint privacy-note" data-testid="peer-rendezvous-turn-privacy">{{ t('settings.peer.rendezvous.turn.privacy') }}</p>
+        </template>
         <div class="actions rendezvous-actions">
           <button
             type="button"

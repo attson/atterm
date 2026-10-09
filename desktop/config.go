@@ -87,12 +87,15 @@ type appConfig struct {
 	// the existing "has URL → connect" behavior, so old config.json files
 	// deserialize correctly without any migration code.
 	RelayPaused bool `json:"relay_paused,omitempty"`
-	// Peer Rendezvous and STUN are local reachability preferences. They are
+	// Peer Rendezvous, STUN, and TURN are local reachability preferences. They are
 	// never included in Relay preferences, Peer config replication, or export.
 	PeerRendezvousMode string   `json:"peer_rendezvous_mode,omitempty"`
 	PeerRendezvousURL  string   `json:"peer_rendezvous_url,omitempty"`
 	PeerSTUNMode       string   `json:"peer_stun_mode,omitempty"`
 	PeerSTUNURLs       []string `json:"peer_stun_urls,omitempty"`
+	PeerTURNEnabled    bool     `json:"peer_turn_enabled,omitempty"`
+	PeerTURNURLs       []string `json:"peer_turn_urls,omitempty"`
+	PeerTURNUsername   string   `json:"peer_turn_username,omitempty"`
 	// Manual LAN reachability is local-only. Endpoints and listener choices
 	// are never replicated because they describe this installation's network.
 	PeerLANEnabled       bool                 `json:"peer_lan_enabled,omitempty"`
@@ -713,6 +716,9 @@ func loadConfig() *configStore {
 func detachMaps(c appConfig) appConfig {
 	if c.PeerSTUNURLs != nil {
 		c.PeerSTUNURLs = append([]string(nil), c.PeerSTUNURLs...)
+	}
+	if c.PeerTURNURLs != nil {
+		c.PeerTURNURLs = append([]string(nil), c.PeerTURNURLs...)
 	}
 	if c.PrefsMeta != nil {
 		m := make(map[string]prefsMetaEntry, len(c.PrefsMeta))

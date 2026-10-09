@@ -76,8 +76,8 @@ func NewPionClientAttempt(parent context.Context, cfg PionClientConfig) (*PionCl
 		candidateType := ""
 		if state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted {
 			if sctp := pc.SCTP(); sctp != nil && sctp.Transport() != nil && sctp.Transport().ICETransport() != nil {
-				if pair, pairErr := sctp.Transport().ICETransport().GetSelectedCandidatePair(); pairErr == nil && pair != nil && pair.Local != nil {
-					candidateType = pair.Local.Typ.String()
+				if pair, pairErr := sctp.Transport().ICETransport().GetSelectedCandidatePair(); pairErr == nil {
+					candidateType = selectedCandidateType(pair)
 				}
 			}
 		}
@@ -102,6 +102,23 @@ func NewPionClientAttempt(parent context.Context, cfg PionClientConfig) (*PionCl
 		a.finish(context.Cause(ctx))
 	}()
 	return a, nil
+}
+
+func selectedCandidateType(pair *webrtc.ICECandidatePair) string {
+	if pair == nil {
+		return ""
+	}
+	if (pair.Local != nil && pair.Local.Typ == webrtc.ICECandidateTypeRelay) ||
+		(pair.Remote != nil && pair.Remote.Typ == webrtc.ICECandidateTypeRelay) {
+		return webrtc.ICECandidateTypeRelay.String()
+	}
+	if pair.Local != nil {
+		return pair.Local.Typ.String()
+	}
+	if pair.Remote != nil {
+		return pair.Remote.Typ.String()
+	}
+	return ""
 }
 
 func (a *PionClientAttempt) Start() error {

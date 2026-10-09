@@ -12,10 +12,13 @@ import (
 )
 
 const (
-	OfficialURL    = "https://rendezvous.atterm.dev"
-	DefaultSTUNURL = "stun:stun.cloudflare.com:3478"
-	maxSTUNURLs    = 8
-	maxURLBytes    = 2048
+	OfficialURL        = "https://rendezvous.atterm.dev"
+	DefaultSTUNURL     = "stun:stun.cloudflare.com:3478"
+	maxSTUNURLs        = 8
+	maxTURNURLs        = 8
+	maxURLBytes        = 2048
+	maxUsernameBytes   = 512
+	maxCredentialBytes = 2048
 )
 
 type Mode string
@@ -34,24 +37,32 @@ const (
 	STUNModeDisabled STUNMode = "disabled"
 )
 
-// Config is the persisted local selection. Rendezvous and STUN choices are
+// Config is the persisted local selection. Rendezvous and ICE server choices are
 // reachability preferences and must not enter Peer config replication.
 type Config struct {
-	Mode     Mode
-	URL      string
-	STUNMode STUNMode
-	STUNURLs []string
+	Mode           Mode
+	URL            string
+	STUNMode       STUNMode
+	STUNURLs       []string
+	TURNEnabled    bool
+	TURNURLs       []string
+	TURNUsername   string
+	TURNCredential string
 }
 
 // ResolvedConfig contains canonical endpoints ready for a client adapter.
 // Empty endpoint fields mean Rendezvous is disabled.
 type ResolvedConfig struct {
-	Mode         Mode
-	BaseURL      string
-	WebSocketURL string
-	HealthURL    string
-	STUNMode     STUNMode
-	STUNURLs     []string
+	Mode           Mode
+	BaseURL        string
+	WebSocketURL   string
+	HealthURL      string
+	STUNMode       STUNMode
+	STUNURLs       []string
+	TURNEnabled    bool
+	TURNURLs       []string
+	TURNUsername   string
+	TURNCredential string
 }
 
 // Endpoint is one canonical service origin and its fixed v1 HTTP/WS paths.
@@ -111,6 +122,31 @@ func ResolveConfig(cfg Config, allowInsecureLoopback bool) (ResolvedConfig, erro
 		resolved.STUNURLs = urls
 	default:
 		return ResolvedConfig{}, fmt.Errorf("rendezvous client: unsupported STUN mode %q", stunMode)
+	}
+
+	resolved.TURNEnabled = cfg.TURNEnabled
+	resolved.TURNUsername = strings.TrimSpace(cfg.TURNUsername)
+	if len(cfg.TURNURLs) != 0 || cfg.TURNEnabled {
+		urls, err := normalizeTURNURLs(cfg.TURNURLs)
+		if err != nil {
+			return ResolvedConfig{}, err
+		}
+		resolved.TURNURLs = urls
+	}
+	if cfg.TURNEnabled {
+		if resolved.TURNUsername == "" {
+			return ResolvedConfig{}, errors.New("rendezvous client: TURN username is required")
+		}
+		if len(resolved.TURNUsername) > maxUsernameBytes {
+			return ResolvedConfig{}, errors.New("rendezvous client: TURN username is too long")
+		}
+		if cfg.TURNCredential == "" {
+			return ResolvedConfig{}, errors.New("rendezvous client: TURN credential is required")
+		}
+		if len(cfg.TURNCredential) > maxCredentialBytes {
+			return ResolvedConfig{}, errors.New("rendezvous client: TURN credential is too long")
+		}
+		resolved.TURNCredential = cfg.TURNCredential
 	}
 	return resolved, nil
 }
@@ -193,6 +229,64 @@ func normalizeSTUNURL(raw string) (string, error) {
 		}
 	}
 	return scheme + ":" + strings.ToLower(probe.Host), nil
+}
+
+func normalizeTURNURLs(values []string) ([]string, error) {
+	if len(values) == 0 || len(values) > maxTURNURLs {
+		return nil, fmt.Errorf("rendezvous client: TURN URL count must be between 1 and %d", maxTURNURLs)
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		canonical, err := normalizeTURNURL(value)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[canonical]; exists {
+			return nil, fmt.Errorf("rendezvous client: duplicate TURN URL %q", canonical)
+		}
+		seen[canonical] = struct{}{}
+		out = append(out, canonical)
+	}
+	return out, nil
+}
+
+func normalizeTURNURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > maxURLBytes {
+		return "", errors.New("rendezvous client: invalid TURN URL")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", errors.New("rendezvous client: invalid TURN URL")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if (scheme != "turn" && scheme != "turns") || parsed.Opaque == "" ||
+		parsed.User != nil || parsed.Host != "" || parsed.Path != "" || parsed.ForceQuery ||
+		parsed.Fragment != "" || strings.ContainsAny(parsed.Opaque, "/#@") {
+		return "", errors.New("rendezvous client: only TURN/TURNS URLs without embedded credentials, paths, or fragments are supported")
+	}
+	probe, err := url.Parse("https://" + parsed.Opaque)
+	if err != nil || probe.Hostname() == "" || probe.User != nil || probe.Path != "" || probe.RawQuery != "" || probe.Fragment != "" {
+		return "", errors.New("rendezvous client: invalid TURN host")
+	}
+	if port := probe.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return "", errors.New("rendezvous client: invalid TURN port")
+		}
+	}
+	canonical := scheme + ":" + strings.ToLower(probe.Host)
+	if parsed.RawQuery != "" {
+		query := parsed.Query()
+		values, ok := query["transport"]
+		if !ok || len(query) != 1 || len(values) != 1 || (values[0] != "udp" && values[0] != "tcp") ||
+			parsed.RawQuery != "transport="+values[0] || (scheme == "turns" && values[0] != "tcp") {
+			return "", errors.New("rendezvous client: TURN supports transport=udp or transport=tcp; TURNS requires transport=tcp")
+		}
+		canonical += "?transport=" + values[0]
+	}
+	return canonical, nil
 }
 
 func isLoopbackHost(host string) bool {

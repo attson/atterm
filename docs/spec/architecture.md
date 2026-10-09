@@ -71,7 +71,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子；AI 会话的 `task_state` 由客户端 hook 驱动（`hookDriven` 闩锁关闭静默启发式，OSC 133 D 解锁） | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
 | `rendezvous` | `internal/rendezvous/` + `cmd/atterm-rendezvous/` | 无账户 WSS presence、opaque topic discovery、120 秒加密信令 mailbox、无敏感 label 的 health/metrics | 不保存 membership/config，不解析 SDP/ICE，不转发 terminal frame，不提供 TURN |
-| `rendezvousclient` / `rendezvouscontract` | `internal/rendezvousclient/` + `internal/rendezvouscontract/` | 解析官方/自建 origin 与 STUN 本地配置；用同一黑盒契约验收部署 | 不参与 Peer 配置复制，不依赖服务端内部状态 |
+| `rendezvousclient` / `rendezvouscontract` | `internal/rendezvousclient/` + `internal/rendezvouscontract/` | 解析官方/自建 origin 与 STUN/TURN 本地配置；用同一黑盒契约验收部署 | 不参与 Peer 配置复制，不依赖服务端内部状态 |
 | `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webpush subscriptions / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）；历史 `webhooks` 表已由 migration 删除 | 不知道 HTTP / 不依赖 relay |
 | 多实例 | `internal/relay/node_home.go` + `config_refresh.go` + `internal/userstore/relay_instances.go` | 多实例心跳缓存（`relay_instances` 表）、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
@@ -498,6 +498,12 @@ Settings 或诊断导出。
 Quick Tunnel 共用 `peerHostRuntime`，所以 session scope、effective permission、周期撤销检查、
 单 terminal subscriber 和 `peerConfigChannel` 的规则完全相同。成员撤销会先更新 governance/
 epoch，再重建 registration，使旧 topic/presence 与既有 attempt 一起失效。
+
+用户可为这条 Pion route 单独配置外部 TURN。Rendezvous 仍只传递 pairwise-encrypted signaling，
+不提供也不代理 TURN；Desktop 把 STUN 与带密码的 TURN 分成独立 `ICEServer` 注入 Pion。TURN 地址和
+用户名只保存在本机配置，密码进入系统钥匙串，三者都不参与 Relay prefs、Peer config replication
+或配置导出。ICE 最终选中 `relay` candidate 时 UI 明示 `TURN relay`，但 membership handshake、
+permission 和 encrypted record layer 不变；TURN 只能观察端点 IP、时序与密文流量。
 
 Manual LAN listener 是独立、显式启用的本地能力：IPv4/hostname advertised host 绑定
 `tcp4 0.0.0.0:<port>`，显式 IPv6 host 绑定 `tcp6 [::]:<port>`，并在 signed bundle 中发布用户填写的

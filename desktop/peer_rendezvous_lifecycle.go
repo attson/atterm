@@ -71,10 +71,7 @@ func (a *App) reconcilePeerRendezvous(cfg appConfig) {
 	}
 	a.peerRendezvousReconcileMu.Lock()
 	defer a.peerRendezvousReconcileMu.Unlock()
-	resolved, err := rendezvousclient.ResolveConfig(rendezvousclient.Config{
-		Mode: rendezvousclient.Mode(cfg.PeerRendezvousMode), URL: cfg.PeerRendezvousURL,
-		STUNMode: rendezvousclient.STUNMode(cfg.PeerSTUNMode), STUNURLs: cfg.PeerSTUNURLs,
-	}, false)
+	resolved, err := a.resolveStoredPeerRendezvousConfig(cfg)
 	if err != nil {
 		logWarn("rendezvous", "configuration rejected: %v", err)
 		return
@@ -127,10 +124,7 @@ func (l *peerRendezvousLifecycle) run() {
 	retry := peerRendezvousRetryMin
 	for l.ctx.Err() == nil {
 		l.setConnecting()
-		webRTC := webrtc.Configuration{}
-		if len(l.resolved.STUNURLs) != 0 {
-			webRTC.ICEServers = []webrtc.ICEServer{{URLs: append([]string(nil), l.resolved.STUNURLs...)}}
-		}
+		webRTC := peerWebRTCConfiguration(l.resolved)
 		startedAt := time.Now()
 		registrationCtx, cancelRegistration := context.WithTimeout(l.ctx, l.registrationTimeoutValue())
 		registerHost := l.registerHost
@@ -298,10 +292,7 @@ func (a *App) GetPeerRendezvousStatus() PeerRendezvousStatus {
 		return PeerRendezvousStatus{Mode: string(rendezvousclient.ModeDisabled), State: "disabled"}
 	}
 	cfg := a.cfgStore.Get()
-	resolved, err := rendezvousclient.ResolveConfig(rendezvousclient.Config{
-		Mode: rendezvousclient.Mode(cfg.PeerRendezvousMode), URL: cfg.PeerRendezvousURL,
-		STUNMode: rendezvousclient.STUNMode(cfg.PeerSTUNMode), STUNURLs: cfg.PeerSTUNURLs,
-	}, false)
+	resolved, err := a.resolveStoredPeerRendezvousConfig(cfg)
 	if err != nil {
 		return PeerRendezvousStatus{Mode: cfg.PeerRendezvousMode, State: "error", LastErrorCode: "invalid_config"}
 	}
@@ -324,14 +315,27 @@ func (a *App) ReconnectPeerRendezvous() (PeerRendezvousStatus, error) {
 		return PeerRendezvousStatus{}, errors.New("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	if _, err := resolvePeerRendezvousConfig(rendezvousclient.Config{
-		Mode: rendezvousclient.Mode(cfg.PeerRendezvousMode), URL: cfg.PeerRendezvousURL,
-		STUNMode: rendezvousclient.STUNMode(cfg.PeerSTUNMode), STUNURLs: cfg.PeerSTUNURLs,
-	}); err != nil {
+	if _, err := a.resolveStoredPeerRendezvousConfig(cfg); err != nil {
 		return PeerRendezvousStatus{}, err
 	}
 	a.reconcilePeerRendezvous(cfg)
 	return a.GetPeerRendezvousStatus(), nil
+}
+
+func peerWebRTCConfiguration(resolved rendezvousclient.ResolvedConfig) webrtc.Configuration {
+	servers := make([]webrtc.ICEServer, 0, 2)
+	if len(resolved.STUNURLs) != 0 {
+		servers = append(servers, webrtc.ICEServer{URLs: append([]string(nil), resolved.STUNURLs...)})
+	}
+	if resolved.TURNEnabled && len(resolved.TURNURLs) != 0 {
+		servers = append(servers, webrtc.ICEServer{
+			URLs:           append([]string(nil), resolved.TURNURLs...),
+			Username:       resolved.TURNUsername,
+			Credential:     resolved.TURNCredential,
+			CredentialType: webrtc.ICECredentialTypePassword,
+		})
+	}
+	return webrtc.Configuration{ICEServers: servers}
 }
 
 func waitPeerRendezvous(ctx context.Context, delay time.Duration) bool {

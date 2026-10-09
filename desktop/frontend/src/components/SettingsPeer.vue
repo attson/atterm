@@ -46,11 +46,14 @@ const rendezvousURL = ref('')
 const rendezvousSTUNMode = ref<'default' | 'custom' | 'disabled'>('default')
 const rendezvousSTUNURLs = ref('')
 const lanEnabled = ref(false)
+const lanAutoDiscovery = ref(false)
 const lanAdvertiseHost = ref('')
 const lanPort = ref('8484')
 const lanRunning = ref(false)
+const lanDiscoveryRunning = ref(false)
 const lanListenAddress = ref('')
 const lanLastError = ref('')
+const lanDiscoveryLastError = ref('')
 const lanRoutes = ref<Array<{ host: string; port: number; fingerprint: string }>>([])
 const lanRouteHost = ref('')
 const lanRoutePort = ref('8484')
@@ -206,11 +209,14 @@ async function loadConfiguredPeerData(): Promise<void> {
 
 function applyLANConfig(config: PeerLANConfig): void {
   lanEnabled.value = config.enabled
+  lanAutoDiscovery.value = config.auto_discovery
   lanAdvertiseHost.value = config.advertise_host || ''
   lanPort.value = String(config.port || 8484)
   lanRunning.value = config.running
+  lanDiscoveryRunning.value = config.discovery_running
   lanListenAddress.value = config.listen_address || ''
   lanLastError.value = config.last_error || ''
+  lanDiscoveryLastError.value = config.discovery_last_error || ''
   lanRoutes.value = (config.routes || []).map(route => ({
     host: route.host,
     port: route.port,
@@ -228,6 +234,7 @@ async function persistLANConfig(routes = lanRoutes.value): Promise<boolean> {
   try {
     await save({
       enabled: lanEnabled.value,
+      auto_discovery: lanAutoDiscovery.value,
       advertise_host: lanAdvertiseHost.value.trim(),
       port: Math.trunc(Number(lanPort.value)),
       routes,
@@ -863,6 +870,13 @@ function permissionLabel(permission: string): string {
             <small>{{ t('settings.peer.lan.enableHint') }}</small>
           </span>
         </label>
+        <label class="checkbox-row">
+          <input v-model="lanAutoDiscovery" data-testid="peer-lan-auto-discovery" type="checkbox" :disabled="lanBusy || !lanEnabled" />
+          <span>
+            <strong>{{ t('settings.peer.lan.autoDiscovery') }}</strong>
+            <small>{{ t('settings.peer.lan.autoDiscoveryHint') }}</small>
+          </span>
+        </label>
         <div class="rendezvous-form-grid">
           <div class="form-field">
             <label class="field-label" for="peer-lan-advertise-host">{{ t('settings.peer.lan.advertiseHost') }}</label>
@@ -895,6 +909,11 @@ function permissionLabel(permission: string): string {
         </div>
         <code v-if="lanListenAddress" class="route-url published-route">{{ lanListenAddress }}</code>
         <p v-if="lanLastError" class="inline-error">{{ t('settings.peer.lan.error') }}</p>
+        <div v-if="lanEnabled && lanAutoDiscovery" class="tunnel-status-row" data-testid="peer-lan-discovery-status">
+          <span class="status-dot" :class="{ active: lanDiscoveryRunning, failed: Boolean(lanDiscoveryLastError) }" aria-hidden="true" />
+          <span>{{ lanDiscoveryRunning ? t('settings.peer.lan.discoveryRunning') : t('settings.peer.lan.discoveryStopped') }}</span>
+        </div>
+        <p v-if="lanDiscoveryLastError" class="inline-error">{{ t('settings.peer.lan.discoveryError') }}</p>
         <p class="hint privacy-note">{{ t('settings.peer.lan.privacy') }}</p>
 
         <div class="lan-route-editor">

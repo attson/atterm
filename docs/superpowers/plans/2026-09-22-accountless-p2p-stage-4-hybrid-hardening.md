@@ -123,7 +123,9 @@ do not enter the Peer path.
 ## PR 4.x - Additional reachability
 
 - User-configured TURN, visibly labelled relayed ICE path。
-- LAN/mDNS route hints。
+- [x] LAN/mDNS route hints: optional DNS-SD `_atterm-peer._tcp` advertisement and browsing use an
+  epoch-scoped opaque tag; only active members can resolve it, results remain memory-only, Manual LAN
+  routes take precedence, and the membership handshake remains authoritative。
 - [x] Manual host/port + fingerprint: explicit IPv4 listener, signed `manual_lan` bootstrap,
   locally persisted endpoint/fingerprint binding, authenticated catalog/config control route and native
   terminal route are implemented. Discovery runs in parallel with Rendezvous and deduplicates by

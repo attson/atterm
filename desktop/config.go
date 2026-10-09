@@ -96,6 +96,7 @@ type appConfig struct {
 	// Manual LAN reachability is local-only. Endpoints and listener choices
 	// are never replicated because they describe this installation's network.
 	PeerLANEnabled       bool                 `json:"peer_lan_enabled,omitempty"`
+	PeerLANAutoDiscovery bool                 `json:"peer_lan_auto_discovery,omitempty"`
 	PeerLANAdvertiseHost string               `json:"peer_lan_advertise_host,omitempty"`
 	PeerLANPort          int                  `json:"peer_lan_port,omitempty"`
 	PeerLANRoutes        []PeerManualLANRoute `json:"peer_lan_routes,omitempty"`

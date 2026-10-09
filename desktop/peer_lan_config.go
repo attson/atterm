@@ -6,15 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/attson/atterm/internal/configsync"
+	"github.com/attson/atterm/internal/peerlan"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/quicktunnel"
 )
 
 const defaultPeerLANPort = 8484
+
+const peerLANMDNSBrowseTimeout = 600 * time.Millisecond
 
 // PeerManualLANRoute is a local reachability hint bound to one active Peer
 // identity. The fingerprint is the expected device signing-key digest, not a
@@ -25,29 +30,38 @@ type PeerManualLANRoute struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
-// PeerLANConfig is the user-visible local listener and manual route list.
+// PeerLANConfig is the user-visible local listener, discovery state and route list.
 type PeerLANConfig struct {
-	Enabled       bool                 `json:"enabled"`
-	AdvertiseHost string               `json:"advertise_host"`
-	Port          int                  `json:"port"`
-	Routes        []PeerManualLANRoute `json:"routes"`
-	Running       bool                 `json:"running"`
-	ListenAddress string               `json:"listen_address,omitempty"`
-	LastError     string               `json:"last_error,omitempty"`
+	Enabled            bool                 `json:"enabled"`
+	AutoDiscovery      bool                 `json:"auto_discovery"`
+	AdvertiseHost      string               `json:"advertise_host"`
+	Port               int                  `json:"port"`
+	Routes             []PeerManualLANRoute `json:"routes"`
+	Running            bool                 `json:"running"`
+	DiscoveryRunning   bool                 `json:"discovery_running"`
+	ListenAddress      string               `json:"listen_address,omitempty"`
+	LastError          string               `json:"last_error,omitempty"`
+	DiscoveryLastError string               `json:"discovery_last_error,omitempty"`
 }
 
 type SetPeerLANConfigReq struct {
 	Enabled       bool                 `json:"enabled"`
+	AutoDiscovery bool                 `json:"auto_discovery"`
 	AdvertiseHost string               `json:"advertise_host"`
 	Port          int                  `json:"port"`
 	Routes        []PeerManualLANRoute `json:"routes"`
 }
 
 type peerLANListener struct {
-	gateway   *quicktunnel.Gateway
-	address   string
-	lastError string
+	gateway        *quicktunnel.Gateway
+	publisher      peerlan.Publisher
+	address        string
+	lastError      string
+	discoveryError string
 }
+
+type peerLANPublishFunc func(peerlan.Advertisement) (peerlan.Publisher, error)
+type peerLANBrowseFunc func(context.Context, time.Duration) ([]peerlan.Entry, error)
 
 type resolvedPeerLANRoute struct {
 	URL        string
@@ -65,14 +79,17 @@ func (a *App) GetPeerLANConfig() (PeerLANConfig, error) {
 		port = defaultPeerLANPort
 	}
 	result := PeerLANConfig{
-		Enabled: cfg.PeerLANEnabled, AdvertiseHost: cfg.PeerLANAdvertiseHost, Port: port,
+		Enabled: cfg.PeerLANEnabled, AutoDiscovery: cfg.PeerLANAutoDiscovery,
+		AdvertiseHost: cfg.PeerLANAdvertiseHost, Port: port,
 		Routes: append([]PeerManualLANRoute(nil), cfg.PeerLANRoutes...),
 	}
 	a.peerLANMu.Lock()
 	if a.peerLAN != nil {
 		result.Running = a.peerLAN.gateway != nil
+		result.DiscoveryRunning = a.peerLAN.publisher != nil
 		result.ListenAddress = a.peerLAN.address
 		result.LastError = a.peerLAN.lastError
+		result.DiscoveryLastError = a.peerLAN.discoveryError
 	}
 	a.peerLANMu.Unlock()
 	return result, nil
@@ -106,6 +123,7 @@ func (a *App) SetPeerLANConfig(req SetPeerLANConfigReq) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.PeerLANEnabled = req.Enabled
+	cfg.PeerLANAutoDiscovery = req.AutoDiscovery
 	cfg.PeerLANAdvertiseHost = advertiseHost
 	cfg.PeerLANPort = port
 	cfg.PeerLANRoutes = routes
@@ -180,7 +198,7 @@ func (a *App) activePeerMembershipDirectory() (map[string]peerproto.VerifiedGran
 	return byPeer, identity.PeerID(), nil
 }
 
-func (a *App) resolvedPeerLANRoutes() ([]resolvedPeerLANRoute, error) {
+func (a *App) resolvedPeerLANRoutes(ctx context.Context) ([]resolvedPeerLANRoute, error) {
 	if a == nil || a.cfgStore == nil {
 		return nil, errors.New("config store not ready")
 	}
@@ -189,7 +207,7 @@ func (a *App) resolvedPeerLANRoutes() ([]resolvedPeerLANRoute, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := make([]resolvedPeerLANRoute, 0, len(cfg.PeerLANRoutes))
+	byPeer := make(map[string]resolvedPeerLANRoute, len(cfg.PeerLANRoutes))
 	for _, route := range cfg.PeerLANRoutes {
 		host, hostErr := canonicalPeerLANHost(route.Host)
 		peerID, fingerprintErr := peerIDFromFingerprint(route.Fingerprint)
@@ -197,10 +215,85 @@ func (a *App) resolvedPeerLANRoutes() ([]resolvedPeerLANRoute, error) {
 		if hostErr != nil || fingerprintErr != nil || !ok || peerID == localPeerID || route.Port < 1 || route.Port > 65535 {
 			continue
 		}
-		result = append(result, resolvedPeerLANRoute{
+		byPeer[peerID] = resolvedPeerLANRoute{
 			URL:    "http://" + net.JoinHostPort(host, strconv.Itoa(route.Port)),
 			PeerID: peerID, Membership: membership,
-		})
+		}
+	}
+	if cfg.PeerLANAutoDiscovery {
+		entries, discoveryErr := a.browsePeerLAN(ctx)
+		if discoveryErr != nil && len(byPeer) == 0 {
+			return nil, discoveryErr
+		}
+		if discoveryErr == nil {
+			tags, tagErr := a.peerLANDiscoveryTags(active, localPeerID)
+			if tagErr != nil && len(byPeer) == 0 {
+				return nil, tagErr
+			}
+			if tagErr == nil {
+				for _, entry := range entries {
+					peerID, ok := tags[entry.Tag]
+					if !ok {
+						continue
+					}
+					if _, exists := byPeer[peerID]; exists {
+						continue
+					}
+					byPeer[peerID] = resolvedPeerLANRoute{
+						URL:    "http://" + net.JoinHostPort(entry.IP.String(), strconv.Itoa(entry.Port)),
+						PeerID: peerID, Membership: active[peerID],
+					}
+				}
+			}
+		}
+	}
+	peerIDs := make([]string, 0, len(byPeer))
+	for peerID := range byPeer {
+		peerIDs = append(peerIDs, peerID)
+	}
+	sort.Strings(peerIDs)
+	result := make([]resolvedPeerLANRoute, 0, len(peerIDs))
+	for _, peerID := range peerIDs {
+		result = append(result, byPeer[peerID])
+	}
+	return result, nil
+}
+
+func (a *App) browsePeerLAN(ctx context.Context) ([]peerlan.Entry, error) {
+	browse := a.peerLANBrowse
+	if browse == nil {
+		browse = peerlan.Browse
+	}
+	return browse(ctx, peerLANMDNSBrowseTimeout)
+}
+
+func (a *App) peerLANDiscoveryTags(active map[string]peerproto.VerifiedGrant, localPeerID string) (map[string]string, error) {
+	manager, err := a.peerManager()
+	if err != nil {
+		return nil, err
+	}
+	state, err := manager.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return nil, err
+	}
+	key, err := loadPeerEpochKey(genesis.Document.SpaceID, configsync.KeyClassSync)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(active))
+	for peerID := range active {
+		if peerID == localPeerID {
+			continue
+		}
+		tag, err := peerlan.DeriveTag(key, genesis.Document.SpaceID, peerID)
+		if err != nil {
+			return nil, err
+		}
+		result[tag] = peerID
 	}
 	return result, nil
 }
@@ -293,9 +386,104 @@ func (a *App) reconcilePeerLAN(cfg appConfig) error {
 	}
 	lifecycle.gateway = gateway
 	lifecycle.address = gateway.Address()
+	if cfg.PeerLANAutoDiscovery {
+		advertisement, advertiseErr := a.peerLANAdvertisement(cfg)
+		if advertiseErr == nil {
+			publish := a.peerLANPublish
+			if publish == nil {
+				publish = peerlan.Publish
+			}
+			lifecycle.publisher, advertiseErr = publish(advertisement)
+		}
+		if advertiseErr != nil {
+			lifecycle.discoveryError = "publish_failed"
+			logWarn("peer-lan", "publish mDNS reachability hint: %v", advertiseErr)
+		}
+	}
 	a.setPeerLANLifecycle(lifecycle)
 	logInfo("peer-lan", "manual Peer listener started address=%s", lifecycle.address)
 	return nil
+}
+
+func (a *App) peerLANAdvertisement(cfg appConfig) (peerlan.Advertisement, error) {
+	manager, err := a.peerManager()
+	if err != nil {
+		return peerlan.Advertisement{}, err
+	}
+	state, err := manager.store.Load()
+	if err != nil {
+		return peerlan.Advertisement{}, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return peerlan.Advertisement{}, err
+	}
+	identity, err := manager.loadIdentity()
+	if err != nil {
+		return peerlan.Advertisement{}, err
+	}
+	key, err := loadPeerEpochKey(genesis.Document.SpaceID, configsync.KeyClassSync)
+	if err != nil {
+		return peerlan.Advertisement{}, err
+	}
+	tag, err := peerlan.DeriveTag(key, genesis.Document.SpaceID, identity.PeerID())
+	if err != nil {
+		return peerlan.Advertisement{}, err
+	}
+	ips, err := peerLANAdvertisementIPs(cfg.PeerLANAdvertiseHost)
+	if err != nil {
+		return peerlan.Advertisement{}, err
+	}
+	port := cfg.PeerLANPort
+	if port == 0 {
+		port = defaultPeerLANPort
+	}
+	return peerlan.Advertisement{Tag: tag, Port: port, IPs: ips}, nil
+}
+
+func peerLANAdvertisementIPs(advertiseHost string) ([]net.IP, error) {
+	if ip := net.ParseIP(strings.TrimSpace(advertiseHost)); ip != nil {
+		if ipv4 := ip.To4(); ipv4 != nil && !ipv4.IsUnspecified() && !ipv4.IsMulticast() {
+			return []net.IP{append(net.IP(nil), ipv4...)}, nil
+		}
+		return nil, errors.New("Peer LAN mDNS currently requires an IPv4 listener address")
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	var result []net.IP
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			host, _, err := net.ParseCIDR(address.String())
+			if err != nil {
+				continue
+			}
+			ipv4 := host.To4()
+			if ipv4 == nil || ipv4.IsUnspecified() || ipv4.IsMulticast() {
+				continue
+			}
+			key := ipv4.String()
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, append(net.IP(nil), ipv4...))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].String() < result[j].String() })
+	if len(result) == 0 {
+		return nil, errors.New("no IPv4 address is available for Peer LAN mDNS")
+	}
+	return result, nil
 }
 
 func (a *App) setPeerLANLifecycle(lifecycle *peerLANListener) {
@@ -334,7 +522,15 @@ func (a *App) stopPeerLAN() {
 	a.peerLAN = nil
 	a.peerLANMu.Unlock()
 	if lifecycle == nil || lifecycle.gateway == nil {
+		if lifecycle != nil && lifecycle.publisher != nil {
+			_ = lifecycle.publisher.Close()
+		}
 		return
+	}
+	if lifecycle.publisher != nil {
+		if err := lifecycle.publisher.Close(); err != nil {
+			logWarn("peer-lan", "stop mDNS publisher: %v", err)
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

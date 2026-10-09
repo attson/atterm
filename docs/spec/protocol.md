@@ -1243,6 +1243,16 @@ XChaCha20-Poly1305 record layer、sequence 和 fragment 规则与 Quick Tunnel �
 和 Preview service。多个 Manual LAN route 与 Rendezvous discovery 并行；同一 `session_id` 同时被
 发现时保留 Rendezvous catalog entry，避免改变已建立的 direct route 语义。
 
+可选 LAN 自动发现使用 DNS-SD service `_atterm-peer._tcp.local.`，当前只发布/接受 IPv4。TXT 只含
+`v=1` 与 `tag=<32 lowercase hex>`；tag 定义为
+`HMAC-SHA256(sync_epoch_key, "atterm-peer-mdns-v1" || 0x00 || decimal(epoch) || 0x00 || space_id || 0x00 || peer_id)[:16]`。
+SRV/A 记录提供 port/IP，但不得加入稳定 `peer_id`、Space ID、fingerprint、membership token、ticket、
+epoch key 或其它凭证。浏览端为每个当前 active remote membership 派生 tag，只接受精确匹配的结果；
+旧 epoch、已撤销成员和未知 tag 均忽略。结果只保存在进程内存，Manual LAN 持久化 route 对同一 peer
+优先。DNS-SD responder 和网络返回均不可信，命中后仍必须完成上述四步 membership handshake 并核对
+目标 identity；mDNS 不能签发 membership、扩大 session scope 或绕过权限。发布/浏览失败不得停止
+Manual LAN listener 或隐藏仍有效的手动 route。
+
 Desktop 只在显式调用 `StartPeerQuickTunnel` 后启动 `cloudflared`，不会随 app 启动自动发布
 公网入口；Manual LAN listener 同样必须在 Settings 显式开启，停止 Quick Tunnel 不关闭它。
 gateway 挂载上述 Peer handler；DataChannel 第二次 membership handshake 完成后，

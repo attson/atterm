@@ -401,6 +401,8 @@ type App struct {
 	peerRendezvous            *peerRendezvousLifecycle
 	peerLANMu                 sync.Mutex
 	peerLAN                   *peerLANListener
+	peerLANPublish            peerLANPublishFunc
+	peerLANBrowse             peerLANBrowseFunc
 	peerManualCatalogMu       sync.Mutex
 	peerManualCatalog         map[uuid.UUID]peerDiscoveredSession
 

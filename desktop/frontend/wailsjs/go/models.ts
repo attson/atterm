@@ -1025,12 +1025,15 @@ export namespace main {
 	}
 	export class PeerLANConfig {
 	    enabled: boolean;
+	    auto_discovery: boolean;
 	    advertise_host: string;
 	    port: number;
 	    routes: PeerManualLANRoute[];
 	    running: boolean;
+	    discovery_running: boolean;
 	    listen_address?: string;
 	    last_error?: string;
+	    discovery_last_error?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new PeerLANConfig(source);
@@ -1039,12 +1042,15 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
+	        this.auto_discovery = source["auto_discovery"];
 	        this.advertise_host = source["advertise_host"];
 	        this.port = source["port"];
 	        this.routes = this.convertValues(source["routes"], PeerManualLANRoute);
 	        this.running = source["running"];
+	        this.discovery_running = source["discovery_running"];
 	        this.listen_address = source["listen_address"];
 	        this.last_error = source["last_error"];
+	        this.discovery_last_error = source["discovery_last_error"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1919,6 +1925,7 @@ export namespace main {
 	}
 	export class SetPeerLANConfigReq {
 	    enabled: boolean;
+	    auto_discovery: boolean;
 	    advertise_host: string;
 	    port: number;
 	    routes: PeerManualLANRoute[];
@@ -1930,6 +1937,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
+	        this.auto_discovery = source["auto_discovery"];
 	        this.advertise_host = source["advertise_host"];
 	        this.port = source["port"];
 	        this.routes = this.convertValues(source["routes"], PeerManualLANRoute);

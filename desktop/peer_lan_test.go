@@ -9,9 +9,12 @@ import (
 	"net"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/configsync"
+	"github.com/attson/atterm/internal/peerlan"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peertransport"
 	"github.com/attson/atterm/internal/quicktunnel"
@@ -145,6 +148,148 @@ func TestPeerLANListenerStartsOnlyWhenExplicitlyEnabled(t *testing.T) {
 	route, ok := fixture.app.peerLANConnectionRoute()
 	if !ok || route.Kind != peerproto.RouteManualLAN || route.URL == "" {
 		t.Fatalf("published LAN route=%+v ok=%t", route, ok)
+	}
+}
+
+type testPeerLANPublisher struct{ closed bool }
+
+func (p *testPeerLANPublisher) Close() error {
+	p.closed = true
+	return nil
+}
+
+func TestPeerLANAutoDiscoveryPublishesOpaqueTagAndStopsWithConfig(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	var published peerlan.Advertisement
+	publisher := &testPeerLANPublisher{}
+	fixture.app.peerLANPublish = func(ad peerlan.Advertisement) (peerlan.Publisher, error) {
+		published = ad
+		return publisher, nil
+	}
+	request := SetPeerLANConfigReq{
+		Enabled: true, AutoDiscovery: true, AdvertiseHost: "127.0.0.1", Port: freeTCPPort(t),
+	}
+	if err := fixture.app.SetPeerLANConfig(request); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(fixture.app.stopPeerLAN)
+	state, err := fixture.app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := loadPeerEpochKey(genesis.Document.SpaceID, configsync.KeyClassSync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localIdentity, err := fixture.app.peerSpace.loadIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultAdvertisement, err := fixture.app.peerLANAdvertisement(appConfig{PeerLANAdvertiseHost: "127.0.0.1"})
+	if err != nil || defaultAdvertisement.Port != defaultPeerLANPort {
+		t.Fatalf("default advertisement=%+v err=%v", defaultAdvertisement, err)
+	}
+	expectedTag, err := peerlan.DeriveTag(key, genesis.Document.SpaceID, localIdentity.PeerID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published.Tag != expectedTag || published.Port != request.Port || len(published.IPs) != 1 || !published.IPs[0].Equal(net.ParseIP("127.0.0.1")) {
+		t.Fatalf("advertisement=%+v expected tag=%q", published, expectedTag)
+	}
+	if published.Tag == localIdentity.PeerID() || strings.Contains(published.Tag, genesis.Document.SpaceID) {
+		t.Fatalf("advertisement leaked stable identity: %+v", published)
+	}
+	config, err := fixture.app.GetPeerLANConfig()
+	if err != nil || !config.Running || !config.DiscoveryRunning || config.DiscoveryLastError != "" {
+		t.Fatalf("LAN config=%+v err=%v", config, err)
+	}
+
+	request.AutoDiscovery = false
+	if err := fixture.app.SetPeerLANConfig(request); err != nil {
+		t.Fatal(err)
+	}
+	if !publisher.closed {
+		t.Fatal("mDNS publisher was not stopped when automatic discovery was disabled")
+	}
+	config, err = fixture.app.GetPeerLANConfig()
+	if err != nil || !config.Running || config.DiscoveryRunning {
+		t.Fatalf("LAN config after disabling discovery=%+v err=%v", config, err)
+	}
+}
+
+func TestPeerLANAutoDiscoveryFailureDoesNotStopListener(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	fixture.app.peerLANPublish = func(peerlan.Advertisement) (peerlan.Publisher, error) {
+		return nil, errors.New("multicast unavailable")
+	}
+	if err := fixture.app.SetPeerLANConfig(SetPeerLANConfigReq{
+		Enabled: true, AutoDiscovery: true, AdvertiseHost: "127.0.0.1", Port: freeTCPPort(t),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(fixture.app.stopPeerLAN)
+	config, err := fixture.app.GetPeerLANConfig()
+	if err != nil || !config.Running || config.DiscoveryRunning || config.DiscoveryLastError != "publish_failed" {
+		t.Fatalf("LAN config=%+v err=%v", config, err)
+	}
+}
+
+func TestPeerLANAutoDiscoveryMatchesActiveMembersAndManualRouteWins(t *testing.T) {
+	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
+	state, err := fixture.app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := loadPeerEpochKey(genesis.Document.SpaceID, configsync.KeyClassSync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteTag, err := peerlan.DeriveTag(key, genesis.Document.SpaceID, fixture.clientIdentity.PeerID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app.peerLANBrowse = func(context.Context, time.Duration) ([]peerlan.Entry, error) {
+		return []peerlan.Entry{
+			{Tag: remoteTag, IP: net.ParseIP("192.0.2.10"), Port: 8484},
+			{Tag: "0123456789abcdef0123456789abcdef", IP: net.ParseIP("192.0.2.11"), Port: 8484},
+		}, nil
+	}
+	cfg := fixture.app.cfgStore.Get()
+	cfg.PeerLANAutoDiscovery = true
+	if err := fixture.app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := fixture.app.resolvedPeerLANRoutes(context.Background())
+	if err != nil || len(routes) != 1 || routes[0].PeerID != fixture.clientIdentity.PeerID() || routes[0].URL != "http://192.0.2.10:8484" {
+		t.Fatalf("discovered routes=%+v err=%v", routes, err)
+	}
+
+	cfg = fixture.app.cfgStore.Get()
+	cfg.PeerLANRoutes = []PeerManualLANRoute{{
+		Host: "192.0.2.20", Port: 9444, Fingerprint: peerFingerprint(fixture.clientIdentity.PeerID()),
+	}}
+	if err := fixture.app.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = fixture.app.resolvedPeerLANRoutes(context.Background())
+	if err != nil || len(routes) != 1 || routes[0].URL != "http://192.0.2.20:9444" {
+		t.Fatalf("manual precedence routes=%+v err=%v", routes, err)
+	}
+
+	fixture.app.peerLANBrowse = func(context.Context, time.Duration) ([]peerlan.Entry, error) {
+		return nil, errors.New("browse failed")
+	}
+	routes, err = fixture.app.resolvedPeerLANRoutes(context.Background())
+	if err != nil || len(routes) != 1 || routes[0].URL != "http://192.0.2.20:9444" {
+		t.Fatalf("manual fallback routes=%+v err=%v", routes, err)
 	}
 }
 

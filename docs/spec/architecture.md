@@ -506,6 +506,14 @@ layer。LAN control route 可做配置 anti-entropy 与 filtered catalog，但�
 文件 worker 或 Preview service。只启用 Manual LAN 时，邀请核销、目录、同步和终端 attach 均不访问
 Relay、Rendezvous、STUN、Cloudflare 或其它公网服务。
 
+同一 listener 可由用户额外开启 mDNS/DNS-SD 自动发现。Desktop 以 `_atterm-peer._tcp` 发布当前
+sync epoch 派生的短期 opaque tag 和 IPv4 listener metadata，不发布 `peer_id`、Space ID、设备指纹、
+membership、凭证或 endpoint token；浏览结果只在进程内存中存在。客户端只把能映射到当前 active
+membership 的 tag 转为候选地址，未知/旧 epoch tag 直接忽略，且本机已保存的 Manual LAN route 优先。
+mDNS 是不可信 reachability hint，不改变四步 membership handshake、identity 校验、授权重验或 encrypted
+record layer；伪造 responder 最多把连接导向错误 endpoint，握手必须 fail closed。mDNS 发布或浏览失败
+不关闭 LAN listener，也不影响手动地址、Quick Tunnel、Rendezvous、Relay 或本地 terminal。
+
 Rendezvous 生命周期是附加能力：启动或重连失败不阻塞桌面启动，本地 terminal、Relay、Manual LAN 与 Quick
 Tunnel 不读取它的状态。成员 reconnect bundle 可发布 Quick Tunnel、Rendezvous、Manual LAN 的任意
 可用组合；首次 invitation redemption 需要 Quick Tunnel 或 Manual LAN，不能只靠 Rendezvous。自动规划会为可达成员建立

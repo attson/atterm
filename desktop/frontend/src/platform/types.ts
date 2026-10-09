@@ -347,6 +347,7 @@ export interface PeerBridge {
   getLANConfig?(): Promise<PeerLANConfig>
   setLANConfig?(req: {
     enabled: boolean
+    auto_discovery: boolean
     advertise_host: string
     port: number
     routes: Array<{ host: string; port: number; fingerprint: string }>

@@ -189,7 +189,7 @@ func (a *peerLANControlHostAttempt) close(closeTransport bool) {
 }
 
 func (a *App) discoverPeerLANSessions(ctx context.Context) ([]proto.SessionInfo, error) {
-	routes, err := a.resolvedPeerLANRoutes()
+	routes, err := a.resolvedPeerLANRoutes(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -150,13 +150,16 @@ so public-route suppression is exercised rather than simulated by clearing every
 
 ## Hardening Program
 
-- Fuzz ticket/handshake/record/fragment/sync/signaling parsers。
-- NAT matrix: host、srflx、symmetric、UDP blocked、network switch。
-- Chaos: Relay/Rendezvous restart、Quick URL rotation、route flap、late frames。
-- Soak: large scrollback + config snapshot + mobile reconnect。
-- Resource bounds: connections、reassembly、op log、tombstones。
-- Grant/key expiry renewal and trust export/import without plaintext private keys。
-- Battery/data measurement across desktop idle、iOS foreground and Web background。
+- [x] Fuzz ticket/handshake/record/fragment/sync/signaling parsers. Native Go fuzz targets include
+  valid protocol seeds and exercise arbitrary malformed input across signed Peer documents, both
+  handshake state machines, encrypted records, isolated terminal/config/signal reassembly, config
+  operations/snapshots/compatibility state, and pairwise encrypted signaling envelopes。
+- [ ] NAT matrix: host、srflx、symmetric、UDP blocked、network switch。
+- [ ] Chaos: Relay/Rendezvous restart、Quick URL rotation、route flap、late frames。
+- [ ] Soak: large scrollback + config snapshot + mobile reconnect。
+- [ ] Resource bounds: connections、reassembly、op log、tombstones。
+- [ ] Grant/key expiry renewal and trust export/import without plaintext private keys。
+- [ ] Battery/data measurement across desktop idle、iOS foreground and Web background。
 
 ## Stage Exit Gate
 

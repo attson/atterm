@@ -250,6 +250,13 @@ func TestPeerMemberDirectoryAndRevocationRotateEpochs(t *testing.T) {
 	if _, err := app.peerSpace.store.ApplyMemberships([]string{remoteMembership.Token}, now); err != nil {
 		t.Fatal(err)
 	}
+	runtime := app.peerSpace.configReplica
+	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, runtime.keys[configsync.KeyClassSync], configsync.Mutation{
+		SchemaVersion: configsync.SchemaVersion, Collection: configsync.CollectionPreferences,
+		RecordID: "terminal_theme", Kind: configsync.KindSet, Payload: json.RawMessage(`"before-rotation"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	exchangedAt := now.Add(time.Minute)
 	if err := app.peerSpace.store.RecordConfigExchange(remote.PeerID(), nil, exchangedAt); err != nil {
 		t.Fatal(err)
@@ -313,6 +320,18 @@ func TestPeerMemberDirectoryAndRevocationRotateEpochs(t *testing.T) {
 		if key.Epoch != after[class].Document.Epoch || bytes.Equal(key.Bytes(), make([]byte, configsync.EpochKeySize)) {
 			t.Fatalf("saved %s key epoch=%d", class, key.Epoch)
 		}
+	}
+	rotatedRuntime, err := app.peerSpace.ensureConfigReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, ok := rotatedRuntime.replica.Get(configsync.CollectionPreferences, "terminal_theme")
+	if !ok {
+		t.Fatal("pre-rotation config record is missing")
+	}
+	plain, err := rotatedRuntime.openRecord(record)
+	if err != nil || string(plain.Value) != `"before-rotation"` {
+		t.Fatalf("open pre-rotation config value=%s err=%v", plain.Value, err)
 	}
 	members, err = app.ListPeerMembers()
 	if err != nil {

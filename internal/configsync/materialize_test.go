@@ -237,6 +237,19 @@ func TestMaterializeRelayValueUsesWinnersTombstonesAndEpochs(t *testing.T) {
 	}, nil); !errors.Is(err, ErrInvalidEpochKey) {
 		t.Fatalf("missing epoch error=%v", err)
 	}
+	wrongBranch, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, ok, err = MaterializeRelayValueCandidates("quick_templates", records, func(class KeyClass, epoch uint64) []EpochKey {
+		if class != key.Class || epoch != key.Epoch {
+			return nil
+		}
+		return []EpochKey{wrongBranch, key}
+	}, nil)
+	if err != nil || !ok || string(value.Value) != `[{"id":"b","label":"B","text":"echo ok"}]` {
+		t.Fatalf("candidate epoch materialize value=%+v ok=%t err=%v", value, ok, err)
+	}
 
 	scalarMutation, err := SetRecordMutation(PlainRecord{
 		Collection: CollectionPreferences, RecordID: "terminal_theme", KeyClass: KeyClassSync, Value: json.RawMessage(`"nord"`),

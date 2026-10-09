@@ -55,6 +55,11 @@ type SealedRelayCodec interface {
 // unreadable merely because a newer current key exists.
 type EpochKeyResolver func(class KeyClass, epoch uint64) (EpochKey, bool)
 
+// EpochKeyCandidatesResolver returns every locally available key candidate
+// for an epoch. Concurrent rotation branches can carry different keys under
+// the same epoch number; AEAD authentication selects the matching candidate.
+type EpochKeyCandidatesResolver func(class KeyClass, epoch uint64) []EpochKey
+
 type orderedRecordPayload struct {
 	Position string          `json:"position"`
 	Value    json.RawMessage `json:"value"`
@@ -283,6 +288,22 @@ func EncodeRelayRecords(key string, records []PlainRecord, codec SealedRelayCode
 // when a scalar's winner is a tombstone; collection tombstones materialize as
 // an empty array/bundle so Relay can observe deletions.
 func MaterializeRelayValue(key string, records []Record, resolve EpochKeyResolver, codec SealedRelayCodec) (RelayValue, bool, error) {
+	var candidates EpochKeyCandidatesResolver
+	if resolve != nil {
+		candidates = func(class KeyClass, epoch uint64) []EpochKey {
+			key, ok := resolve(class, epoch)
+			if !ok {
+				return nil
+			}
+			return []EpochKey{key}
+		}
+	}
+	return MaterializeRelayValueCandidates(key, records, candidates, codec)
+}
+
+// MaterializeRelayValueCandidates is MaterializeRelayValue with support for
+// deterministic epoch-rotation branches that share one epoch number.
+func MaterializeRelayValueCandidates(key string, records []Record, resolve EpochKeyCandidatesResolver, codec SealedRelayCodec) (RelayValue, bool, error) {
 	spec, ok := RelaySpec(key)
 	if !ok {
 		return RelayValue{}, false, fmt.Errorf("%w: unknown relay key %q", ErrInvalidSchemaValue, key)
@@ -311,13 +332,20 @@ func MaterializeRelayValue(key string, records []Record, resolve EpochKeyResolve
 		if resolve == nil {
 			return RelayValue{}, false, fmt.Errorf("%w: no epoch resolver for %s/%s", ErrInvalidSchemaValue, record.Collection, record.RecordID)
 		}
-		epochKey, ok := resolve(record.KeyClass, record.KeyEpoch)
-		if !ok {
+		keys := resolve(record.KeyClass, record.KeyEpoch)
+		if len(keys) == 0 {
 			return RelayValue{}, false, fmt.Errorf("%w: epoch key %s/%d unavailable", ErrInvalidEpochKey, record.KeyClass, record.KeyEpoch)
 		}
-		opened, err := OpenPlainRecord(record, epochKey)
-		if err != nil {
-			return RelayValue{}, false, err
+		var opened PlainRecord
+		var openErr error
+		for _, epochKey := range keys {
+			opened, openErr = OpenPlainRecord(record, epochKey)
+			if openErr == nil {
+				break
+			}
+		}
+		if openErr != nil {
+			return RelayValue{}, false, openErr
 		}
 		plain = append(plain, opened)
 	}

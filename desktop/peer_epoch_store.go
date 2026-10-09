@@ -18,6 +18,8 @@ type peerEpochKeyRecord struct {
 	Key   []byte `json:"key"`
 }
 
+const peerEpochKeyRotationInterval = 30 * 24 * time.Hour
+
 func peerEpochKeyService() string {
 	return "com.atterm.peer-epoch-key.v1" + appdir.KeychainSuffix()
 }
@@ -269,6 +271,50 @@ func (m *peerSpaceManager) applyPeerEpochRotations(tokens []string) (bool, error
 	m.configReplica = nil
 	m.configMu.Unlock()
 	return stored != 0, nil
+}
+
+// rotateEpochKeysIfNeeded advances both key classes together after the
+// creator-owned rotation interval. Other admins still rotate immediately as
+// part of deny-wins revocation, but do not compete for scheduled rotations.
+func (m *peerSpaceManager) rotateEpochKeysIfNeeded() (bool, error) {
+	state, err := m.store.Load()
+	if err != nil {
+		return false, err
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return false, err
+	}
+	identity, err := m.loadIdentity()
+	if err != nil {
+		return false, err
+	}
+	if identity.PeerID() != genesis.Document.CreatorPeerID {
+		return false, nil
+	}
+	current, err := currentEpochRotations(state.EpochRotations, genesis)
+	if err != nil {
+		return false, err
+	}
+	if len(current) != 2 {
+		return false, errors.New("Peer Space current epoch rotations are incomplete")
+	}
+	now := m.now()
+	cutoff := now.Add(-peerEpochKeyRotationInterval).Unix()
+	due := false
+	for _, class := range []configsync.KeyClass{configsync.KeyClassSync, configsync.KeyClassVault} {
+		if current[class].Document.CreatedAt <= cutoff {
+			due = true
+		}
+	}
+	if !due {
+		return false, nil
+	}
+	tokens, err := m.buildEpochRotations(state, identity.PeerID(), now)
+	if err != nil {
+		return false, err
+	}
+	return m.applyPeerEpochRotations(tokens)
 }
 
 func authorizePeerEpochRotations(state peerstore.State, newTokens []string, now time.Time) error {

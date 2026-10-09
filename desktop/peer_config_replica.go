@@ -11,16 +11,18 @@ import (
 	"github.com/attson/atterm/internal/configsync"
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
+	"github.com/attson/atterm/internal/peerstore"
 )
 
 // peerConfigReplica keeps the local signing authority and current encryption
 // epochs next to the durable replica. It is never exposed to the frontend.
 type peerConfigReplica struct {
-	spaceID  string
-	replica  *configsync.DurableReplica
-	identity *peercrypto.Identity
-	keys     map[configsync.KeyClass]configsync.EpochKey
-	manager  *peerSpaceManager
+	spaceID   string
+	replica   *configsync.DurableReplica
+	identity  *peercrypto.Identity
+	keys      map[configsync.KeyClass]configsync.EpochKey
+	epochKeys map[configsync.KeyClass]map[uint64][]configsync.EpochKey
+	manager   *peerSpaceManager
 }
 
 const (
@@ -51,6 +53,10 @@ func (m *peerSpaceManager) ensureConfigReplica() (*peerConfigReplica, error) {
 	if membership.Document.SubjectPeerID != identity.PeerID() {
 		return nil, errors.New("peer identity does not own config replica membership")
 	}
+	wrapping, err := m.loadWrappingIdentity()
+	if err != nil {
+		return nil, err
+	}
 
 	keys := make(map[configsync.KeyClass]configsync.EpochKey, 2)
 	syncKey, err := loadPeerEpochKey(genesis.Document.SpaceID, configsync.KeyClassSync)
@@ -65,8 +71,13 @@ func (m *peerSpaceManager) ensureConfigReplica() (*peerConfigReplica, error) {
 		}
 		keys[configsync.KeyClassVault] = vaultKey
 	}
+	epochKeys, err := recoverPeerEpochKeys(state, genesis, identity.PeerID(), wrapping, keys)
+	if err != nil {
+		return nil, err
+	}
 
 	if current := m.configReplica; current != nil && current.spaceID == genesis.Document.SpaceID && samePeerEpochs(current.keys, keys) {
+		current.epochKeys = epochKeys
 		return current, nil
 	}
 	if m.configRoot == "" {
@@ -78,10 +89,52 @@ func (m *peerSpaceManager) ensureConfigReplica() (*peerConfigReplica, error) {
 		return nil, fmt.Errorf("open Peer Space config replica: %w", err)
 	}
 	runtime := &peerConfigReplica{
-		spaceID: genesis.Document.SpaceID, replica: replica, identity: identity, keys: keys, manager: m,
+		spaceID: genesis.Document.SpaceID, replica: replica, identity: identity,
+		keys: keys, epochKeys: epochKeys, manager: m,
 	}
 	m.configReplica = runtime
 	return runtime, nil
+}
+
+func recoverPeerEpochKeys(
+	state peerstore.State,
+	genesis peerproto.VerifiedGenesis,
+	peerID string,
+	wrapping *peercrypto.WrappingIdentity,
+	current map[configsync.KeyClass]configsync.EpochKey,
+) (map[configsync.KeyClass]map[uint64][]configsync.EpochKey, error) {
+	keys := make(map[configsync.KeyClass]map[uint64][]configsync.EpochKey, len(current))
+	add := func(key configsync.EpochKey) {
+		byEpoch := keys[key.Class]
+		if byEpoch == nil {
+			byEpoch = make(map[uint64][]configsync.EpochKey)
+			keys[key.Class] = byEpoch
+		}
+		for _, existing := range byEpoch[key.Epoch] {
+			if bytes.Equal(existing.Bytes(), key.Bytes()) {
+				return
+			}
+		}
+		byEpoch[key.Epoch] = append(byEpoch[key.Epoch], key)
+	}
+	for _, key := range current {
+		add(key)
+	}
+	for _, token := range state.EpochRotations {
+		rotation, err := configsync.VerifyEpochRotation(token, genesis)
+		if err != nil {
+			return nil, fmt.Errorf("verify Peer Space epoch history: %w", err)
+		}
+		key, err := configsync.OpenRotationEpochKey(rotation, genesis, peerID, wrapping)
+		if err != nil {
+			continue
+		}
+		if err := configsync.ValidateEpochKeyForRotation(key, rotation); err != nil {
+			return nil, fmt.Errorf("verify Peer Space epoch history key: %w", err)
+		}
+		add(key)
+	}
+	return keys, nil
 }
 
 func samePeerEpochs(left, right map[configsync.KeyClass]configsync.EpochKey) bool {
@@ -116,10 +169,6 @@ func (r *peerConfigReplica) materializeRelayValues(codec configsync.SealedRelayC
 }
 
 func (r *peerConfigReplica) materializeRelayValuesMatching(codec configsync.SealedRelayCodec, include func(string) bool) ([]configsync.RelayValue, []error) {
-	resolve := func(class configsync.KeyClass, epoch uint64) (configsync.EpochKey, bool) {
-		key, ok := r.keys[class]
-		return key, ok && key.Epoch == epoch
-	}
 	values := make([]configsync.RelayValue, 0, len(configsync.RelayKeySpecs()))
 	var errs []error
 	for _, spec := range configsync.RelayKeySpecs() {
@@ -130,7 +179,7 @@ func (r *peerConfigReplica) materializeRelayValuesMatching(codec configsync.Seal
 		for _, collection := range spec.Collections {
 			records = append(records, r.replica.Records(collection)...)
 		}
-		value, ok, err := configsync.MaterializeRelayValue(spec.Key, records, resolve, codec)
+		value, ok, err := configsync.MaterializeRelayValueCandidates(spec.Key, records, r.resolveEpochKeys, codec)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("materialize Relay key %s: %w", spec.Key, err))
 			continue
@@ -191,14 +240,10 @@ func (r *peerConfigReplica) appendLocalRelayKey(cfg appConfig, relayKey string) 
 			if record.Deleted {
 				continue
 			}
-			key, ok := r.keys[record.KeyClass]
-			if !ok {
+			if len(r.resolveEpochKeys(record.KeyClass, record.KeyEpoch)) == 0 {
 				continue
 			}
-			if key.Epoch != record.KeyEpoch {
-				return 0, fmt.Errorf("open Peer config %s/%s: %w: epoch %d unavailable", record.Collection, record.RecordID, configsync.ErrInvalidEpochKey, record.KeyEpoch)
-			}
-			plain, err := configsync.OpenPlainRecord(record, key)
+			plain, err := r.openRecord(record)
 			if err != nil {
 				return 0, fmt.Errorf("open Peer config %s/%s: %w", record.Collection, record.RecordID, err)
 			}
@@ -220,6 +265,29 @@ func (r *peerConfigReplica) appendLocalRelayKey(cfg appConfig, relayKey string) 
 		return 0, nil
 	}
 	return r.appendPeerConfigMutations("local Peer config "+relayKey, mutations)
+}
+
+func (r *peerConfigReplica) resolveEpochKeys(class configsync.KeyClass, epoch uint64) []configsync.EpochKey {
+	if r == nil || r.epochKeys[class] == nil {
+		return nil
+	}
+	return r.epochKeys[class][epoch]
+}
+
+func (r *peerConfigReplica) openRecord(record configsync.Record) (configsync.PlainRecord, error) {
+	keys := r.resolveEpochKeys(record.KeyClass, record.KeyEpoch)
+	if len(keys) == 0 {
+		return configsync.PlainRecord{}, fmt.Errorf("%w: epoch %s/%d unavailable", configsync.ErrInvalidEpochKey, record.KeyClass, record.KeyEpoch)
+	}
+	var lastErr error
+	for _, key := range keys {
+		plain, err := configsync.OpenPlainRecord(record, key)
+		if err == nil {
+			return plain, nil
+		}
+		lastErr = err
+	}
+	return configsync.PlainRecord{}, lastErr
 }
 
 // appendRelayValue imports one legacy Relay winner into the canonical

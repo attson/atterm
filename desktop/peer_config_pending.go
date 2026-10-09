@@ -101,18 +101,17 @@ func (m *peerSpaceManager) acceptPendingPeerConfig() (int, error) {
 func (r *peerConfigReplica) appendPendingPeerConfig(records []configsync.PlainRecord) (int, error) {
 	previous := make([]configsync.PlainRecord, 0, len(records))
 	for _, record := range records {
-		key, available := r.keys[record.KeyClass]
-		if !available {
+		if _, available := r.keys[record.KeyClass]; !available {
 			return 0, fmt.Errorf("accept pending Peer config: key class %s unavailable", record.KeyClass)
 		}
 		current, exists := r.replica.Get(record.Collection, record.RecordID)
 		if !exists || current.Deleted {
 			continue
 		}
-		if current.KeyClass != record.KeyClass || current.KeyEpoch != key.Epoch {
+		if current.KeyClass != record.KeyClass || len(r.resolveEpochKeys(current.KeyClass, current.KeyEpoch)) == 0 {
 			return 0, fmt.Errorf("accept pending Peer config %s/%s: %w", record.Collection, record.RecordID, configsync.ErrInvalidEpochKey)
 		}
-		opened, err := configsync.OpenPlainRecord(current, key)
+		opened, err := r.openRecord(current)
 		if err != nil {
 			return 0, err
 		}

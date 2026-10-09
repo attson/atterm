@@ -177,6 +177,58 @@ func TestCreatePeerSpacePersistsAndRecoversInitialEpochKeys(t *testing.T) {
 	}
 }
 
+func TestPeerEpochKeysRotateOnScheduleWithoutLosingOldConfig(t *testing.T) {
+	app, now := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{TerminalTheme: "nord"}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := currentEpochRotations(state.EpochRotations, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.peerSpace.now = func() time.Time { return now.Add(peerEpochKeyRotationInterval + time.Minute) }
+	if rotated, err := app.peerSpace.rotateEpochKeysIfNeeded(); err != nil || !rotated {
+		t.Fatalf("scheduled rotation=%t err=%v", rotated, err)
+	}
+	updated, err := app.peerSpace.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := currentEpochRotations(updated.EpochRotations, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, class := range []configsync.KeyClass{configsync.KeyClassSync, configsync.KeyClassVault} {
+		if after[class].Document.Epoch != before[class].Document.Epoch+1 {
+			t.Fatalf("%s epoch=%d want=%d", class, after[class].Document.Epoch, before[class].Document.Epoch+1)
+		}
+	}
+	runtime, err := app.peerSpace.ensureConfigReplica()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, ok := runtime.replica.Get(configsync.CollectionPreferences, "terminal_theme")
+	if !ok || record.KeyEpoch != 1 {
+		t.Fatalf("pre-rotation record=%+v present=%t", record, ok)
+	}
+	plain, err := runtime.openRecord(record)
+	if err != nil || string(plain.Value) != `"nord"` {
+		t.Fatalf("open pre-rotation value=%s err=%v", plain.Value, err)
+	}
+	if rotated, err := app.peerSpace.rotateEpochKeysIfNeeded(); err != nil || rotated {
+		t.Fatalf("repeated scheduled rotation=%t err=%v", rotated, err)
+	}
+}
+
 func TestCreatePeerSpaceInitializesDurableConfigReplica(t *testing.T) {
 	app, _ := newTestPeerApp(t)
 	status, err := app.CreatePeerSpace()

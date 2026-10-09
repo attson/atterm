@@ -219,8 +219,11 @@ New non-root memberships now expire after 90 days and are renewed during an auth
 inside a 30-day window. A renewal preserves the subject signing/wrapping public keys and exact capabilities,
 uses a fresh serial, cannot be self-issued, and is distributed as an ordinary membership anti-entropy item.
 The receiving device promotes its local grant only after both public keys match its existing identity. Expired,
-revoked, or stale grants fail closed and require a new invitation. The hardening item remains open until periodic
-epoch-key renewal and encrypted trust export/import are implemented.
+revoked, or stale grants fail closed and require a new invitation. Epoch-key renewal now advances sync and vault
+together every 30 days when the genesis creator next opens an authenticated config exchange. Historical rotation
+envelopes remain the source for old record keys; the Go owner can retain multiple authenticated key candidates
+for a concurrent epoch and AEAD-select the matching one, while all new writes use the canonical head. The
+hardening item remains open for trust export/import and its packaged recovery verification.
 
 ## Stage Exit Gate
 

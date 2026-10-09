@@ -74,6 +74,9 @@ func (c *peerConfigChannel) Start(ctx context.Context) error {
 		if _, err := manager.renewMembershipIfNeeded(c.receiver.remote); err != nil {
 			return err
 		}
+		if _, err := manager.rotateEpochKeysIfNeeded(); err != nil {
+			return err
+		}
 	}
 	inventory, err := c.localInventory()
 	if err != nil {

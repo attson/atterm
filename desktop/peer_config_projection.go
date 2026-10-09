@@ -81,7 +81,7 @@ func (r *peerConfigReplica) projectPortableKey(projected *appConfig, spec config
 	if !found {
 		return nil
 	}
-	value, ok, err := configsync.MaterializeRelayValue(spec.Key, records, r.resolveEpochKey, nil)
+	value, ok, err := configsync.MaterializeRelayValueCandidates(spec.Key, records, r.resolveEpochKeys, nil)
 	if err != nil {
 		return err
 	}
@@ -218,18 +218,14 @@ func (r *peerConfigReplica) openLocalProjectionRecords(collections []string) ([]
 	found := false
 	for _, collection := range collections {
 		for _, record := range r.replica.Records(collection) {
-			key, available := r.keys[record.KeyClass]
-			if !available {
+			if len(r.resolveEpochKeys(record.KeyClass, record.KeyEpoch)) == 0 {
 				continue
 			}
 			found = true
 			if record.Deleted {
 				continue
 			}
-			if key.Epoch != record.KeyEpoch {
-				return nil, false, fmt.Errorf("%w: epoch %s/%d unavailable", configsync.ErrInvalidEpochKey, record.KeyClass, record.KeyEpoch)
-			}
-			opened, err := configsync.OpenPlainRecord(record, key)
+			opened, err := r.openRecord(record)
 			if err != nil {
 				return nil, false, err
 			}
@@ -237,9 +233,4 @@ func (r *peerConfigReplica) openLocalProjectionRecords(collections []string) ([]
 		}
 	}
 	return plain, found, nil
-}
-
-func (r *peerConfigReplica) resolveEpochKey(class configsync.KeyClass, epoch uint64) (configsync.EpochKey, bool) {
-	key, ok := r.keys[class]
-	return key, ok && key.Epoch == epoch
 }

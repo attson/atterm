@@ -1091,6 +1091,13 @@ serial、membership 中的 wrapping public key 与 `ake1` envelope，缺少、�
 保留供诊断/anti-entropy，但不能进入 canonical chain，必须基于 winner 重新轮换。设备解开自己的
 `ake1` 后还要核对 key commitment，防止同一 rotation 给不同 recipient 包裹不同 epoch key。
 
+除成员撤销触发的即时 rotation 外，genesis creator 在任一 current rotation 满 30 天后的下一次
+authenticated config exchange 同时轮换 sync/vault 两类 key；其它 admin 不发起周期 rotation。
+配置 mutation 继续记录 `key_class + key_epoch`，设备从已签名 `akr1` 历史中恢复自己有权打开的 key。
+同一 epoch 若存在并发候选，运行时保留全部可验证 key candidate，并用 payload AEAD authentication
+选择实际加密该记录的 key；新写入只使用 canonical current key。历史 key 只在持有本机 wrapping
+private key 的 Go owner 内存中解封，不进入 renderer、日志或诊断导出。
+
 配置与治理状态通过 transport-independent anti-entropy JSON 消息交换，不占用 Relay
 `proto.Type`。接收端先发送 `AntiEntropyInventory{v,space_id,vector,membership_hashes,
 revocation_hashes,rotation_hashes}`：config history 用 contiguous version vector 摘要，grow-only

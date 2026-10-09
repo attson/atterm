@@ -172,8 +172,14 @@ replace release soak or device testing.
 Rendezvous restart chaos now runs through the production desktop lifecycle against two generations
 of the real in-memory service behind one stable endpoint. The test disconnects every active socket,
 holds the endpoint unavailable until the client reports a bounded retry, then proves it registers a
-fresh host route with cleared failure state after the service returns. Relay restart, Quick Tunnel URL
-rotation, route flapping and cross-route late-frame chaos remain before the Chaos item can close.
+fresh host route with cleared failure state after the service returns.
+
+Quick Tunnel URL rotation now has a deterministic process-level chaos test: after the helper publishes
+the first URL, the test kills that process, verifies the manager removes the stale public URL and local
+gateway, then explicitly starts a fresh process that publishes a different URL. Existing signed bundle,
+Rendezvous catalog and client cache tests cover distribution and atomic replacement of that new hint.
+The manager remains intentionally user-started rather than silently restarting cloudflared. Relay restart,
+route flapping and cross-route late-frame chaos remain before the Chaos item can close.
 
 ## Stage Exit Gate
 

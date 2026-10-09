@@ -185,6 +185,64 @@ func TestManagerStopWaitsForInFlightStartCleanup(t *testing.T) {
 	}
 }
 
+func TestManagerProcessRestartRotatesPublicURL(t *testing.T) {
+	var launches atomic.Int32
+	m := New(Config{
+		Executable:   os.Args[0],
+		StartTimeout: 2 * time.Second,
+		StopTimeout:  time.Second,
+	})
+	m.command = func(executable string, args ...string) *exec.Cmd {
+		launch := launches.Add(1)
+		publicURL := "https://second-route.trycloudflare.com"
+		if launch == 1 {
+			publicURL = "https://first-route.trycloudflare.com"
+		}
+		helperArgs := []string{"-test.run=TestQuickTunnelHelperProcess", "--"}
+		helperArgs = append(helperArgs, args...)
+		cmd := exec.Command(executable, helperArgs...)
+		cmd.Env = append(os.Environ(),
+			"ATTERM_QUICKTUNNEL_HELPER=1",
+			"ATTERM_QUICKTUNNEL_HELPER_MODE=url-stderr",
+			"ATTERM_QUICKTUNNEL_PUBLIC_URL="+publicURL,
+		)
+		return cmd
+	}
+
+	first, err := m.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Running || first.PublicURL != "https://first-route.trycloudflare.com" {
+		t.Fatalf("first status=%+v", first)
+	}
+	m.mu.Lock()
+	firstRun := m.run
+	m.mu.Unlock()
+	if firstRun == nil {
+		t.Fatal("first Quick Tunnel run disappeared before crash injection")
+	}
+	if err := killProcess(firstRun.cmd); err != nil {
+		t.Fatalf("crash first Quick Tunnel process: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for m.Status().Running && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if stopped := m.Status(); stopped.Running || stopped.PublicURL != "" || stopped.LocalOrigin != "" {
+		t.Fatalf("status after process exit=%+v", stopped)
+	}
+
+	second, err := m.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = m.Stop() }()
+	if !second.Running || second.PublicURL != "https://second-route.trycloudflare.com" || launches.Load() != 2 {
+		t.Fatalf("second status=%+v launches=%d", second, launches.Load())
+	}
+}
+
 func newHelperManager(t *testing.T, mode, argsFile string, startTimeout, stopTimeout time.Duration) *Manager {
 	t.Helper()
 	m := New(Config{
@@ -228,7 +286,11 @@ func TestQuickTunnelHelperProcess(t *testing.T) {
 
 	switch os.Getenv("ATTERM_QUICKTUNNEL_HELPER_MODE") {
 	case "url-stderr":
-		fmt.Fprintln(os.Stderr, "INF Your quick Tunnel is available at https://quiet-field.trycloudflare.com")
+		publicURL := os.Getenv("ATTERM_QUICKTUNNEL_PUBLIC_URL")
+		if publicURL == "" {
+			publicURL = "https://quiet-field.trycloudflare.com"
+		}
+		fmt.Fprintln(os.Stderr, "INF Your quick Tunnel is available at "+publicURL)
 		waitForTermination(false)
 	case "invalid-exit":
 		fmt.Fprintln(os.Stdout, "https://nested.bad.trycloudflare.com")

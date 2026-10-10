@@ -1,7 +1,10 @@
 # 路线图
 
-## 状态速览 (2026-08-29)
+## 状态速览 (2026-10-10)
 
+- **Accountless P2P 实现已推进到 Stage 4**：Relay 直连加速已发布；Peer Space、预签邀请、去中心化配置同步、Web/iOS Quick Tunnel bridge、受校验的 `cloudflared` 安装、Rendezvous 发现/信令、混合接管和 zero-session host control 已实现。协议和逐阶段 gate 见 [`2026-09-22-accountless-p2p.md`](./superpowers/plans/2026-09-22-accountless-p2p.md)。
+- **官方 Rendezvous 部署仍阻塞**：`rendezvous.atterm.dev` 无 DNS，现有仓库和 GitHub environment 没有 DNS/部署凭据；self-host/local contract 已通过，不能据此声称官方服务已验收。
+- **P2P 默认开启仍需实机 gate**：真实 NAT/WebKit/iOS、iOS 后台、双打包桌面 LAN-only、跨机器信任恢复及 battery/data 测量尚未完成；自动 fallback 继续 opt-in。
 - **v0.4.19** 已发布(2026-08-16)。桌面 dmg / Linux deb+tar / Windows exe+zip 全平台构件已 upload,SHA256SUMS + GPG 签名附。
 - **下一阶段方向已定**:以配置同步层为主线,补本地终端基本功 + SSH 主机能力,见 [`docs/superpowers/specs/2026-08-16-sync-layer-roadmap-design.md`](./superpowers/specs/2026-08-16-sync-layer-roadmap-design.md)。对应下面的 **P5 / P6 / P7**;原 P3(协作)降级到 Backlog、原 P4(历史与回放)暂缓。
 - **桌面挂件**(Desk Widget)已落地:置顶悬浮小窗显示所有会话的运行 / 失败 / 等待输入状态,点行跳转对应 tab。走插件模式(Settings → 插件),可选"仅 AI 会话"。设计与踩坑记录见 [`docs/superpowers/specs/2026-08-10-desk-widget-design.md`](./superpowers/specs/2026-08-10-desk-widget-design.md),不变量见 AGENTS.md 红线 #37。
@@ -536,6 +539,21 @@
 **刻意不做**：公网分享 URL、任意 host/通用 TCP/SOCKS、自动端口扫描、relay
 解密或 HTTP 感知。阶段 1 的价值是“离开工位后能看开发服务”，不是把 atterm
 变成通用内网穿透产品。
+
+## Accountless P2P release train（v0.6-v0.9）
+
+- [x] v0.6 Relay 账户内 WebRTC 直连加速与 Relay fallback。
+- [x] Peer Space 设备身份、预签邀请、撤销、epoch key 与去中心化配置 anti-entropy。
+- [x] Quick Tunnel WebRTC-first / encrypted WSS、Web/iOS client bridge、显式 fallback consent。
+- [x] Desktop 可选 verified `cloudflared` 安装；安装与公开 tunnel 启动仍是两个显式动作。
+- [x] 自建 Rendezvous 服务、共享 contract、稳定发现、pairwise encrypted signaling 与 Desktop attach。
+- [ ] 官方 `rendezvous.atterm.dev` 部署及同一 contract 验收（外部 DNS/部署权限阻塞）。
+- [x] Direct/Quick Tunnel route lease、100 次 handover、paste/file/session-create/Preview enforcement。
+- [x] 零会话主机通过独立 `host_info` 被发现，并用无 PTY subscriber 的 host-control route 创建 profile session。
+- [ ] 打包端真实 NAT/iOS background/LAN-only/trust recovery/battery-data release gates。
+- [ ] Relay 与 Peer 两种 trust principal 之间的自动 cross-principal handover；当前仍保持显式分离。
+
+第 7 项桌面安装包 codesign/notarization 继续跳过，不属于本轮 P2P 实现完成条件。
 
 ## 阻塞于外部凭据
 

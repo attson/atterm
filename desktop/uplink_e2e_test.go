@@ -153,11 +153,6 @@ func TestUplinkE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e test")
 	}
-	// TODO(task-3.3): rewire desktop e2e tests after Phase 3 (per-user session
-	// tokens). The uplink currently sends "Bearer rt"; the remote relay now
-	// requires a real userstore session, so every uplink dial returns 401.
-	// Skipping until Phase 3 mints session tokens for these fixtures.
-	t.Skip("desktop uplink-e2e needs session tokens (Phase 3)")
 
 	// 1. remote relay (backed by an in-memory userstore + one session token).
 	remoteAddr, remoteTok := startE2ERemoteRelay(t)

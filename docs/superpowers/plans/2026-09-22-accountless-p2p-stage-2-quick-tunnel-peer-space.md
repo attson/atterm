@@ -6,7 +6,15 @@
 > Release: v0.7.0 beta, v0.7.x stable after soak
 > Outcome: 用户不登录 Relay，也能通过预签邀请和 Quick Tunnel 接管终端并同步配置。
 
-Implementation status (2026-09-28): PR 2.1 foundation is in progress on
+Completion update (2026-10-10): the Stage 2 implementation is complete in the feature line. Desktop hosts,
+browser clients and Capacitor/iOS clients share the accountless invitation/membership handshake and encrypted
+Quick Tunnel transport. Web/iOS prefer WebRTC and expose encrypted WSS fallback only after explicit device-local
+consent. Desktop can use an existing `cloudflared` or explicitly install a platform/architecture-matched binary
+after verifying the upstream SHA-256 manifest; installation is atomic and tunnel publication remains a separate
+user action. The deterministic gates below pass. Packaged iOS background/network and battery/data soak remain
+Stage 4 release gates, not unfinished Stage 2 protocol work.
+
+Historical implementation log (2026-09-28): PR 2.1 foundation was in progress on
 `feature/peer-space-foundation`. P-256 desktop identity storage、immutable
 genesis、signed membership、route-independent `atp1` invitation batches、
 encrypted invite ledger and cross-process single-use/revocation writes are
@@ -152,7 +160,7 @@ The shared Settings join UI now accepts pasted tokens and fragment deep links,
 shows the authenticated fingerprint/capabilities/route, and requires explicit
 confirmation before redemption. It exposes QR scanning only when both a Peer
 bridge and Capacitor camera capability are present. Web/iOS Peer bridge wiring
-and the end-user fallback consent flow remain pending. Desktop Settings now
+and the end-user fallback consent flow are now implemented. Desktop Settings now
 also exposes the explicit Quick Tunnel start/stop lifecycle and copies a
 ticketless member reconnect bundle for the current route. Regenerating that
 bundle after URL rotation does not mint or replace durable membership. The
@@ -252,14 +260,14 @@ Gateway supports encrypted signaling and binary WSS. It authenticates only throu
 
 ## Stage Exit Gate
 
-- [ ] Fresh Desktop/Web/iOS client joins and controls a desktop without Relay login.
-- [ ] Same invitation/trust survives Quick Tunnel route URL changes; only route bundle refreshes.
-- [ ] WebRTC is preferred; forced ICE failure uses encrypted WSS only with consent.
-- [ ] Three devices eventually converge config through available Peer connections.
-- [ ] No online peer means visible pending sync, not data loss or hidden cloud storage.
-- [ ] Vault data is off by default and capability-gated.
-- [ ] Settings is scrollable at desktop/mobile target sizes.
-- [ ] Existing Relay acceleration still works and remains independently disableable.
+- [x] Fresh Desktop/Web/iOS client joins and controls a desktop without Relay login.
+- [x] Same invitation/trust survives Quick Tunnel route URL changes; only route bundle refreshes.
+- [x] WebRTC is preferred; forced ICE failure uses encrypted WSS only with consent.
+- [x] Three devices eventually converge config through available Peer connections.
+- [x] No online peer means visible pending sync, not data loss or hidden cloud storage.
+- [x] Vault data is off by default and capability-gated.
+- [x] Settings is scrollable at desktop/mobile target sizes.
+- [x] Existing Relay acceleration still works and remains independently disableable.
 
 Verification:
 

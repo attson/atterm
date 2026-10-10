@@ -6,6 +6,14 @@
 > Release: v0.8.0
 > Outcome: Peer Space 成员通过官方或自建 Rendezvous 稳定发现并建立直连，不依赖临时 Quick Tunnel URL。
 
+Status update (2026-10-10): service, self-host contract, stable discovery, encrypted signaling, Desktop
+session attach and operational UX are implemented. The only Stage 3 exit item still open is the official
+deployment: `rendezvous.atterm.dev` does not resolve and the available repository/GitHub environment has no
+DNS or deployment credential. Local contract output is
+`protocol_version=1, live_delivery=true, mailbox_delivery=true, retry_deduplicated=true,
+oversize_rejected=true, metrics_private=true`; it is evidence for the shared implementation, not a substitute
+for running the same suite against the official origin.
+
 ## Product Boundary
 
 - Rendezvous 只做 presence/discovery/signaling。
@@ -40,8 +48,9 @@ Implementation status: canonical official/custom/disabled endpoint and STUN conf
 browser capability preflight, self-host container/docs, and the shared black-box contract runner
 are implemented. Settings presentation and connection lifecycle remain in PR 3.4/3.5.
 The self-hosted production-proxy posture passes the black-box runner locally. The official
-`rendezvous.atterm.dev` origin did not resolve during the 2026-10-08 acceptance run, so the shared
-deployment gate remains open rather than treating the in-process service test as an official check.
+`rendezvous.atterm.dev` origin still did not resolve during the 2026-10-10 acceptance audit, and no DNS,
+Cloudflare, SSH, Kubernetes or hosted-platform deployment credential is available. The shared deployment
+gate remains open rather than treating the in-process service test as an official check.
 
 - Publish one protocol and contract suite for both deployments。
 - Official/custom/disabled URL configuration。
@@ -129,7 +138,7 @@ suite separately checks DEBUG logs and metrics for routing, identity and payload
 ## Stage Exit Gate
 
 - [x] A trusted client reconnects after desktop restart without receiving a new Quick Tunnel URL.
-- [ ] Official and self-hosted services pass the same contract suite.
+- [ ] Official and self-hosted services pass the same contract suite. Self-host/local passes; official DNS/deploy is externally blocked.
 - [x] Rendezvous restart only drops ephemeral presence/signaling.
 - [x] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
 - [x] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.

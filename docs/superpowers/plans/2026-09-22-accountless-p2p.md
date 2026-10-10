@@ -1,12 +1,12 @@
 # Accountless P2P Remote Access Implementation Plan
 
-> Status: Proposed
+> Status: Active — Stages 0-2 implemented; Stage 3 official deployment and Stage 4 packaged-device gates remain
 > Date: 2026-09-22
 > Prototype: `docs/prototypes/peer-connect/index.html`
 
 ## Release Train
 
-当前 HEAD 可达的最新版本是 `v0.5.20`。路线图中以 v0.6/v0.7/v0.8 命名的 SSH、同步与 Preview 工作已经提前落在 v0.5.x，因此 P2P 从下一条 minor line 开始。版本号在实际打 tag 时仍按“当前 HEAD 可达 tag”重新核对，不从分支名推断。
+截至 2026-10-10，当前 HEAD 可达的最新版本是 `v0.6.0`。后续版本号在实际打 tag 时仍按“当前 HEAD 可达 tag”重新核对，不从分支名推断。Stage 3 的官方 Rendezvous 部署因 DNS/部署凭据缺失保持未完成；Stage 4 的真实设备与网络 gate 不由模拟测试替代。
 
 | Release | Included stages | User-visible outcome | Default / rollback | Compatibility gate |
 |---|---|---|---|---|

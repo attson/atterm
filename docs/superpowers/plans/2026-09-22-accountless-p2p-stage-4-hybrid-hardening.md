@@ -103,13 +103,14 @@ and outbound results revalidate membership, scope, owner `full` policy and route
 changes reject client pending RPCs and discard stale results. The Peer record supplies E2EE, so FS
 payloads stay single-segment and do not depend on Relay `account_key`; read/write caps and permanently
 denied credential directories remain unchanged. Remote profile launch reuses `SESSION_CREATE` /
-`SESSION_CREATED` over a temporary authenticated Peer terminal route. The client selects a discoverable
-control/full session on the requested host as an authorization anchor, prefers Direct over Quick Tunnel,
-and sends only request/host/profile ids. The owner resolves the profile locally, rechecks membership,
-session scope, owner policy and route lease before fork and response, limits each route to one in-flight
-create, and drops late results after downgrade or route replacement. The request is never retried after it
-starts. A target currently needs at least one discoverable session; zero-session host control remains a
-future extension. Peer Remote Web Preview reuses `SERVICE_OPEN` / `SERVICE_OPENED` /
+`SESSION_CREATED` over a temporary authenticated Peer host-control route. The encrypted catalog carries a
+first-page `host_info` descriptor independently of session count, so an authorized desktop remains selectable
+with zero open PTYs. The client prefers Direct over Quick Tunnel and sends only request/host/profile ids. Quick
+Tunnel fallback requires the existing device-local consent and is allowed only before the create record starts
+transmission. The owner resolves the profile locally, requires exact active unscoped memberships, rechecks owner
+policy and target host id before fork and response, limits each route to one in-flight create, and never creates
+a PTY subscriber for the control route. The request is never retried after it starts. Peer Remote Web Preview
+reuses `SERVICE_OPEN` / `SERVICE_OPENED` /
 `SERVICE_CLOSE` for control but carries TCP bytes in a new authenticated `RecordService` logical
 channel, independently of terminal frames and PTY subscriber lifecycle. Direct Pion and Quick Tunnel
 WSS use the same bounded service codec; WSS schedules service below terminal and above config sync.
@@ -240,14 +241,34 @@ handshake with another active member, exchange the real config anti-entropy inve
 remote preference and persist both durable exchange cursors. The hardening item remains open only for packaged
 cross-machine recovery verification on a signed desktop build.
 
+### Gate audit (2026-10-10)
+
+Deterministic coverage and physical-device release gates are tracked separately so a simulator result cannot
+silently satisfy a hardware/network claim:
+
+| Area | Hermetic evidence | Remaining external gate |
+|---|---|---|
+| NAT and network switch | `TestPionNATMatrix` covers host/srflx, endpoint-independent NAT, symmetric NAT fail-closed, UDP blocked and disconnect/reconnect | Packaged Chromium/WebKit/iOS across real home, carrier and restrictive networks |
+| Route ownership | Client and host suites force 100 handovers/replacements with monotonic OUT and one IN/driver owner | Packaged cross-network soak before automatic fallback is default-on |
+| Replay/config soak | 8 MiB/4,096-frame client lifecycle test and ~400 KiB authenticated config snapshot retry test | Packaged iOS foreground/background soak |
+| LAN-only | Production listener invitation/catalog/config/terminal E2E runs with public routes suppressed | Two packaged desktops on a real LAN |
+| Trust recovery | Fresh-store identity, membership handshake and config exchange pass without plaintext keys | Packaged cross-machine import/export |
+| Data/energy | Privacy-preserving per-route application-byte counters and personal dashboard are automated | Desktop idle, iOS foreground/background battery and OS-level data measurements |
+| Official Rendezvous | Local black-box contract passes protocol v1 live/mailbox/retry/size/privacy checks | Deploy `rendezvous.atterm.dev`, configure DNS/TLS, then run the same contract against it |
+
+The official endpoint is currently externally blocked: `rendezvous.atterm.dev` has no DNS record and this
+repository/account exposes no DNS, Cloudflare, SSH, Kubernetes or platform deployment credential. The `prod`
+GitHub environment only contains update-signing and Docker Hub secrets. This is not a code-test failure and is
+not marked complete.
+
 ## Stage Exit Gate
 
-- [ ] Same session is shown once across available route candidates.
+- [x] Same session is shown once across available route candidates.
 - [x] 100 forced handovers have no OUT gaps/duplicates and no duplicate IN.
-- [ ] Direct success removes high-volume bytes from Relay/Quick paths.
-- [ ] Every expanded capability has transport and desktop enforcement tests.
-- [ ] Peer-only mode never requires Relay login/account key.
-- [ ] LAN/manual mode operates with all public services disabled.
+- [x] Direct success removes high-volume bytes from Relay/Quick paths.
+- [x] Every expanded capability has transport and desktop enforcement tests.
+- [x] Peer-only mode never requires Relay login/account key.
+- [ ] LAN/manual mode operates with all public services disabled. Hermetic E2E passes; two packaged desktops remain.
 - [ ] No path logs or exports `account_key`, Peer private key or epoch key.
 
 Minimum full gate:

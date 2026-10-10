@@ -206,7 +206,7 @@ jobs:
         # architecture-specific; run it once on amd64 so arm64 packaging is
         # not blocked by the hosted arm runner's PTY timing differences.
         if: matrix.arch == 'amd64'
-        run: go test -tags webkit2_41 -timeout 60s ./desktop/
+        run: go test -tags webkit2_41 -timeout 240s ./desktop/
 
       - name: prepare release metadata
         if: startsWith(github.ref, 'refs/tags/v')

@@ -67,6 +67,50 @@ services:
     # "--https-addr", ":8443" here and set ATTERM_TLS_CERT/ATTERM_TLS_KEY.
     command: ["--addr", ":8080"]
 
+  atterm-rendezvous:
+    image: ${ATTERM_RENDEZVOUS_IMAGE:-atterm-rendezvous:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.rendezvous
+      args:
+        GOPROXY: ${ATTERM_RENDEZVOUS_GOPROXY:-https://proxy.golang.org,direct}
+    container_name: atterm-rendezvous
+    profiles: ["rendezvous"]
+    restart: unless-stopped
+    # Rendezvous is an optional, accountless discovery/signaling service. It
+    # has no database and never carries terminal or config bytes. Host network
+    # mode lets the process bind the host loopback, so Caddy or cloudflared in
+    # the host network namespace can terminate TLS without exposing the
+    # plaintext backend. A proxy in a normal Docker bridge cannot reach this
+    # loopback address; give that proxy host networking as well.
+    network_mode: host
+    environment:
+      # Exact browser origins that may open /v1/connect. This is the origin of
+      # the web client, not the Rendezvous domain. Native desktop clients send
+      # no Origin; Capacitor uses capacitor://localhost.
+      ATTERM_RENDEZVOUS_ORIGINS: ${ATTERM_RENDEZVOUS_ORIGINS:-http://localhost:8080,capacitor://localhost}
+      ATTERM_RENDEZVOUS_LOG_LEVEL: ${ATTERM_RENDEZVOUS_LOG_LEVEL:-INFO}
+      # A zero/empty limit uses the server's bounded default documented in
+      # site/docs/guide/deploy-rendezvous.md.
+      ATTERM_RENDEZVOUS_MAX_CONNECTIONS: ${ATTERM_RENDEZVOUS_MAX_CONNECTIONS:-0}
+      ATTERM_RENDEZVOUS_MAX_CONNECTIONS_PER_IP: ${ATTERM_RENDEZVOUS_MAX_CONNECTIONS_PER_IP:-0}
+      ATTERM_RENDEZVOUS_MAX_CONNECTIONS_PER_TOPIC: ${ATTERM_RENDEZVOUS_MAX_CONNECTIONS_PER_TOPIC:-0}
+      ATTERM_RENDEZVOUS_MAX_MAILBOX_PER_TOPIC: ${ATTERM_RENDEZVOUS_MAX_MAILBOX_PER_TOPIC:-0}
+      ATTERM_RENDEZVOUS_MAX_MAILBOX_GLOBAL: ${ATTERM_RENDEZVOUS_MAX_MAILBOX_GLOBAL:-0}
+      ATTERM_RENDEZVOUS_MAX_RECENT_MESSAGES: ${ATTERM_RENDEZVOUS_MAX_RECENT_MESSAGES:-0}
+      ATTERM_RENDEZVOUS_MAX_MESSAGES_PER_MINUTE_PER_IP: ${ATTERM_RENDEZVOUS_MAX_MESSAGES_PER_MINUTE_PER_IP:-0}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - "--addr"
+      - "127.0.0.1:${ATTERM_RENDEZVOUS_BACKEND_PORT:-8081}"
+      - "--behind-tls-proxy"
+
   postgres:
     image: ${ATTERM_PG_IMAGE:-postgres:16-alpine}
     container_name: atterm-postgres

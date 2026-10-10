@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,8 +12,17 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+func withIsolatedPeerConfigHome(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("APPDATA", filepath.Join(root, "config"))
+	t.Setenv("LocalAppData", filepath.Join(root, "local"))
+}
+
 func TestPeerRendezvousConfigPersistsWithoutChangingRelay(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	withIsolatedPeerConfigHome(t)
 	app := &App{cfgStore: loadConfig()}
 	cfg := app.cfgStore.Get()
 	cfg.RelayURL = "wss://relay.example"
@@ -43,7 +53,7 @@ func TestPeerRendezvousConfigPersistsWithoutChangingRelay(t *testing.T) {
 }
 
 func TestPeerRendezvousConfigDefaultsDisabledAndRejectsPublicPlaintext(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	withIsolatedPeerConfigHome(t)
 	app := &App{cfgStore: loadConfig()}
 	got, err := app.GetPeerRendezvousConfig()
 	if err != nil {
@@ -60,7 +70,7 @@ func TestPeerRendezvousConfigDefaultsDisabledAndRejectsPublicPlaintext(t *testin
 }
 
 func TestPeerRendezvousConfigStaysOutOfReplicationAndExport(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	withIsolatedPeerConfigHome(t)
 	app := &App{cfgStore: loadConfig()}
 	if err := app.SetPeerRendezvousConfig(SetPeerRendezvousConfigReq{
 		Mode: "custom", URL: "https://local-only-rendezvous.example",
@@ -105,7 +115,7 @@ func TestPeerRendezvousConfigStaysOutOfReplicationAndExport(t *testing.T) {
 }
 
 func TestPeerTURNCredentialUsesKeychainAndCanBePreservedOrCleared(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	withIsolatedPeerConfigHome(t)
 	app := &App{cfgStore: loadConfig()}
 	request := SetPeerRendezvousConfigReq{
 		Mode: "official", STUNMode: "default",
@@ -166,7 +176,7 @@ func TestPeerTURNCredentialUsesKeychainAndCanBePreservedOrCleared(t *testing.T) 
 }
 
 func TestPeerTURNRequiresCredentialOnFirstEnable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	withIsolatedPeerConfigHome(t)
 	app := &App{cfgStore: loadConfig()}
 	err := app.SetPeerRendezvousConfig(SetPeerRendezvousConfigReq{
 		Mode: "official", STUNMode: "default", TURNEnabled: true,

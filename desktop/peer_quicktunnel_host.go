@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/peercrypto"
 	"github.com/attson/atterm/internal/peerproto"
 	"github.com/attson/atterm/internal/peertraffic"
@@ -47,6 +50,13 @@ type peerQuickTunnelManager interface {
 	Status() quicktunnel.Status
 }
 
+type cloudflaredManagedInstaller interface {
+	Status() (quicktunnel.InstallStatus, error)
+	ExecutablePath() string
+	VerifyExecutable(string) error
+	Install(context.Context) (quicktunnel.InstallStatus, error)
+}
+
 type peerQuickTunnelChannel interface {
 	SendRecord(context.Context, peertransport.RecordKind, []byte) error
 	SendFrame(context.Context, []byte) error
@@ -59,10 +69,16 @@ type peerQuickTunnelChannel interface {
 // PeerQuickTunnelStatus is the Desktop-visible lifecycle state. Starting the
 // host is always explicit; constructing App never opens a public route.
 type PeerQuickTunnelStatus struct {
-	Running     bool   `json:"running"`
-	Starting    bool   `json:"starting"`
-	PublicURL   string `json:"public_url,omitempty"`
-	LocalOrigin string `json:"local_origin,omitempty"`
+	Running          bool   `json:"running"`
+	Starting         bool   `json:"starting"`
+	PublicURL        string `json:"public_url,omitempty"`
+	LocalOrigin      string `json:"local_origin,omitempty"`
+	ManagedSupported bool   `json:"managed_supported"`
+	ManagedInstalled bool   `json:"managed_installed"`
+	SystemAvailable  bool   `json:"system_available"`
+	ManagedVersion   string `json:"managed_version,omitempty"`
+	ManagedAsset     string `json:"managed_asset,omitempty"`
+	ManagedSHA256    string `json:"managed_sha256,omitempty"`
 }
 
 type peerQuickTunnelHost struct {
@@ -136,7 +152,15 @@ func newPeerQuickTunnelHost(app *App, host *relayHost) (*peerQuickTunnelHost, er
 		return nil, err
 	}
 	peerHost.handler = handler
-	peerHost.tunnel = quicktunnel.New(quicktunnel.Config{Handler: handler})
+	installer, err := app.peerCloudflaredInstaller()
+	if err != nil {
+		return nil, err
+	}
+	peerHost.tunnel = quicktunnel.New(quicktunnel.Config{
+		Handler:           handler,
+		ManagedExecutable: installer.ExecutablePath(),
+		VerifyExecutable:  installer.VerifyExecutable,
+	})
 	return peerHost, nil
 }
 
@@ -1410,20 +1434,61 @@ func (a *App) revalidatePeerQuickTunnelAttempts() {
 
 func (a *App) ensurePeerQuickTunnelHost() (*peerQuickTunnelHost, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.quickTunnel != nil {
 		host, ok := a.quickTunnel.(*peerQuickTunnelHost)
+		a.mu.Unlock()
 		if !ok {
 			return nil, errors.New("Quick Tunnel lifecycle is not a Peer host")
 		}
 		return host, nil
 	}
+	a.mu.Unlock()
 	host, err := newPeerQuickTunnelHost(a, a.host)
 	if err != nil {
 		return nil, err
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.quickTunnel != nil {
+		existing, ok := a.quickTunnel.(*peerQuickTunnelHost)
+		if !ok {
+			return nil, errors.New("Quick Tunnel lifecycle is not a Peer host")
+		}
+		return existing, nil
+	}
 	a.quickTunnel = host
 	return host, nil
+}
+
+func (a *App) peerCloudflaredInstaller() (cloudflaredManagedInstaller, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cloudflaredInstaller != nil {
+		return a.cloudflaredInstaller, nil
+	}
+	cacheDir, err := appdir.CacheDir()
+	if err != nil {
+		return nil, fmt.Errorf("open application cache for cloudflared: %w", err)
+	}
+	a.cloudflaredInstaller = quicktunnel.NewInstaller(filepath.Join(cacheDir, "cloudflared"))
+	return a.cloudflaredInstaller, nil
+}
+
+func (a *App) decoratePeerQuickTunnelStatus(status PeerQuickTunnelStatus) PeerQuickTunnelStatus {
+	installer, err := a.peerCloudflaredInstaller()
+	if err == nil {
+		managed, statusErr := installer.Status()
+		if statusErr == nil {
+			status.ManagedSupported = managed.Supported
+			status.ManagedInstalled = managed.Installed
+			status.ManagedVersion = managed.Version
+			status.ManagedAsset = managed.AssetName
+			status.ManagedSHA256 = managed.SHA256
+		}
+	}
+	_, pathErr := exec.LookPath("cloudflared")
+	status.SystemAvailable = pathErr == nil
+	return status
 }
 
 // StartPeerQuickTunnel explicitly publishes the local Peer gateway.
@@ -1441,7 +1506,36 @@ func (a *App) StartPeerQuickTunnel() (PeerQuickTunnelStatus, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return host.Start(ctx)
+	status, err := host.Start(ctx)
+	return a.decoratePeerQuickTunnelStatus(status), err
+}
+
+// InstallPeerCloudflared performs the user-triggered pinned install. Starting
+// Quick Tunnel never calls this method implicitly.
+func (a *App) InstallPeerCloudflared() (PeerQuickTunnelStatus, error) {
+	a.peerPublicRouteMu.Lock()
+	defer a.peerPublicRouteMu.Unlock()
+	a.mu.Lock()
+	host, _ := a.quickTunnel.(*peerQuickTunnelHost)
+	a.mu.Unlock()
+	if host != nil {
+		status := host.Status()
+		if status.Running || status.Starting {
+			return a.decoratePeerQuickTunnelStatus(status), errors.New("cannot install cloudflared while Quick Tunnel is running")
+		}
+	}
+	installer, err := a.peerCloudflaredInstaller()
+	if err != nil {
+		return PeerQuickTunnelStatus{}, err
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := installer.Install(ctx); err != nil {
+		return a.decoratePeerQuickTunnelStatus(PeerQuickTunnelStatus{}), err
+	}
+	return a.decoratePeerQuickTunnelStatus(PeerQuickTunnelStatus{}), nil
 }
 
 // StopPeerQuickTunnel removes the public route without deleting Peer trust.
@@ -1458,15 +1552,15 @@ func (a *App) StopPeerQuickTunnel() error {
 // GetPeerQuickTunnelStatus returns an idle status before first explicit start.
 func (a *App) GetPeerQuickTunnelStatus() PeerQuickTunnelStatus {
 	if a.peerLANOnly() {
-		return PeerQuickTunnelStatus{}
+		return a.decoratePeerQuickTunnelStatus(PeerQuickTunnelStatus{})
 	}
 	a.mu.Lock()
 	host, _ := a.quickTunnel.(*peerQuickTunnelHost)
 	a.mu.Unlock()
 	if host == nil {
-		return PeerQuickTunnelStatus{}
+		return a.decoratePeerQuickTunnelStatus(PeerQuickTunnelStatus{})
 	}
-	return host.Status()
+	return a.decoratePeerQuickTunnelStatus(host.Status())
 }
 
 // CreatePeerConnectionBundle signs the current temporary route. Passing an

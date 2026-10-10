@@ -1119,6 +1119,12 @@ export namespace main {
 	    starting: boolean;
 	    public_url?: string;
 	    local_origin?: string;
+	    managed_supported: boolean;
+	    managed_installed: boolean;
+	    system_available: boolean;
+	    managed_version?: string;
+	    managed_asset?: string;
+	    managed_sha256?: string;
 
 
 	    static createFrom(source: any = {}) {
@@ -1132,6 +1138,12 @@ export namespace main {
 	        this.starting = source["starting"];
 	        this.public_url = source["public_url"];
 	        this.local_origin = source["local_origin"];
+	        this.managed_supported = source["managed_supported"];
+	        this.managed_installed = source["managed_installed"];
+	        this.system_available = source["system_available"];
+	        this.managed_version = source["managed_version"];
+	        this.managed_asset = source["managed_asset"];
+	        this.managed_sha256 = source["managed_sha256"];
 	    }
 	}
 	export class PeerRendezvousConfig {

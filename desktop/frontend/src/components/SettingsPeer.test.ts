@@ -38,6 +38,7 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
       reconnectRendezvous: vi.fn(),
       syncConfigNow: vi.fn(),
       getQuickTunnelStatus: vi.fn(),
+      installCloudflared: vi.fn(),
       startQuickTunnel: vi.fn(),
       stopQuickTunnel: vi.fn(),
       getLANConfig: vi.fn(),
@@ -124,7 +125,14 @@ beforeEach(() => {
   fakePlatform.peer.importConnectionBundle.mockResolvedValue({
     issuer_peer_id: 'peer_host_789', quick_tunnel: true, expires_at: 1_797_984_000,
   })
-  fakePlatform.peer.getQuickTunnelStatus.mockResolvedValue({ running: false, starting: false })
+  fakePlatform.peer.getQuickTunnelStatus.mockResolvedValue({
+    running: false, starting: false, managed_supported: true, managed_installed: false, system_available: true,
+    managed_version: '2026.10.0', managed_asset: 'cloudflared-test', managed_sha256: 'abc123',
+  })
+  fakePlatform.peer.installCloudflared.mockResolvedValue({
+    running: false, starting: false, managed_supported: true, managed_installed: true, system_available: false,
+    managed_version: '2026.10.0', managed_asset: 'cloudflared-test', managed_sha256: 'abc123',
+  })
   fakePlatform.peer.startQuickTunnel.mockResolvedValue({
     running: true,
     starting: false,
@@ -618,6 +626,29 @@ describe('SettingsPeer', () => {
     expect(fakePlatform.peer.createConnectionBundle).toHaveBeenCalledWith('')
     expect(fakePlatform.system.setClipboardText).toHaveBeenCalledWith('atc1.member-route.signature')
     expect(wrapper.get('[data-testid="peer-tunnel-copy-route"]').text()).toContain('settings.peer.tunnel.copied')
+  })
+
+  it('requires explicit confirmation before installing pinned cloudflared', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    fakePlatform.peer.getQuickTunnelStatus.mockResolvedValue({
+      running: false, starting: false, managed_supported: true, managed_installed: false, system_available: false,
+      managed_version: '2026.10.0', managed_asset: 'cloudflared-linux-amd64', managed_sha256: 'pinned-sha',
+    })
+    const wrapper = await mountReady()
+
+    await wrapper.get('[data-testid="peer-tunnel-start"]').trigger('click')
+    expect(fakePlatform.peer.startQuickTunnel).not.toHaveBeenCalled()
+    expect(fakePlatform.peer.installCloudflared).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="peer-tunnel-install-confirm"]').text()).toContain('version=2026.10.0')
+    expect(wrapper.get('[data-testid="peer-tunnel-install-confirm"]').text()).toContain('sha256=pinned-sha')
+
+    await wrapper.get('[data-testid="peer-tunnel-install"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.peer.installCloudflared).toHaveBeenCalledOnce()
+    expect(fakePlatform.peer.startQuickTunnel).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="peer-tunnel-managed-installed"]').text()).toContain('version=2026.10.0')
+    expect(wrapper.find('[data-testid="peer-tunnel-install-confirm"]').exists()).toBe(false)
   })
 
   it('keeps first-join invitation bundles disabled when only Rendezvous is online', async () => {

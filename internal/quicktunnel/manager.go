@@ -29,10 +29,12 @@ var (
 
 // Config controls one Quick Tunnel process and its private loopback gateway.
 type Config struct {
-	Executable   string
-	Handler      http.Handler
-	StartTimeout time.Duration
-	StopTimeout  time.Duration
+	Executable        string
+	ManagedExecutable string
+	VerifyExecutable  func(string) error
+	Handler           http.Handler
+	StartTimeout      time.Duration
+	StopTimeout       time.Duration
 }
 
 // Status is a point-in-time lifecycle snapshot. PublicURL is set only after a
@@ -249,12 +251,24 @@ func (m *Manager) statusLocked() Status {
 
 func (m *Manager) resolveExecutable() (string, error) {
 	name := m.cfg.Executable
-	if name == "" {
-		name = "cloudflared"
+	if name != "" {
+		path, err := m.lookPath(name)
+		if err != nil {
+			return "", fmt.Errorf("%w: %q: %v", ErrExecutableNotFound, name, err)
+		}
+		return path, nil
 	}
-	path, err := m.lookPath(name)
+	if m.cfg.ManagedExecutable != "" {
+		if _, err := os.Stat(m.cfg.ManagedExecutable); err == nil {
+			if m.cfg.VerifyExecutable == nil || m.cfg.VerifyExecutable(m.cfg.ManagedExecutable) != nil {
+				return "", fmt.Errorf("%w: managed executable verification failed", ErrExecutableNotFound)
+			}
+			return m.cfg.ManagedExecutable, nil
+		}
+	}
+	path, err := m.lookPath("cloudflared")
 	if err != nil {
-		return "", fmt.Errorf("%w: %q: %v", ErrExecutableNotFound, name, err)
+		return "", fmt.Errorf("%w: %q: %v", ErrExecutableNotFound, "cloudflared", err)
 	}
 	return path, nil
 }

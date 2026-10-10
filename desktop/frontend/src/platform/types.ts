@@ -315,6 +315,12 @@ export interface PeerQuickTunnelStatus {
   starting: boolean
   public_url?: string
   local_origin?: string
+  managed_supported?: boolean
+  managed_installed?: boolean
+  system_available?: boolean
+  managed_version?: string
+  managed_asset?: string
+  managed_sha256?: string
 }
 
 export interface PeerTrafficRow {
@@ -377,6 +383,7 @@ export interface PeerBridge {
   getTraffic?(from: string, to: string): Promise<PeerTrafficRow[]>
   /** Desktop host controls. Clients without a local gateway leave these absent. */
   getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
+  installCloudflared?(): Promise<PeerQuickTunnelStatus>
   startQuickTunnel?(): Promise<PeerQuickTunnelStatus>
   stopQuickTunnel?(): Promise<void>
   createConnectionBundle?(invitationToken: string): Promise<string>

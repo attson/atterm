@@ -362,6 +362,10 @@ export function ImportSSHHosts(arg1) {
   return window['go']['main']['App']['ImportSSHHosts'](arg1);
 }
 
+export function InstallPeerCloudflared() {
+  return window['go']['main']['App']['InstallPeerCloudflared']();
+}
+
 export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }

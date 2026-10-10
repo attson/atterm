@@ -65,6 +65,54 @@ func TestManagerDoesNotDownloadMissingExecutable(t *testing.T) {
 	}
 }
 
+func TestManagerPrefersVerifiedManagedExecutableOverPath(t *testing.T) {
+	t.Parallel()
+
+	managed := filepath.Join(t.TempDir(), "managed-cloudflared")
+	if err := os.WriteFile(managed, []byte("managed"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m := New(Config{
+		ManagedExecutable: managed,
+		VerifyExecutable: func(path string) error {
+			if path != managed {
+				t.Fatalf("verified path = %q", path)
+			}
+			return nil
+		},
+	})
+	m.lookPath = func(name string) (string, error) {
+		t.Fatalf("lookPath(%q) called despite verified managed executable", name)
+		return "", errors.New("unreachable")
+	}
+	got, err := m.resolveExecutable()
+	if err != nil || got != managed {
+		t.Fatalf("resolveExecutable = %q, %v", got, err)
+	}
+}
+
+func TestManagerRejectsUnverifiedManagedExecutable(t *testing.T) {
+	t.Parallel()
+
+	managed := filepath.Join(t.TempDir(), "managed-cloudflared")
+	if err := os.WriteFile(managed, []byte("tampered"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m := New(Config{
+		ManagedExecutable: managed,
+		VerifyExecutable:  func(string) error { return errors.New("checksum mismatch") },
+	})
+	m.lookPath = func(name string) (string, error) {
+		if name == "cloudflared" {
+			return filepath.Join(t.TempDir(), "path-cloudflared"), nil
+		}
+		return "", errors.New("not found")
+	}
+	if _, err := m.resolveExecutable(); !errors.Is(err, ErrExecutableNotFound) {
+		t.Fatalf("resolveExecutable error = %v, want ErrExecutableNotFound", err)
+	}
+}
+
 func TestManagerRejectsInvalidURLBeforeProcessExit(t *testing.T) {
 	t.Parallel()
 

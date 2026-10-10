@@ -319,6 +319,9 @@ type App struct {
 	// Keeping shutdown ownership here ensures the public route cannot outlive
 	// the desktop process even though its start/UI wiring lands separately.
 	quickTunnel quickTunnelLifecycle
+	// Created lazily so local terminal startup never depends on the cache
+	// directory or any optional Peer route.
+	cloudflaredInstaller cloudflaredManagedInstaller
 
 	// sftp holds the file explorer's SSH data source (see sftp_source.go).
 	// Built lazily by sftpBrowser() because App is constructed in a dozen

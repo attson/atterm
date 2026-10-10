@@ -18,6 +18,7 @@ const previewing = ref(false)
 const joining = ref(false)
 const scanning = ref(false)
 const tunnelBusy = ref(false)
+const tunnelInstallConfirming = ref(false)
 const routeCopying = ref(false)
 const routeCopied = ref(false)
 const routeImporting = ref(false)
@@ -94,6 +95,12 @@ const hasQuickTunnelHost = computed(() => Boolean(
   && platform.peer.stopQuickTunnel
   && platform.peer.createConnectionBundle,
 ))
+const cloudflaredReady = computed(() => {
+  const current = tunnelStatus.value
+  if (!current) return true
+  const reportsAvailability = typeof current.managed_installed === 'boolean' || typeof current.system_available === 'boolean'
+  return !reportsAvailability || Boolean(current.managed_installed || current.system_available)
+})
 const hasLANHost = computed(() => Boolean(platform.peer?.getLANConfig && platform.peer.setLANConfig))
 const fingerprint = computed(() => {
   const hash = status.value?.genesis_hash?.trim()
@@ -455,6 +462,10 @@ function onBundleInput(): void {
 async function startQuickTunnel(): Promise<void> {
   const start = platform.peer?.startQuickTunnel
   if (!start || tunnelBusy.value || lanOnly.value) return
+  if (!cloudflaredReady.value && tunnelStatus.value?.managed_supported && platform.peer?.installCloudflared) {
+    tunnelInstallConfirming.value = true
+    return
+  }
   error.value = ''
   routeCopied.value = false
   copiedInvitationID.value = ''
@@ -463,6 +474,21 @@ async function startQuickTunnel(): Promise<void> {
     tunnelStatus.value = await start()
   } catch {
     error.value = t('settings.peer.errors.tunnelStart')
+  } finally {
+    tunnelBusy.value = false
+  }
+}
+
+async function installCloudflared(): Promise<void> {
+  const install = platform.peer?.installCloudflared
+  if (!install || tunnelBusy.value) return
+  error.value = ''
+  tunnelBusy.value = true
+  try {
+    tunnelStatus.value = await install()
+    tunnelInstallConfirming.value = false
+  } catch {
+    error.value = t('settings.peer.errors.tunnelInstall')
   } finally {
     tunnelBusy.value = false
   }
@@ -1317,9 +1343,45 @@ function permissionLabel(permission: string): string {
           class="route-url published-route"
           data-testid="peer-tunnel-url"
         >{{ tunnelStatus.public_url }}</code>
+        <p v-if="tunnelStatus?.managed_installed" class="hint" data-testid="peer-tunnel-managed-installed">
+          {{ t('settings.peer.tunnel.managedInstalled', { version: tunnelStatus.managed_version || '' }) }}
+        </p>
+        <div
+          v-if="tunnelInstallConfirming"
+          class="discard-confirm"
+          data-testid="peer-tunnel-install-confirm"
+        >
+          <p>{{ t('settings.peer.tunnel.installConfirm', {
+            version: tunnelStatus?.managed_version || '',
+            asset: tunnelStatus?.managed_asset || '',
+            sha256: tunnelStatus?.managed_sha256 || '',
+          }) }}</p>
+          <div class="actions">
+            <button
+              type="button"
+              class="primary-action"
+              data-testid="peer-tunnel-install"
+              :disabled="tunnelBusy"
+              @click="installCloudflared"
+            >
+              <Download :size="15" aria-hidden="true" />
+              {{ tunnelBusy ? t('settings.peer.tunnel.installing') : t('settings.peer.tunnel.install') }}
+            </button>
+            <button
+              type="button"
+              class="icon-action"
+              :disabled="tunnelBusy"
+              :aria-label="t('common.cancel')"
+              :title="t('common.cancel')"
+              @click="tunnelInstallConfirming = false"
+            >
+              <X :size="15" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
         <div class="actions">
           <button
-            v-if="!tunnelStatus?.running"
+            v-if="!tunnelStatus?.running && !tunnelInstallConfirming"
             type="button"
             class="primary-action"
             data-testid="peer-tunnel-start"

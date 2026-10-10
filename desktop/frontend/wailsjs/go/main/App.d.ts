@@ -185,6 +185,8 @@ export function ImportPeerTrustBackup(arg1:string,arg2:string):Promise<main.Peer
 
 export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 
+export function InstallPeerCloudflared():Promise<main.PeerQuickTunnelStatus>;
+
 export function InstallUpdate():Promise<void>;
 
 export function JoinPeerSpace(arg1:main.JoinPeerSpaceReq):Promise<main.PeerSpaceStatus>;

@@ -3,13 +3,41 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/attson/atterm/internal/quicktunnel"
 )
 
 type fakeQuickTunnelLifecycle struct {
 	stops atomic.Int32
 	err   error
+}
+
+type fakeCloudflaredInstaller struct {
+	mu       sync.Mutex
+	status   quicktunnel.InstallStatus
+	installs int
+	err      error
+}
+
+func (f *fakeCloudflaredInstaller) Status() (quicktunnel.InstallStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.status, nil
+}
+func (f *fakeCloudflaredInstaller) ExecutablePath() string        { return "/managed/cloudflared" }
+func (f *fakeCloudflaredInstaller) VerifyExecutable(string) error { return nil }
+func (f *fakeCloudflaredInstaller) Install(context.Context) (quicktunnel.InstallStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.installs++
+	if f.err != nil {
+		return quicktunnel.InstallStatus{}, f.err
+	}
+	f.status.Installed = true
+	return f.status, nil
 }
 
 func (f *fakeQuickTunnelLifecycle) Stop() error {
@@ -25,6 +53,39 @@ func TestShutdownStopsQuickTunnel(t *testing.T) {
 
 	if got := lifecycle.stops.Load(); got != 1 {
 		t.Fatalf("quick tunnel Stop calls = %d, want 1", got)
+	}
+}
+
+func TestInstallPeerCloudflaredIsExplicitAndReported(t *testing.T) {
+	installer := &fakeCloudflaredInstaller{status: quicktunnel.InstallStatus{
+		Supported: true, Version: quicktunnel.ManagedCloudflaredVersion,
+		AssetName: "cloudflared-test", SHA256: "pinned-digest",
+	}}
+	a := &App{ctx: context.Background(), cloudflaredInstaller: installer}
+
+	before := a.GetPeerQuickTunnelStatus()
+	if before.ManagedInstalled || !before.ManagedSupported || installer.installs != 0 {
+		t.Fatalf("status before explicit install = %+v, installs=%d", before, installer.installs)
+	}
+	after, err := a.InstallPeerCloudflared()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ManagedInstalled || after.ManagedVersion != quicktunnel.ManagedCloudflaredVersion || installer.installs != 1 {
+		t.Fatalf("status after install = %+v, installs=%d", after, installer.installs)
+	}
+}
+
+func TestInstallPeerCloudflaredRejectsRunningTunnel(t *testing.T) {
+	installer := &fakeCloudflaredInstaller{status: quicktunnel.InstallStatus{Supported: true}}
+	a := &App{ctx: context.Background(), cloudflaredInstaller: installer}
+	a.quickTunnel = &peerQuickTunnelHost{tunnel: &fakePeerQuickTunnelManager{status: quicktunnel.Status{Running: true}}}
+
+	if _, err := a.InstallPeerCloudflared(); err == nil {
+		t.Fatal("InstallPeerCloudflared succeeded while Quick Tunnel was running")
+	}
+	if installer.installs != 0 {
+		t.Fatalf("installer calls = %d, want 0", installer.installs)
 	}
 }
 

@@ -26,6 +26,7 @@ import {
   SendNativeDirectFrame,
   StopNativeDirect,
   GetPeerSpaceStatus,
+  GetPeerTraffic,
   GetPeerConfigSyncStatus,
   AcceptPendingPeerConfig,
   DiscardPendingPeerConfig,
@@ -72,7 +73,7 @@ import {
   Mkdir,
   Trash,
 } from '../../wailsjs/go/main/PluginFS'
-import type { Platform, EnvironmentInfo, RemoteSession } from './types'
+import type { Platform, EnvironmentInfo, PeerTrafficRow, RemoteSession } from './types'
 import { main as WailsModels } from '../../wailsjs/go/models'
 import { setAccountKeyProvider } from '../lib/account-key'
 import { NativeDirectClientTransport } from '../lib/nativeDirectClient'
@@ -90,6 +91,17 @@ const peerNativeBridge = {
   start: (req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: 'direct' | 'lan' | 'quick_tunnel' }) => StartPeerNativeDirect(req),
   send: (id: string, frame: number[]) => SendPeerNativeDirectFrame(id, frame),
   stop: (id: string) => StopPeerNativeDirect(id),
+}
+
+const peerTrafficRoutes = new Set<PeerTrafficRow['route']>(['direct', 'quick_tunnel', 'lan', 'gateway'])
+
+function isPeerTrafficRoute(route: string): route is PeerTrafficRow['route'] {
+  return peerTrafficRoutes.has(route as PeerTrafficRow['route'])
+}
+
+async function getPeerTraffic(from: string, to: string): Promise<PeerTrafficRow[]> {
+  const rows = await GetPeerTraffic(from, to)
+  return rows.flatMap((row) => isPeerTrafficRoute(row.route) ? [{ ...row, route: row.route }] : [])
 }
 
 async function listPeerRemoteSessions(): Promise<RemoteSession[]> {
@@ -371,6 +383,7 @@ export function createWailsPlatform(): Platform {
     },
     peer: {
       status: () => GetPeerSpaceStatus(),
+      getTraffic: getPeerTraffic,
       configSyncStatus: () => GetPeerConfigSyncStatus(),
       acceptPendingConfig: () => AcceptPendingPeerConfig(),
       discardPendingConfig: () => DiscardPendingPeerConfig(),

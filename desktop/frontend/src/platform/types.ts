@@ -317,6 +317,15 @@ export interface PeerQuickTunnelStatus {
   local_origin?: string
 }
 
+export interface PeerTrafficRow {
+  day: string
+  route: 'direct' | 'quick_tunnel' | 'lan' | 'gateway'
+  bytes_sent: number
+  bytes_received: number
+  records_sent: number
+  records_received: number
+}
+
 // Peer trust is optional until each platform has its required secure identity
 // backend. Components must gate on platform.peer rather than importing Wails
 // bindings or silently falling back to Relay credentials.
@@ -364,6 +373,8 @@ export interface PeerBridge {
   listSessions?(): Promise<RemoteSession[]>
   getSessionRouteStatus?(sessionID: string): Promise<PeerSessionRouteStatus>
   createSessionTransport?: (options: NativeDirectClientOptions) => DirectTransport
+  /** Desktop-only, device-local encrypted-record aggregates. */
+  getTraffic?(from: string, to: string): Promise<PeerTrafficRow[]>
   /** Desktop host controls. Clients without a local gateway leave these absent. */
   getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
   startQuickTunnel?(): Promise<PeerQuickTunnelStatus>

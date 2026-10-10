@@ -47,6 +47,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   RebindServicePreview: vi.fn().mockResolvedValue(undefined),
   StopServicePreview: vi.fn().mockResolvedValue(undefined),
   GetPeerSpaceStatus: vi.fn().mockResolvedValue({ configured: false }),
+  GetPeerTraffic: vi.fn().mockResolvedValue([
+    { day: '2026-09-23', route: 'direct', bytes_sent: 10, bytes_received: 20, records_sent: 1, records_received: 2 },
+    { day: '2026-09-23', route: 'future_route', bytes_sent: 30, bytes_received: 40, records_sent: 3, records_received: 4 },
+  ]),
   GetPeerConfigSyncStatus: vi.fn().mockResolvedValue({ configured: true, pending_operations: 2 }),
   AcceptPendingPeerConfig: vi.fn().mockResolvedValue({ configured: true, pending_operations: 3, pending_import_records: 0 }),
   DiscardPendingPeerConfig: vi.fn().mockResolvedValue({ configured: true, pending_operations: 2, pending_import_records: 0 }),
@@ -96,6 +100,7 @@ import {
   AcceptPendingPeerConfig,
   CreatePeerConnectionBundle,
   CreatePeerInvitations,
+  GetPeerTraffic,
   GetPeerRendezvousConfig,
   GetPeerRendezvousStatus,
   GetPeerQuickTunnelStatus,
@@ -313,6 +318,15 @@ describe('createWailsPlatform', () => {
       permission: 'control',
     }))
     expect(result[0].invite_id).toBe('invite-1')
+  })
+
+  it('peer bridge exposes known local traffic routes and drops unknown routes', async () => {
+    const p = createWailsPlatform()
+
+    expect(await p.peer!.getTraffic!('2026-09-01', '2026-09-23')).toEqual([
+      { day: '2026-09-23', route: 'direct', bytes_sent: 10, bytes_received: 20, records_sent: 1, records_received: 2 },
+    ])
+    expect(GetPeerTraffic).toHaveBeenCalledWith('2026-09-01', '2026-09-23')
   })
 
   it('peer bridge previews and joins through typed Wails bindings', async () => {

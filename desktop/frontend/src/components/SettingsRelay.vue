@@ -514,8 +514,8 @@ defineExpose({
         {{ t("settings.relay.hint") }}
       </p>
 
-      <section v-if="connectedUserID" class="traffic-section">
-        <AccountTrafficDashboard />
+      <section class="traffic-section">
+        <AccountTrafficDashboard :relay-connected="!!connectedUserID" />
       </section>
 
       <div class="url-label-row">

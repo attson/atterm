@@ -30,9 +30,9 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.connecting");
   });
 
-  test("mounts the personal traffic dashboard only for an authenticated relay account", () => {
-    expect(source).toContain('v-if="connectedUserID"');
-    expect(source).toContain("<AccountTrafficDashboard />");
+  test("keeps the personal traffic dashboard available for local Peer traffic", () => {
+    expect(source).not.toContain('<section v-if="connectedUserID" class="traffic-section">');
+    expect(source).toContain('<AccountTrafficDashboard :relay-connected="!!connectedUserID" />');
   });
 
   test("remote-session-permission selector is gone (single-user tool, no sharing)", () => {

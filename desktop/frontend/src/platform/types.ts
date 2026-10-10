@@ -143,11 +143,20 @@ export interface RemoteSession {
   peer_direct?: boolean
 }
 
+export interface RemoteHost {
+  id: string
+  name: string
+  permission: 'view' | 'control' | 'full'
+}
+
 export interface SessionBridge {
   newSession?(req: _Req): Promise<_Resp>
   closeSession(sessionID: string): Promise<void>
   listShells(): Promise<string[]>
   listRemoteSessions(): Promise<RemoteSession[]>
+  /** Peer hosts are independent from PTYs so an authorized desktop with no
+   *  open sessions can still receive a profile launch request. */
+  listRemoteHosts?(): Promise<RemoteHost[]>
   /** Optional — mark the given sessions (or all owned sessions) as seen on
    *  the relay. Wails delegates to lib/api (which surfaces the raw HTTP
    *  status on failure). Capacitor posts directly to /api/sessions/seen
@@ -200,8 +209,8 @@ export interface SessionBridge {
    *  sidebar's session list and any attached terminals) for up to 30s —
    *  bounded to one such slot at a time by that same JS guard, but worth
    *  knowing if connection-limit errors ever show up here. The Wails Peer
-   *  implementation similarly owns one temporary terminal route, but sends
-   *  no driver claim or terminal input and closes it after the response. */
+   *  implementation owns one temporary host-control route, creates no PTY
+   *  subscriber, and closes it after the response. */
   createSessionWithProfile?(hostID: string, profileID: string): Promise<string>
 }
 

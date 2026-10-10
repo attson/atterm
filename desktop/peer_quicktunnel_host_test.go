@@ -41,6 +41,10 @@ type peerConfigTestRecord struct {
 }
 
 func newPeerQuickTunnelFixture(t *testing.T, permission peerproto.Permission) peerQuickTunnelFixture {
+	return newPeerQuickTunnelFixtureWithScope(t, permission, true)
+}
+
+func newPeerQuickTunnelFixtureWithScope(t *testing.T, permission peerproto.Permission, scoped bool) peerQuickTunnelFixture {
 	t.Helper()
 	app, _ := newTestPeerApp(t)
 	now := time.Now().Add(-time.Second).UTC()
@@ -87,8 +91,12 @@ func newPeerQuickTunnelFixture(t *testing.T, permission peerproto.Permission) pe
 	if err != nil {
 		t.Fatal(err)
 	}
+	var allowedSessionIDs []string
+	if scoped {
+		allowedSessionIDs = []string{sessionID.String()}
+	}
 	tickets, err := peerproto.NewInvitationBatch(identity, genesis, hostMembership, now, peerproto.InvitationOptions{
-		Count: 1, Permission: permission, AllowedSessionIDs: []string{sessionID.String()},
+		Count: 1, Permission: permission, AllowedSessionIDs: allowedSessionIDs,
 	})
 	if err != nil {
 		t.Fatal(err)

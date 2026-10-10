@@ -1055,7 +1055,7 @@ export const en = {
       peerOpenTitle: "Open on a Peer device",
       peerOpenHint: "Start this profile on another reachable device without using a Relay account.",
       peerHostLabel: "Target device",
-      peerNoHosts: "No writable Peer device is currently discoverable. The target needs at least one published session.",
+      peerNoHosts: "No writable Peer device is currently discoverable. Make sure the target is online and grants control access.",
       peerOpen: "Open on selected Peer device",
       peerOpening: "Opening on Peer device...",
       peerOpenErrors: {

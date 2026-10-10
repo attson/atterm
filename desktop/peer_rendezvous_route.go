@@ -35,10 +35,17 @@ type peerRendezvousHost struct {
 	configAttempts map[uuid.UUID]*peerRendezvousConfigHostAttempt
 	configClients  map[string]*peerRendezvousConfigClient
 	catalog        map[uuid.UUID]peerDiscoveredSession
+	hostCatalog    map[string]peerDiscoveredHost
 }
 
 type peerDiscoveredSession struct {
 	info      proto.SessionInfo
+	remote    rendezvousclient.PeerRoute
+	manualURL string
+}
+
+type peerDiscoveredHost struct {
+	info      rendezvousclient.PeerHost
 	remote    rendezvousclient.PeerRoute
 	manualURL string
 }
@@ -93,6 +100,7 @@ func newPeerRendezvousHostWithRegistrationContext(ctx, registrationCtx context.C
 		configAttempts: make(map[uuid.UUID]*peerRendezvousConfigHostAttempt),
 		configClients:  make(map[string]*peerRendezvousConfigClient),
 		catalog:        make(map[uuid.UUID]peerDiscoveredSession),
+		hostCatalog:    make(map[string]peerDiscoveredHost),
 	}
 	route, err := rendezvousclient.NewRoute(hostCtx, rendezvousclient.RouteConfig{
 		Connection: connection, InitialPresence: snapshot,
@@ -108,6 +116,13 @@ func newPeerRendezvousHostWithRegistrationContext(ctx, registrationCtx context.C
 				return nil, err
 			}
 			return peerHost.runtime.catalog(request.ClientPeerID)
+		},
+		HostInfo: func(ctx context.Context, request rendezvousclient.PeerCatalogRequest) (rendezvousclient.PeerHost, error) {
+			if err := ctx.Err(); err != nil {
+				return rendezvousclient.PeerHost{}, err
+			}
+			host, _, err := peerHost.runtime.hostInfo(request.ClientPeerID)
+			return host, err
 		},
 		ConnectionBundleHost: func(ctx context.Context, _ rendezvousclient.PeerCatalogRequest) (string, error) {
 			if err := ctx.Err(); err != nil {
@@ -151,6 +166,7 @@ func (h *peerRendezvousHost) discoverSessions(ctx context.Context) ([]proto.Sess
 		}()
 	}
 	next := make(map[uuid.UUID]peerDiscoveredSession)
+	nextHosts := make(map[string]peerDiscoveredHost)
 	var joined error
 	for range remotes {
 		select {
@@ -167,6 +183,9 @@ func (h *peerRendezvousHost) discoverSessions(ctx context.Context) ([]proto.Sess
 			for id, session := range accepted {
 				next[id] = session
 			}
+			if host, ok := h.validateCatalogHost(item.remote, item.catalog.Host); ok {
+				nextHosts[host.info.ID] = host
+			}
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -176,6 +195,7 @@ func (h *peerRendezvousHost) discoverSessions(ctx context.Context) ([]proto.Sess
 	}
 	h.mu.Lock()
 	h.catalog = next
+	h.hostCatalog = nextHosts
 	h.mu.Unlock()
 	infos := make([]proto.SessionInfo, 0, len(next))
 	for _, session := range next {
@@ -183,6 +203,40 @@ func (h *peerRendezvousHost) discoverSessions(ctx context.Context) ([]proto.Sess
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos, nil
+}
+
+func (h *peerRendezvousHost) validateCatalogHost(remote rendezvousclient.PeerRoute, host *rendezvousclient.PeerHost) (peerDiscoveredHost, bool) {
+	if host == nil || host.ID == "" || (host.Permission != peertransport.PermissionControl && host.Permission != peertransport.PermissionFull) {
+		return peerDiscoveredHost{}, false
+	}
+	manager, err := h.app.peerManager()
+	if err != nil {
+		return peerDiscoveredHost{}, false
+	}
+	state, err := manager.store.Load()
+	if err != nil {
+		return peerDiscoveredHost{}, false
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return peerDiscoveredHost{}, false
+	}
+	active, err := activePeerMemberships(state, genesis, time.Now())
+	if err != nil {
+		return peerDiscoveredHost{}, false
+	}
+	identity, err := manager.loadIdentity()
+	if err != nil {
+		return peerDiscoveredHost{}, false
+	}
+	local := membershipForPeerID(active, identity.PeerID())
+	remoteMembership := membershipForPeerID(active, remote.PeerID)
+	if local == nil || remoteMembership == nil || !bytes.Equal(remoteMembership.WrappingPublicKey, remote.WrappingPublicKey) ||
+		!permissionWithinPeerGrant(host.Permission, local.Document.Permission) ||
+		!permissionWithinPeerGrant(host.Permission, remoteMembership.Document.Permission) {
+		return peerDiscoveredHost{}, false
+	}
+	return peerDiscoveredHost{info: *host, remote: remote}, true
 }
 
 func (h *peerRendezvousHost) validateAndApplyCatalog(remote rendezvousclient.PeerRoute, catalog rendezvousclient.PeerCatalog) (map[uuid.UUID]peerDiscoveredSession, error) {
@@ -260,6 +314,13 @@ func (h *peerRendezvousHost) discoveredSession(sessionID uuid.UUID) (peerDiscove
 	defer h.mu.Unlock()
 	session, ok := h.catalog[sessionID]
 	return session, ok
+}
+
+func (h *peerRendezvousHost) discoveredHost(hostID string) (peerDiscoveredHost, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	host, ok := h.hostCatalog[hostID]
+	return host, ok
 }
 
 // ListPeerSessions discovers active, authorized Peer sessions through all

@@ -416,6 +416,103 @@ func TestRouteCatalogReturnsAuthorizedSessionsWithoutOpeningTerminalAttempt(t *t
 	}
 }
 
+func TestRouteCatalogReturnsHostWithoutSessionsOrTerminalAttempt(t *testing.T) {
+	fixture := newRouteFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hostRequests := make(chan struct{}, 1)
+	hostRoute, err := NewRoute(ctx, RouteConfig{
+		Connection: fixture.hostConnection, InitialPresence: fixture.hostSnapshot,
+		SpaceID: fixture.spaceID, EpochKey: fixture.epoch, LocalPeerID: fixture.hostIdentity.PeerID(),
+		LocalWrappingIdentity: fixture.hostWrapping,
+		ResolvePeer: func(presenceID string) (PeerRoute, bool) {
+			peer := fixture.clientPeer()
+			return peer, presenceID == peer.PresenceID
+		},
+		CatalogHost: func(context.Context, PeerCatalogRequest) ([]PeerSession, error) { return nil, nil },
+		HostInfo: func(context.Context, PeerCatalogRequest) (PeerHost, error) {
+			hostRequests <- struct{}{}
+			return PeerHost{ID: "desktop-host", Name: "Desk", Permission: peertransport.PermissionControl}, nil
+		},
+		ConnectionBundleHost: func(context.Context, PeerCatalogRequest) (string, error) {
+			return "signed-member-route-bundle", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostRoute.Close()
+	clientRoute := fixture.newClientRoute(t, ctx)
+	defer clientRoute.Close()
+
+	legacy, err := clientRoute.Catalog(ctx, fixture.hostPeer())
+	if err != nil || len(legacy) != 0 {
+		t.Fatalf("legacy zero-session catalog=%+v err=%v", legacy, err)
+	}
+	select {
+	case <-hostRequests:
+		t.Fatal("legacy catalog requested route-extension host_info")
+	default:
+	}
+
+	catalog, err := clientRoute.CatalogWithRoutes(ctx, fixture.hostPeer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Sessions) != 0 || catalog.Host == nil || catalog.Host.ID != "desktop-host" ||
+		catalog.Host.Permission != peertransport.PermissionControl {
+		t.Fatalf("zero-session catalog=%+v", catalog)
+	}
+	select {
+	case <-hostRequests:
+	default:
+		t.Fatal("route catalog did not request host_info")
+	}
+	hostRoute.mu.Lock()
+	attempts := len(hostRoute.hosts)
+	hostRoute.mu.Unlock()
+	if attempts != 0 {
+		t.Fatalf("host catalog created %d terminal attempts", attempts)
+	}
+}
+
+func TestCatalogValidationRejectsHostInfoOutsideFirstResponsePage(t *testing.T) {
+	request := routeWireMessage{
+		Version: routeWireVersion, Kind: routeKindCatalog, AttemptID: uuid.New(),
+		ClientPeerID: "client", CatalogOffset: 1,
+	}
+	remote := PeerRoute{PeerID: "peer-host"}
+	response := routeWireMessage{
+		Version: routeWireVersion, Kind: routeKindCatalogOK, AttemptID: request.AttemptID,
+		HostID: remote.PeerID, CatalogOffset: request.CatalogOffset,
+		HostInfo: &PeerHost{ID: "desktop-host", Permission: peertransport.PermissionControl},
+	}
+	if !errors.Is(validateCatalogResponse(response, request, remote, routeKindCatalogOK), ErrAuthentication) {
+		t.Fatal("later catalog page accepted host_info")
+	}
+	request.HostInfo = response.HostInfo
+	if !errors.Is(validateCatalogRequest(request, routeKindCatalog), ErrAuthentication) {
+		t.Fatal("catalog request accepted host_info")
+	}
+}
+
+func TestValidatePeerHostRejectsInvalidMetadata(t *testing.T) {
+	valid := PeerHost{ID: "desktop-host", Name: "Desk", Permission: peertransport.PermissionFull}
+	if err := validatePeerHost(valid); err != nil {
+		t.Fatalf("valid host: %v", err)
+	}
+	for _, host := range []PeerHost{
+		{Name: "Desk", Permission: peertransport.PermissionFull},
+		{ID: "desktop-host", Name: string([]byte{0xff}), Permission: peertransport.PermissionFull},
+		{ID: "desktop-host", Name: strings.Repeat("x", routeMaxMetadataSize+1), Permission: peertransport.PermissionFull},
+		{ID: "desktop-host"},
+	} {
+		if err := validatePeerHost(host); err == nil {
+			t.Fatalf("invalid host accepted: %+v", host)
+		}
+	}
+}
+
 func TestRouteCatalogWithRoutesReturnsBundleAndKeepsLegacyCatalogUnchanged(t *testing.T) {
 	fixture := newRouteFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -549,7 +646,7 @@ func TestRouteCatalogWithRoutesKeepsSupportedCapabilityAcrossTransientFailure(t 
 func TestCatalogRouteBundleMustFitEncryptedEnvelope(t *testing.T) {
 	_, err := catalogPageResponse(
 		routeKindCatalogRoutesOK, "host", uuid.New(), 0, 0, nil,
-		strings.Repeat("x", maxSignalPlaintext),
+		strings.Repeat("x", maxSignalPlaintext), nil,
 	)
 	if !errors.Is(err, ErrInvalidSignal) {
 		t.Fatalf("oversized route bundle error=%v", err)

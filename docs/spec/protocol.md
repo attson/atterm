@@ -1150,6 +1150,8 @@ terminal subscriber lifecycle。
 | `SERVICE` | `0x0d` | 独立 Remote Web Preview multiplex message，不进入 terminal frame |
 | `CATALOG_REQUEST` | `0x0e` | reserved control route 上的 JSON `{v}` 目录请求 |
 | `CATALOG_RESPONSE` | `0x0f` | filtered Peer session catalog，不创建 terminal subscriber |
+| `SESSION_CREATE` | `0x10` | reserved control route 上的 `SessionCreatePayload`，创建后仍不订阅 PTY |
+| `SESSION_CREATED` | `0x11` | 与 request id 绑定的 `SessionCreatedPayload` |
 
 单个 record plaintext 上限仍是 16 KiB。超过上限的配置消息用独立格式分片：
 
@@ -1158,7 +1160,7 @@ terminal subscriber lifecycle。
 offset(be32) || total(be32) || data
 ```
 
-`original_kind` 只允许 `0x07..0x09` 或 `0x0e..0x0f`；`total` 必须大于 16 KiB 且不超过 16 MiB。固定
+`original_kind` 只允许 `0x07..0x09` 或 `0x0e..0x11`；`total` 必须大于 16 KiB 且不超过 16 MiB。固定
 `0xffffffff` 同时使 config fragment 无法被 terminal fragment reassembler 接受。terminal 与
 config 各自只允许一个连续消息重组，状态完全分离；乱序、交错、超时、越界、未知类型、AEAD
 篡改或上层 JSON/授权失败都关闭当前 Peer route，不把 payload 投递到另一逻辑通道。
@@ -1259,7 +1261,8 @@ host/client attempt。offer/answer 只经上述 encrypted signal record 交换�
 收到 `wss_ready` 后，同一 WebSocket 切换到 WSS data 模式，复用首次 signaling membership
 handshake 已派生的 traffic key、nonce counter 和 exact remote membership，不再执行第二次
 handshake。此后只接受 `FRAME`..`CONFIG_FRAGMENT`（`0x01..0x0a`）、独立 `SERVICE`（`0x0d`）
-以及 reserved control route 上的 `CATALOG_REQUEST/RESPONSE`（`0x0e..0x0f`），
+以及 reserved control route 上的 `CATALOG_REQUEST/RESPONSE`、`SESSION_CREATE/CREATED`
+（`0x0e..0x11`），
 任何 signaling record 或未知类型都 fail closed。terminal/config 的 fragmentation 与 reassembly 规则和 DataChannel
 完全相同；配置授权仍绑定 handshake 的 exact membership。WSS writer 使用有界队列，在每个
 encrypted record 边界按 `input/control > terminal output > Preview service > config sync` 调度；同一 fragmented
@@ -1345,9 +1348,11 @@ loopback gateway 和 `cloudflared`，但不删除 Peer trust，可再次显式�
 Rendezvous Pion route 都复用上述同一个 Session attach、权限热检查和 config anti-entropy 路径；
 config 仍不创建第二个 terminal subscriber。Desktop Settings 已提供 join/bootstrap 确认、独立于
 Relay 登录设备的 Peer member directory、不可逆成员撤销，以及 Quick Tunnel start/stop、member
-reconnect bundle 复制入口和 official/custom/disabled Rendezvous 运维状态；Web/iOS Peer client
-接入、最终用户侧 Rendezvous session discovery/attach 入口与
-fallback consent 仍未实现。
+reconnect bundle 复制入口和 official/custom/disabled Rendezvous 运维状态。Web/iOS 通过共享
+browser Peer bridge 完成 Quick Tunnel join、membership handshake、WebRTC-first 与用户显式授权的
+encrypted WSS fallback；客户端私钥不离开 WebCrypto/Keychain owner。Desktop 还提供经上游
+SHA-256 manifest 校验、平台/架构精确匹配且原子安装的可选 `cloudflared` 安装流程；启动 tunnel
+仍须用户显式操作。
 
 ### Rendezvous v1 discovery and signaling
 
@@ -1481,11 +1486,12 @@ DataChannel 上完成现有
 `PeerMembershipAuthenticator` 握手，握手通过后才允许创建 terminal subscriber 和
 `peerConfigChannel`。
 
-配置 anti-entropy 使用保留的虚拟 session id
-`ffffffff-ffff-4fff-bfff-ffffffffffff` 建立 config-only `open`。该 id 只作为握手 transcript
+配置 anti-entropy 与 host-level control 使用保留的虚拟 session id
+`ffffffff-ffff-4fff-bfff-ffffffffffff` 建立 control-only `open`。该 id 只作为握手 transcript
 namespace，不对应 registry 中的 PTY，也不受 membership 的 `allowed_session_ids` 限制；host 仍须
-验证双方是当前 active member，并把握手权限固定为 `view`。config-only attempt 只接受
-`CONFIG_INVENTORY/BATCH/ACK` 记录，收到 terminal record 立即关闭，且整个生命周期不调用
+验证双方是当前 active member，并把握手权限固定为 `view`。control-only attempt 只接受
+`CONFIG_INVENTORY/BATCH/ACK`、`CATALOG_REQUEST/RESPONSE` 和
+`SESSION_CREATE/CREATED` 记录，收到 terminal record 立即关闭，且整个生命周期不调用
 `Session.Subscribe`。旧客户端会把该 id 当不存在的 terminal session 并安全拒绝。
 
 `catalog_request` 用独立 request UUID 和从 0 开始的 offset 请求目标 host 当前可见的 session。
@@ -1503,7 +1509,11 @@ channel；v1 `catalog_response` 不携带 `ConnectionBundle`。只有用户选�
 并重新请求 `catalog_request`。已确认支持的 Peer 若发生瞬时 service/offline 失败，可回退 v1 session
 目录但不降级能力缓存；认证或消息结构错误不得通过 v1 绕过。
 
-`catalog_response_routes` 仅在 offset 0 的第一页增加 `connection_bundle`，后续页必须省略。host
+`catalog_response_routes` 仅在 offset 0 的第一页增加 `connection_bundle` 与可选 `host_info`，
+后续页必须省略；普通 `catalog_response` 绝不携带这两个扩展字段，以兼容使用严格 JSON decoder
+的旧客户端。`host_info` 是独立于 PTY 数量的 `{id,name,permission}` 描述；只有双方 membership
+均为无 session scope 且实时有效权限至少为 `control` 时才可发布 control/full，否则降为 view，
+客户端不会把它列为可创建会话的目标。host
 每次第一页请求都重新生成由当前 active local membership 签名的无 ticket member reconnect bundle；
 它可包含当前 Quick Tunnel、Rendezvous 与 Manual LAN route 的任意可用组合。该字段与 session metadata
 一起位于 pairwise XChaCha20-Poly1305 信封内，Rendezvous 只能看到不超过 64 KiB 的 ciphertext。
@@ -1515,6 +1525,15 @@ endpoint 都不暴露给 renderer。Quick Tunnel URL/token 不落盘，Manual LA
 此时保留现有 hint 直到自身 expiry。此分发不创建 Pion attempt、terminal subscriber 或 config
 channel，也不因 bundle 到达而主动切换 terminal route；只有之后发生上述可恢复 Direct 故障时，
 client 才重新查询 capability 并执行对应 WSS route 的自动 handover。用户仍可在失败界面显式选择重试。
+
+零会话主机的 profile 启动复用上述 control-only route。客户端只发送
+`SessionCreatePayload {request_id,host_id,profile_id}`，主机从自己的配置解析 profile；请求不携带
+shell、cwd、environment 或凭据。主机在 fork 前重新校验 exact active membership、双方无
+`allowed_session_ids` scope、owner policy、目标 host id 与 control/full 权限，并把每条 route 的
+并发创建限制为 1。回复 `SESSION_CREATED` 必须匹配 request id。Direct 优先；只有设备本地已明确
+授权 Quick Tunnel fallback 且 Direct 失败发生在请求开始发送之前，客户端才可改走 encrypted WSS。
+请求一旦开始发送即不得自动重试，避免网络不确定时重复 fork。成功或失败后临时 control route
+立即关闭，全程不创建 PTY subscriber、driver 或 terminal byte stream。
 
 发送 `open` 后，Rendezvous ACK 为 `queued` 映射 `peer offline`；连接、写入、ACK 超时或 host
 容量问题映射 `service unavailable`；Pion ICE/transport 建链失败映射 `ICE failed`；membership、

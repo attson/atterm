@@ -70,6 +70,10 @@ export function CreatePeerInvitations(arg1) {
   return window['go']['main']['App']['CreatePeerInvitations'](arg1);
 }
 
+export function CreatePeerSessionWithProfile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreatePeerSessionWithProfile'](arg1, arg2, arg3);
+}
+
 export function CreatePeerSpace() {
   return window['go']['main']['App']['CreatePeerSpace']();
 }
@@ -384,6 +388,10 @@ export function ListKnownHosts() {
 
 export function ListPeerInvitations() {
   return window['go']['main']['App']['ListPeerInvitations']();
+}
+
+export function ListPeerHosts() {
+  return window['go']['main']['App']['ListPeerHosts']();
 }
 
 export function ListPeerMembers() {

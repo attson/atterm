@@ -52,20 +52,25 @@ const (
 	// control-message fragment namespace but never grant terminal authority.
 	RecordCatalogRequest  RecordKind = 14
 	RecordCatalogResponse RecordKind = 15
+	// RecordSessionCreate and RecordSessionCreated carry the existing bounded
+	// SESSION_CREATE payloads on an authenticated control route. They let a
+	// trusted member address a host that currently has no terminal session.
+	RecordSessionCreate  RecordKind = 16
+	RecordSessionCreated RecordKind = 17
 )
 
 func (k RecordKind) valid() bool {
-	return k >= RecordFrame && k <= RecordCatalogResponse
+	return k >= RecordFrame && k <= RecordSessionCreated
 }
 
 func (k RecordKind) configMessage() bool {
 	return k >= RecordConfigInventory && k <= RecordConfigAck ||
-		k == RecordCatalogRequest || k == RecordCatalogResponse
+		k >= RecordCatalogRequest && k <= RecordSessionCreated
 }
 
 func (k RecordKind) dataChannelMessage() bool {
 	return k >= RecordFrame && k <= RecordConfigFragment ||
-		k >= RecordService && k <= RecordCatalogResponse
+		k >= RecordService && k <= RecordSessionCreated
 }
 
 // IsConfigMessage reports whether a record carries one complete config

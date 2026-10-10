@@ -981,6 +981,22 @@ export namespace main {
 	        this.route_url = source["route_url"];
 	    }
 	}
+	export class PeerHostDescriptor {
+	    id: string;
+	    name: string;
+	    permission: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerHostDescriptor(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.permission = source["permission"];
+	    }
+	}
 	export class PeerInvitation {
 	    invite_id: string;
 	    batch_id: string;

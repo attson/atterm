@@ -23,6 +23,8 @@ func TestRecordKindWireValuesRemainStable(t *testing.T) {
 		RecordService:         13,
 		RecordCatalogRequest:  14,
 		RecordCatalogResponse: 15,
+		RecordSessionCreate:   16,
+		RecordSessionCreated:  17,
 	}
 	for kind, wire := range want {
 		if byte(kind) != wire {
@@ -45,7 +47,7 @@ func TestSignalRecordKindsAreNotDataChannelMessages(t *testing.T) {
 	if !RecordService.dataChannelMessage() {
 		t.Fatal("service kind rejected as DataChannel message")
 	}
-	for _, kind := range []RecordKind{RecordCatalogRequest, RecordCatalogResponse} {
+	for _, kind := range []RecordKind{RecordCatalogRequest, RecordCatalogResponse, RecordSessionCreate, RecordSessionCreated} {
 		if !kind.dataChannelMessage() || !kind.IsConfigMessage() {
 			t.Fatalf("catalog kind %d rejected as fragmented control message", kind)
 		}

@@ -30,6 +30,7 @@ type peerRendezvousConfigHostAttempt struct {
 	mu               sync.Mutex
 	channel          peerQuickTunnelChannel
 	config           *peerConfigChannel
+	sessions         *peerSessionControlHost
 	remoteMembership string
 	closed           bool
 	closeOnce        sync.Once
@@ -110,6 +111,10 @@ func (a *peerRendezvousConfigHostAttempt) start(channel peerQuickTunnelChannel) 
 	a.channel = channel
 	a.config = config
 	a.remoteMembership = remoteMembership
+	sessions, sessionErr := newPeerSessionControlHost(a.ctx, a.host.runtime, channel, remoteMembership)
+	if sessionErr == nil {
+		a.sessions = sessions
+	}
 	a.mu.Unlock()
 	return config.Start(a.ctx)
 }
@@ -117,6 +122,7 @@ func (a *peerRendezvousConfigHostAttempt) start(channel peerQuickTunnelChannel) 
 func (a *peerRendezvousConfigHostAttempt) handleConfigMessage(kind peertransport.RecordKind, payload []byte) error {
 	a.mu.Lock()
 	config := a.config
+	sessions := a.sessions
 	remoteMembership := a.remoteMembership
 	closed := a.closed
 	a.mu.Unlock()
@@ -125,6 +131,12 @@ func (a *peerRendezvousConfigHostAttempt) handleConfigMessage(kind peertransport
 	}
 	if err := validatePeerConfigMembership(a.host.app, remoteMembership); err != nil {
 		return err
+	}
+	if sessions != nil {
+		handled, err := sessions.Handle(kind, payload)
+		if handled {
+			return err
+		}
 	}
 	return config.Handle(a.ctx, kind, payload)
 }
@@ -163,6 +175,7 @@ func (a *peerRendezvousConfigHostAttempt) close(closeChannel bool) {
 		channel = a.channel
 		a.channel = nil
 		a.config = nil
+		a.sessions = nil
 		a.remoteMembership = ""
 		a.mu.Unlock()
 		a.cancel()

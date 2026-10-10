@@ -39,6 +39,8 @@ export function CreatePeerConnectionBundle(arg1:string):Promise<string>;
 
 export function CreatePeerInvitations(arg1:main.CreatePeerInvitationsReq):Promise<Array<main.PeerInvitation>>;
 
+export function CreatePeerSessionWithProfile(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
 export function CreatePeerSpace():Promise<main.PeerSpaceStatus>;
 
 export function DeleteFeishuBinding():Promise<void>;
@@ -196,6 +198,8 @@ export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
 
 export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
+
+export function ListPeerHosts():Promise<Array<main.PeerHostDescriptor>>;
 
 export function ListPeerMembers():Promise<Array<main.PeerMember>>;
 

@@ -47,6 +47,7 @@ type peerLANControlHostAttempt struct {
 	transport *peertransport.PionHostAttempt
 	channel   peerQuickTunnelChannel
 	config    *peerConfigChannel
+	sessions  *peerSessionControlHost
 	closed    bool
 	closeOnce sync.Once
 }
@@ -108,6 +109,10 @@ func (h *peerQuickTunnelHost) onLANControlAuthenticated(signal *quicktunnel.Sign
 }
 
 func (a *peerLANControlHostAttempt) start(channel peerQuickTunnelChannel) error {
+	remoteMembership, ok := channel.RemoteMembershipToken()
+	if !ok || remoteMembership == "" {
+		return errors.New("Peer LAN control membership is unavailable")
+	}
 	config, err := newPeerConfigChannel(a.host.app, channel)
 	if err != nil {
 		return err
@@ -119,6 +124,10 @@ func (a *peerLANControlHostAttempt) start(channel peerQuickTunnelChannel) error 
 	}
 	a.channel = channel
 	a.config = config
+	sessions, sessionErr := newPeerSessionControlHost(a.ctx, a.host.runtime, channel, remoteMembership)
+	if sessionErr == nil {
+		a.sessions = sessions
+	}
 	a.mu.Unlock()
 	return config.Start(a.ctx)
 }
@@ -127,10 +136,17 @@ func (a *peerLANControlHostAttempt) handleControlMessage(kind peertransport.Reco
 	a.mu.Lock()
 	channel := a.channel
 	config := a.config
+	sessionControl := a.sessions
 	closed := a.closed
 	a.mu.Unlock()
 	if closed || channel == nil || config == nil {
 		return errors.New("Peer LAN control route is unavailable")
+	}
+	if sessionControl != nil {
+		handled, err := sessionControl.Handle(kind, payload)
+		if handled {
+			return err
+		}
 	}
 	if kind != peertransport.RecordCatalogRequest {
 		return config.Handle(a.ctx, kind, payload)
@@ -178,6 +194,7 @@ func (a *peerLANControlHostAttempt) close(closeTransport bool) {
 		a.transport = nil
 		a.channel = nil
 		a.config = nil
+		a.sessions = nil
 		a.mu.Unlock()
 		a.cancel()
 	})

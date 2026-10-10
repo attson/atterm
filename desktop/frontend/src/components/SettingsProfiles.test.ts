@@ -203,6 +203,26 @@ describe("SettingsProfiles", () => {
     expect(wrapper.text()).not.toContain("Hidden Viewer");
   });
 
+  it("shows an authorized Peer host even when it has no sessions", async () => {
+    const platform = createFakePlatform();
+    platform.sessions.listRemoteSessions = vi.fn().mockResolvedValue([]);
+    platform.sessions.listRemoteHosts = vi.fn().mockResolvedValue([
+      { id: "host-empty", name: "Empty Desktop", permission: "control" },
+      { id: "host-view", name: "Viewer", permission: "view" },
+    ]);
+    __setPlatformForTests(platform);
+
+    const wrapper = mount(SettingsProfiles);
+    await flushPromises();
+    const picker = wrapper.get('[data-testid="profile-peer-host"]');
+    await picker.get('[data-testid="select-trigger"]').trigger("click");
+
+    expect(picker.findAll('[data-testid="select-option"]').map((option) => option.text())).toEqual([
+      "Empty Desktop",
+    ]);
+    expect(platform.sessions.listRemoteSessions).not.toHaveBeenCalled();
+  });
+
   it("guards rapid duplicate Peer actions and emits the created session id", async () => {
     let resolveCreate!: (sessionID: string) => void;
     const create = vi.fn(() => new Promise<string>((resolve) => { resolveCreate = resolve; }));

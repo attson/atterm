@@ -129,12 +129,23 @@ type PeerCatalogRequest struct {
 
 type HostCatalogFunc func(context.Context, PeerCatalogRequest) ([]PeerSession, error)
 
+// PeerHost identifies one reachable desktop independently of its session
+// count. Permission is the current effective ceiling for host-level actions.
+type PeerHost struct {
+	ID         string                   `json:"id"`
+	Name       string                   `json:"name,omitempty"`
+	Permission peertransport.Permission `json:"permission"`
+}
+
+type HostInfoFunc func(context.Context, PeerCatalogRequest) (PeerHost, error)
+
 // PeerCatalog is a session snapshot plus an optional signed, ticketless
 // reconnect bundle. The bundle is transported only inside the pairwise
 // encrypted signaling envelope and remains subject to caller-side validation.
 type PeerCatalog struct {
 	Sessions         []PeerSession
 	ConnectionBundle string
+	Host             *PeerHost
 }
 
 // HostConnectionBundleFunc creates a fresh member reconnect bundle for the
@@ -151,6 +162,7 @@ type RouteConfig struct {
 	ResolvePeer           func(presenceID string) (PeerRoute, bool)
 	AuthorizeHost         HostAuthorizeFunc
 	CatalogHost           HostCatalogFunc
+	HostInfo              HostInfoFunc
 	ConnectionBundleHost  HostConnectionBundleFunc
 	WebRTC                webrtc.Configuration
 }
@@ -191,6 +203,7 @@ type routeWireMessage struct {
 	CatalogNextOffset   int                      `json:"catalog_next_offset,omitempty"`
 	Sessions            []PeerSession            `json:"sessions,omitempty"`
 	ConnectionBundle    string                   `json:"connection_bundle,omitempty"`
+	HostInfo            *PeerHost                `json:"host_info,omitempty"`
 }
 
 type routeAck struct {
@@ -490,6 +503,7 @@ func (r *Route) fetchCatalog(ctx context.Context, remote PeerRoute, requestKind,
 					catalog.Sessions = append(catalog.Sessions, clonePeerSessions(message.Sessions)...)
 					if offset == 0 {
 						catalog.ConnectionBundle = message.ConnectionBundle
+						catalog.Host = clonePeerHost(message.HostInfo)
 					}
 					if len(catalog.Sessions) > routeMaxCatalogEntries {
 						err = ErrInvalidSignal
@@ -738,6 +752,17 @@ func (r *Route) handleCatalogRequest(remote PeerRoute, message routeWireMessage)
 		return
 	}
 	connectionBundle := ""
+	var hostInfo *PeerHost
+	// host_info is part of the optional route-bearing extension. Keeping it
+	// out of catalog_response preserves strict-decoder compatibility with v1.
+	if message.Kind == routeKindCatalogRoutes && message.CatalogOffset == 0 && r.cfg.HostInfo != nil {
+		host, hostErr := r.cfg.HostInfo(r.ctx, request)
+		if hostErr != nil || validatePeerHost(host) != nil {
+			r.sendRouteError(remote, message.AttemptID, routeErrorAuthentication)
+			return
+		}
+		hostInfo = &host
+	}
 	responseKind := routeKindCatalogOK
 	if message.Kind == routeKindCatalogRoutes {
 		responseKind = routeKindCatalogRoutesOK
@@ -751,7 +776,7 @@ func (r *Route) handleCatalogRequest(remote PeerRoute, message routeWireMessage)
 	}
 	end := min(message.CatalogOffset+routeCatalogPageSize, len(sessions))
 	response, err := catalogPageResponse(
-		responseKind, r.cfg.LocalPeerID, message.AttemptID, message.CatalogOffset, end, sessions, connectionBundle,
+		responseKind, r.cfg.LocalPeerID, message.AttemptID, message.CatalogOffset, end, sessions, connectionBundle, hostInfo,
 	)
 	if err != nil {
 		r.sendRouteError(remote, message.AttemptID, routeErrorServiceUnavailable)
@@ -762,7 +787,7 @@ func (r *Route) handleCatalogRequest(remote PeerRoute, message routeWireMessage)
 	}
 }
 
-func catalogPageResponse(kind, hostID string, requestID uuid.UUID, offset, end int, sessions []PeerSession, connectionBundle string) (routeWireMessage, error) {
+func catalogPageResponse(kind, hostID string, requestID uuid.UUID, offset, end int, sessions []PeerSession, connectionBundle string, hostInfo *PeerHost) (routeWireMessage, error) {
 	for {
 		next := 0
 		if end < len(sessions) {
@@ -772,6 +797,7 @@ func catalogPageResponse(kind, hostID string, requestID uuid.UUID, offset, end i
 			Version: routeWireVersion, Kind: kind, AttemptID: requestID,
 			HostID: hostID, CatalogOffset: offset, CatalogNextOffset: next,
 			Sessions: clonePeerSessions(sessions[offset:end]), ConnectionBundle: connectionBundle,
+			HostInfo: clonePeerHost(hostInfo),
 		}
 		encoded, err := json.Marshal(response)
 		if err == nil && len(encoded) <= maxSignalPlaintext {
@@ -1168,7 +1194,7 @@ func validateCatalogRequest(message routeWireMessage, expectedKind string) error
 	if message.Version != routeWireVersion || message.Kind != expectedKind ||
 		(expectedKind != routeKindCatalog && expectedKind != routeKindCatalogRoutes) || message.AttemptID == uuid.Nil ||
 		!validRouteIdentifier(message.ClientPeerID) || message.CatalogOffset < 0 || message.CatalogOffset > routeMaxCatalogEntries ||
-		len(message.Sessions) != 0 || message.CatalogNextOffset != 0 || message.ConnectionBundle != "" {
+		len(message.Sessions) != 0 || message.CatalogNextOffset != 0 || message.ConnectionBundle != "" || message.HostInfo != nil {
 		return ErrAuthentication
 	}
 	return nil
@@ -1192,10 +1218,25 @@ func validateCatalogResponse(message, request routeWireMessage, remote PeerRoute
 			(message.CatalogOffset != 0 && message.ConnectionBundle != "")) {
 		return ErrAuthentication
 	}
+	if request.CatalogOffset == 0 {
+		if message.HostInfo != nil && validatePeerHost(*message.HostInfo) != nil {
+			return ErrAuthentication
+		}
+	} else if message.HostInfo != nil {
+		return ErrAuthentication
+	}
 	for _, session := range message.Sessions {
 		if validatePeerSession(session) != nil {
 			return ErrAuthentication
 		}
+	}
+	return nil
+}
+
+func validatePeerHost(host PeerHost) error {
+	if !validRouteIdentifier(host.ID) || len(host.Name) > routeMaxMetadataSize || !utf8.ValidString(host.Name) ||
+		!permissionWithin(host.Permission, peerproto.PermissionFull) {
+		return ErrInvalidSignal
 	}
 	return nil
 }
@@ -1228,6 +1269,14 @@ func clonePeerSessions(sessions []PeerSession) []PeerSession {
 		}
 	}
 	return out
+}
+
+func clonePeerHost(host *PeerHost) *PeerHost {
+	if host == nil {
+		return nil
+	}
+	copy := *host
+	return &copy
 }
 
 func validRouteSignal(signalType, payload string) bool {

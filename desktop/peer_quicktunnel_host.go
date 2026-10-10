@@ -319,6 +319,10 @@ func (h *peerHostRuntime) authorizeConfig(clientPeerID string) (peerHostAuthoriz
 }
 
 func (h *peerHostRuntime) catalog(clientPeerID string) ([]rendezvousclient.PeerSession, error) {
+	_, effective, err := h.hostInfo(clientPeerID)
+	if err != nil {
+		return nil, err
+	}
 	manager, err := h.app.peerManager()
 	if err != nil {
 		return nil, quicktunnel.ErrUnauthorized
@@ -331,32 +335,19 @@ func (h *peerHostRuntime) catalog(clientPeerID string) ([]rendezvousclient.PeerS
 	if err != nil {
 		return nil, quicktunnel.ErrUnauthorized
 	}
-	identity, err := manager.loadIdentity()
-	if err != nil {
-		return nil, quicktunnel.ErrUnauthorized
-	}
 	active, err := activePeerMemberships(state, genesis, time.Now())
 	if err != nil {
 		return nil, quicktunnel.ErrUnauthorized
 	}
 	client := membershipForPeerID(active, clientPeerID)
+	identity, err := manager.loadIdentity()
+	if err != nil {
+		return nil, quicktunnel.ErrUnauthorized
+	}
 	local := membershipForPeerID(active, identity.PeerID())
 	if client == nil || local == nil {
 		return nil, quicktunnel.ErrUnauthorized
 	}
-	ownerPermission, ok := directTransportPermission(h.app.cfgStore.Get().RemotePermissionOrDefault())
-	if !ok {
-		return nil, quicktunnel.ErrUnauthorized
-	}
-	clientPermission, ok := peerPermission(client.Document.Permission)
-	if !ok {
-		return nil, quicktunnel.ErrUnauthorized
-	}
-	localPermission, ok := peerPermission(local.Document.Permission)
-	if !ok {
-		return nil, quicktunnel.ErrUnauthorized
-	}
-	effective := minimumPeerTransportPermission(ownerPermission, clientPermission, localPermission)
 	result := make([]rendezvousclient.PeerSession, 0)
 	h.host.server.Registry().ForEach(func(sess *session.Session) bool {
 		if sess.Info().HostID != h.host.hostID || !peerMembershipAllowsSession(*client, sess.ID) ||
@@ -368,6 +359,52 @@ func (h *peerHostRuntime) catalog(clientPeerID string) ([]rendezvousclient.PeerS
 	})
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
+}
+
+func (h *peerHostRuntime) hostInfo(clientPeerID string) (rendezvousclient.PeerHost, peertransport.Permission, error) {
+	manager, err := h.app.peerManager()
+	if err != nil {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	state, err := manager.store.Load()
+	if err != nil {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	genesis, err := peerproto.VerifyGenesis(state.GenesisToken)
+	if err != nil {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	identity, err := manager.loadIdentity()
+	if err != nil {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	active, err := activePeerMemberships(state, genesis, time.Now())
+	if err != nil {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	client := membershipForPeerID(active, clientPeerID)
+	local := membershipForPeerID(active, identity.PeerID())
+	if client == nil || local == nil {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	ownerPermission, ok := directTransportPermission(h.app.cfgStore.Get().RemotePermissionOrDefault())
+	if !ok {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	clientPermission, ok := peerPermission(client.Document.Permission)
+	if !ok {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	localPermission, ok := peerPermission(local.Document.Permission)
+	if !ok {
+		return rendezvousclient.PeerHost{}, 0, quicktunnel.ErrUnauthorized
+	}
+	effective := minimumPeerTransportPermission(ownerPermission, clientPermission, localPermission)
+	hostPermission := effective
+	if len(client.Document.AllowedSessionIDs) != 0 || len(local.Document.AllowedSessionIDs) != 0 {
+		hostPermission = peertransport.PermissionView
+	}
+	return rendezvousclient.PeerHost{ID: h.host.hostID, Name: truncatePeerCatalogText(h.host.host), Permission: hostPermission}, effective, nil
 }
 
 func peerCatalogSession(info proto.SessionInfo, permission peertransport.Permission) rendezvousclient.PeerSession {

@@ -1022,7 +1022,7 @@ export const zhCN = {
       peerOpenTitle: "在 Peer 设备上打开",
       peerOpenHint: "无需 Relay 账号，直接在另一台可连接设备上使用此配置创建会话。",
       peerHostLabel: "目标设备",
-      peerNoHosts: "当前未发现可写的 Peer 设备。目标设备至少需要发布一个会话。",
+      peerNoHosts: "当前未发现可写的 Peer 设备。请确认目标设备在线并已授予控制权限。",
       peerOpen: "在选中的 Peer 设备上打开",
       peerOpening: "正在 Peer 设备上打开...",
       peerOpenErrors: {

@@ -20,7 +20,7 @@ import {
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
 import { usePlatform } from "../platform";
-import type { RemoteSession } from "../platform/types";
+import type { RemoteHost, RemoteSession } from "../platform/types";
 import type { MessageKey } from "../i18n";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 
@@ -43,12 +43,18 @@ const defaultProfileId = ref("");
 const loading = ref(true);
 const error = ref("");
 const peerSessions = ref<RemoteSession[]>([]);
+const peerHosts = ref<RemoteHost[]>([]);
 const selectedPeerHostID = ref("");
 const creatingProfileID = ref("");
 const peerCreateError = ref("");
 
 const peerHostOptions = computed<SelectOption[]>(() => {
   const hosts = new Map<string, string>();
+  for (const host of peerHosts.value) {
+    if (!host.id || hosts.has(host.id)) continue;
+    if (host.permission !== "control" && host.permission !== "full") continue;
+    hosts.set(host.id, host.name || host.id);
+  }
   for (const session of peerSessions.value) {
     if (!session.host_id || hosts.has(session.host_id)) continue;
     if (session.remote_permission !== "control" && session.remote_permission !== "full") continue;
@@ -62,8 +68,15 @@ const peerHostOptions = computed<SelectOption[]>(() => {
 async function loadPeerHosts(): Promise<void> {
   if (!platform.sessions.createSessionWithProfile) return;
   try {
-    peerSessions.value = await platform.sessions.listRemoteSessions();
+    if (platform.sessions.listRemoteHosts) {
+      peerHosts.value = await platform.sessions.listRemoteHosts();
+      peerSessions.value = [];
+    } else {
+      peerHosts.value = [];
+      peerSessions.value = await platform.sessions.listRemoteSessions();
+    }
   } catch {
+    peerHosts.value = [];
     peerSessions.value = [];
   }
   if (!peerHostOptions.value.some((option) => option.value === selectedPeerHostID.value)) {

@@ -44,7 +44,8 @@ export interface DirectClientCallbacks {
 }
 
 export interface DirectTransportDiagnostics {
-  iceState: RTCIceConnectionState
+  route?: 'direct' | 'lan' | 'quick_tunnel'
+  iceState?: RTCIceConnectionState
   candidateType?: 'host' | 'srflx' | 'prflx' | 'relay'
 }
 

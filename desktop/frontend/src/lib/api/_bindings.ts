@@ -422,6 +422,15 @@ export interface DiagnosticsPayload {
   remote_permission: string;
   uplink_paused: boolean;
   recent_relay_errors: { timestamp: string; message: string }[];
+  rendezvous?: {
+    mode: string;
+    service_origin: string;
+    state: string;
+    last_registered_at?: number;
+    registration_ms?: number;
+    reachable_peers: number;
+    last_error_code?: string;
+  };
   config: {
     default_shell: string;
     locale: string;

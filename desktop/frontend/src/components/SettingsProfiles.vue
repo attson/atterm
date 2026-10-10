@@ -6,10 +6,11 @@
 // own template on caps.wailsBindings the way Appearance does per-field —
 // SettingsDialog.vue already hides the entire "profiles" tab (and skips
 // mounting this component at all) when !caps.wailsBindings, matching
-// SettingsRelay.vue/SettingsFeishu.vue's precedent. Profiles only ever
-// launch a *local* shell (desktop/relay_host.go NewSession), so there is no
-// web/Capacitor variant to support here (design doc §2 non-goals).
-import { onBeforeUnmount, onMounted, ref } from "vue";
+// SettingsRelay.vue/SettingsFeishu.vue's precedent. Profile editing remains
+// desktop-only; the optional Peer action asks another desktop to resolve the
+// same profile id from its own synchronized configuration.
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { LoaderCircle, Play } from "lucide-vue-next";
 import {
   getProfiles,
   setProfiles,
@@ -19,6 +20,9 @@ import {
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
 import { usePlatform } from "../platform";
+import type { RemoteSession } from "../platform/types";
+import type { MessageKey } from "../i18n";
+import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 
 const { t } = useI18n();
 const platform = usePlatform();
@@ -31,12 +35,68 @@ const platform = usePlatform();
 // SettingsDialog.vue exactly like those two.
 const emit = defineEmits<{
   (e: "profiles-changed"): void;
+  (e: "session-created", sessionId: string): void;
 }>();
 
 const profiles = ref<SessionProfile[]>([]);
 const defaultProfileId = ref("");
 const loading = ref(true);
 const error = ref("");
+const peerSessions = ref<RemoteSession[]>([]);
+const selectedPeerHostID = ref("");
+const creatingProfileID = ref("");
+const peerCreateError = ref("");
+
+const peerHostOptions = computed<SelectOption[]>(() => {
+  const hosts = new Map<string, string>();
+  for (const session of peerSessions.value) {
+    if (!session.host_id || hosts.has(session.host_id)) continue;
+    if (session.remote_permission !== "control" && session.remote_permission !== "full") continue;
+    hosts.set(session.host_id, session.host || session.host_id);
+  }
+  return [...hosts.entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+});
+
+async function loadPeerHosts(): Promise<void> {
+  if (!platform.sessions.createSessionWithProfile) return;
+  try {
+    peerSessions.value = await platform.sessions.listRemoteSessions();
+  } catch {
+    peerSessions.value = [];
+  }
+  if (!peerHostOptions.value.some((option) => option.value === selectedPeerHostID.value)) {
+    selectedPeerHostID.value = peerHostOptions.value[0]?.value ?? "";
+  }
+}
+
+const peerCreateErrorKeys = new Set([
+  "unknown_profile", "permission_denied", "request_in_flight", "duplicate_request_id",
+  "unknown_host_id", "invalid_request", "upstream_unavailable", "session_create_busy", "timeout",
+]);
+
+function mapPeerCreateError(message: string): string {
+  if (peerCreateErrorKeys.has(message)) {
+    return t(`settings.profiles.peerOpenErrors.${message}` as MessageKey);
+  }
+  return t("settings.profiles.peerOpenErrors.generic", { error: message });
+}
+
+async function openOnPeer(profileID: string): Promise<void> {
+  const create = platform.sessions.createSessionWithProfile;
+  if (!create || creatingProfileID.value || !selectedPeerHostID.value) return;
+  creatingProfileID.value = profileID;
+  peerCreateError.value = "";
+  try {
+    const sessionID = await create(selectedPeerHostID.value, profileID);
+    emit("session-created", sessionID);
+  } catch (value) {
+    peerCreateError.value = mapPeerCreateError(value instanceof Error ? value.message : String(value));
+  } finally {
+    creatingProfileID.value = "";
+  }
+}
 
 interface EditingState {
   id: string;
@@ -72,6 +132,7 @@ async function loadProfiles() {
 let prefsChangedOff: (() => void) | null = null;
 onMounted(() => {
   void loadProfiles();
+  void loadPeerHosts();
   prefsChangedOff = platform.events.on("prefs:changed", () => {
     void loadProfiles();
   });
@@ -243,6 +304,19 @@ async function clearDefault() {
     <p class="hint">{{ t("settings.profiles.precedenceHint") }}</p>
     <p class="hint">{{ t("settings.profiles.envPrivacyIntro") }}</p>
 
+    <section v-if="platform.sessions.createSessionWithProfile" class="peer-open" data-testid="profile-peer-open">
+      <div>
+        <h4>{{ t("settings.profiles.peerOpenTitle") }}</h4>
+        <p class="hint">{{ t("settings.profiles.peerOpenHint") }}</p>
+      </div>
+      <label v-if="peerHostOptions.length > 0" class="peer-host-picker">
+        <span>{{ t("settings.profiles.peerHostLabel") }}</span>
+        <SelectDropdown v-model="selectedPeerHostID" :options="peerHostOptions" data-testid="profile-peer-host" />
+      </label>
+      <p v-else class="hint">{{ t("settings.profiles.peerNoHosts") }}</p>
+      <p v-if="peerCreateError" class="error" data-testid="profile-peer-error">{{ peerCreateError }}</p>
+    </section>
+
     <template v-if="!loading">
       <ul class="list">
         <li v-for="p in profiles" :key="p.id" class="row" :data-testid="`profile-row-${p.id}`">
@@ -255,6 +329,19 @@ async function clearDefault() {
           <code class="detail">{{ p.shell || t("settings.profiles.shellUnset") }}</code>
           <code class="detail">{{ p.cwd || t("settings.profiles.cwdUnset") }}</code>
           <div class="actions">
+            <button
+              v-if="selectedPeerHostID"
+              type="button"
+              class="icon-action"
+              :data-testid="`profile-peer-open-${p.id}`"
+              :disabled="Boolean(creatingProfileID)"
+              :aria-label="creatingProfileID === p.id ? t('settings.profiles.peerOpening') : t('settings.profiles.peerOpen')"
+              :title="creatingProfileID === p.id ? t('settings.profiles.peerOpening') : t('settings.profiles.peerOpen')"
+              @click="openOnPeer(p.id)"
+            >
+              <LoaderCircle v-if="creatingProfileID === p.id" :size="14" class="spin" aria-hidden="true" />
+              <Play v-else :size="14" aria-hidden="true" />
+            </button>
             <button
               v-if="p.id !== defaultProfileId"
               :data-testid="`profile-set-default-${p.id}`"
@@ -358,6 +445,27 @@ async function clearDefault() {
   flex-direction: column;
   gap: 6px;
 }
+.peer-open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 8px 16px;
+  align-items: end;
+  padding-block: 4px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.peer-open h4 {
+  margin: 0 0 3px;
+  font-size: 0.84rem;
+}
+.peer-host-picker {
+  display: grid;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+}
+.peer-open > .error {
+  grid-column: 1 / -1;
+}
 .row {
   display: grid;
   grid-template-columns: 9rem 1fr 1fr auto;
@@ -405,6 +513,15 @@ async function clearDefault() {
   padding: 0 8px;
   font-size: 0.74rem;
 }
+.actions .icon-action {
+  width: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.spin { animation: profile-spin 0.8s linear infinite; }
+@keyframes profile-spin { to { transform: rotate(360deg); } }
 .actions .del {
   color: var(--bad);
   border-color: rgba(248, 81, 73, 0.4);
@@ -470,6 +587,7 @@ async function clearDefault() {
 }
 
 @media (max-width: 640px) {
+  .peer-open { grid-template-columns: 1fr; }
   .row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

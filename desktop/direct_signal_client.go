@@ -32,6 +32,7 @@ type NativeDirectStartRequest struct {
 	SessionID        string `json:"session_id"`
 	SinceSeq         uint64 `json:"since_seq"`
 	ClientInstanceID string `json:"client_instance_id"`
+	Route            string `json:"route,omitempty"`
 }
 
 // NativeDirectEvent is the small event surface consumed by the Wails adapter.
@@ -40,6 +41,7 @@ type NativeDirectEvent struct {
 	Kind            string `json:"kind"`
 	FrameBase64     string `json:"frame_base64,omitempty"`
 	LastReplayedSeq uint64 `json:"last_replayed_seq,omitempty"`
+	Route           string `json:"route,omitempty"`
 	ICEState        string `json:"ice_state,omitempty"`
 	CandidateType   string `json:"candidate_type,omitempty"`
 	Error           string `json:"error,omitempty"`
@@ -72,6 +74,9 @@ type nativeDirectClient struct {
 func (a *App) StartNativeDirect(req NativeDirectStartRequest) error {
 	if a == nil || a.cfgStore == nil || a.ctx == nil {
 		return errors.New("native direct client unavailable")
+	}
+	if route := strings.TrimSpace(req.Route); route != "" && route != peerNativeRouteDirect {
+		return errors.New("unsupported Relay native route")
 	}
 	id, err := uuid.Parse(req.ID)
 	if err != nil || id == uuid.Nil {
@@ -314,7 +319,7 @@ func (c *nativeDirectClient) startAttempt(message directsignal.Message) error {
 		},
 		OnRecord: c.handleRecord,
 		OnDiagnostics: func(iceState, candidateType string) {
-			c.emit(NativeDirectEvent{Kind: "diagnostics", ICEState: iceState, CandidateType: candidateType})
+			c.emit(NativeDirectEvent{Kind: "diagnostics", Route: peerNativeRouteDirect, ICEState: iceState, CandidateType: candidateType})
 		},
 		OnClosed: func(closeErr error) {
 			if closeErr != nil && c.ctx.Err() == nil {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import profilesSource from "./SettingsProfiles.vue?raw";
+import peerMembersSource from "./PeerMembersSection.vue?raw";
 import receivedFilesSource from "./SettingsReceivedFiles.vue?raw";
 import shortcutsSource from "./SettingsShortcuts.vue?raw";
 import templatesSource from "./SettingsTemplates.vue?raw";
@@ -26,5 +27,11 @@ describe("settings narrow layout", () => {
     expect(receivedFilesSource).toContain("@media (max-width: 640px)");
     expect(receivedFilesSource).toMatch(/\.header\s*\{[^}]*flex-wrap:\s*wrap/s);
     expect(receivedFilesSource).toMatch(/\.session-row,\s*\.files li\s*\{[^}]*flex-wrap:\s*wrap/s);
+  });
+
+  it("keeps Peer member details and revocation confirmation inside the pane", () => {
+    expect(peerMembersSource).toContain("@media (max-width: 640px)");
+    expect(peerMembersSource).toMatch(/\.member-details\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
+    expect(peerMembersSource).toMatch(/\.confirm-actions\s*\{[^}]*grid-column:\s*1 \/ -1/s);
   });
 });

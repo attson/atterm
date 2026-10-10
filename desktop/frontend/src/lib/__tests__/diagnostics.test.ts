@@ -16,6 +16,14 @@ function baseline(): DiagnosticsPayload {
     remote_permission: 'full',
     uplink_paused: false,
     recent_relay_errors: [],
+    rendezvous: {
+      mode: 'official',
+      service_origin: 'https://rendezvous.atterm.dev',
+      state: 'online',
+      last_registered_at: 1_797_900_000,
+      registration_ms: 42,
+      reachable_peers: 2,
+    },
     config: {
       default_shell: '/bin/zsh',
       locale: 'system',
@@ -77,5 +85,14 @@ describe('formatDiagnostics', () => {
     const p = baseline()
     p.relay_url = ''
     expect(formatDiagnostics(p)).toContain('(not configured)')
+  })
+
+  it('includes only aggregate Rendezvous diagnostics', () => {
+    const out = formatDiagnostics(baseline())
+    expect(out).toContain('https://rendezvous.atterm.dev')
+    expect(out).toContain('Registration latency: 42ms')
+    expect(out).toContain('Reachable peers:      2')
+    expect(out).not.toContain('presence_id')
+    expect(out).not.toContain('topic')
   })
 })

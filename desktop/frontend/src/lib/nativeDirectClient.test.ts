@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { DirectClientOptions } from './directClient'
 import { NativeDirectClientTransport, type NativeDirectBridge } from './nativeDirectClient'
 
-function setup() {
+function setup(route?: 'direct' | 'quick_tunnel') {
   let eventHandler: ((data: unknown) => void) | null = null
   const off = vi.fn()
   const bridge: NativeDirectBridge = {
@@ -29,7 +29,7 @@ function setup() {
     accountKey: new Uint8Array(32).fill(7),
     callbacks,
   }
-  const transport = new NativeDirectClientTransport(options, bridge)
+  const transport = new NativeDirectClientTransport({ ...options, route }, bridge)
   return { bridge, callbacks, transport, off, emit: (data: unknown) => eventHandler?.(data) }
 }
 
@@ -67,5 +67,20 @@ describe('NativeDirectClientTransport', () => {
     expect(off).toHaveBeenCalledOnce()
     await vi.waitFor(() => expect(bridge.stop).toHaveBeenCalledOnce())
     expect(transport.sendFrame(new Uint8Array([1]))).toBe(false)
+  })
+
+  it('selects Quick Tunnel by kind without exposing an endpoint or credential', () => {
+    const { bridge, callbacks, transport, emit } = setup('quick_tunnel')
+    transport.start()
+
+    const request = vi.mocked(bridge.start).mock.calls[0][0]
+    expect(request).toMatchObject({ route: 'quick_tunnel' })
+    expect(request).not.toHaveProperty('url')
+    expect(request).not.toHaveProperty('token')
+    expect(request).not.toHaveProperty('membership')
+    expect(request).not.toHaveProperty('account_key')
+
+    emit({ kind: 'diagnostics', route: 'quick_tunnel' })
+    expect(callbacks.onDiagnostics).toHaveBeenCalledWith({ route: 'quick_tunnel' })
   })
 })

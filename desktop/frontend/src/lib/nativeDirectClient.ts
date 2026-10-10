@@ -5,6 +5,7 @@ interface NativeDirectEvent {
   kind: string
   frame_base64?: string
   last_replayed_seq?: number
+  route?: string
   ice_state?: string
   candidate_type?: string
   error?: string
@@ -12,10 +13,19 @@ interface NativeDirectEvent {
 
 export interface NativeDirectBridge {
   on(event: string, handler: (data: unknown) => void): () => void
-  start(req: { id: string; session_id: string; since_seq: number; client_instance_id: string }): Promise<void>
+  start(req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: NativePeerRoute }): Promise<void>
   send(id: string, frame: number[]): Promise<void>
   stop(id: string): Promise<void>
 }
+
+/** Go/Pion transports authenticate natively. Relay direct callers may still
+ * include accountKey, while accountless Peer callers intentionally omit it. */
+export type NativeDirectClientOptions = Omit<DirectClientOptions, 'accountKey'> & {
+  accountKey?: Uint8Array
+  route?: NativePeerRoute
+}
+
+export type NativePeerRoute = 'direct' | 'lan' | 'quick_tunnel'
 
 function asError(value: unknown): Error {
   if (value instanceof Error) return value
@@ -31,18 +41,20 @@ function decodeBase64(value: string): Uint8Array {
 }
 
 function diagnostics(event: NativeDirectEvent): DirectTransportDiagnostics | null {
+  const route = event.route === 'direct' || event.route === 'lan' || event.route === 'quick_tunnel' ? event.route : undefined
   const state = event.ice_state
-  if (state !== 'new' && state !== 'checking' && state !== 'connected' && state !== 'completed' &&
-      state !== 'failed' && state !== 'disconnected' && state !== 'closed') return null
+  const iceState = state === 'new' || state === 'checking' || state === 'connected' || state === 'completed' ||
+      state === 'failed' || state === 'disconnected' || state === 'closed' ? state : undefined
+  if (!route && !iceState) return null
   const candidate = event.candidate_type
   const candidateType = candidate === 'host' || candidate === 'srflx' || candidate === 'prflx' || candidate === 'relay'
     ? candidate
     : undefined
-  return { iceState: state, ...(candidateType ? { candidateType } : {}) }
+  return { ...(route ? { route } : {}), ...(iceState ? { iceState } : {}), ...(candidateType ? { candidateType } : {}) }
 }
 
-/** Wails adapter for the Go/Pion direct client. SessionConnection still owns
- * route switching, replay sequencing, and Relay fallback. */
+/** Wails adapter for Go/Pion direct clients. Its owner supplies either the
+ * Relay fallback lifecycle or the accountless Peer reconnect lifecycle. */
 export class NativeDirectClientTransport implements DirectTransport {
   private readonly id = crypto.randomUUID()
   private off: (() => void) | null = null
@@ -52,19 +64,21 @@ export class NativeDirectClientTransport implements DirectTransport {
   private closed = false
 
   constructor(
-    private readonly options: DirectClientOptions,
+    private readonly options: NativeDirectClientOptions,
     private readonly bridge: NativeDirectBridge,
+    private readonly eventPrefix = 'native-direct:event:',
   ) {}
 
   start(): void {
     if (this.started || this.closed) return
     this.started = true
-    this.off = this.bridge.on(`native-direct:event:${this.id}`, (data) => this.handleEvent(data))
+    this.off = this.bridge.on(`${this.eventPrefix}${this.id}`, (data) => this.handleEvent(data))
     void this.bridge.start({
       id: this.id,
       session_id: this.options.sessionId,
       since_seq: this.options.sinceSeq,
       client_instance_id: this.options.clientInstanceId,
+      ...(this.options.route ? { route: this.options.route } : {}),
     }).catch((error) => this.fail(error))
   }
 
@@ -75,6 +89,10 @@ export class NativeDirectClientTransport implements DirectTransport {
       .then(() => this.bridge.send(this.id, copy))
       .catch((error) => this.fail(error))
     return true
+  }
+
+  nativeAttemptId(): string {
+    return this.id
   }
 
   close(): void {

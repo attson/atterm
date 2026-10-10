@@ -9,7 +9,7 @@ v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identit
 
 ## 一句话总览
 
-atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独立 server）+ **任意 web/桌面客户端**。三者通过统一的二进制 WebSocket 帧协议通信。本地体验永远独立、可用；远程能力是叠加的，按需启动。
+atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独立 server）+ **可选无账户 Rendezvous**（独立 stateless server）+ **任意 web/桌面客户端**。本地体验永远独立、可用；远程能力是叠加的，按需启动。Relay 承载账户路径，Rendezvous 只承载 Peer Space 的短期发现和加密信令。
 
 ## 组件全图
 
@@ -70,13 +70,15 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子；AI 会话的 `task_state` 由客户端 hook 驱动（`hookDriven` 闩锁关闭静默启发式，OSC 133 D 解锁） | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
+| `rendezvous` | `internal/rendezvous/` + `cmd/atterm-rendezvous/` | 无账户 WSS presence、opaque topic discovery、120 秒加密信令 mailbox、无敏感 label 的 health/metrics | 不保存 membership/config，不解析 SDP/ICE，不转发 terminal frame，不提供 TURN |
+| `rendezvousclient` / `rendezvouscontract` | `internal/rendezvousclient/` + `internal/rendezvouscontract/` | 解析官方/自建 origin 与 STUN/TURN 本地配置；用同一黑盒契约验收部署 | 不参与 Peer 配置复制，不依赖服务端内部状态 |
 | `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webpush subscriptions / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）；历史 `webhooks` 表已由 migration 删除 | 不知道 HTTP / 不依赖 relay |
 | 多实例 | `internal/relay/node_home.go` + `config_refresh.go` + `internal/userstore/relay_instances.go` | 多实例心跳缓存（`relay_instances` 表）、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
 | `desktop/relay_host.go` | desktop | 启 mini relay，spawn PTY，AdoptSession | 不连远程 |
 | `desktop/uplink.go` | desktop | 远程 relay 客户端（lazy 协议） | 不直接拥有 PTY |
-| `desktop/remote_fs.go` | desktop | 远程文件浏览器桥接：本机文件系统 CRUD + 回收站 + watch，响应 `FS_REQUEST`/发 `FS_EVENT`，受 `remote_permission=full` 门控（配合 `internal/relay/fs_router.go` 按 host 路由） | 不做前端 UI、不越权访问未授权 session 的 host |
+| `desktop/remote_fs.go` | desktop | 远程文件浏览器桥接：本机文件系统 CRUD + 回收站 + watch，响应 `FS_REQUEST`/发 `FS_EVENT`，受 `remote_permission=full` 门控；Relay 经 `internal/relay/fs_router.go` 按 requester 路由，Peer route 按 attempt 生命周期隔离 | 不做前端 UI、不越权访问未授权 session 的 host |
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
@@ -188,6 +190,13 @@ ATTACH(sid, client_id)  ───►
 数据：原生 client loopback listener
        ⇄ /service-client ⇄ relay keyless pair ⇄ /service-host
        ⇄ owner <loopback>:<port>（localhost / IPv4 / IPv6）
+
+Peer 控制：PeerSessionConnection SERVICE_OPEN(peer_fields)
+           ⇄ encrypted FRAME record ⇄ owner peerHostAttempt
+
+Peer 数据：原生 client loopback listener
+           ⇄ encrypted SERVICE record (Direct Pion / Quick Tunnel WSS)
+           ⇄ owner <loopback>:<port>
 ```
 
 relay 为两条 service WS 发一次性 ticket，只看 multiplex header/额度并转发
@@ -208,6 +217,13 @@ Preview 不会改变 0→1/N→0 subscriber lifecycle，更不会让静默 PTY �
 上传。阶段 1 只在 Wails desktop 与 Capacitor iOS 暴露原生 bridge；纯 Web/PWA
 不显示入口。完整 wire、限额与生命周期见
 [Remote Web Preview 阶段 1 design](../superpowers/specs/2026-08-29-remote-web-preview-phase1-design.md)。
+
+Peer Preview 复用同一套 gateway/iframe UX，但不复用 Relay service hub、ticket 或
+`account_key`。`SERVICE_OPEN` 仍是控制帧，TCP 字节改走独立 `RecordService` logical channel；
+Direct 与 Quick Tunnel 共用相同 message codec。owner 对每次 open/收发重验 route lease、active
+membership、session scope、双方 `full` permission 和 current driver。route replacement、pane
+detach、权限降级或 driver 转移立即关闭 service。renderer 只持有 Go 进程内 opaque attempt id，
+看不到 endpoint、membership token、Peer key 或 Relay credential。
 
 ## 会话生命周期
 
@@ -350,6 +366,188 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 `internal/relay.NewServer(relay.Config{})` 作为库仍保留”不鉴权”语义（当 Resolver 和
 Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
 的生产默认行为。
+
+## Rendezvous 启动安全
+
+`cmd/atterm-rendezvous` 与 Relay 是两个独立进程和信任边界。它没有用户数据库，也不读取
+Relay 配置：
+
+- 直接公网监听必须提供 `ATTERM_RENDEZVOUS_TLS_CERT`、
+  `ATTERM_RENDEZVOUS_TLS_KEY` 和 `ATTERM_RENDEZVOUS_ORIGINS`，TLS 最低版本为 1.3；
+- TLS 终止反代使用 `--behind-tls-proxy`，此模式强制 `--addr` 为 loopback，防止明文后端被
+  意外暴露；
+- `--dev-insecure` 是唯一允许无证书、无 Origin allowlist 的模式；
+- Origin 按完整 `scheme://host[:port]` 精确匹配，不信任 query/header 中的 token；无 Origin
+  的原生客户端仍需完成设备 challenge；
+- IP 只取 TCP remote address，不默认信任 `X-Forwarded-For`。反代部署需在反代层另做公网
+  per-IP 限流，服务自身的 per-IP limit 此时是后端保护而非最终用户限流；
+- shutdown 主动中止所有 WebSocket，且不落盘 presence、mailbox 或近期去重记录。
+
+本机开发：
+
+```bash
+go run ./cmd/atterm-rendezvous --addr 127.0.0.1:8081 --dev-insecure
+```
+
+wire 契约、默认限额和隐私边界见 [protocol.md](./protocol.md) §Rendezvous v1。
+官方/自建部署步骤与统一 contract runner 见
+[部署 Rendezvous](../../site/docs/guide/deploy-rendezvous.md)。
+
+## Rendezvous 发现与配置同步规划
+
+`internal/peerdiscovery` 是 Rendezvous 与 Peer trust 之间的纯本地边界。它用当前 sync epoch key
+派生 epoch 级 opaque topic 和 15 分钟轮换 presence，且只对当前 active memberships 的
+current/previous/next slot 做反解。`internal/rendezvousclient` 每次 WebSocket 注册使用新的临时
+P-256 challenge identity，因此服务看到的 registration public key 不是 durable Peer identity。
+
+Rendezvous snapshot/online/offline 只能进入内存 reachability directory。Desktop 在
+`desktop/peer_rendezvous_discovery.go` 规划拨号前重新读取 signed membership/revocation state 和
+当前 epoch key，再把可达 peer 与 `peerstore.ConfigSyncPeers` 的 durable acknowledgement vector
+连接起来。小 Space（active members <= 8）对全部可达 peer 做 anti-entropy；大 Space 每轮默认
+最多 4 个，按本地 operation lag、last exchange 和 slot 轮换排序。由此 A/B/C 等小拓扑不需要
+指定中心节点，大拓扑也不会让每个前台客户端同时拨所有成员。
+
+discovery planner 本身只产出 config-sync target，不创建 terminal subscriber。Desktop 每 3 秒
+把 target 映射成 config-only Pion attempt；该 attempt 使用保留的虚拟 session id 绑定握手
+transcript，只接受配置记录，不查 terminal registry、不调用 `Session.Subscribe`，target 离线或
+fanout 轮换时关闭。其下层 `internal/rendezvousclient/route.go` 在单条 presence WebSocket 上复用
+多个 attempt，把 `open/authorized/offer/answer/ICE/error` 放入按 Peer pair 派生的
+XChaCha20-Poly1305 信封，再接入 Stage 1 的 Pion transport。Rendezvous 只能看到 opaque
+topic/presence/message id 和 ciphertext；membership token 只进入 DataChannel 内的第二次身份握手。
+
+同一条加密 route 还承载分页的 `catalog_request/catalog_response`。Manual LAN 使用保留的 control
+session transcript 承载同义的 `CATALOG_REQUEST/CATALOG_RESPONSE` record。host 在每次目录请求时重新按
+active membership、撤销、双方 session scope、双方 permission ceiling 和 owner
+`remote_permission` 过滤本机会话；目录查询不创建 Pion attempt 或 terminal subscriber。
+Desktop 每 3 秒向当前可解析的 host presence 拉取目录，同时并行查询本地配置中的 Manual LAN
+routes，把成功结果缓存为
+`session_id -> Peer route`，并以 session id 为权威和 Relay 会话合并到侧栏；同一 session 同时存在
+时 Relay 条目覆盖 Peer 条目。用户点开 Peer-only 条目后，renderer 只把 session id、replay cursor
+和 client instance id 交给 Go，Go 从缓存取 route、从 Peer store 重读 identity/membership/scope，
+再经 Pion attach。该 pane 不打开 Relay `/client` WebSocket，也不提供 Relay fallback。图片/文件粘贴复用现有 `PASTE_IMAGE` / `PASTE_FILE` frame，只在 Peer route ready、
+当前 pane 是 driver 且双方 membership/session scope 与 owner policy 的 effective permission 都为
+`full` 时开放；owner host 在入 session 队列前重新验证 active membership、当前 route lease、driver、
+payload JSON/MIME 与 10 MiB binary 上限。
+
+Peer 文件浏览复用 `FS_REQUEST` / `FS_RESPONSE` / `FS_EVENT` 和同一份 File Explorer UI，但 payload
+不叠加 Relay `account_key`：单段 plaintext FS JSON 由 Peer record layer 整体加密。每条 authenticated
+attempt 持有独立 `remoteFS`、4-request worker budget 和 watch 生命周期；host 对每个请求重验 exact
+active membership、双方 session scope、owner 当前 `full` policy 与 route lease，覆盖 renderer 的
+`client_id`，并在发送 response/event 前再次重验。普通 CRUD/watch 不要求 driver，`open_external`
+要求当前 subscriber 是 driver；read/write 保留 5 MiB hard cap。route replacement/close 会取消 worker
+输出并关闭 watcher，旧 generation 的迟到 response/event 不进入新 route。Peer record 已端到端加密，
+所以允许读取 `.env*`；通用 policy 仍恒拒 `.ssh` / `.gnupg` / `.aws`。
+
+Peer Web Preview 复用 `SERVICE_OPEN` / `SERVICE_OPENED` / `SERVICE_CLOSE` 控制帧，但 request 的
+`peer_fields` 已由 Peer record E2EE 保护，禁止携带 Relay host ticket/sealed account envelope。
+成功后本机 gateway 通过 opaque native attempt id 注册 service；TCP open/data/close 使用独立
+`RecordService`，不会进入 terminal frame、FS/config callback 或 PTY subscriber。Direct Pion 与
+Quick Tunnel WSS 使用同一 codec，WSS 的 service queue 位于 terminal 与 config 优先级之间。
+每 route 4 个 service、每 service 16 条连接、每端双向累计 512 MiB；owner 每条消息都重验 current
+route/full/driver，降权、driver 丢失、detach 和 route replacement 均关闭 service state。
+
+Peer 远程创建会话复用 `SESSION_CREATE` / `SESSION_CREATED`，并复用 Settings 的 Session Profiles
+界面。renderer 从加密 catalog 中选择同一 `host_id` 下 effective permission 为 `control/full` 的
+可发现 session 作为临时 anchor，依次查询 token-free route capability，优先 Direct、其次 Quick
+Tunnel；连接 ready 后只发送 `{request_id, host_id, profile_id}`，不 claim driver、不发送 terminal
+input，收到一条响应或 30 秒超时即关闭。请求开始后不跨 generation 重试。owner 的
+`peerHostAttempt` 用 anchor session 的 authenticated membership、双方 session scope 和共享 route
+lease 做授权，但只在本地配置中按 `profile_id` 解析 shell/cwd/env/startup command；renderer 无法
+注入这些执行字段。owner 在 worker fork 前与 response 发出前重验权限/lease，每个 attempt 只允许
+一个并发 create，route replacement 或 owner 降权会丢弃旧路迟到响应。当前方案要求目标设备至少
+发布一个可发现 session；支持零会话 host 需要后续独立 control channel，不能把 `host_id` 当成
+session id 或绕过 session-scope 授权。
+
+同一 native Peer transport API 接受 `direct`、`lan` 和 `quick_tunnel` route kind，但 renderer 不提供 URL、
+membership token 或任何 Relay/account credential。首次加入成功后，Go 只在内存保留已验签 bundle
+中的 Quick Tunnel URL、签发 Peer 和到期时间；Manual LAN host/port 则按 issuer
+`SHA256:<peer_id>` 指纹写入本地配置，用户可编辑或删除。使用任一路径前都会再次确认该 Peer 仍在
+当前 deny-wins active membership 集合中，并要求目标 session 已由 Rendezvous 或 Manual LAN 的
+authenticated catalog 发现。WSS 路径复用相同的
+membership handshake、加密 terminal/config records 和 subscriber 生命周期。默认 route 仍是
+direct；Rendezvous 可用时对应 Pion，否则 Manual LAN catalog entry 解析为 LAN WSS。已有成员可在 Settings 手动导入无 ticket 的 signed
+reconnect bundle；Desktop 要求 bundle 属于当前 genesis、issuer 的精确 membership token 仍在
+deny-wins active set 中，再原子替换仅存在 Go 内存的 Quick Tunnel route，并新增或替换本地持久化
+的 Manual LAN route。新 bundle 不含 Quick Tunnel 时会删除该 issuer 的旧 Quick Tunnel route，
+但不会隐式删除用户保存的 Manual LAN endpoint。当前 Rendezvous catalog 已提供可选 v2 能力探测：
+`catalog_request_routes/catalog_response_routes` 在 pairwise encrypted catalog 第一页携带最新 signed
+member reconnect bundle；旧 host 忽略探测，client 在 750 ms 后回退 v1 并缓存该能力结果。Desktop
+先按现有 session scope/permission 验证目录，再独立验证 bundle 的 current genesis、精确 active
+issuer membership 与目标 Peer ID，成功后原子替换或删除该 issuer 的内存 route。v1 fallback 不改
+已有 route，Quick Tunnel URL/token 不落盘，任何 endpoint 都不进入 renderer、日志或诊断。Peer terminal 重连失败且目标 session
+仍在已认证目录中时，renderer 只能查询 `direct/lan/quick_tunnel` 可用性布尔值。对 ICE、Rendezvous
+可达性、timeout 或已建立 route 断开等可恢复故障，client 最多等待该本地查询 1 秒；若 Go 重新
+确认 signed Quick Tunnel hint 或本地已验证 Manual LAN route 有效，就携带同一 client instance 与
+last committed OUT seq 自动 handover 到对应 WSS route。认证、协议、backpressure 错误不允许换路降级。切到 Quick Tunnel 后至少稳定 30 秒才会
+重新查询 Direct；失败以 30 秒到 5 分钟指数冷却。Direct 候选沿用相同 identity/cursor，host 通过
+replacing subscriber 原子迁移 lease，client 在 `DIRECT_READY` 前冻结写入并对双路 OUT 按 seq 去重；
+候选失败时关闭旧路并按 cursor 重连 Quick Tunnel，避免把输入异步排入已被 host 撤权的 transport。
+用户仍可显式选择 Quick Tunnel。host 侧为 Quick Tunnel WSS 与
+Rendezvous Pion 共用 authenticated Peer route
+lease，按 `(remote_peer_id, session_id, client_instance_id)` 原子迁移 terminal subscriber 和 driver；
+新 route 完成授权重验与 replay catch-up 后才接管，旧 route 随即失去 terminal/config 写权限，
+且迟到 close 不会释放新 lease。不同客户端实例仍可独立订阅同一 session。Relay-account 与 Peer
+principal 之间的自动选路仍属于后续工作。
+
+Desktop 的 `peer_rendezvous_lifecycle.go` 在已有 Peer Space 且本机启用 Rendezvous 时维护 host
+registration：单次注册最多等待 10 秒，失败以 500 ms 到 8 s 退避，连接断开和 15 分钟
+presence 轮换都会重建。运行状态只向 renderer 投影 mode、service origin、状态、最近注册时间、
+注册耗时、opaque presence 数量和稳定错误码；topic、presence id、Peer id 与信令 payload 不进入
+Settings 或诊断导出。
+`peer_rendezvous_route.go` 只把 active membership 解析出的 presence 交给 route adapter，并与
+Quick Tunnel 共用 `peerHostRuntime`，所以 session scope、effective permission、周期撤销检查、
+单 terminal subscriber 和 `peerConfigChannel` 的规则完全相同。成员撤销会先更新 governance/
+epoch，再重建 registration，使旧 topic/presence 与既有 attempt 一起失效。
+
+用户可为这条 Pion route 单独配置外部 TURN。Rendezvous 仍只传递 pairwise-encrypted signaling，
+不提供也不代理 TURN；Desktop 把 STUN 与带密码的 TURN 分成独立 `ICEServer` 注入 Pion。TURN 地址和
+用户名只保存在本机配置，密码进入系统钥匙串，三者都不参与 Relay prefs、Peer config replication
+或配置导出。ICE 最终选中 `relay` candidate 时 UI 明示 `TURN relay`，但 membership handshake、
+permission 和 encrypted record layer 不变；TURN 只能观察端点 IP、时序与密文流量。
+
+Manual LAN listener 是独立、显式启用的本地能力：IPv4/hostname advertised host 绑定
+`tcp4 0.0.0.0:<port>`，显式 IPv6 host 绑定 `tcp6 [::]:<port>`，并在 signed bundle 中发布用户填写的
+host；IPv6 literal 使用 bracketed URL，link-local 地址保留接口 zone。停止 Quick Tunnel 不影响它。保存的 host/port 只提供 reachability，设备
+指纹必须精确绑定当前 active membership，随后仍执行四步 membership handshake 和 encrypted record
+layer。LAN control route 可做配置 anti-entropy 与 filtered catalog，但不会创建 PTY subscriber、driver、
+文件 worker 或 Preview service。只启用 Manual LAN 时，邀请核销、目录、同步和终端 attach 均不访问
+Relay、Rendezvous、STUN、Cloudflare 或其它公网服务。
+
+Desktop 还提供本机持久化的 `peer_lan_only` 路由策略。启用时先成功停止已运行的 Quick
+Tunnel，随后提交策略，并关闭现有 Peer client 与 Rendezvous lifecycle；之后 Quick Tunnel
+启动、Rendezvous 注册/重连、Direct Pion 与缓存 Quick Tunnel route 都在 Go 边界 fail closed。
+Manual LAN listener、mDNS、已验证手动地址、邀请核销、catalog 与 config anti-entropy 继续工作。
+关闭策略会用原有配置恢复 Rendezvous，策略切换不会删除 Rendezvous/STUN/TURN/Quick Tunnel
+设置。该策略只约束 Peer reachability；Relay 账户路径独立，若用户希望整个应用不连接账户
+Relay，必须另行暂停 Relay。它也不宣称阻止更新、飞书或其它非 Peer HTTP 流量。
+
+同一 listener 可由用户额外开启 mDNS/DNS-SD 自动发现。Desktop 以 `_atterm-peer._tcp` 发布当前
+sync epoch 派生的短期 opaque tag 和 IPv4 A 或 IPv6 AAAA listener metadata；link-local IPv6 responder
+只绑定 configured zone 对应接口，浏览端保留接收接口 zone。不发布 `peer_id`、Space ID、设备指纹、
+membership、凭证或 endpoint token；浏览结果只在进程内存中存在。客户端只把能映射到当前 active
+membership 的 tag 转为候选地址，未知/旧 epoch tag 直接忽略，且本机已保存的 Manual LAN route 优先。
+mDNS 是不可信 reachability hint，不改变四步 membership handshake、identity 校验、授权重验或 encrypted
+record layer；伪造 responder 最多把连接导向错误 endpoint，握手必须 fail closed。mDNS 发布或浏览失败
+不关闭 LAN listener，也不影响手动地址、Quick Tunnel、Rendezvous、Relay 或本地 terminal。
+
+Rendezvous 生命周期是附加能力：启动或重连失败不阻塞桌面启动，本地 terminal、Relay、Manual LAN 与 Quick
+Tunnel 不读取它的状态。成员 reconnect bundle 可发布 Quick Tunnel、Rendezvous、Manual LAN 的任意
+可用组合；首次 invitation redemption 需要 Quick Tunnel 或 Manual LAN，不能只靠 Rendezvous。自动规划会为可达成员建立
+config-only Pion 通道，Settings 的手动同步则在所有已完成 membership handshake 的 terminal 或
+config-only channel 上重新发送 inventory；无认证通道时明确失败。两条路径都不创建 terminal
+subscriber 或隐藏的中心上传路径。成员目录中的“最近直连交换”来自各设备持久化的
+`ConfigSyncPeers.LastExchangeAt`，不是 Rendezvous 提供的在线/last-seen 权威状态。
+
+无账户 Peer 路径的流量统计保存在每台桌面设备本地的 `peer-traffic.json`，不依赖 Relay
+账户或中心采集。计量点位于 membership handshake 之后的 encrypted record layer：Pion
+DataChannel、Quick Tunnel WSS 和 Manual LAN WSS 只在 record 成功发送，或 AEAD 验证并确认
+为 data record 后，累计密文 record 的方向、字节数和条数。握手、Rendezvous/ICE 信令、失败
+写入以及底层 IP/SCTP/WebSocket 开销不计入，因此该指标用于比较 atterm Peer 有效传输量，
+不是网络账单值。数据仅按 UTC 日和 `direct` / `quick_tunnel` / `lan` / `gateway` 路由类别聚合，
+保留 180 天；不写入 Peer ID、session ID、IP、endpoint、membership 或凭证。共享 host WSS
+handler 同时服务 Quick Tunnel 与 Manual LAN，无法可靠区分来源时使用 `gateway`，不伪造路由
+精度。Desktop 的 `GetPeerTraffic(from,to)` 提供最多 90 个 UTC 日的只读查询并在返回前原子落盘；
+应用正常关闭时也会尽力 flush，失败不阻塞本地终端或关闭流程。
 
 ## Relay 多实例架构
 

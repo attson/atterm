@@ -16,6 +16,10 @@
 
 ## PR 3.1 - Minimal Rendezvous service
 
+Implementation status: the standalone stateless service, v1 challenge/register/publish protocol,
+120-second bounded mailbox, retry dedupe, exact Origin enforcement, TLS/loopback-proxy startup gates,
+and payload-free health/metrics are implemented. Client route integration remains in PR 3.3/3.4.
+
 Create:
 
 - `internal/rendezvous/`
@@ -32,6 +36,13 @@ Implement:
 
 ## PR 3.2 - Official/self-hosted contract
 
+Implementation status: canonical official/custom/disabled endpoint and STUN configuration,
+browser capability preflight, self-host container/docs, and the shared black-box contract runner
+are implemented. Settings presentation and connection lifecycle remain in PR 3.4/3.5.
+The self-hosted production-proxy posture passes the black-box runner locally. The official
+`rendezvous.atterm.dev` origin did not resolve during the 2026-10-08 acceptance run, so the shared
+deployment gate remains open rather than treating the in-process service test as an official check.
+
 - Publish one protocol and contract suite for both deployments。
 - Official/custom/disabled URL configuration。
 - Self-host docs for TLS、origins、rate limits and reverse proxy。
@@ -39,6 +50,14 @@ Implement:
 - STUN settings and metadata-disclosure documentation。
 
 ## PR 3.3 - Stable member discovery and sync dialing
+
+Implementation status: sync-epoch-derived opaque topics, 15-minute rotating member presence,
+adjacent-slot resolution, ephemeral registration challenge identities, an in-memory reachability
+directory, and deterministic all-peer/bounded-fanout config-sync planning are implemented. The
+Desktop planner revalidates active membership and joins reachability only to durable peer
+acknowledgement vectors. The planner now drives authenticated config-only Pion attempts without a
+terminal subscriber; rotating three-peer anti-entropy convergence is covered by durable replica and
+real Pion route tests.
 
 - Space members register rotating presence identifiers derived from Space material, not email/account ids。
 - Small Spaces attempt anti-entropy with all reachable peers; larger Spaces use bounded fanout based on vector lag。
@@ -48,6 +67,13 @@ Implement:
 
 ## PR 3.4 - Client route integration
 
+Implementation status: the pairwise-encrypted signaling adapter, multiplexed Pion attempts,
+stable route failure categories, Desktop host registration/reconnect/rotation lifecycle, shared
+Quick Tunnel/Rendezvous terminal attachment runtime, and mixed or Rendezvous-only member reconnect
+bundles are implemented. First invitation redemption remains Quick Tunnel-only. The transport API
+is covered with real in-memory Rendezvous + Pion tests; end-user route selection/status presentation
+remains PR 3.5, so the Stage exit gate is not claimed here.
+
 - Add Rendezvous signaling adapter to the transport established in Stage 1。
 - Existing membership authenticator from Stage 2 handles the connection。
 - ConnectionBundle can carry Rendezvous and Quick Tunnel hints without changing CapabilityTicket。
@@ -55,6 +81,15 @@ Implement:
 - UI shows `Direct via Rendezvous signaling`; terminal route remains `Direct` after setup。
 
 ## PR 3.5 - Settings and operational UX
+
+Implementation status: Desktop Settings now exposes official/custom/disabled Rendezvous and
+default/custom/disabled STUN selection, validates and persists local-only endpoints, reports
+registration state/latency/time/reachable presence count with stable error codes, and provides
+manual reconnect plus authenticated-channel config sync. The Peer directory reports each member's
+last direct config exchange, member reconnect bundles can be copied with Rendezvous alone online,
+first-join bundles remain Quick Tunnel-only, and diagnostics include only a redaction-safe aggregate
+Rendezvous summary. End-user accountless session discovery/attach still needs a separate protocol,
+so the Stage exit gate is not claimed by this PR.
 
 `Peer 连接` gains:
 
@@ -64,15 +99,42 @@ Implement:
 - Per-device last seen/sync state without implying server-side authority。
 - Manual reconnect/sync actions and diagnostic export。
 
+## PR 3.6 - Desktop session discovery and attach
+
+Implementation status: Desktop now requests a bounded, paginated session catalog over the existing
+pairwise-encrypted Rendezvous route, while the host revalidates active membership, revocation,
+session scope and permission ceilings for every request. Catalog reads create no terminal subscriber
+or Pion attempt. The Desktop sidebar merges discovered Peer sessions by authoritative session id,
+prefers a Relay entry when both exist, and opens Peer-only sessions through the native Go/Pion client
+without a Relay `/client` WebSocket. Attach re-reads durable Peer state and reuses the existing
+membership handshake, host permission enforcement, periodic revocation check and config channel.
+Automated in-memory catalog/Pion tests and frontend direct-only connection tests are implemented;
+the real two-Desktop flow has also passed local acceptance: discovery, control, restart without a
+new Quick Tunnel URL, view-only enforcement, member revocation and Rendezvous failure isolation.
+Peer-only terminal panes retain the last classified route failure across reconnect attempts. ICE
+failure is shown as a likely restrictive-NAT/blocked-UDP condition and explicitly states that
+Rendezvous carries discovery/signaling only; the UI directs the user to a Quick Tunnel route or a
+different network instead of implying that Rendezvous can relay terminal bytes.
+The route integration suite also records the decoded WebSocket frames at the Rendezvous boundary
+while a real Pion channel carries terminal and config markers. Invitation/membership tokens,
+session metadata, SDP, config and terminal plaintext are absent from that wire capture; the service
+suite separately checks DEBUG logs and metrics for routing, identity and payload markers.
+
+- Discover only sessions authorized by both members' scopes and effective permission ceilings。
+- Keep session metadata, SDP/ICE, membership material and terminal bytes opaque to Rendezvous。
+- Cache route identity only in Go; renderer receives no membership token or Peer route secret。
+- Reconnect a selected session through native Pion with replay de-duplication and no Relay fallback。
+- Keep local terminal, Relay and Quick Tunnel lifecycle independent from Rendezvous discovery failure。
+
 ## Stage Exit Gate
 
-- [ ] A trusted client reconnects after desktop restart without receiving a new Quick Tunnel URL.
+- [x] A trusted client reconnects after desktop restart without receiving a new Quick Tunnel URL.
 - [ ] Official and self-hosted services pass the same contract suite.
-- [ ] Rendezvous restart only drops ephemeral presence/signaling.
-- [ ] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
-- [ ] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
-- [ ] A/B/C sync converges through rotating online peers without a designated hub.
-- [ ] Restrictive NAT is reported honestly; Rendezvous alone is not called a data relay.
+- [x] Rendezvous restart only drops ephemeral presence/signaling.
+- [x] Service logs/packet inspection contain no invite secret、SDP plaintext、config or terminal bytes.
+- [x] Rendezvous unavailable leaves local terminal、Relay and Quick Tunnel paths usable.
+- [x] A/B/C sync converges through rotating online peers without a designated hub.
+- [x] Restrictive NAT is reported honestly; Rendezvous alone is not called a data relay.
 
 Verification:
 

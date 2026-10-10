@@ -21,6 +21,9 @@ function fakePayload(): api.DiagnosticsPayload {
     remote_permission: 'full',
     uplink_paused: false,
     recent_relay_errors: [],
+    rendezvous: {
+      mode: 'disabled', service_origin: '', state: 'disabled', reachable_peers: 0,
+    },
     config: {
       default_shell: '/bin/zsh', locale: 'system', terminal_theme: 'default',
       notifications_enabled: true, shell_integration_enabled: true,

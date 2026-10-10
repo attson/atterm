@@ -15,8 +15,10 @@ function styleBlockFor(selector: string): string {
 }
 
 describe("TerminalView plugin connection registry", () => {
-  test("registers its live SessionConnection and only removes its own entry", () => {
-    expect(appSource).toMatch(/reactive\(new Map<string, SessionConnection>\(\)\)/);
+  test("registers its live Relay or Peer FS connection and only removes its own entry", () => {
+    expect(appSource).toContain(
+      "reactive(new Map<string, SessionFSConnection>())",
+    );
     expect(appSource).toMatch(/const selectedPane = computed<Pane \| null>/);
     expect(appSource).toMatch(/watch\(selectedPane,/);
     expect(source).toContain('"atterm:pluginSessionConnections"');
@@ -37,6 +39,26 @@ describe("TerminalView direct transport plumbing", () => {
     expect(source).toContain("directEndpoint: props.directEndpoint");
     expect(source).toContain("directTransportFactory: platform.directConnection.createTransport");
     expect(source).toContain("preferDirect: props.preferDirect");
+  });
+
+  test("explains restrictive NAT without presenting Rendezvous as a data relay", () => {
+    expect(source).toContain('data-testid="peer-connection-failure"');
+    expect(source).toContain('terminal.route.peerFailure.iceFailed');
+    expect(source).toContain('props.peerDirect && routeDiagnostics.value.fallbackReason');
+  });
+
+  test("labels a selected relay ICE candidate as TURN relay", () => {
+    expect(source).toContain('routeDiagnostics.value.candidateType === "relay"');
+    expect(source).toContain('t("terminal.route.turnRelay")');
+  });
+
+  test("offers Quick Tunnel only after the native route cache confirms it", () => {
+    expect(source).toContain('data-testid="peer-quick-tunnel-retry"');
+    expect(source).toContain('platform.peer?.getSessionRouteStatus');
+    expect(source).toMatch(/canRetryPeerQuickTunnel[\s\S]*peerQuickTunnelAvailable\.value/);
+    expect(source).toContain('conn.setRoute("quick_tunnel")');
+    expect(source).toContain("resolveQuickTunnelFallback: refreshPeerRouteStatus");
+    expect(source).toContain("resolveDirectFailback: resolvePeerDirectFailback");
   });
 });
 
@@ -608,6 +630,15 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toMatch(/async function\s+onImagePicked\s*\(/);
     expect(source).toMatch(/conn\?\.sendPasteImage\(file,\s*name\)/);
     expect(source).toMatch(/pasteImageBus\.emit\(file,\s*name\)/);
+  });
+
+  test("allows full-permission Peer drivers to use image and file paste", () => {
+    const gate = source.match(/const\s+pasteBlobCanSend\s*=\s*computed\(\(\)\s*=>[\s\S]*?\n\);/);
+    expect(gate).not.toBeNull();
+    expect(gate![0]).toMatch(/auxKeysCanSend\.value/);
+    expect(gate![0]).toMatch(/effectiveRemotePermission\(props\.remotePermission\)\s*===\s*"full"/);
+    expect(gate![0]).not.toMatch(/peerDirect/);
+    expect(source).toMatch(/async function\s+handleImagePaste\([\s\S]*?if\s*\(!pasteBlobCanSend\.value\)\s*return/);
   });
 
   test("uses Capacitor Camera Prompt for native image picking when available", () => {
@@ -1526,8 +1557,10 @@ describe("PaneGrid preview badge layout", () => {
     expect(paneSource).not.toContain(".remote-badge.has-preview");
     expect(paneSource).not.toContain("servicePreviewActive.has(pane.sessionId)");
     expect(paneSource).toContain('class="service-preview-controls-slot"');
-    // Antenna trigger + host label are unconditional (only gated on availability).
+    // The host label remains unconditional and the shared Preview trigger is
+    // available to both Relay and authenticated Peer panes.
     expect(paneSource).toContain('v-if="servicePreviewAvailable"');
+    expect(paneSource).not.toContain('servicePreviewAvailable && !pane.peerDirect');
     expect(paneSource).toContain('<span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>');
   });
 

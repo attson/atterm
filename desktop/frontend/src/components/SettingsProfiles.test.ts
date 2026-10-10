@@ -5,6 +5,7 @@ import { __setPlatformForTests } from "../platform";
 import { createFakePlatform, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "../lib/api";
 import type { SessionProfile } from "../lib/api";
+import { en } from "../i18n/messages/en";
 
 describe("SettingsProfiles", () => {
   // Named so assertions below can inspect call args (e.g. what SetProfiles
@@ -170,5 +171,64 @@ describe("SettingsProfiles", () => {
 
     expect(getProfilesMock).toHaveBeenCalled();
     expect(setProfilesMock).not.toHaveBeenCalled();
+  });
+
+  function peerSessions() {
+    return [
+      { session_id: "s-view", host_id: "host-view", host: "Hidden Viewer", remote_permission: "view" },
+      { session_id: "s-zulu", host_id: "host-zulu", host: "Zulu Laptop", remote_permission: "control" },
+      { session_id: "s-alpha-1", host_id: "host-alpha", host: "Alpha Desktop", remote_permission: "full" },
+      { session_id: "s-alpha-2", host_id: "host-alpha", host: "Alpha Desktop", remote_permission: "full" },
+    ];
+  }
+
+  function mountPeerProfiles(createSessionWithProfile = vi.fn().mockResolvedValue("created-session")) {
+    const platform = createFakePlatform();
+    platform.sessions.listRemoteSessions = vi.fn().mockResolvedValue(peerSessions());
+    platform.sessions.createSessionWithProfile = createSessionWithProfile;
+    __setPlatformForTests(platform);
+    return { wrapper: mount(SettingsProfiles), createSessionWithProfile };
+  }
+
+  it("shows one custom-dropdown option per control/full Peer host", async () => {
+    const { wrapper } = mountPeerProfiles();
+    await flushPromises();
+
+    const picker = wrapper.get('[data-testid="profile-peer-host"]');
+    await picker.get('[data-testid="select-trigger"]').trigger("click");
+    expect(picker.findAll('[data-testid="select-option"]').map((option) => option.text())).toEqual([
+      "Alpha Desktop",
+      "Zulu Laptop",
+    ]);
+    expect(wrapper.text()).not.toContain("Hidden Viewer");
+  });
+
+  it("guards rapid duplicate Peer actions and emits the created session id", async () => {
+    let resolveCreate!: (sessionID: string) => void;
+    const create = vi.fn(() => new Promise<string>((resolve) => { resolveCreate = resolve; }));
+    const { wrapper } = mountPeerProfiles(create);
+    await flushPromises();
+
+    const button = wrapper.get('[data-testid="profile-peer-open-p1"]');
+    void button.trigger("click");
+    await button.trigger("click");
+    expect(create).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledWith("host-alpha", "p1");
+
+    resolveCreate("created-session");
+    await flushPromises();
+    expect(wrapper.emitted("session-created")).toEqual([["created-session"]]);
+  });
+
+  it("surfaces a stable Peer timeout error without retrying", async () => {
+    const create = vi.fn().mockRejectedValue(new Error("timeout"));
+    const { wrapper } = mountPeerProfiles(create);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="profile-peer-open-p1"]').trigger("click");
+    await flushPromises();
+    expect(create).toHaveBeenCalledOnce();
+    expect(wrapper.get('[data-testid="profile-peer-error"]').text()).toBe(en.settings.profiles.peerOpenErrors.timeout);
+    expect(wrapper.emitted("session-created")).toBeUndefined();
   });
 });

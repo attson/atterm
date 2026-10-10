@@ -323,6 +323,54 @@ export namespace main {
 	        this.command_notify_threshold_seconds = source["command_notify_threshold_seconds"];
 	    }
 	}
+	export class CreatePeerInvitationsReq {
+	    count: number;
+	    valid_for_hours: number;
+	    permission: string;
+	    allowed_session_ids: string[];
+	    can_invite: boolean;
+	    can_sync_secrets: boolean;
+
+
+	    static createFrom(source: any = {}) {
+	        return new CreatePeerInvitationsReq(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.count = source["count"];
+	        this.valid_for_hours = source["valid_for_hours"];
+	        this.permission = source["permission"];
+	        this.allowed_session_ids = source["allowed_session_ids"];
+	        this.can_invite = source["can_invite"];
+	        this.can_sync_secrets = source["can_sync_secrets"];
+	    }
+	}
+	export class RendezvousDiagnostics {
+	    mode: string;
+	    service_origin: string;
+	    state: string;
+	    last_registered_at?: number;
+	    registration_ms?: number;
+	    reachable_peers: number;
+	    last_error_code?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RendezvousDiagnostics(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.service_origin = source["service_origin"];
+	        this.state = source["state"];
+	        this.last_registered_at = source["last_registered_at"];
+	        this.registration_ms = source["registration_ms"];
+	        this.reachable_peers = source["reachable_peers"];
+	        this.last_error_code = source["last_error_code"];
+	    }
+	}
 	export class RelayErrorEntry {
 	    timestamp: string;
 	    message: string;
@@ -352,6 +400,7 @@ export namespace main {
 	    remote_permission: string;
 	    uplink_paused: boolean;
 	    recent_relay_errors: RelayErrorEntry[];
+	    rendezvous: RendezvousDiagnostics;
 	    config: ConfigSummary;
 	
 	    static createFrom(source: any = {}) {
@@ -374,6 +423,7 @@ export namespace main {
 	        this.remote_permission = source["remote_permission"];
 	        this.uplink_paused = source["uplink_paused"];
 	        this.recent_relay_errors = this.convertValues(source["recent_relay_errors"], RelayErrorEntry);
+	        this.rendezvous = this.convertValues(source["rendezvous"], RendezvousDiagnostics);
 	        this.config = this.convertValues(source["config"], ConfigSummary);
 	    }
 	
@@ -669,6 +719,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class JoinPeerSpaceReq {
+	    connection_bundle: string;
+	    expected_fingerprint: string;
+
+
+	    static createFrom(source: any = {}) {
+	        return new JoinPeerSpaceReq(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.connection_bundle = source["connection_bundle"];
+	        this.expected_fingerprint = source["expected_fingerprint"];
+	    }
+	}
 	export class KnownHostEntry {
 	    host: string;
 	    fingerprint: string;
@@ -726,10 +792,13 @@ export namespace main {
 	    session_id: string;
 	    since_seq: number;
 	    client_instance_id: string;
+	    route?: string;
+
 
 	    static createFrom(source: any = {}) {
 	        return new NativeDirectStartRequest(source);
 	    }
+
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
@@ -737,6 +806,7 @@ export namespace main {
 	        this.session_id = source["session_id"];
 	        this.since_seq = source["since_seq"];
 	        this.client_instance_id = source["client_instance_id"];
+	        this.route = source["route"];
 	    }
 	}
 	export class NewSessionReq {
@@ -846,6 +916,367 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class PeerConfigSyncStatus {
+	    configured: boolean;
+	    local_operations: number;
+	    pending_operations: number;
+	    replica_devices: number;
+	    active_remote_members: number;
+	    acknowledging_peers: number;
+	    last_exchange_at?: number;
+	    pending_import_records: number;
+	    pending_import_captured_at?: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerConfigSyncStatus(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.configured = source["configured"];
+	        this.local_operations = source["local_operations"];
+	        this.pending_operations = source["pending_operations"];
+	        this.replica_devices = source["replica_devices"];
+	        this.active_remote_members = source["active_remote_members"];
+	        this.acknowledging_peers = source["acknowledging_peers"];
+	        this.last_exchange_at = source["last_exchange_at"];
+	        this.pending_import_records = source["pending_import_records"];
+	        this.pending_import_captured_at = source["pending_import_captured_at"];
+	    }
+	}
+	export class PeerConnectionPreview {
+	    space_id: string;
+	    fingerprint: string;
+	    issuer_peer_id: string;
+	    permission: string;
+	    allowed_session_ids: string[];
+	    can_invite: boolean;
+	    can_sync_secrets: boolean;
+	    invitation_expires_at: number;
+	    bundle_expires_at: number;
+	    route_kind: string;
+	    route_url: string;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerConnectionPreview(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.space_id = source["space_id"];
+	        this.fingerprint = source["fingerprint"];
+	        this.issuer_peer_id = source["issuer_peer_id"];
+	        this.permission = source["permission"];
+	        this.allowed_session_ids = source["allowed_session_ids"];
+	        this.can_invite = source["can_invite"];
+	        this.can_sync_secrets = source["can_sync_secrets"];
+	        this.invitation_expires_at = source["invitation_expires_at"];
+	        this.bundle_expires_at = source["bundle_expires_at"];
+	        this.route_kind = source["route_kind"];
+	        this.route_url = source["route_url"];
+	    }
+	}
+	export class PeerInvitation {
+	    invite_id: string;
+	    batch_id: string;
+	    token: string;
+	    expires_at: number;
+	    consumed_at?: number;
+	    consumed_by_peer_id?: string;
+	    revoked_at?: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerInvitation(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.invite_id = source["invite_id"];
+	        this.batch_id = source["batch_id"];
+	        this.token = source["token"];
+	        this.expires_at = source["expires_at"];
+	        this.consumed_at = source["consumed_at"];
+	        this.consumed_by_peer_id = source["consumed_by_peer_id"];
+	        this.revoked_at = source["revoked_at"];
+	    }
+	}
+	export class PeerManualLANRoute {
+	    host: string;
+	    port: number;
+	    fingerprint: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerManualLANRoute(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.fingerprint = source["fingerprint"];
+	    }
+	}
+	export class PeerLANConfig {
+	    lan_only: boolean;
+	    enabled: boolean;
+	    auto_discovery: boolean;
+	    advertise_host: string;
+	    port: number;
+	    routes: PeerManualLANRoute[];
+	    running: boolean;
+	    discovery_running: boolean;
+	    listen_address?: string;
+	    last_error?: string;
+	    discovery_last_error?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerLANConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lan_only = source["lan_only"];
+	        this.enabled = source["enabled"];
+	        this.auto_discovery = source["auto_discovery"];
+	        this.advertise_host = source["advertise_host"];
+	        this.port = source["port"];
+	        this.routes = this.convertValues(source["routes"], PeerManualLANRoute);
+	        this.running = source["running"];
+	        this.discovery_running = source["discovery_running"];
+	        this.listen_address = source["listen_address"];
+	        this.last_error = source["last_error"];
+	        this.discovery_last_error = source["discovery_last_error"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+	export class PeerMember {
+	    peer_id: string;
+	    grant_serial: string;
+	    issuer_peer_id: string;
+	    permission: string;
+	    allowed_session_ids: string[];
+	    can_invite: boolean;
+	    can_sync_secrets: boolean;
+	    issued_at: number;
+	    expires_at?: number;
+	    revoked_at?: number;
+	    status: string;
+	    local: boolean;
+	    can_revoke: boolean;
+	    last_exchange_at?: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerMember(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.peer_id = source["peer_id"];
+	        this.grant_serial = source["grant_serial"];
+	        this.issuer_peer_id = source["issuer_peer_id"];
+	        this.permission = source["permission"];
+	        this.allowed_session_ids = source["allowed_session_ids"];
+	        this.can_invite = source["can_invite"];
+	        this.can_sync_secrets = source["can_sync_secrets"];
+	        this.issued_at = source["issued_at"];
+	        this.expires_at = source["expires_at"];
+	        this.revoked_at = source["revoked_at"];
+	        this.status = source["status"];
+	        this.local = source["local"];
+	        this.can_revoke = source["can_revoke"];
+	        this.last_exchange_at = source["last_exchange_at"];
+	    }
+	}
+	export class PeerQuickTunnelStatus {
+	    running: boolean;
+	    starting: boolean;
+	    public_url?: string;
+	    local_origin?: string;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerQuickTunnelStatus(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.starting = source["starting"];
+	        this.public_url = source["public_url"];
+	        this.local_origin = source["local_origin"];
+	    }
+	}
+	export class PeerRendezvousConfig {
+	    mode: string;
+	    url: string;
+	    websocket_url: string;
+	    health_url: string;
+	    stun_mode: string;
+	    stun_urls: string[];
+	    turn_enabled: boolean;
+	    turn_urls: string[];
+	    turn_username: string;
+	    turn_credential_configured: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerRendezvousConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.url = source["url"];
+	        this.websocket_url = source["websocket_url"];
+	        this.health_url = source["health_url"];
+	        this.stun_mode = source["stun_mode"];
+	        this.stun_urls = source["stun_urls"];
+	        this.turn_enabled = source["turn_enabled"];
+	        this.turn_urls = source["turn_urls"];
+	        this.turn_username = source["turn_username"];
+	        this.turn_credential_configured = source["turn_credential_configured"];
+	    }
+	}
+	export class PeerRendezvousStatus {
+	    mode: string;
+	    state: string;
+	    url?: string;
+	    last_registered_at?: number;
+	    registration_ms?: number;
+	    reachable_peers: number;
+	    last_error_code?: string;
+	    next_retry_at?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerRendezvousStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.state = source["state"];
+	        this.url = source["url"];
+	        this.last_registered_at = source["last_registered_at"];
+	        this.registration_ms = source["registration_ms"];
+	        this.reachable_peers = source["reachable_peers"];
+	        this.last_error_code = source["last_error_code"];
+	        this.next_retry_at = source["next_retry_at"];
+	    }
+	}
+	export class PeerRouteImportResult {
+	    issuer_peer_id: string;
+	    quick_tunnel: boolean;
+	    manual_lan: boolean;
+	    expires_at: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerRouteImportResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.issuer_peer_id = source["issuer_peer_id"];
+	        this.quick_tunnel = source["quick_tunnel"];
+	        this.manual_lan = source["manual_lan"];
+	        this.expires_at = source["expires_at"];
+	    }
+	}
+	export class PeerSessionRouteStatus {
+	    direct: boolean;
+	    lan: boolean;
+	    quick_tunnel: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new PeerSessionRouteStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.direct = source["direct"];
+	        this.lan = source["lan"];
+	        this.quick_tunnel = source["quick_tunnel"];
+	    }
+	}
+	export class PeerSpaceStatus {
+	    configured: boolean;
+	    peer_id?: string;
+	    space_id?: string;
+	    genesis_hash?: string;
+	    created_at?: number;
+	    open_invitations: number;
+	    used_invitations: number;
+	    revoked_invitations: number;
+	    expired_invitations: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerSpaceStatus(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.configured = source["configured"];
+	        this.peer_id = source["peer_id"];
+	        this.space_id = source["space_id"];
+	        this.genesis_hash = source["genesis_hash"];
+	        this.created_at = source["created_at"];
+	        this.open_invitations = source["open_invitations"];
+	        this.used_invitations = source["used_invitations"];
+	        this.revoked_invitations = source["revoked_invitations"];
+	        this.expired_invitations = source["expired_invitations"];
+	    }
+	}
+	export class PeerTrafficRow {
+	    day: string;
+	    route: string;
+	    bytes_sent: number;
+	    bytes_received: number;
+	    records_sent: number;
+	    records_received: number;
+
+
+	    static createFrom(source: any = {}) {
+	        return new PeerTrafficRow(source);
+	    }
+
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.day = source["day"];
+	        this.route = source["route"];
+	        this.bytes_sent = source["bytes_sent"];
+	        this.bytes_received = source["bytes_received"];
+	        this.records_sent = source["records_sent"];
+	        this.records_received = source["records_received"];
+	    }
 	}
 	export class WidgetConfig {
 	    enabled: boolean;
@@ -1409,6 +1840,7 @@ export namespace main {
 	    host_to_client_key: number[];
 	    port: number;
 	    path_prefix?: string;
+	    peer_attempt_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServicePreviewMapping(source);
@@ -1422,6 +1854,7 @@ export namespace main {
 	        this.host_to_client_key = source["host_to_client_key"];
 	        this.port = source["port"];
 	        this.path_prefix = source["path_prefix"];
+	        this.peer_attempt_id = source["peer_attempt_id"];
 	    }
 	}
 	export class ServicePreviewRebindRequest {
@@ -1431,6 +1864,7 @@ export namespace main {
 	    client_ticket: string;
 	    client_to_host_key: number[];
 	    host_to_client_key: number[];
+	    peer_attempt_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServicePreviewRebindRequest(source);
@@ -1444,6 +1878,7 @@ export namespace main {
 	        this.client_ticket = source["client_ticket"];
 	        this.client_to_host_key = source["client_to_host_key"];
 	        this.host_to_client_key = source["host_to_client_key"];
+	        this.peer_attempt_id = source["peer_attempt_id"];
 	    }
 	}
 	export class ServicePreviewStartRequest {
@@ -1522,7 +1957,73 @@ export namespace main {
 	        this.sync_env = source["sync_env"];
 	    }
 	}
-	
+	export class SetPeerLANConfigReq {
+	    lan_only: boolean;
+	    enabled: boolean;
+	    auto_discovery: boolean;
+	    advertise_host: string;
+	    port: number;
+	    routes: PeerManualLANRoute[];
+
+	    static createFrom(source: any = {}) {
+	        return new SetPeerLANConfigReq(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lan_only = source["lan_only"];
+	        this.enabled = source["enabled"];
+	        this.auto_discovery = source["auto_discovery"];
+	        this.advertise_host = source["advertise_host"];
+	        this.port = source["port"];
+	        this.routes = this.convertValues(source["routes"], PeerManualLANRoute);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SetPeerRendezvousConfigReq {
+	    mode: string;
+	    url: string;
+	    stun_mode: string;
+	    stun_urls: string[];
+	    turn_enabled: boolean;
+	    turn_urls: string[];
+	    turn_username: string;
+	    turn_credential: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SetPeerRendezvousConfigReq(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.url = source["url"];
+	        this.stun_mode = source["stun_mode"];
+	        this.stun_urls = source["stun_urls"];
+	        this.turn_enabled = source["turn_enabled"];
+	        this.turn_urls = source["turn_urls"];
+	        this.turn_username = source["turn_username"];
+	        this.turn_credential = source["turn_credential"];
+	    }
+	}
+
 	export class SignOutOthersResult {
 	    deleted: number;
 	

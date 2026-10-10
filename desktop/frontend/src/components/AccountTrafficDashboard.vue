@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { Activity, ArrowDownRight, ArrowUpRight, Gauge, Minus, Network, Radio, RefreshCw } from "lucide-vue-next";
 import { getMeTraffic } from "@shared/api/me";
 import type { AdminTrafficRow, MeTrafficResponse } from "@shared/api/types";
 import type { MessageKey } from "../i18n";
 import { useI18n } from "../i18n/useI18n";
+import { usePlatform } from "../platform";
+import type { PeerTrafficRow } from "../platform/types";
 import {
   categorySummaries,
   directionSeries,
@@ -17,27 +19,65 @@ import {
   type TrafficMetric,
 } from "./admin/trafficModel";
 
+const props = withDefaults(defineProps<{ relayConnected?: boolean }>(), { relayConnected: true });
 const { t } = useI18n();
+const platform = usePlatform();
 const rangeDays = ref(7);
 const metric = ref<TrafficMetric>("bytes");
 const dimension = ref<TimelineDimension>("group");
 const direction = ref<DirectionFilter>("all");
 const loading = ref(false);
 const error = ref(false);
+const partialError = ref(false);
 const traffic = ref<MeTrafficResponse | null>(null);
+const peerTraffic = ref<PeerTrafficRow[] | null>(null);
 const range = computed(() => trafficRange(rangeDays.value));
+const peerTrafficAvailable = computed(() => typeof platform.peer?.getTraffic === "function");
+let loadGeneration = 0;
 
 async function load(): Promise<void> {
+  const generation = ++loadGeneration;
   loading.value = true;
   error.value = false;
-  try {
-    traffic.value = await getMeTraffic(range.value.from, range.value.to);
-  } catch {
+  partialError.value = false;
+  const relayRequest = props.relayConnected
+    ? getMeTraffic(range.value.from, range.value.to)
+    : Promise.resolve<MeTrafficResponse | null>(null);
+  const getPeerTraffic = platform.peer?.getTraffic;
+  const peerFrom = rangeDays.value === 90 ? range.value.days[0] : range.value.from;
+  const peerRequest = getPeerTraffic
+    ? getPeerTraffic(peerFrom, range.value.to)
+    : Promise.resolve<PeerTrafficRow[] | null>(null);
+  const [relayResult, peerResult] = await Promise.allSettled([relayRequest, peerRequest]);
+  if (generation !== loadGeneration) return;
+
+  let expected = 0;
+  let succeeded = 0;
+  if (props.relayConnected) {
+    expected++;
+    if (relayResult.status === "fulfilled") {
+      traffic.value = relayResult.value;
+      succeeded++;
+    } else {
+      traffic.value = null;
+    }
+  } else {
     traffic.value = null;
-    error.value = true;
-  } finally {
-    loading.value = false;
   }
+  if (getPeerTraffic) {
+    expected++;
+    if (peerResult.status === "fulfilled") {
+      peerTraffic.value = peerResult.value;
+      succeeded++;
+    } else {
+      peerTraffic.value = null;
+    }
+  } else {
+    peerTraffic.value = null;
+  }
+  error.value = expected > 0 && succeeded === 0;
+  partialError.value = succeeded > 0 && succeeded < expected;
+  loading.value = false;
 }
 
 function setRange(days: number): void {
@@ -96,6 +136,40 @@ const directKpis = computed(() => [
   { key: "fallback", icon: ArrowDownRight, label: t("settings.account.traffic.fallbacks"), value: compactNumber(fallbacks.value), hint: t("settings.account.traffic.fallbackHint"), trend: null },
 ]);
 
+const currentPeer = computed(() => (peerTraffic.value ?? []).filter((row) => currentDays.value.has(row.day)));
+const previousPeer = computed(() => (peerTraffic.value ?? []).filter((row) => previousDays.value.has(row.day)));
+const peerSent = computed(() => currentPeer.value.reduce((sum, row) => sum + row.bytes_sent, 0));
+const peerReceived = computed(() => currentPeer.value.reduce((sum, row) => sum + row.bytes_received, 0));
+const peerBytes = computed(() => peerSent.value + peerReceived.value);
+const peerRecords = computed(() => currentPeer.value.reduce((sum, row) => sum + row.records_sent + row.records_received, 0));
+const peerPriorSent = computed(() => previousPeer.value.reduce((sum, row) => sum + row.bytes_sent, 0));
+const peerPriorReceived = computed(() => previousPeer.value.reduce((sum, row) => sum + row.bytes_received, 0));
+const peerPriorBytes = computed(() => peerPriorSent.value + peerPriorReceived.value);
+const peerPriorRecords = computed(() => previousPeer.value.reduce((sum, row) => sum + row.records_sent + row.records_received, 0));
+const peerTrend = (current: number, previous: number): number | null => rangeDays.value === 90 ? null : trendPercent(current, previous);
+const peerKpis = computed(() => [
+  { key: "total", label: t("settings.account.traffic.peerTotal"), value: humanBytes(peerBytes.value), trend: peerTrend(peerBytes.value, peerPriorBytes.value) },
+  { key: "sent", label: t("settings.account.traffic.peerSent"), value: humanBytes(peerSent.value), trend: peerTrend(peerSent.value, peerPriorSent.value) },
+  { key: "received", label: t("settings.account.traffic.peerReceived"), value: humanBytes(peerReceived.value), trend: peerTrend(peerReceived.value, peerPriorReceived.value) },
+  { key: "records", label: t("settings.account.traffic.peerRecords"), value: compactNumber(peerRecords.value), trend: peerTrend(peerRecords.value, peerPriorRecords.value) },
+]);
+
+const peerRouteOrder: PeerTrafficRow["route"][] = ["direct", "quick_tunnel", "lan", "gateway"];
+const peerRouteColors: Record<PeerTrafficRow["route"], string> = {
+  direct: "#58a6ff",
+  quick_tunnel: "#39c5cf",
+  lan: "#3fb950",
+  gateway: "#d29922",
+};
+const peerRoutes = computed(() => peerRouteOrder.map((route) => {
+  const rows = currentPeer.value.filter((row) => row.route === route);
+  const sent = rows.reduce((sum, row) => sum + row.bytes_sent, 0);
+  const received = rows.reduce((sum, row) => sum + row.bytes_received, 0);
+  const records = rows.reduce((sum, row) => sum + row.records_sent + row.records_received, 0);
+  return { route, sent, received, records, bytes: sent + received, color: peerRouteColors[route] };
+}));
+const peerRouteMax = computed(() => Math.max(1, ...peerRoutes.value.map((route) => route.bytes)));
+
 const categories = computed(() => categorySummaries(currentRows.value));
 const chartSeries = computed(() => dimension.value === "direction"
   ? []
@@ -142,6 +216,9 @@ function categoryName(key: string): string {
   const translated = t(`settings.account.traffic.categories.${key}` as MessageKey);
   return translated === `settings.account.traffic.categories.${key}` ? key : translated;
 }
+function peerRouteName(route: PeerTrafficRow["route"]): string {
+  return t(`settings.account.traffic.peerRoutes.${route}` as MessageKey);
+}
 function showDayLabel(index: number): boolean {
   const step = Math.max(1, Math.floor(range.value.days.length / 6));
   return index === 0 || index === range.value.days.length - 1 || index % step === 0;
@@ -152,6 +229,7 @@ function linePoints(values: number[]): string {
 }
 
 onMounted(load);
+watch(() => props.relayConnected, () => { void load(); });
 </script>
 
 <template>
@@ -167,15 +245,17 @@ onMounted(load);
     </div>
 
     <p v-if="error" class="traffic-state error" role="alert">{{ t("settings.account.traffic.loadFailed") }}<button type="button" @click="load">{{ t("settings.account.traffic.retry") }}</button></p>
-    <div v-else-if="loading && !traffic" class="traffic-state">{{ t("common.loading") }}</div>
+    <div v-else-if="loading && !traffic && !peerTraffic" class="traffic-state">{{ t("common.loading") }}</div>
     <template v-else>
-      <div class="kpi-strip" data-testid="relay-kpis">
+      <p v-if="partialError" class="partial-error" role="status">{{ t("settings.account.traffic.partialLoadFailed") }}</p>
+
+      <div v-if="relayConnected && traffic" class="kpi-strip" data-testid="relay-kpis">
         <div v-for="kpi in kpis" :key="kpi.key" class="kpi-cell" :data-testid="kpi.key === 'total' ? 'relay-traffic-total' : `relay-kpi-${kpi.key}`">
           <span>{{ kpi.label }}</span><div><strong>{{ kpi.value }}</strong><small :class="{ up: kpi.trend !== null && kpi.trend > 0, down: kpi.trend !== null && kpi.trend < 0 }"><ArrowUpRight v-if="kpi.trend !== null && kpi.trend > 0" /><ArrowDownRight v-else-if="kpi.trend !== null && kpi.trend < 0" /><Minus v-else />{{ trendText(kpi.trend) }}</small></div>
         </div>
       </div>
 
-      <section class="analysis-panel">
+      <section v-if="relayConnected && traffic" class="analysis-panel">
         <div class="panel-head">
           <div><span>{{ t("settings.account.traffic.coreAnalysis") }}</span><h4>{{ t("settings.account.traffic.timelineTitle") }}</h4></div>
           <div class="analysis-controls">
@@ -193,15 +273,48 @@ onMounted(load);
         <div v-if="dimension !== 'direction' && currentRows.length" class="legend series-legend"><span v-for="series in chartSeries.slice(0, 8)" :key="series.key"><i :style="{ background: series.color }"></i>{{ dimension === "group" ? categoryName(series.label) : series.label }}</span></div>
       </section>
 
-      <div class="detail-grid">
+      <div v-if="relayConnected && traffic" class="detail-grid">
         <section class="detail-panel"><div class="panel-head"><div><h4>{{ t("settings.account.traffic.categorySummary") }}</h4><p>{{ t("settings.account.traffic.totalComposition") }}</p></div></div><div v-if="categories.length" class="category-list"><div v-for="category in categories" :key="category.key"><span class="category-name"><i :style="{ background: category.color }"></i><strong>{{ categoryName(category.key) }}</strong><em>{{ category.share.toFixed(1) }}%</em></span><span class="meter"><i :style="{ width: `${category.share}%`, background: category.color }"></i></span><span class="category-value"><strong>{{ humanBytes(category.bytes) }}</strong><small>{{ t("settings.account.traffic.outIn", { out: humanBytes(category.outbound), incoming: humanBytes(category.inbound) }) }}</small></span></div></div><p v-else class="detail-empty">{{ t("settings.account.traffic.empty") }}</p></section>
         <section class="detail-panel"><div class="panel-head"><div><h4>{{ t("settings.account.traffic.frameBreakdown") }}</h4><p>{{ t("settings.account.traffic.topFrames") }}</p></div></div><div v-if="frameRows.length" class="frame-table-wrap"><table><thead><tr><th>{{ t("settings.account.traffic.colFrameType") }}</th><th>{{ t("settings.account.traffic.colBytes") }}</th><th>{{ t("settings.account.traffic.colFrames") }}</th></tr></thead><tbody><tr v-for="frame in frameRows" :key="`${frame.name}:${frame.category}`"><td><strong>{{ frame.name }}</strong><small>{{ categoryName(frame.category) }}</small></td><td>{{ humanBytes(frame.bytes) }}</td><td>{{ compactNumber(frame.frames) }}</td></tr></tbody></table></div><p v-else class="detail-empty">{{ t("settings.account.traffic.empty") }}</p></section>
       </div>
 
-      <section class="direct-panel">
+      <section v-if="relayConnected && traffic" class="direct-panel">
         <div class="panel-head"><div><span>{{ t("settings.account.traffic.p2p") }}</span><h4>{{ t("settings.account.traffic.directQuality") }}</h4></div><small><Network />{{ t("settings.account.traffic.aggregateOnly") }}</small></div>
         <div class="direct-strip"><div v-for="item in directKpis" :key="item.key" :data-testid="item.key === 'direct' ? 'direct-traffic-total' : item.key === 'success' ? 'direct-success-rate' : undefined"><span><component :is="item.icon" />{{ item.label }}</span><strong>{{ item.value }}</strong><small>{{ item.hint }}</small><em v-if="item.trend !== null">{{ trendText(item.trend) }}</em></div></div>
         <div class="success-meter" :title="`${successRate.toFixed(1)}%`"><i :style="{ width: `${successRate}%` }"></i></div>
+      </section>
+
+      <section v-if="peerTrafficAvailable && peerTraffic" class="peer-panel" data-testid="peer-traffic-panel">
+        <div class="panel-head">
+          <div><span>{{ t("settings.account.traffic.peerLocal") }}</span><h4>{{ t("settings.account.traffic.peerLocalTitle") }}</h4></div>
+          <small><Network />{{ t("settings.account.traffic.peerRouteHint") }}</small>
+        </div>
+        <div class="kpi-strip peer-kpis">
+          <div v-for="kpi in peerKpis" :key="kpi.key" class="kpi-cell" :data-testid="`peer-traffic-${kpi.key}`">
+            <span>{{ kpi.label }}</span>
+            <div>
+              <strong>{{ kpi.value }}</strong>
+              <small :class="{ up: kpi.trend !== null && kpi.trend > 0, down: kpi.trend !== null && kpi.trend < 0 }">
+                <ArrowUpRight v-if="kpi.trend !== null && kpi.trend > 0" />
+                <ArrowDownRight v-else-if="kpi.trend !== null && kpi.trend < 0" />
+                <Minus v-else />
+                {{ trendText(kpi.trend) }}
+              </small>
+            </div>
+          </div>
+        </div>
+        <div class="peer-route-heading">
+          <strong>{{ t("settings.account.traffic.peerRouteBreakdown") }}</strong>
+          <span>{{ t("settings.account.traffic.peerRouteHint") }}</span>
+        </div>
+        <div class="peer-route-list">
+          <div v-for="route in peerRoutes" :key="route.route" class="peer-route-row" :data-testid="`peer-route-${route.route}`">
+            <span class="peer-route-name"><i :style="{ background: route.color }"></i><strong>{{ peerRouteName(route.route) }}</strong></span>
+            <span class="peer-route-meter"><i :style="{ width: `${(route.bytes / peerRouteMax) * 100}%`, background: route.color }"></i></span>
+            <span class="peer-route-value"><strong>{{ humanBytes(route.bytes) }}</strong><small>{{ t("settings.account.traffic.sentReceived", { sent: humanBytes(route.sent), received: humanBytes(route.received) }) }}</small></span>
+            <span class="peer-route-records">{{ t("settings.account.traffic.recordCount", { count: compactNumber(route.records) }) }}</span>
+          </div>
+        </div>
       </section>
     </template>
   </div>
@@ -233,7 +346,7 @@ onMounted(load);
 .kpi-cell small svg { width: 10px; height: 10px; }
 .kpi-cell small.up { color: var(--warn, #d29922); }
 .kpi-cell small.down { color: var(--good, #3fb950); }
-.analysis-panel, .direct-panel { border-top: 1px solid var(--border); padding-top: 12px; }
+.analysis-panel, .direct-panel, .peer-panel { border-top: 1px solid var(--border); padding-top: 12px; }
 .analysis-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .analysis-controls > div { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 .analysis-controls small { color: var(--fg-dim); font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -285,6 +398,25 @@ td small { color: var(--fg-dim); font-size: 8px; }
 .direct-strip em { color: var(--fg-dim); font-size: 9px; font-style: normal; }
 .success-meter { height: 3px; background: color-mix(in srgb, var(--border) 65%, transparent); }
 .success-meter i { display: block; height: 100%; background: #3fb950; transition: width 160ms ease; }
+.peer-panel .panel-head > small { display: flex; align-items: center; gap: 4px; color: var(--fg-dim); font-size: 9px; }
+.peer-panel .panel-head > small svg { width: 12px; height: 12px; }
+.peer-kpis { margin-top: 9px; }
+.peer-route-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.peer-route-heading strong { color: var(--fg); font-size: 11px; }
+.peer-route-heading span { color: var(--fg-dim); font-size: 9px; text-align: right; }
+.peer-route-list { margin-top: 5px; }
+.peer-route-row { display: grid; grid-template-columns: minmax(92px, 0.7fr) minmax(80px, 1fr) minmax(150px, auto) minmax(82px, auto); align-items: center; gap: 10px; min-height: 40px; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }
+.peer-route-name { display: flex; align-items: center; min-width: 0; gap: 6px; color: var(--fg); font-size: 10px; }
+.peer-route-name i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 2px; }
+.peer-route-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.peer-route-meter { height: 4px; overflow: hidden; background: color-mix(in srgb, var(--border) 55%, transparent); border-radius: 2px; }
+.peer-route-meter i { display: block; height: 100%; }
+.peer-route-value { min-width: 0; text-align: right; }
+.peer-route-value strong, .peer-route-value small { display: block; }
+.peer-route-value strong { color: var(--fg); font-size: 10px; }
+.peer-route-value small, .peer-route-records { color: var(--fg-dim); font-size: 8px; white-space: nowrap; }
+.peer-route-records { text-align: right; }
+.partial-error { margin: 0; padding: 7px 9px; border-left: 2px solid var(--warn, #d29922); background: color-mix(in srgb, var(--warn, #d29922) 8%, transparent); color: var(--fg-dim); font-size: 10px; }
 .traffic-state.error { color: var(--bad); gap: 8px; }
 .traffic-state button { border: 0; background: transparent; color: var(--accent); cursor: pointer; padding: 0; }
 @keyframes traffic-spin { to { transform: rotate(360deg); } }
@@ -297,9 +429,16 @@ td small { color: var(--fg-dim); font-size: 8px; }
   .kpi-cell:nth-child(2), .direct-strip > div:nth-child(2) { border-right: 0; }
   .kpi-cell:nth-child(-n+2), .direct-strip > div:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
   .detail-grid { grid-template-columns: 1fr; }
+  .peer-route-row { grid-template-columns: minmax(90px, 0.7fr) minmax(70px, 1fr) minmax(140px, auto); }
+  .peer-route-records { grid-column: 3; margin-top: -8px; padding-bottom: 6px; }
 }
 @media (max-width: 460px) {
   .segmented.compact button { min-width: 30px; padding: 0 4px; }
   .kpi-cell > div { align-items: flex-start; flex-direction: column; }
+  .peer-route-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .peer-route-heading span { text-align: left; }
+  .peer-route-row { grid-template-columns: minmax(92px, 0.8fr) minmax(0, 1fr); gap: 7px; padding: 7px 0; }
+  .peer-route-value { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; text-align: left; }
+  .peer-route-records { grid-column: 1 / -1; margin-top: -3px; padding-bottom: 0; text-align: left; }
 }
 </style>

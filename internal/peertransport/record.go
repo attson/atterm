@@ -31,16 +31,53 @@ var (
 type RecordKind byte
 
 const (
-	RecordFrame       RecordKind = 1
-	RecordFragment    RecordKind = 2
-	RecordDirectReady RecordKind = 3
-	RecordPing        RecordKind = 4
-	RecordPong        RecordKind = 5
-	RecordClose       RecordKind = 6
+	RecordFrame           RecordKind = 1
+	RecordFragment        RecordKind = 2
+	RecordDirectReady     RecordKind = 3
+	RecordPing            RecordKind = 4
+	RecordPong            RecordKind = 5
+	RecordClose           RecordKind = 6
+	RecordConfigInventory RecordKind = 7
+	RecordConfigBatch     RecordKind = 8
+	RecordConfigAck       RecordKind = 9
+	RecordConfigFragment  RecordKind = 10
+	RecordSignal          RecordKind = 11
+	RecordSignalFragment  RecordKind = 12
+	// RecordService carries one independently framed Remote Web Preview
+	// message. It shares the authenticated Peer record layer but never enters
+	// the terminal proto.Frame stream or PTY subscriber lifecycle.
+	RecordService RecordKind = 13
+	// RecordCatalogRequest and RecordCatalogResponse carry a paginated session
+	// directory on an authenticated control route. They use the existing
+	// control-message fragment namespace but never grant terminal authority.
+	RecordCatalogRequest  RecordKind = 14
+	RecordCatalogResponse RecordKind = 15
 )
 
 func (k RecordKind) valid() bool {
-	return k >= RecordFrame && k <= RecordClose
+	return k >= RecordFrame && k <= RecordCatalogResponse
+}
+
+func (k RecordKind) configMessage() bool {
+	return k >= RecordConfigInventory && k <= RecordConfigAck ||
+		k == RecordCatalogRequest || k == RecordCatalogResponse
+}
+
+func (k RecordKind) dataChannelMessage() bool {
+	return k >= RecordFrame && k <= RecordConfigFragment ||
+		k >= RecordService && k <= RecordCatalogResponse
+}
+
+// IsConfigMessage reports whether a record carries one complete config
+// anti-entropy message rather than a fragment or terminal payload.
+func (k RecordKind) IsConfigMessage() bool {
+	return k.configMessage()
+}
+
+// IsDataMessage reports whether a record kind is valid on an authenticated
+// terminal/config data path, including its fragment kinds.
+func (k RecordKind) IsDataMessage() bool {
+	return k.dataChannelMessage()
 }
 
 // RecordSealer emits strictly increasing records for one direction.

@@ -10,14 +10,18 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-// PionClientConfig contains one Relay-authorized client attempt.
+// PionClientConfig contains one authorized client attempt.
 type PionClientConfig struct {
+	// API supplies endpoint-specific Pion settings. Nil uses production defaults.
+	API             *webrtc.API
 	Authorization   Authorization
 	Authenticator   HandshakeAuthenticator
 	WebRTC          webrtc.Configuration
 	SendSignal      func(signalType, payload string) error
 	OnAuthenticated func(*PionClientChannel)
 	OnRecord        func(RecordKind, []byte)
+	OnConfigMessage func(RecordKind, []byte) error
+	OnTraffic       TrafficObserver
 	OnDiagnostics   func(iceState, candidateType string)
 	OnClosed        func(error)
 }
@@ -38,13 +42,14 @@ type PionClientAttempt struct {
 	closed  bool
 }
 
-// PionClientChannel is available only after account-key authentication.
+// PionClientChannel is available only after handshake authentication.
 type PionClientChannel struct {
-	attempt     *PionClientAttempt
-	dc          *webrtc.DataChannel
-	sealer      *RecordSealer
-	opener      *RecordOpener
-	reassembler Reassembler
+	attempt           *PionClientAttempt
+	dc                *webrtc.DataChannel
+	sealer            *RecordSealer
+	opener            *RecordOpener
+	reassembler       Reassembler
+	configReassembler ConfigReassembler
 
 	sendMu        sync.Mutex
 	receiveMu     sync.Mutex
@@ -59,7 +64,7 @@ func NewPionClientAttempt(parent context.Context, cfg PionClientConfig) (*PionCl
 	if err != nil {
 		return nil, err
 	}
-	pc, err := webrtc.NewPeerConnection(cfg.WebRTC)
+	pc, err := newPeerConnection(cfg.API, cfg.WebRTC)
 	if err != nil {
 		return nil, fmt.Errorf("%w: create peer connection: %v", ErrDirectTransport, err)
 	}
@@ -74,8 +79,8 @@ func NewPionClientAttempt(parent context.Context, cfg PionClientConfig) (*PionCl
 		candidateType := ""
 		if state == webrtc.ICEConnectionStateConnected || state == webrtc.ICEConnectionStateCompleted {
 			if sctp := pc.SCTP(); sctp != nil && sctp.Transport() != nil && sctp.Transport().ICETransport() != nil {
-				if pair, pairErr := sctp.Transport().ICETransport().GetSelectedCandidatePair(); pairErr == nil && pair != nil && pair.Local != nil {
-					candidateType = pair.Local.Typ.String()
+				if pair, pairErr := sctp.Transport().ICETransport().GetSelectedCandidatePair(); pairErr == nil {
+					candidateType = selectedCandidateType(pair)
 				}
 			}
 		}
@@ -100,6 +105,23 @@ func NewPionClientAttempt(parent context.Context, cfg PionClientConfig) (*PionCl
 		a.finish(context.Cause(ctx))
 	}()
 	return a, nil
+}
+
+func selectedCandidateType(pair *webrtc.ICECandidatePair) string {
+	if pair == nil {
+		return ""
+	}
+	if (pair.Local != nil && pair.Local.Typ == webrtc.ICECandidateTypeRelay) ||
+		(pair.Remote != nil && pair.Remote.Typ == webrtc.ICECandidateTypeRelay) {
+		return webrtc.ICECandidateTypeRelay.String()
+	}
+	if pair.Local != nil {
+		return pair.Local.Typ.String()
+	}
+	if pair.Remote != nil {
+		return pair.Remote.Typ.String()
+	}
+	return ""
 }
 
 func (a *PionClientAttempt) Start() error {
@@ -235,6 +257,12 @@ func (c *PionClientChannel) receive(record []byte) error {
 	if err != nil {
 		return err
 	}
+	if !kind.dataChannelMessage() {
+		return fmt.Errorf("%w: record kind %d is not valid on DataChannel", ErrDirectTransport, kind)
+	}
+	if c.attempt.cfg.OnTraffic != nil {
+		c.attempt.cfg.OnTraffic(TrafficReceived, len(record))
+	}
 	if kind == RecordFragment {
 		frame, complete, err := c.reassembler.Add(plaintext, time.Now())
 		if err != nil || !complete {
@@ -243,19 +271,74 @@ func (c *PionClientChannel) receive(record []byte) error {
 		kind = RecordFrame
 		plaintext = frame
 	}
+	if kind == RecordConfigFragment {
+		configKind, message, complete, err := c.configReassembler.Add(plaintext, time.Now())
+		if err != nil || !complete {
+			return err
+		}
+		kind = configKind
+		plaintext = message
+	}
+	if kind.configMessage() {
+		if c.attempt.cfg.OnConfigMessage != nil {
+			if err := c.attempt.cfg.OnConfigMessage(kind, append([]byte(nil), plaintext...)); err != nil {
+				return fmt.Errorf("%w: config message: %w", ErrDirectTransport, err)
+			}
+		}
+		return nil
+	}
 	if c.attempt.cfg.OnRecord != nil {
 		c.attempt.cfg.OnRecord(kind, append([]byte(nil), plaintext...))
 	}
 	return nil
 }
 
+// SendConfigMessage encrypts one config logical message, fragmenting it
+// independently from terminal frames when needed.
+func (c *PionClientChannel) SendConfigMessage(ctx context.Context, kind RecordKind, message []byte) error {
+	if c == nil || c.dc == nil || c.sealer == nil || !kind.configMessage() {
+		return fmt.Errorf("%w: invalid config channel", ErrDirectTransport)
+	}
+	if len(message) > MaxConfigMessageSize {
+		return fmt.Errorf("%w: config message too large", ErrDirectTransport)
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if len(message) <= MaxRecordPlaintext {
+		return c.sendRecordLocked(ctx, kind, message)
+	}
+	fragments, err := FragmentConfigMessage(kind, c.nextMessageID, message)
+	if err != nil {
+		return err
+	}
+	c.nextMessageID++
+	for _, fragment := range fragments {
+		if err := c.sendRecordLocked(ctx, RecordConfigFragment, fragment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *PionClientChannel) SendRecord(ctx context.Context, kind RecordKind, plaintext []byte) error {
+	if !kind.dataChannelMessage() {
+		return fmt.Errorf("%w: record kind %d is not valid on DataChannel", ErrDirectTransport, kind)
+	}
 	if c == nil || c.dc == nil || c.sealer == nil {
 		return fmt.Errorf("%w: unauthenticated channel", ErrDirectTransport)
 	}
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	return c.sendRecordLocked(ctx, kind, plaintext)
+}
+
+// SendServiceMessage sends one bounded Preview byte-channel message without
+// wrapping it in a terminal proto.Frame.
+func (c *PionClientChannel) SendServiceMessage(ctx context.Context, payload []byte) error {
+	if _, err := DecodeServiceMessage(payload); err != nil {
+		return err
+	}
+	return c.SendRecord(ctx, RecordService, payload)
 }
 
 func (c *PionClientChannel) SendFrame(ctx context.Context, frame []byte) error {
@@ -300,6 +383,9 @@ func (c *PionClientChannel) sendRecordLocked(ctx context.Context, kind RecordKin
 	if err := c.dc.Send(record); err != nil {
 		return fmt.Errorf("%w: send record: %v", ErrDirectTransport, err)
 	}
+	if c.attempt.cfg.OnTraffic != nil {
+		c.attempt.cfg.OnTraffic(TrafficSent, len(record))
+	}
 	return nil
 }
 
@@ -308,6 +394,20 @@ func (c *PionClientChannel) Close() error {
 		return nil
 	}
 	return c.attempt.Close()
+}
+
+// RemoteMembershipToken returns the Peer membership authenticated by this
+// channel. Relay-account channels return false.
+func (c *PionClientChannel) RemoteMembershipToken() (string, bool) {
+	if c == nil || c.attempt == nil {
+		return "", false
+	}
+	auth, ok := c.attempt.cfg.Authenticator.(interface{ RemoteMembershipToken() string })
+	if !ok {
+		return "", false
+	}
+	token := auth.RemoteMembershipToken()
+	return token, token != ""
 }
 
 func (a *PionClientAttempt) Close() error {

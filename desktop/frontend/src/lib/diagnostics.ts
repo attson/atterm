@@ -7,6 +7,9 @@ import type { DiagnosticsPayload } from './api'
  */
 export function formatDiagnostics(p: DiagnosticsPayload): string {
   const pad = (k: string) => k.padEnd(24, ' ')
+  const rendezvous = p.rendezvous ?? {
+    mode: 'disabled', service_origin: '', state: 'disabled', reachable_peers: 0,
+  }
   const lines: string[] = [
     `atterm desktop diagnostics — ${p.generated_at}`,
     '--------------------------------------------------',
@@ -19,6 +22,15 @@ export function formatDiagnostics(p: DiagnosticsPayload): string {
     pad('Allow insecure HTTP:') + (p.allow_insecure_relay ? 'yes' : 'no'),
     pad('Remote permission:') + p.remote_permission,
     pad('Uplink paused:') + (p.uplink_paused ? 'yes' : 'no'),
+    '',
+    'Rendezvous:',
+    pad('  Mode:') + rendezvous.mode,
+    pad('  Service origin:') + (rendezvous.service_origin || '(disabled)'),
+    pad('  State:') + rendezvous.state,
+    pad('  Last registration:') + (rendezvous.last_registered_at || '(none)'),
+    pad('  Registration latency:') + (rendezvous.registration_ms ? `${rendezvous.registration_ms}ms` : '(none)'),
+    pad('  Reachable peers:') + rendezvous.reachable_peers,
+    pad('  Last error code:') + (rendezvous.last_error_code || '(none)'),
     '',
     'Recent relay errors (most recent first):',
     ...(p.recent_relay_errors.length === 0

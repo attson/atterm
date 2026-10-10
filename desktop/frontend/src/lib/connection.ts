@@ -118,6 +118,14 @@ export interface FSEvent {
   event: "changed" | string;
 }
 
+/** Minimal connection surface consumed by the remote file explorer. Both
+ * Relay-backed SessionConnection and accountless PeerSessionConnection
+ * implement it. */
+export interface SessionFSConnection {
+  sendFSRequest(req: FSRequest, timeoutMs?: number): Promise<FSResponse>;
+  onFSEvent(handler: (event: FSEvent) => void): () => void;
+}
+
 export interface ConnectionHandlers {
   onOutput?: (data: Uint8Array) => void;
   onClose?: (info: ClosePayload) => void;
@@ -147,7 +155,7 @@ export interface ConnectionHandlers {
   onDriverChange?: (driverClientID: string, isMe: boolean, driverClientName: string) => void;
 }
 
-export type SessionRoute = "relay" | "connecting-direct" | "direct";
+export type SessionRoute = "relay" | "connecting-direct" | "direct" | "connecting-lan" | "lan" | "connecting-quick-tunnel" | "quick-tunnel";
 export type DirectFallbackReason =
   | "account_key_unavailable"
   | "signal_endpoint_unavailable"
@@ -174,8 +182,9 @@ export interface SessionRouteDiagnostics {
 export function directFallbackReason(error: unknown, wasActive = false): DirectFallbackReason {
   const message = errText(error).toLowerCase();
   if (message.includes("rtcpeerconnection") || message.includes("webrtc is unavailable")) return "webrtc_unavailable";
-  if (message.includes("timed out") || message.includes("ticket_expired")) return "timeout";
-  if (message.includes("host_offline") || message.includes("peer_disconnected")) return "host_unavailable";
+  if (message.includes("timed out") || message.includes("deadline exceeded") || message.includes("ticket_expired")) return "timeout";
+  if (message.includes("host_offline") || message.includes("peer offline") || message.includes("peer_disconnected")) return "host_unavailable";
+  if (message.includes("rendezvous client: service unavailable")) return "signal_endpoint_unavailable";
   if (message.includes("signaling rejected") || message.includes("signaling disconnected")) return "signaling_rejected";
   if (message.includes("peer connection failed") || message.includes("ice")) return "ice_failed";
   if (message.includes("handshake") || message.includes("proof") || message.includes("auth")) return "authentication_failed";
@@ -212,6 +221,8 @@ export interface DirectTransport {
   start(): void;
   sendFrame(frame: Uint8Array): boolean;
   close(): void;
+  /** Opaque native route handle used only by the desktop Peer Preview bridge. */
+  nativeAttemptId?(): string;
 }
 
 export interface SessionListHandlers {
@@ -220,9 +231,9 @@ export interface SessionListHandlers {
   onPrefsChanged?: () => void;
 }
 
-const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_PASTE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SERVICE_OPEN_TIMEOUT_MS = 30_000;
 
 export interface ServiceOpenResult {
@@ -230,12 +241,17 @@ export interface ServiceOpenResult {
   clientTicket: string;
   clientToHostKey: Uint8Array;
   hostToClientKey: Uint8Array;
+  peerAttemptId?: string;
 }
 
 export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {
   if (wsReadyState !== WebSocket.OPEN) return t("terminal.websocketNotOpen");
-  if (blobSize > MAX_PASTE_IMAGE_BYTES) {
-    return t("terminal.imageTooLarge", { size: blobSize, limit: MAX_PASTE_IMAGE_BYTES });
+  return pastePayloadSizeBlockReason(blobSize);
+}
+
+export function pastePayloadSizeBlockReason(blobSize: number): string | null {
+  if (blobSize > MAX_PASTE_BYTES) {
+    return t("terminal.imageTooLarge", { size: blobSize, limit: MAX_PASTE_BYTES });
   }
   return null;
 }
@@ -248,6 +264,16 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
     out += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(out);
+}
+
+export async function encodePastePayload(blob: Blob, filename: string, fallbackContentType: string): Promise<Uint8Array> {
+  const blocked = pastePayloadSizeBlockReason(blob.size);
+  if (blocked) throw new Error(blocked);
+  return encodeText(JSON.stringify({
+    filename,
+    content_type: blob.type || fallbackContentType,
+    data: arrayBufferToBase64(await blob.arrayBuffer()),
+  }));
 }
 
 function stringToBase64URL(value: string): string {
@@ -332,7 +358,7 @@ function isFSChunkPayload(value: unknown): value is FSChunkPayload {
   );
 }
 
-function isFSResponse(value: unknown): value is FSResponse {
+export function isFSResponse(value: unknown): value is FSResponse {
   if (!isRecord(value)) return false;
   if (typeof value.request_id !== "string" || typeof value.ok !== "boolean") return false;
   if (!isOptionalString(value.error) || !isOptionalString(value.watch_id)) return false;
@@ -878,11 +904,7 @@ export class SessionConnection {
       this.handlers.onStatus?.("error");
       throw new Error(blocked ?? "websocket is not open");
     }
-    const payload = encodeText(JSON.stringify({
-      filename,
-      content_type: blob.type || "image/png",
-      data: arrayBufferToBase64(await blob.arrayBuffer()),
-    }));
+    const payload = await encodePastePayload(blob, filename, "image/png");
     logDebug("conn", "sending paste image", {
       filename,
       contentType: blob.type || "image/png",
@@ -904,11 +926,7 @@ export class SessionConnection {
       this.handlers.onStatus?.("error");
       throw new Error(blocked ?? "websocket is not open");
     }
-    const payload = encodeText(JSON.stringify({
-      filename,
-      content_type: blob.type || "application/octet-stream",
-      data: arrayBufferToBase64(await blob.arrayBuffer()),
-    }));
+    const payload = await encodePastePayload(blob, filename, "application/octet-stream");
     logDebug("conn", "sending paste file", {
       filename,
       contentType: blob.type || "application/octet-stream",
@@ -1558,6 +1576,7 @@ export interface SessionInfo {
    *  so a client MUST run decryptSessionFields to recover them. Empty/absent
    *  for sessions whose agent had no unlocked account_key. */
   sealed?: string;
+  peer_direct?: boolean;
 }
 
 export type TaskState =

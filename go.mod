@@ -9,6 +9,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/mdns v1.0.6
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.6
 	github.com/oklog/ulid/v2 v2.1.1
@@ -61,6 +62,7 @@ require (
 	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/miekg/dns v1.1.55 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.8 // indirect

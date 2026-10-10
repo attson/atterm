@@ -450,6 +450,67 @@ func TestClaimDriverPromotesWithoutAutoDriveSubscriber(t *testing.T) {
 	}
 }
 
+func TestSubscribeReplacingSubscriberPreservesDriverAndLifecycle(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	firstLifecycle := make(chan struct{}, 1)
+	lastLifecycle := make(chan struct{}, 1)
+	var counts []int
+	s.SetSubscriberLifecycle(
+		func() { firstLifecycle <- struct{}{} },
+		func() { lastLifecycle <- struct{}{} },
+	)
+	s.SetSubscriberCountHook(func(count int) { counts = append(counts, count) })
+
+	first, _ := s.Subscribe(0, "peer:instance-a", "desktop-a", WithoutAutoDrive())
+	drainInitialFrames(t, first)
+	s.ClaimDriver(first, "instance-a", "desktop-a")
+	if frame := readFrameForTest(t, first); frame.Type != proto.TypeMeta {
+		t.Fatalf("claim frame type=0x%02x want META", frame.Type)
+	}
+
+	replacement, _ := s.Subscribe(
+		0, "peer:instance-a", "desktop-a",
+		WithoutAutoDrive(), ReplacingSubscriber(first),
+	)
+	defer s.Unsubscribe(replacement)
+	drainInitialFrames(t, replacement)
+
+	select {
+	case <-first.Done():
+	default:
+		t.Fatal("replaced subscriber remained open")
+	}
+	if got := s.SubscriberCount(); got != 1 {
+		t.Fatalf("subscriber count=%d want=1", got)
+	}
+	if !s.IsDriver(replacement) {
+		t.Fatal("replacement did not inherit the driver lease")
+	}
+	if got := s.DriverClientID(); got != "instance-a" {
+		t.Fatalf("driver client id=%q want preserved identity", got)
+	}
+	if len(counts) != 1 || counts[0] != 1 {
+		t.Fatalf("subscriber count notifications=%v want [1]", counts)
+	}
+	select {
+	case <-firstLifecycle:
+	case <-time.After(time.Second):
+		t.Fatal("first-subscriber lifecycle did not fire")
+	}
+	select {
+	case <-lastLifecycle:
+		t.Fatal("replacement triggered a false last-subscriber lifecycle")
+	default:
+	}
+
+	s.Unsubscribe(replacement)
+	select {
+	case <-lastLifecycle:
+	case <-time.After(time.Second):
+		t.Fatal("final unsubscribe did not fire last-subscriber lifecycle")
+	}
+}
+
 func TestClaimDriverTransfersAndBroadcastsMeta(t *testing.T) {
 	id := uuid.New()
 	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})

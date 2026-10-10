@@ -1,0 +1,585 @@
+package configsync
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/attson/atterm/internal/peercrypto"
+	"github.com/google/uuid"
+)
+
+func openTestDurable(t *testing.T, path, spaceID string) *DurableReplica {
+	t.Helper()
+	store, err := OpenDurableReplica(path, spaceID, 1, NewClockWithSource(func() time.Time {
+		return time.UnixMilli(replicaNowMS)
+	}, 10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestDurableReplicaSurvivesRestartAndCompaction(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	remote := testIdentity(t)
+	store := openTestDurable(t, path, spaceID)
+
+	first, ack, err := store.Append(identity, testConfigMutation("theme", KindSet, "dark"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack.Vector[identity.PeerID()] != 1 || first.Document.Counter != 1 {
+		t.Fatalf("first append ack=%#v op=%+v", ack, first.Document)
+	}
+	remoteToken := signTestOp(t, remote, spaceID, 1, replicaNowMS+10, ack.Vector, "locale", KindSet, "zh-CN", 1)
+	if result, ack, err := store.Apply(remoteToken); err != nil || !result.Stored || ack.Vector[remote.PeerID()] != 1 {
+		t.Fatalf("remote apply result=%+v ack=%#v err=%v", result, ack, err)
+	}
+
+	reopened := openTestDurable(t, path, spaceID)
+	theme, _ := reopened.Get("preferences", "theme")
+	locale, _ := reopened.Get("preferences", "locale")
+	if string(theme.Payload) != "dark" || string(locale.Payload) != "zh-CN" {
+		t.Fatalf("reopened records: theme=%+v locale=%+v", theme, locale)
+	}
+
+	snapshot, compactAck, err := reopened.Compact(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedSnapshot, err := VerifySnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(compactAck.Vector, verifiedSnapshot.Document.CoverVector) {
+		t.Fatalf("compact ack=%#v cover=%#v", compactAck.Vector, verifiedSnapshot.Document.CoverVector)
+	}
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted durableState
+	if err := strictDurableJSON(blob, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Snapshot == "" || len(persisted.Ops) != 0 {
+		t.Fatalf("compacted disk state=%+v", persisted)
+	}
+
+	afterCompact := openTestDurable(t, path, spaceID)
+	third, _, err := afterCompact.Append(identity, testConfigMutation("theme", KindSet, "light"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Document.Counter != 2 {
+		t.Fatalf("counter after compaction=%d want=2", third.Document.Counter)
+	}
+	behind := afterCompact.StateForPeer(nil)
+	if behind.Snapshot == "" || len(behind.Ops) != 1 {
+		t.Fatalf("state for peer behind snapshot=%t ops=%d", behind.Snapshot != "", len(behind.Ops))
+	}
+	atBoundary := afterCompact.StateForPeer(verifiedSnapshot.Document.CoverVector)
+	if atBoundary.Snapshot != "" || len(atBoundary.Ops) != 1 || atBoundary.Ops[0] != third.Token {
+		t.Fatalf("state at boundary snapshot=%t ops=%d", atBoundary.Snapshot != "", len(atBoundary.Ops))
+	}
+}
+
+func TestDurableReplicaCrossProcessCounterAllocation(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	stores := []*DurableReplica{openTestDurable(t, path, spaceID), openTestDurable(t, path, spaceID)}
+
+	operations := make([]VerifiedOp, len(stores))
+	errs := make([]error, len(stores))
+	var wg sync.WaitGroup
+	for index := range stores {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			operations[index], _, errs[index] = stores[index].Append(identity, testConfigMutation("record-"+string(rune('a'+index)), KindSet, "value"))
+		}(index)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	counters := []int{int(operations[0].Document.Counter), int(operations[1].Document.Counter)}
+	sort.Ints(counters)
+	if !reflect.DeepEqual(counters, []int{1, 2}) {
+		t.Fatalf("allocated counters=%v", counters)
+	}
+	if err := stores[0].Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if stores[0].Vector()[identity.PeerID()] != 2 {
+		t.Fatalf("reloaded vector=%#v", stores[0].Vector())
+	}
+}
+
+func TestDurableReplicaAdoptsSnapshotBeforeTail(t *testing.T) {
+	spaceID := uuid.NewString()
+	identity := testIdentity(t)
+	sourcePath := filepath.Join(t.TempDir(), "source.json")
+	source := openTestDurable(t, sourcePath, spaceID)
+	if _, _, err := source.Append(identity, testConfigMutation("locale", KindSet, "en")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := source.Compact(identity); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := source.Append(identity, testConfigMutation("locale", KindSet, "zh-CN")); err != nil {
+		t.Fatal(err)
+	}
+	transfer := source.StateForPeer(nil)
+
+	destination := openTestDurable(t, filepath.Join(t.TempDir(), "destination.json"), spaceID)
+	if _, err := destination.AdoptSnapshot(transfer.Snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range transfer.Ops {
+		if _, _, err := destination.Apply(token); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := destination.AdoptSnapshot(transfer.Snapshot); err != nil {
+		t.Fatalf("retry exact snapshot after tail: %v", err)
+	}
+	locale, _ := destination.Get("preferences", "locale")
+	if string(locale.Payload) != "zh-CN" || destination.Vector().Compare(source.Vector()) != VectorEqual {
+		t.Fatalf("destination record=%+v vector=%#v source=%#v", locale, destination.Vector(), source.Vector())
+	}
+}
+
+func TestDurableReplicaRebasesCoveredHistoryAtomically(t *testing.T) {
+	spaceID := uuid.NewString()
+	creator := testIdentity(t)
+	peer := testIdentity(t)
+	source := openTestDurable(t, filepath.Join(t.TempDir(), "source.json"), spaceID)
+	destinationPath := filepath.Join(t.TempDir(), "destination.json")
+	destination := openTestDurable(t, destinationPath, spaceID)
+
+	first, _, err := source.Append(creator, testConfigMutation("theme", KindSet, "dark"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := destination.Apply(first.Token); err != nil {
+		t.Fatal(err)
+	}
+	local, _, err := destination.Append(peer, testConfigMutation("locale", KindSet, "zh-CN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := source.Apply(local.Token); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := source.Compact(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ack, err := destination.RebaseSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ack.Vector, source.Vector()) {
+		t.Fatalf("rebase ack=%v source=%v", ack.Vector, source.Vector())
+	}
+	reopened := openTestDurable(t, destinationPath, spaceID)
+	theme, _ := reopened.Get("preferences", "theme")
+	locale, _ := reopened.Get("preferences", "locale")
+	if string(theme.Payload) != "dark" || string(locale.Payload) != "zh-CN" || reopened.Vector().Compare(source.Vector()) != VectorEqual {
+		t.Fatalf("rebased records theme=%+v locale=%+v vector=%v", theme, locale, reopened.Vector())
+	}
+}
+
+func TestDurableReplicaRejectsSnapshotThatDoesNotCoverLocalBranch(t *testing.T) {
+	spaceID := uuid.NewString()
+	creator := testIdentity(t)
+	peer := testIdentity(t)
+	source := openTestDurable(t, filepath.Join(t.TempDir(), "source.json"), spaceID)
+	destinationPath := filepath.Join(t.TempDir(), "destination.json")
+	destination := openTestDurable(t, destinationPath, spaceID)
+
+	if _, _, err := source.Append(creator, testConfigMutation("theme", KindSet, "dark")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := source.Compact(creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := destination.Append(peer, testConfigMutation("locale", KindSet, "zh-CN")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := destination.RebaseSnapshot(snapshot); !errors.Is(err, ErrSnapshotNotCovered) {
+		t.Fatalf("uncovered rebase error=%v", err)
+	}
+	after, err := os.ReadFile(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("rejected snapshot changed durable replica")
+	}
+	locale, ok := destination.Get("preferences", "locale")
+	if !ok || string(locale.Payload) != "zh-CN" || destination.Vector()[peer.PeerID()] != 1 {
+		t.Fatalf("rejected snapshot changed in-memory replica: record=%+v vector=%v", locale, destination.Vector())
+	}
+}
+
+func TestDurableReplicaCompactsTailAtConfiguredBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		maxTailOps   int
+		maxTailBytes int
+	}{
+		{name: "operations", maxTailOps: 2, maxTailBytes: 1 << 20},
+		{name: "bytes", maxTailOps: 100, maxTailBytes: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spaceID := uuid.NewString()
+			path := filepath.Join(t.TempDir(), "config-replica.json")
+			identity := testIdentity(t)
+			store := openTestDurable(t, path, spaceID)
+			if _, _, _, err := store.BootstrapEncrypted(identity, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.Append(identity, testConfigMutation("theme", KindSet, "dark")); err != nil {
+				t.Fatal(err)
+			}
+			compacted, _, err := store.CompactIfNeeded(identity, tc.maxTailOps, tc.maxTailBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "operations" && compacted {
+				t.Fatal("operation tail compacted below bound")
+			}
+			if tc.name == "operations" {
+				if _, _, err := store.Append(identity, testConfigMutation("locale", KindSet, "zh-CN")); err != nil {
+					t.Fatal(err)
+				}
+				compacted, _, err = store.CompactIfNeeded(identity, tc.maxTailOps, tc.maxTailBytes)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !compacted {
+				t.Fatal("tail did not compact at configured bound")
+			}
+			reopened := openTestDurable(t, path, spaceID)
+			state := reopened.StateForPeer(nil)
+			if state.Snapshot == "" || len(state.Ops) != 0 {
+				t.Fatalf("bounded compact state snapshot=%t ops=%d", state.Snapshot != "", len(state.Ops))
+			}
+			if _, _, seeded, err := reopened.BootstrapEncrypted(identity, nil); err != nil || seeded {
+				t.Fatalf("bounded compaction lost bootstrap marker: seeded=%t err=%v", seeded, err)
+			}
+		})
+	}
+
+	store := openTestDurable(t, filepath.Join(t.TempDir(), "invalid.json"), uuid.NewString())
+	if compacted, _, err := store.CompactIfNeeded(nil, 1, 1); !errors.Is(err, ErrDurableStoreInvalid) || compacted {
+		t.Fatalf("invalid compaction compacted=%t err=%v", compacted, err)
+	}
+}
+
+func TestDurableReplicaCompactionSerializesWithCrossProcessAppend(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	compactor := openTestDurable(t, path, spaceID)
+	if _, _, err := compactor.Append(identity, testConfigMutation("theme", KindSet, "dark")); err != nil {
+		t.Fatal(err)
+	}
+	appender := openTestDurable(t, path, spaceID)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() {
+		<-start
+		_, _, err := compactor.CompactIfNeeded(identity, 1, 1<<20)
+		errs <- err
+	}()
+	go func() {
+		<-start
+		_, _, err := appender.Append(identity, testConfigMutation("locale", KindSet, "zh-CN"))
+		errs <- err
+	}()
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reopened := openTestDurable(t, path, spaceID)
+	theme, themeOK := reopened.Get("preferences", "theme")
+	locale, localeOK := reopened.Get("preferences", "locale")
+	if !themeOK || !localeOK || string(theme.Payload) != "dark" || string(locale.Payload) != "zh-CN" || reopened.Vector()[identity.PeerID()] != 2 {
+		t.Fatalf("serialized compaction records theme=%+v locale=%+v vector=%v", theme, locale, reopened.Vector())
+	}
+}
+
+func TestDurableReplicaPrunesOnlyCausallyStableTombstones(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	store := openTestDurable(t, path, spaceID)
+	set, _, err := store.Append(identity, testConfigMutation("theme", KindSet, "dark"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Append(identity, testConfigMutation("theme", KindDelete, "")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, _, err := store.CompactForBounds(identity, 100, 1<<20, VersionVector{identity.PeerID(): 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Compacted || result.PrunedTombstones != 0 {
+		t.Fatalf("unstable tombstone compacted: %+v", result)
+	}
+	if record, ok := store.Get("preferences", "theme"); !ok || !record.Deleted {
+		t.Fatalf("unstable tombstone missing: %+v present=%t", record, ok)
+	}
+
+	result, _, err = store.CompactForBounds(identity, 100, 1<<20, store.Vector())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Compacted || result.PrunedTombstones != 1 {
+		t.Fatalf("stable tombstone result=%+v", result)
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	if record, ok := reopened.Get("preferences", "theme"); ok {
+		t.Fatalf("pruned tombstone still materialized: %+v", record)
+	}
+	if applied, _, err := reopened.Apply(set.Token); err != nil || !applied.Duplicate || applied.Stored {
+		t.Fatalf("covered stale set replay result=%+v err=%v", applied, err)
+	}
+	if _, ok := reopened.Get("preferences", "theme"); ok {
+		t.Fatal("covered stale set resurrected pruned tombstone")
+	}
+	if operation, _, err := reopened.Append(identity, testConfigMutation("theme", KindSet, "light")); err != nil || operation.Document.Counter != 3 {
+		t.Fatalf("causal resurrection operation=%+v err=%v", operation.Document, err)
+	}
+	if record, ok := reopened.Get("preferences", "theme"); !ok || record.Deleted || string(record.Payload) != "light" {
+		t.Fatalf("causal resurrection record=%+v present=%t", record, ok)
+	}
+}
+
+func TestDurableReplicaFailsClosedOnCorruptState(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"space_id":"`+spaceID+`","schema_version":1,"ops":[],"unknown":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenDurableReplica(path, spaceID, 1, nil); !errors.Is(err, ErrDurableStoreInvalid) {
+		t.Fatalf("corrupt store error=%v", err)
+	}
+}
+
+func TestDurableReplicaFileIsPrivate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("filesystem mode check")
+	}
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	store := openTestDurable(t, path, spaceID)
+	identity, err := peercrypto.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Append(identity, testConfigMutation("locale", KindSet, "en")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("store mode=%o want=600", info.Mode().Perm())
+	}
+}
+
+func TestDurableReplicaEncryptsBeforePersisting(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	store := openTestDurable(t, path, spaceID)
+	identity := testIdentity(t)
+	key, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext := []byte("plaintext-must-not-reach-disk")
+	if _, _, err := store.AppendEncrypted(identity, key, Mutation{
+		Collection: "preferences", RecordID: "locale", Kind: KindSet, Payload: plaintext,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(blob, plaintext) {
+		t.Fatal("durable replica contains plaintext config payload")
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	record, ok := reopened.Get("preferences", "locale")
+	if !ok {
+		t.Fatal("encrypted durable record missing")
+	}
+	opened, err := OpenRecordPayload(key, record)
+	if err != nil || !bytes.Equal(opened, plaintext) {
+		t.Fatalf("opened durable payload=%q err=%v", opened, err)
+	}
+}
+
+func TestDurableReplicaAppendEncryptedBatchIsAtomic(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "replica.json")
+	store := openTestDurable(t, path, spaceID)
+	identity := testIdentity(t)
+	syncKey, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultKey, err := GenerateEpochKey(KeyClassVault, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations := []EncryptedMutation{
+		{Key: syncKey, Mutation: Mutation{
+			Collection: CollectionProfiles, RecordID: "profile-1", Kind: KindSet,
+			KeyClass: KeyClassSync, KeyEpoch: 1, Payload: []byte(`{"position":"0000000000000000","value":{"id":"profile-1","name":"Work"}}`),
+		}},
+		{Key: vaultKey, Mutation: Mutation{
+			Collection: CollectionProfileEnv, RecordID: "profile-1", Kind: KindSet,
+			KeyClass: KeyClassVault, KeyEpoch: 1, Payload: []byte(`{"env":{"TOKEN":"secret"},"id":"profile-1"}`),
+		}},
+	}
+	operations, ack, err := store.AppendEncryptedBatch(identity, mutations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 2 || operations[0].Document.Counter != 1 || operations[1].Document.Counter != 2 || ack.Vector[identity.PeerID()] != 2 {
+		t.Fatalf("operations=%+v ack=%+v", operations, ack)
+	}
+
+	bad := append([]EncryptedMutation(nil), mutations...)
+	bad[0].Mutation.RecordID = "profile-2"
+	bad[1].Mutation.Collection = "INVALID COLLECTION"
+	if _, _, err := store.AppendEncryptedBatch(identity, bad); err == nil {
+		t.Fatal("batch with invalid second mutation succeeded")
+	}
+	if vector := store.Vector(); vector[identity.PeerID()] != 2 {
+		t.Fatalf("failed batch advanced vector: %v", vector)
+	}
+	if _, ok := store.Get(CollectionProfiles, "profile-2"); ok {
+		t.Fatal("first mutation from failed batch reached durable view")
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	if vector := reopened.Vector(); vector[identity.PeerID()] != 2 {
+		t.Fatalf("failed batch reached disk: %v", vector)
+	}
+}
+
+func TestDurableReplicaBootstrapEncryptedIsAtomicAndIdempotent(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	key, err := GenerateEpochKey(KeyClassSync, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := openTestDurable(t, path, spaceID)
+	mutations := []EncryptedMutation{{Key: key, Mutation: Mutation{
+		SchemaVersion: SchemaVersion,
+		Collection:    CollectionPreferences,
+		RecordID:      "terminal_theme",
+		Kind:          KindSet,
+		Payload:       []byte(`"nord"`),
+	}}}
+	bad := append([]EncryptedMutation(nil), mutations...)
+	bad = append(bad, EncryptedMutation{Key: key, Mutation: Mutation{
+		SchemaVersion: SchemaVersion,
+		Collection:    "INVALID COLLECTION",
+		RecordID:      "broken",
+		Kind:          KindSet,
+		Payload:       []byte(`true`),
+	}})
+	if _, _, _, err := store.BootstrapEncrypted(identity, bad); err == nil {
+		t.Fatal("invalid bootstrap batch succeeded")
+	}
+	if len(store.Vector()) != 0 {
+		t.Fatalf("failed bootstrap changed vector: %#v", store.Vector())
+	}
+	operations, ack, seeded, err := store.BootstrapEncrypted(identity, mutations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seeded || len(operations) != 1 || ack.Vector[identity.PeerID()] != 1 {
+		t.Fatalf("first bootstrap seeded=%t operations=%d ack=%#v", seeded, len(operations), ack)
+	}
+
+	reopened := openTestDurable(t, path, spaceID)
+	operations, ack, seeded, err = reopened.BootstrapEncrypted(identity, []EncryptedMutation{{Key: key, Mutation: Mutation{
+		SchemaVersion: SchemaVersion,
+		Collection:    CollectionPreferences,
+		RecordID:      "terminal_theme",
+		Kind:          KindSet,
+		Payload:       []byte(`"daylight"`),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seeded || len(operations) != 0 || ack.Vector[identity.PeerID()] != 1 {
+		t.Fatalf("retry bootstrap seeded=%t operations=%d ack=%#v", seeded, len(operations), ack)
+	}
+	record, ok := reopened.Get(CollectionPreferences, "terminal_theme")
+	if !ok {
+		t.Fatal("bootstrapped record missing")
+	}
+	plain, err := OpenPlainRecord(record, key)
+	if err != nil || string(plain.Value) != `"nord"` {
+		t.Fatalf("bootstrapped value=%s err=%v", plain.Value, err)
+	}
+
+	if _, _, err := reopened.Compact(identity); err != nil {
+		t.Fatal(err)
+	}
+	afterCompact := openTestDurable(t, path, spaceID)
+	if _, _, seeded, err := afterCompact.BootstrapEncrypted(identity, nil); err != nil || seeded {
+		t.Fatalf("bootstrap marker lost during compaction: seeded=%t err=%v", seeded, err)
+	}
+}
+
+func TestDurableReplicaEmptyBootstrapPersistsMarker(t *testing.T) {
+	spaceID := uuid.NewString()
+	path := filepath.Join(t.TempDir(), "config-replica.json")
+	identity := testIdentity(t)
+	store := openTestDurable(t, path, spaceID)
+	if operations, _, seeded, err := store.BootstrapEncrypted(identity, nil); err != nil || !seeded || len(operations) != 0 {
+		t.Fatalf("empty bootstrap operations=%d seeded=%t err=%v", len(operations), seeded, err)
+	}
+	reopened := openTestDurable(t, path, spaceID)
+	if _, _, seeded, err := reopened.BootstrapEncrypted(identity, nil); err != nil || seeded {
+		t.Fatalf("empty bootstrap retry seeded=%t err=%v", seeded, err)
+	}
+}

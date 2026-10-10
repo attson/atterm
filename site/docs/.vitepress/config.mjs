@@ -32,6 +32,7 @@ export default defineConfig({
             { text: '远程接管与会话侧栏', link: '/guide/remote-takeover' },
             { text: '端到端加密与安全', link: '/guide/e2ee' },
             { text: '部署 Relay', link: '/guide/deploy-relay' },
+            { text: '部署 Rendezvous', link: '/guide/deploy-rendezvous' },
             { text: 'AI Agent 与 Feishu', link: '/guide/ai-agents' },
             { text: 'FAQ / 故障排查', link: '/guide/faq' },
           ],

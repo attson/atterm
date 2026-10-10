@@ -27,6 +27,37 @@ Direct (Relay or Rendezvous signaling)
 - Candidate health does not create duplicate sidebar items。
 - Route selection respects user policy; no account login prompt in Peer-only mode。
 
+Implementation status: the frontend now has a pure candidate model keyed by
+`(principal, session_id)` with deterministic `direct > Quick Tunnel WSS > Relay WS`
+selection, route/principal compatibility checks, and an explicit Peer-only policy that cannot
+select Relay-account candidates. The sidebar merge uses this model for the currently available
+Relay catalog and Rendezvous Peer catalog, preserving one visible `session_id` with the established
+Relay-entry precedence while keeping the two trust groups separate before UI collapse. Quick Tunnel
+WSS is now exposed through that same native Peer transport contract as an explicit
+`route=quick_tunnel` choice. Go retains the already verified first-join hint only in process memory,
+keys it by the authenticated issuer Peer ID, rechecks bundle expiry and current deny-wins membership,
+and resolves every endpoint and membership token outside the renderer. The WSS client reuses the
+existing encrypted terminal/config record channel and reports `Quick Tunnel` rather than `Direct`.
+The default request remains Rendezvous direct, and no Relay credential or `account_key` enters the Peer
+path. Existing members can manually import a signed,
+ticketless reconnect bundle. Import requires the current genesis and exact active issuer membership,
+then atomically replaces (or removes) only the process-local Quick Tunnel hint. The encrypted Rendezvous
+catalog also probes an optional v2 response that
+carries the host's refreshed signed member bundle on its first page. Old hosts ignore the probe and are
+cached as v1-only after a short timeout; new clients independently bind the bundle issuer to the catalog
+Peer and current deny-wins membership before rotating only that process-local hint. This distribution
+creates no terminal subscriber or Pion attempt and a v1 fallback leaves the current hint untouched.
+Authenticated Peer live route leasing is now active on the shared Quick Tunnel/Rendezvous host path.
+The lease key is `(remote_peer_id, session_id, client_instance_id)`: a replacement route revalidates
+the exact active membership and session scope, catches up replay, then atomically inherits the existing
+subscriber/driver identity. The superseded route loses terminal and config authority, a late old close
+cannot remove the replacement, and stale concurrent candidates cannot overwrite the winner. Independent
+client instances still coexist. Peer clients now automatically select a currently verified Quick Tunnel
+hint after recoverable Direct reachability/transport failures. The transition keeps the client instance
+and committed OUT cursor, drops stale generation callbacks, freezes writes until replay ready, and stays
+on Quick Tunnel after fallback to prevent flapping. Authentication, protocol and backpressure failures do
+not downgrade. Relay-account/Peer cross-principal routing and automatic failback remain deferred.
+
 ## PR 4.2 - Automated handover
 
 - Direct establishment stops unnecessary Relay/Quick terminal byte flow。
@@ -35,6 +66,19 @@ Direct (Relay or Rendezvous signaling)
 - Input freezes during ambiguous ownership; it is never sent twice。
 - Cooldown/hysteresis prevents flapping。
 - Sync channel can choose any authenticated Peer route independently of terminal subscriber lifecycle。
+
+Implementation status: the Peer-only `Rendezvous direct -> Quick Tunnel WSS` handover is implemented.
+The availability decision is a bounded token-free Go capability query; endpoints and membership tokens
+remain outside the renderer. Existing generation/cursor guards prove stale OUT is dropped, replay is
+deduplicated, and queued input is released only on the replacement route's `DIRECT_READY`. Relay fallback,
+cross-principal handover and cooldown-based Direct failback remain future slices. Deterministic client and
+host soak tests now force 100 route replacements: the client retains one instance/cursor, drops duplicate
+and stale OUT, and emits each queued write once; the host keeps one subscriber/driver lease and permanently
+rejects every superseded route. Quick Tunnel now probes a Direct failback only after a 30-second stable
+cooldown, with exponential retry capped at five minutes. The Direct candidate keeps the same identity and
+cursor, freezes writes until replay ready, and either promotes atomically or reconnects Quick Tunnel from
+the committed cursor without trusting an asynchronously revoked old writer.
+Cross-principal Relay handover and cross-process NAT/network-switch soak remain future work.
 
 ## PR 4.3+ - Capability expansion
 
@@ -47,30 +91,159 @@ Each capability ships as a separate PR with explicit principal/frame allowlist, 
 
 `full` permission does not automatically allow a new frame until its own enforcement PR lands.
 
+Implementation status: items 1-4 are implemented. Peer image/file paste reuses the existing
+`PASTE_IMAGE` / `PASTE_FILE` protocol payloads over both Rendezvous Direct and Quick Tunnel,
+without Relay credentials or `account_key`. The renderer requires ready + driver + `full` and does
+not queue large blobs across handover. The owner host independently revalidates the exact active
+membership/session scope, current owner policy, driver and route lease, then bounds encoded and
+decoded payload sizes before forwarding to the local session. Peer Remote File Explorer reuses
+`FS_REQUEST` / `FS_RESPONSE` / `FS_EVENT` and the shared desktop/web panel over both Rendezvous
+Direct and Quick Tunnel. Each authenticated host attempt owns its worker/watch lifecycle; requests
+and outbound results revalidate membership, scope, owner `full` policy and route lease, while route
+changes reject client pending RPCs and discard stale results. The Peer record supplies E2EE, so FS
+payloads stay single-segment and do not depend on Relay `account_key`; read/write caps and permanently
+denied credential directories remain unchanged. Remote profile launch reuses `SESSION_CREATE` /
+`SESSION_CREATED` over a temporary authenticated Peer terminal route. The client selects a discoverable
+control/full session on the requested host as an authorization anchor, prefers Direct over Quick Tunnel,
+and sends only request/host/profile ids. The owner resolves the profile locally, rechecks membership,
+session scope, owner policy and route lease before fork and response, limits each route to one in-flight
+create, and drops late results after downgrade or route replacement. The request is never retried after it
+starts. A target currently needs at least one discoverable session; zero-session host control remains a
+future extension. Peer Remote Web Preview reuses `SERVICE_OPEN` / `SERVICE_OPENED` /
+`SERVICE_CLOSE` for control but carries TCP bytes in a new authenticated `RecordService` logical
+channel, independently of terminal frames and PTY subscriber lifecycle. Direct Pion and Quick Tunnel
+WSS use the same bounded service codec; WSS schedules service below terminal and above config sync.
+The owner requires the current driver plus effective `full`, revalidates exact membership/session
+scope and route lease on every message, and closes services on downgrade, driver loss, detach or route
+replacement. Loopback-only targets, 4 services per route, 16 connections per service, 512 MiB per-end
+byte budgets and bounded backpressure are covered by transport and real TCP round-trip tests. The local
+gateway receives only an opaque native attempt id; Relay tickets, Relay credentials and `account_key`
+do not enter the Peer path.
+
 ## PR 4.x - Additional reachability
 
-- User-configured TURN, visibly labelled relayed ICE path。
-- LAN/mDNS route hints。
-- Manual host/port + fingerprint。
-- IPv6 direct candidates。
-- Completely no-public-infrastructure mode。
+- [x] User-configured TURN: local-only URLs/username plus a keychain credential are injected as a
+  separate Pion ICE server, and a selected `relay` candidate is visibly labelled `TURN relay`。
+- [x] LAN/mDNS route hints: optional DNS-SD `_atterm-peer._tcp` advertisement and browsing use an
+  epoch-scoped opaque tag; only active members can resolve it, results remain memory-only, Manual LAN
+  routes take precedence, and the membership handshake remains authoritative。
+- [x] Manual host/port + fingerprint: explicit IPv4/IPv6 listener, signed `manual_lan` bootstrap,
+  locally persisted endpoint/fingerprint binding, authenticated catalog/config control route and native
+  terminal route are implemented. Discovery runs in parallel with Rendezvous and deduplicates by
+  `session_id`; the same membership handshake, encrypted records and route lease remain authoritative。
+- [x] IPv6 direct candidates: explicit IPv6 advertised hosts select a `tcp6 [::]` listener, signed and
+  discovered routes use bracketed URLs, mDNS publishes/accepts AAAA, and link-local candidates preserve
+  the interface zone without changing membership authorization。
+- [x] Completely no-public-infrastructure mode: a persistent local LAN-only policy preserves public
+  route settings but transactionally stops Quick Tunnel, suppresses Rendezvous/STUN/TURN, rejects Direct
+  and cached/imported Quick Tunnel candidates, and keeps Manual LAN plus mDNS operational. Relay account
+  connectivity remains an explicit, separate user control。
 
 Every route reuses Peer membership/handshake/record encryption; none creates a new trust model.
+Manual LAN can perform invitation redemption, catalog and config exchange with Relay, Rendezvous, STUN
+and Quick Tunnel disabled. A hermetic dual-identity integration test now exercises the production TCP
+listener, signed invitation redemption, reserved control catalog/config exchange, terminal replay,
+driver claim, input delivery and subscriber cleanup with every public route disabled. The stage exit
+checkbox remains open until the same flow is exercised on two packaged desktop installations. The E2E
+now enables the production LAN-only policy while leaving the stored Rendezvous/STUN configuration active,
+so public-route suppression is exercised rather than simulated by clearing every setting.
 
 ## Hardening Program
 
-- Fuzz ticket/handshake/record/fragment/sync/signaling parsers。
-- NAT matrix: host、srflx、symmetric、UDP blocked、network switch。
-- Chaos: Relay/Rendezvous restart、Quick URL rotation、route flap、late frames。
-- Soak: large scrollback + config snapshot + mobile reconnect。
-- Resource bounds: connections、reassembly、op log、tombstones。
-- Grant/key expiry renewal and trust export/import without plaintext private keys。
-- Battery/data measurement across desktop idle、iOS foreground and Web background。
+- [x] Fuzz ticket/handshake/record/fragment/sync/signaling parsers. Native Go fuzz targets include
+  valid protocol seeds and exercise arbitrary malformed input across signed Peer documents, both
+  handshake state machines, encrypted records, isolated terminal/config/signal reassembly, config
+  operations/snapshots/compatibility state, and pairwise encrypted signaling envelopes。
+- [ ] NAT matrix: host、srflx、symmetric、UDP blocked、network switch。
+- [x] Chaos: Relay/Rendezvous restart、Quick URL rotation、route flap、late frames。
+- [ ] Soak: large scrollback + config snapshot + mobile reconnect。
+- [x] Resource bounds: connections、reassembly、op log、tombstones。
+- [ ] Grant/key expiry renewal and trust export/import without plaintext private keys。
+- [ ] Battery/data measurement across desktop idle、iOS foreground and Web background。
+
+Desktop now has a privacy-preserving local Peer traffic meter as the first data-measurement slice. It counts
+exact authenticated encrypted application-record bytes and records for Direct Pion, Quick Tunnel WSS and Manual
+LAN WSS, including terminal, config sync, file and Preview traffic. Handshake/signaling bytes and lower-layer
+overhead are excluded. UTC-day route aggregates are retained for 180 days in a mode-0600 local file and exposed
+through a bounded 90-day read-only Wails query; Peer/session identities, addresses and credentials are never
+stored. The shared host WSS handler is honestly classified as `gateway` because it cannot distinguish a public
+Quick Tunnel request from a Manual LAN request. The personal Settings dashboard and packaged-device energy/data
+measurement remain separate release slices, so the Battery/data gate stays open.
+
+The native Pion path now has a hermetic virtual-network matrix that exercises the production
+client/host attempts and authenticated DataChannel handshake with host candidates, plus STUN
+server-reflexive candidate gathering and endpoint-independent NAT traversal. It verifies symmetric
+NAT and UDP-blocked routes fail closed, and proves that a network disconnect closes the current
+attempt before a fresh connection succeeds. The NAT matrix remains open until packaged
+Chromium/WebKit/iOS clients pass the same cases on real networks; this virtual coverage does not
+replace release soak or device testing.
+
+Rendezvous restart chaos now runs through the production desktop lifecycle against two generations
+of the real in-memory service behind one stable endpoint. The test disconnects every active socket,
+holds the endpoint unavailable until the client reports a bounded retry, then proves it registers a
+fresh host route with cleared failure state after the service returns.
+
+Quick Tunnel URL rotation now has a deterministic process-level chaos test: after the helper publishes
+the first URL, the test kills that process, verifies the manager removes the stale public URL and local
+gateway, then explicitly starts a fresh process that publishes a different URL. Existing signed bundle,
+Rendezvous catalog and client cache tests cover distribution and atomic replacement of that new hint.
+The manager remains intentionally user-started rather than silently restarting cloudflared.
+
+Route-flap chaos now drives the production `SessionConnection` through 100 Direct-to-Relay handovers.
+Each cycle dispatches late frames, ready/authentication callbacks, failures and close/replay callbacks from
+the retired Direct transport and Relay socket while the replacement Relay is still ambiguous. The test
+proves the committed OUT cursor remains monotonic with one delivery per sequence, queued input stays frozen
+until replay completes, one route owns every input, and stale callbacks cannot allocate extra fallback
+sockets.
+
+Relay restart chaos now keeps one stable public endpoint in front of two real `relay.Server` generations
+sharing the same user database. The test terminates every upgraded connection, holds the service unavailable
+through a failed reconnect attempt, then proves the desktop uplink republishes the same live local session
+to the fresh in-memory registry. A new remote viewer attaches and completes terminal input/output after the
+restart, while connection health records the recovery. This closes the deterministic Chaos matrix; packaged
+and real-network behavior remains covered by the separate NAT and soak gates.
+
+The shared desktop/web/Capacitor `PeerSessionConnection` now has a deterministic mobile-lifecycle soak: an
+8 MiB scrollback replay arrives in 4,096 sequenced chunks before ready, followed by 32 suspend/resume cycles.
+Every replacement route starts from the committed cursor, rejects late and duplicate OUT from retired routes,
+and releases one queued driver claim, resize and input only after replay readiness. The Soak item remains open
+until packaged iOS foreground/background recovery is measured rather than simulated through the shared
+connection lifecycle. A separate config-only soak now sends a roughly 400 KiB compacted snapshot through an
+authenticated Pion route. It crosses multiple anti-entropy batches and encrypted transport fragments, drops
+the first durable ACK, resumes from the exact outstanding batch, converges once, and keeps the terminal
+subscriber lifecycle untouched throughout.
+
+The durable Peer config tail now compacts automatically at 512 operations or 8 MiB, whichever comes first.
+The threshold decision is rechecked under the cross-process file lock, and the signed snapshot retains the
+causal cover vector while the operation tail is removed. A returning device with an older non-empty replica
+can atomically rebase only when that cover vector includes all of its durable history; an unshared local
+branch fails closed instead of being discarded. Tombstones are omitted only at the component-wise durable
+acknowledgement floor of every active member. A missing or lagging member ACK retains the remove-wins marker;
+after pruning, the compacted vector still rejects covered stale-set replay while a causally newer set can
+recreate the record. The 32 MiB snapshot, 64 MiB durable store, bounded operation tail, one in-flight
+reassembly per logical stream, 16 MiB message caps, and existing per-route/server connection ceilings close
+the deterministic Resource bounds gate. Packaged memory and energy behavior remains in the Battery/data gate.
+
+New non-root memberships now expire after 90 days and are renewed during an authenticated config exchange
+inside a 30-day window. A renewal preserves the subject signing/wrapping public keys and exact capabilities,
+uses a fresh serial, cannot be self-issued, and is distributed as an ordinary membership anti-entropy item.
+The receiving device promotes its local grant only after both public keys match its existing identity. Expired,
+revoked, or stale grants fail closed and require a new invitation. Epoch-key renewal now advances sync and vault
+together every 30 days when the genesis creator next opens an authenticated config exchange. Historical rotation
+envelopes remain the source for old record keys; the Go owner can retain multiple authenticated key candidates
+for a concurrent epoch and AEAD-select the matching one, while all new writes use the canonical head. Desktop
+trust recovery now exports only an Argon2id + XChaCha20-Poly1305 encrypted package: store keys are regenerated,
+epoch keys are recovered from signed envelopes, and invitation secrets plus live replica cursors are excluded.
+Import refuses to overwrite an existing identity and validates the full trust chain before secure-storage writes.
+A deterministic fresh-install recovery test now proves the restored member can complete the signed membership
+handshake with another active member, exchange the real config anti-entropy inventory/batch/ack flow, project a
+remote preference and persist both durable exchange cursors. The hardening item remains open only for packaged
+cross-machine recovery verification on a signed desktop build.
 
 ## Stage Exit Gate
 
 - [ ] Same session is shown once across available route candidates.
-- [ ] 100 forced handovers have no OUT gaps/duplicates and no duplicate IN.
+- [x] 100 forced handovers have no OUT gaps/duplicates and no duplicate IN.
 - [ ] Direct success removes high-volume bytes from Relay/Quick paths.
 - [ ] Every expanded capability has transport and desktop enforcement tests.
 - [ ] Peer-only mode never requires Relay login/account key.

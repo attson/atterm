@@ -121,8 +121,8 @@ Stage 1 不创建 Peer identity。Relay 先验证账户、session ownership 和 
 
 - 每个安装生成独立 Peer device identity，与 Relay 账户完全无关。
 - 首台设备创建不可变的 signed genesis document（`space_id`、初始 admin、协议版本）；其 hash 是信任锚。后续设备拿到 space membership certificate，而不是分别加入每台主机的孤立 trust domain。
-- 身份签名算法使用 P-256 ECDSA；会话密钥协商使用临时 P-256 ECDH。
-- Desktop 私钥保存在 OS keyring；iOS 使用新的 Keychain plugin；浏览器使用 IndexedDB 中不可导出的 WebCrypto `CryptoKey`。
+- 身份签名算法使用 P-256 ECDSA；每台设备另有一把静态 P-256 ECDH wrapping identity 用于接收配置 epoch key，会话密钥协商再使用独立的临时 P-256 ECDH。三类私钥不得复用。
+- Desktop signing/wrapping 私钥分别保存在 OS keyring；iOS 使用 Keychain plugin；浏览器使用 IndexedDB 中不可导出的 WebCrypto `CryptoKey`。
 - `peer_id = base64url(SHA-256(canonical public key))`。
 - 每台 desktop 仍是自己本地 session 的最终 owner，可在 Space grant 之上进一步收窄权限；Space membership 本身不覆盖 session owner 的决定。
 - 不导入、不导出、不派生现有 Relay `account_key`。Peer 私钥、邀请 secret、会话密钥不得进入 URL query、日志或 Relay 配置。
@@ -180,7 +180,7 @@ atp1.<base64url(exact-json-bytes)>.<base64url(p1363-signature)>
 - 这条限制是严格单次消费的必要条件：离线分区下若多个副本都能独立核销，就无法阻止同一 ticket 在两个分区各成功一次。
 - 签发设备离线时，预签 ticket 无需用户现场点击授权，但必须等该设备上线才能兑换。未来可增加显式 M-of-N redemption authority，不在 MVP 内。
 - 批量撤销只有传播到对应 redemption device 后才能阻止兑换。已复制到外部但核销设备尚未收到撤销的 delegated invitation 仍可能在过期前使用，UI 必须提示这一点。
-- 兑换成功后，签发设备签发 `DeviceGrant`/membership certificate，绑定 space、client public key、permission、session scope、`can_invite`、`can_sync_secrets`、签发/过期时间和 serial。
+- 兑换成功后，签发设备签发 `DeviceGrant`/membership certificate，绑定 space、client signing/wrapping public keys、permission、session scope、`can_invite`、`can_sync_secrets`、签发/过期时间和 serial。
 - 后续连接使用 grant + client 私钥 proof，不再消耗邀请。
 - 删除 trusted device 会撤销其 grant serial；若该设备可签邀请，同时撤销其未兑换的 delegated tickets。
 
@@ -261,7 +261,7 @@ Peer Space 没有“服务器上的用户记录”。所有决策都是签名 op
 - `cmd/atterm-rendezvous/`
   - 可独立自建的最小服务
 - `internal/quicktunnel/`
-  - 后续 cloudflared lifecycle、URL extraction、timeouts
+  - random-port loopback gateway、cloudflared lifecycle、strict URL extraction、timeouts 和 process-tree cleanup
 
 修改建议：
 
@@ -402,12 +402,14 @@ WSS fallback 使用同一 encrypted record codec，并给 sync channel 最低调
 普通配置与敏感 vault 分开轮换，避免“能同步主题”自动等于“能拿 SSH 私钥”。密钥层级：
 
 ```text
-device identity key          never synced
-  -> wraps sync_epoch_key    portable preferences/config
-  -> wraps vault_epoch_key   opted-in profiles env / SSH credentials and private keys
+device signing key           signs identity/membership; never used for ECDH
+  -> certifies independent device wrapping public key
+device wrapping key          P-256 ECDH private key; never synced
+  -> unwraps sync_epoch_key  portable preferences/config
+  -> unwraps vault_epoch_key opted-in profiles env / SSH credentials and private keys
 ```
 
-Peer channel 已端到端加密，但同步 payload 仍使用 epoch key 封装后再进入 op log，这样本地 snapshots、未来可选的第三方 store-and-forward 也不会变成明文。AAD 必须包含 `space_id || collection || record_id || op_id || epoch`，并在 `internal/e2eecrypto/aadtags.go`/`docs/spec/protocol.md` 注册独立 namespace，禁止与 Relay account envelopes 交叉重放。
+Peer channel 已端到端加密，但同步 payload 仍使用 epoch key 封装后再进入 op log，这样本地 snapshots、未来可选的第三方 store-and-forward 也不会变成明文。AAD 必须包含 `space_id || collection || record_id || op_id || key_class || epoch`，并在 `internal/e2eecrypto/aadtags.go`/`docs/spec/protocol.md` 注册独立 namespace，禁止与 Relay account envelopes 交叉重放。签名 identity key 与 wrapping key 必须保持用途分离；membership 同时认证 signing public key 和 wrapping public key。
 
 ### 6.6 What syncs
 
@@ -531,7 +533,7 @@ Relay 加速 release gate 到此：旧客户端不变、直连失败永远可回
 
 ### P4 - Quick Tunnel accountless route
 
-- [ ] cloudflared lifecycle 和 loopback peer gateway。
+- [x] cloudflared lifecycle 和 loopback peer gateway（仅基础生命周期；signaling/WSS 由后续项接入）。
 - [ ] 临时 route bundle、tunnel signaling、WebRTC-first。
 - [ ] 用户允许时使用 application-encrypted WSS fallback。
 - [ ] URL 轮换只刷新 route bundle，不重建 membership。
@@ -569,7 +571,7 @@ Quick Tunnel accountless release gate 到此：明确临时 URL 与至少两台�
 ### P9 - Capability expansion and hardening
 
 - [ ] paste、file explorer、session create、preview 各自单独开放权限。
-- [ ] optional TURN、LAN/mDNS、manual/IPv6、完全无公网模式。
+- [ ] optional TURN、IPv6、Manual LAN、epoch-scoped mDNS discovery 与本机 LAN-only 公网路径抑制策略已实现；仍需完成打包端实机与 hardening gate。
 - [ ] fuzz/NAT/chaos/soak、资源上限、grant/key renewal、battery/data measurement。
 
 ## 11. Test Strategy

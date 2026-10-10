@@ -25,6 +25,7 @@ description: atterm 仓库导航——某个功能/场景要改哪些文件，�
 | 改 web 主界面 / 终端 / 侧栏 / Settings / Admin | `desktop/frontend/src/App.vue` + `desktop/frontend/src/components/**` + `desktop/frontend/src/platform/web.ts` + `web/src/main-web.ts`；主 App 复用桌面组件，不新建第二套 `web/src/main`/`settings`/`admin` 主界面 |
 | 改 web 端终端快捷键 / 选择图片 / 选择文件 | `desktop/frontend/src/components/TerminalView.vue`（browser-only aux row + hidden file inputs）+ `desktop/frontend/src/lib/auxKeys.ts` + `desktop/frontend/src/lib/connection.ts`（`sendPasteImage`/`sendPasteFile`）+ `desktop/frontend/src/platform/web.ts` + i18n；文件/图片按钮必须 gated 到 driver + `remote_permission=full` |
 | 改桌面远程 relay 配置 | `desktop/app.go` + `desktop/config.go` + `desktop/relay_security.go` + `desktop/frontend/src/components/SettingsDialog.vue` |
+| 改 Peer Rendezvous 发现 / 加密信令 / Pion route / config sync fanout | `internal/peerdiscovery/`（sync epoch 派生、内存 reachability、target planner）+ `internal/rendezvousclient/connection.go`（单连接注册/publish）+ `internal/rendezvousclient/signal_crypto.go`（pairwise 信令信封）+ `internal/rendezvousclient/route.go`（复用 Pion attempts）+ `desktop/peer_rendezvous_discovery.go`（active membership / durable ack 适配）+ `desktop/peer_rendezvous_route.go`（共享 terminal/config host attachment）+ `desktop/peer_rendezvous_lifecycle.go`（注册、退避、轮换、脱敏状态）+ `desktop/peer_config_status.go`（手动 inventory 广播）+ `desktop/diagnostics.go`（脱敏摘要）+ `desktop/frontend/src/components/SettingsPeer.vue` / `PeerMembersSection.vue` + `platform/{types,wails}.ts` + i18n + `internal/rendezvous/`（wire/service）+ `docs/spec/protocol.md` §Rendezvous v1 + `docs/spec/architecture.md` §Rendezvous 发现与配置同步规划。Rendezvous 不是 membership truth；DataChannel membership handshake 仍是授权边界 |
 | 改远程权限模型 | `internal/proto/frame.go` + `internal/relay/permissions.go` + `desktop/uplink.go` + Settings UI + 协议规范 |
 | 改 relay admin 配置（限流 / origins / debug / 飞书 / VAPID） | `internal/userstore/relay_config.go`（DB schema + Get/Set + version bump）+ `internal/relay/admin_config.go`（`AdminConfig` 字段 + validate + `LoadFromDB`）+ `internal/relay/config_refresh.go`（多实例版本轮询）+ `internal/relay/admin_http.go`（`/admin/api/config`、`/admin/api/feishu`、generate-key）+ `internal/relay/server.go`（热应用：atomic origins/debug、`ApplyFeishuConfig`、飞书路由门控）+ `internal/userstore/store.go`（`SetSecretCipher`）+ `cmd/atterm-relay/main.go`（env→config 播种）+ `desktop/frontend/src/components/admin/{Config,FeishuConfig}.vue` + `web/src/shared/api/admin.ts` + i18n + README/spec。红线 #26 |
 | 改 relay 多实例 / realm / home_instance 路由 | `internal/userstore/realm.go`（`relay_realm_state` singleton + `GetOrCreateRealm`）+ `internal/userstore/relay_instances.go`（`relay_instances` 心跳表 + `UpsertInstance`/`ListActiveInstances`）+ `internal/relay/config_refresh.go`（`relay_config.version` 轮询向其它实例传播 admin 配置）+ `internal/relay/node_home.go`（`resolveHomeInstanceURL` + 心跳/活跃列表）+ `internal/relay/opaque_auth.go`（登录响应携带 `realm_id` + `home_instance_url`）+ `internal/e2eeclient/client.go`（客户端解析 `realm_id`/`home_instance_url` 字段）+ `cmd/atterm-relay/main.go`（`ATTERM_RELAY_INSTANCE_PUBLIC_URL` 读入 + realm bootstrap）+ migrations `0007_relay_realm.sql` / `0008_node_selection.sql`（sqlite）与对应 postgres 版本 + `docs/spec/architecture.md` §多实例 + `docs/spec/auth.md` §登录响应字段。红线 #33 |
@@ -84,6 +85,14 @@ description: atterm 仓库导航——某个功能/场景要改哪些文件，�
 - `ATTERM_DIRECT_P2P`：桌面端启用 v0.6 beta 直连 host rollout；默认关闭，当前开发阶段仅作灰度开关，正式用户偏好和 client 接入在后续 Stage 1 版本加入
 
 其它：
+- `ATTERM_RENDEZVOUS_ADDR`：独立 Rendezvous 监听地址（默认 `:8443`）
+- `ATTERM_RENDEZVOUS_ORIGINS`：浏览器 Origin 精确 allowlist，生产必填
+- `ATTERM_RENDEZVOUS_TLS_CERT` / `ATTERM_RENDEZVOUS_TLS_KEY`：独立 Rendezvous 真证书；生产直连必填。TLS 反代后端改用 `--behind-tls-proxy` 且只能监听 loopback
+- `ATTERM_RENDEZVOUS_MAX_CONNECTIONS` / `_PER_IP` / `_PER_TOPIC`：Rendezvous 全局、每 IP、每 opaque topic 连接上限；`0` 使用默认值
+- `ATTERM_RENDEZVOUS_MAX_MAILBOX_PER_TOPIC` / `_GLOBAL`：120 秒易失 mailbox 上限；`0` 使用默认值
+- `ATTERM_RENDEZVOUS_MAX_RECENT_MESSAGES` / `_MAX_MESSAGES_PER_MINUTE_PER_IP`：publish retry 去重表与每 IP 速率上限；`0` 使用默认值
+- `ATTERM_RENDEZVOUS_LOG_LEVEL`：独立 Rendezvous stderr 级别 `DEBUG|INFO|WARN|ERROR`
+- `ATTERM_RENDEZVOUS_TEST_URL` / `ATTERM_RENDEZVOUS_TEST_ORIGIN`：黑盒 contract runner 的部署 origin 与浏览器 Origin；仅测试输入，不被服务进程读取
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
 - `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：GitHub prod environment secret；base64 Ed25519 公钥，release 构建时注入桌面 app

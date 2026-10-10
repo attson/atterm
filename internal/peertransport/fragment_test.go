@@ -77,3 +77,132 @@ func TestFragmentBounds(t *testing.T) {
 		t.Fatalf("oversize frame accepted: %v", err)
 	}
 }
+
+func TestConfigFragmentRoundTripKeepsLogicalKind(t *testing.T) {
+	payload := bytes.Repeat([]byte("config-batch"), 4096)
+	fragments, err := FragmentConfigMessage(RecordConfigBatch, 91, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fragments) < 2 {
+		t.Fatal("large config message was not fragmented")
+	}
+	now := time.Unix(1_800_000_000, 0)
+	var reassembler ConfigReassembler
+	var (
+		gotKind RecordKind
+		got     []byte
+	)
+	for i, fragment := range fragments {
+		var complete bool
+		gotKind, got, complete, err = reassembler.Add(fragment, now)
+		if err != nil {
+			t.Fatalf("fragment %d: %v", i, err)
+		}
+		if complete != (i == len(fragments)-1) {
+			t.Fatalf("fragment %d complete=%v", i, complete)
+		}
+	}
+	if gotKind != RecordConfigBatch || !bytes.Equal(got, payload) {
+		t.Fatalf("reassembled kind=%d bytes=%d", gotKind, len(got))
+	}
+}
+
+func TestCatalogResponseUsesIsolatedControlFragmentation(t *testing.T) {
+	payload := bytes.Repeat([]byte("catalog-entry"), 4096)
+	fragments, err := FragmentConfigMessage(RecordCatalogResponse, 92, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reassembler ConfigReassembler
+	var got []byte
+	for index, fragment := range fragments {
+		kind, message, complete, err := reassembler.Add(fragment, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if complete {
+			if index != len(fragments)-1 || kind != RecordCatalogResponse {
+				t.Fatalf("completed index=%d kind=%d", index, kind)
+			}
+			got = message
+		}
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("catalog response reassembly mismatch")
+	}
+}
+
+func TestConfigFragmentsAreIsolatedFromTerminalReassembly(t *testing.T) {
+	payload := bytes.Repeat([]byte{0x42}, MaxRecordPlaintext+1)
+	fragments, err := FragmentConfigMessage(RecordConfigBatch, 7, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var terminal Reassembler
+	if _, _, err := terminal.Add(fragments[0], time.Now()); !errors.Is(err, ErrInvalidFragment) {
+		t.Fatalf("terminal reassembler accepted config fragment: %v", err)
+	}
+}
+
+func TestSignalFragmentRoundTripIsIsolated(t *testing.T) {
+	payload := bytes.Repeat([]byte("encrypted-sdp"), 2048)
+	fragments, err := FragmentSignalMessage(37, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fragments) < 2 {
+		t.Fatal("large signaling message was not fragmented")
+	}
+	now := time.Unix(1_800_000_000, 0)
+	var signal SignalReassembler
+	var got []byte
+	for i, fragment := range fragments {
+		var complete bool
+		got, complete, err = signal.Add(fragment, now)
+		if err != nil {
+			t.Fatalf("signal fragment %d: %v", i, err)
+		}
+		if complete != (i == len(fragments)-1) {
+			t.Fatalf("signal fragment %d complete=%v", i, complete)
+		}
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("reassembled signaling message differs")
+	}
+	var config ConfigReassembler
+	if _, _, _, err := config.Add(fragments[0], now); !errors.Is(err, ErrInvalidFragment) {
+		t.Fatalf("config reassembler accepted signal fragment: %v", err)
+	}
+}
+
+func TestConfigReassemblerRejectsInterleaveWithoutPoisoningRetry(t *testing.T) {
+	payload := bytes.Repeat([]byte{0x33}, MaxRecordPlaintext*2)
+	fragments, err := FragmentConfigMessage(RecordConfigInventory, 12, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := FragmentConfigMessage(RecordConfigAck, 13, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	var reassembler ConfigReassembler
+	if _, _, _, err := reassembler.Add(fragments[0], now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := reassembler.Add(other[1], now); !errors.Is(err, ErrInvalidFragment) {
+		t.Fatalf("interleaved config fragment accepted: %v", err)
+	}
+	for i, fragment := range fragments[1:] {
+		kind, got, complete, err := reassembler.Add(fragment, now)
+		if err != nil {
+			t.Fatalf("valid fragment after rejected interleave %d: %v", i+1, err)
+		}
+		if complete {
+			if kind != RecordConfigInventory || !bytes.Equal(got, payload) {
+				t.Fatalf("retry kind=%d bytes=%d", kind, len(got))
+			}
+		}
+	}
+}

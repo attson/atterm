@@ -114,6 +114,14 @@ type sessionCreateHandler struct {
 	// without spawning a real shell, the same role fsExec plays for
 	// filesystem requests.
 	newSession func(ctx context.Context, req NewSessionReq) (uuid.UUID, error)
+	// authorize is an optional live authorization check for transports whose
+	// membership or route lease can change while a request waits for its worker.
+	// Relay leaves it nil because the relay connection owns that lifecycle.
+	authorize func() bool
+	// limit defaults to sessionCreateConcurrency. Peer attempts set it to one:
+	// one authenticated route represents one logical client and must not fork
+	// two shells concurrently after a double action.
+	limit int
 
 	mu       sync.Mutex
 	inFlight int
@@ -160,7 +168,11 @@ func (h *sessionCreateHandler) submit(req proto.SessionCreatePayload) {
 func (h *sessionCreateHandler) acquire() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.inFlight >= sessionCreateConcurrency {
+	limit := h.limit
+	if limit <= 0 {
+		limit = sessionCreateConcurrency
+	}
+	if h.inFlight >= limit {
 		return false
 	}
 	h.inFlight++
@@ -215,6 +227,10 @@ func (h *sessionCreateHandler) run(req proto.SessionCreatePayload) {
 		h.testHook()
 	}
 
+	if h.authorize != nil && !h.authorize() {
+		h.sendResult(req.RequestID, false, uuid.Nil, sessionCreateErrPermissionDenied)
+		return
+	}
 	if h.remotePermission != proto.RemotePermissionControl && h.remotePermission != proto.RemotePermissionFull {
 		h.sendResult(req.RequestID, false, uuid.Nil, sessionCreateErrPermissionDenied)
 		return

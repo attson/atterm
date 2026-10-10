@@ -6,6 +6,68 @@ import (
 	"testing"
 )
 
+func TestRecordKindWireValuesRemainStable(t *testing.T) {
+	want := map[RecordKind]byte{
+		RecordFrame:           1,
+		RecordFragment:        2,
+		RecordDirectReady:     3,
+		RecordPing:            4,
+		RecordPong:            5,
+		RecordClose:           6,
+		RecordConfigInventory: 7,
+		RecordConfigBatch:     8,
+		RecordConfigAck:       9,
+		RecordConfigFragment:  10,
+		RecordSignal:          11,
+		RecordSignalFragment:  12,
+		RecordService:         13,
+		RecordCatalogRequest:  14,
+		RecordCatalogResponse: 15,
+	}
+	for kind, wire := range want {
+		if byte(kind) != wire {
+			t.Fatalf("record kind %d has wire value %d, want %d", kind, byte(kind), wire)
+		}
+	}
+}
+
+func TestSignalRecordKindsAreNotDataChannelMessages(t *testing.T) {
+	for _, kind := range []RecordKind{RecordSignal, RecordSignalFragment} {
+		if kind.dataChannelMessage() {
+			t.Fatalf("signaling kind %d accepted as DataChannel message", kind)
+		}
+	}
+	for kind := RecordFrame; kind <= RecordConfigFragment; kind++ {
+		if !kind.dataChannelMessage() {
+			t.Fatalf("existing DataChannel kind %d rejected", kind)
+		}
+	}
+	if !RecordService.dataChannelMessage() {
+		t.Fatal("service kind rejected as DataChannel message")
+	}
+	for _, kind := range []RecordKind{RecordCatalogRequest, RecordCatalogResponse} {
+		if !kind.dataChannelMessage() || !kind.IsConfigMessage() {
+			t.Fatalf("catalog kind %d rejected as fragmented control message", kind)
+		}
+	}
+}
+
+func TestServiceRecordSealsAndOpens(t *testing.T) {
+	sealer, opener := recordPair(t)
+	want := []byte("preview bytes")
+	record, err := sealer.Seal(RecordService, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, got, err := opener.Open(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != RecordService || !bytes.Equal(got, want) {
+		t.Fatalf("opened kind=%d payload=%q, want service %q", kind, got, want)
+	}
+}
+
 func recordPair(t *testing.T) (*RecordSealer, *RecordOpener) {
 	t.Helper()
 	key := bytes.Repeat([]byte{0x71}, 32)

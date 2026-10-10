@@ -5,6 +5,8 @@ import {hookinstall} from '../models';
 import {connhealth} from '../models';
 import {feishu} from '../models';
 
+export function AcceptPendingPeerConfig():Promise<main.PeerConfigSyncStatus>;
+
 export function AddSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<main.SSHHost>;
 
 export function AddSSHKey(arg1:string,arg2:string,arg3:string):Promise<main.SSHKey>;
@@ -33,11 +35,19 @@ export function ConfirmQuit():Promise<void>;
 
 export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 
+export function CreatePeerConnectionBundle(arg1:string):Promise<string>;
+
+export function CreatePeerInvitations(arg1:main.CreatePeerInvitationsReq):Promise<Array<main.PeerInvitation>>;
+
+export function CreatePeerSpace():Promise<main.PeerSpaceStatus>;
+
 export function DeleteFeishuBinding():Promise<void>;
 
 export function DeleteSSHHost(arg1:string):Promise<void>;
 
 export function DeleteSSHKey(arg1:string):Promise<void>;
+
+export function DiscardPendingPeerConfig():Promise<main.PeerConfigSyncStatus>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
 
@@ -46,6 +56,8 @@ export function DownloadVersion(arg1:string):Promise<void>;
 export function ExportConfig(arg1:boolean):Promise<string>;
 
 export function ExportDiagnostics(arg1:string):Promise<string>;
+
+export function ExportPeerTrustBackup(arg1:string):Promise<string>;
 
 export function FetchRelayMe():Promise<main.RelayMe>;
 
@@ -94,6 +106,22 @@ export function GetLoggingConfig():Promise<main.LoggingConfig>;
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPasteboardFileURLs():Promise<Array<string>>;
+
+export function GetPeerConfigSyncStatus():Promise<main.PeerConfigSyncStatus>;
+
+export function GetPeerLANConfig():Promise<main.PeerLANConfig>;
+
+export function GetPeerQuickTunnelStatus():Promise<main.PeerQuickTunnelStatus>;
+
+export function GetPeerRendezvousConfig():Promise<main.PeerRendezvousConfig>;
+
+export function GetPeerRendezvousStatus():Promise<main.PeerRendezvousStatus>;
+
+export function GetPeerSessionRouteStatus(arg1:string):Promise<main.PeerSessionRouteStatus>;
+
+export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
+
+export function GetPeerTraffic(arg1:string,arg2:string):Promise<Array<main.PeerTrafficRow>>;
 
 export function GetPinnedSessionIds():Promise<Array<string>>;
 
@@ -151,13 +179,25 @@ export function GetWebglRendererEnabled():Promise<boolean>;
 
 export function HasAccountKey():Promise<boolean>;
 
+export function ImportPeerConnectionBundle(arg1:string):Promise<main.PeerRouteImportResult>;
+
+export function ImportPeerTrustBackup(arg1:string,arg2:string):Promise<main.PeerSpaceStatus>;
+
 export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 
 export function InstallUpdate():Promise<void>;
 
+export function JoinPeerSpace(arg1:main.JoinPeerSpaceReq):Promise<main.PeerSpaceStatus>;
+
 export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
+
+export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
+
+export function ListPeerMembers():Promise<Array<main.PeerMember>>;
+
+export function ListPeerSessions():Promise<string>;
 
 export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
 
@@ -191,6 +231,8 @@ export function PickLogFilePath():Promise<string>;
 
 export function PreviewConfigImport(arg1:string):Promise<main.ImportPreview>;
 
+export function PreviewPeerConnectionBundle(arg1:string):Promise<main.PeerConnectionPreview>;
+
 export function PreviewSSHConfigImport():Promise<main.SSHConfigImportPreview>;
 
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
@@ -209,6 +251,8 @@ export function ReceivedFilesList():Promise<main.ReceivedFilesSummary>;
 
 export function ReceivedFilesOpenDir():Promise<void>;
 
+export function ReconnectPeerRendezvous():Promise<main.PeerRendezvousStatus>;
+
 export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function RememberRelayPassword(arg1:string):Promise<void>;
@@ -216,6 +260,12 @@ export function RememberRelayPassword(arg1:string):Promise<void>;
 export function RemoveKnownHost(arg1:string):Promise<void>;
 
 export function RevealSSHKey(arg1:string):Promise<main.SSHKeySecret>;
+
+export function RevokePeerInvitation(arg1:string):Promise<void>;
+
+export function RevokePeerInvitationBatch(arg1:string):Promise<void>;
+
+export function RevokePeerMember(arg1:string):Promise<void>;
 
 export function RevokeRelaySession(arg1:string):Promise<void>;
 
@@ -245,6 +295,8 @@ export function SendFeishuTestCard(arg1:string):Promise<void>;
 
 export function SendNativeDirectFrame(arg1:string,arg2:Array<number>):Promise<void>;
 
+export function SendPeerNativeDirectFrame(arg1:string,arg2:Array<number>):Promise<void>;
+
 export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
@@ -270,6 +322,10 @@ export function SetLocalePreference(arg1:string):Promise<void>;
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
+
+export function SetPeerLANConfig(arg1:main.SetPeerLANConfigReq):Promise<void>;
+
+export function SetPeerRendezvousConfig(arg1:main.SetPeerRendezvousConfigReq):Promise<void>;
 
 export function SetPinnedSessionIds(arg1:Array<string>):Promise<void>;
 
@@ -329,6 +385,10 @@ export function StartForward(arg1:string,arg2:string):Promise<void>;
 
 export function StartNativeDirect(arg1:main.NativeDirectStartRequest):Promise<void>;
 
+export function StartPeerNativeDirect(arg1:main.NativeDirectStartRequest):Promise<void>;
+
+export function StartPeerQuickTunnel():Promise<main.PeerQuickTunnelStatus>;
+
 export function StartServicePreview(arg1:main.ServicePreviewStartRequest):Promise<main.ServicePreviewStartResponse>;
 
 export function StartWidget():Promise<void>;
@@ -337,11 +397,17 @@ export function StopForward(arg1:string,arg2:string):Promise<void>;
 
 export function StopNativeDirect(arg1:string):Promise<void>;
 
+export function StopPeerNativeDirect(arg1:string):Promise<void>;
+
+export function StopPeerQuickTunnel():Promise<void>;
+
 export function StopServicePreview(arg1:string):Promise<void>;
 
 export function StopWidget():Promise<void>;
 
 export function SyncNow():Promise<void>;
+
+export function SyncPeerConfigNow():Promise<main.PeerConfigSyncStatus>;
 
 export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main.TranslateHTTPResponse>;
 

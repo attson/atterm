@@ -19,15 +19,19 @@ const (
 
 var ErrDirectTransport = errors.New("peertransport: direct transport failed")
 
-// PionHostConfig contains one Relay-authorized host attempt. SendSignal must
-// enqueue bounded signaling messages without logging their payloads.
+// PionHostConfig contains one authorized host attempt. SendSignal must enqueue
+// bounded signaling messages without logging their payloads.
 type PionHostConfig struct {
+	// API supplies endpoint-specific Pion settings. Nil uses production defaults.
+	API             *webrtc.API
 	Authorization   Authorization
 	Authenticator   HandshakeAuthenticator
 	WebRTC          webrtc.Configuration
 	SendSignal      func(signalType, payload string) error
 	OnAuthenticated func(*PionHostChannel)
 	OnRecord        func(RecordKind, []byte)
+	OnConfigMessage func(RecordKind, []byte) error
+	OnTraffic       TrafficObserver
 	OnClosed        func(error)
 }
 
@@ -48,14 +52,15 @@ type PionHostAttempt struct {
 	closed      bool
 }
 
-// PionHostChannel is available only after account-key authentication. Send
+// PionHostChannel is available only after handshake authentication. Send
 // methods serialize counters and enforce DataChannel backpressure.
 type PionHostChannel struct {
-	attempt     *PionHostAttempt
-	dc          *webrtc.DataChannel
-	sealer      *RecordSealer
-	opener      *RecordOpener
-	reassembler Reassembler
+	attempt           *PionHostAttempt
+	dc                *webrtc.DataChannel
+	sealer            *RecordSealer
+	opener            *RecordOpener
+	reassembler       Reassembler
+	configReassembler ConfigReassembler
 
 	sendMu        sync.Mutex
 	receiveMu     sync.Mutex
@@ -70,7 +75,7 @@ func NewPionHostAttempt(parent context.Context, cfg PionHostConfig) (*PionHostAt
 	if err != nil {
 		return nil, err
 	}
-	pc, err := webrtc.NewPeerConnection(cfg.WebRTC)
+	pc, err := newPeerConnection(cfg.API, cfg.WebRTC)
 	if err != nil {
 		return nil, fmt.Errorf("%w: create peer connection: %v", ErrDirectTransport, err)
 	}
@@ -90,6 +95,13 @@ func NewPionHostAttempt(parent context.Context, cfg PionHostConfig) (*PionHostAt
 		a.finish(context.Cause(ctx))
 	}()
 	return a, nil
+}
+
+func newPeerConnection(api *webrtc.API, config webrtc.Configuration) (*webrtc.PeerConnection, error) {
+	if api != nil {
+		return api.NewPeerConnection(config)
+	}
+	return webrtc.NewPeerConnection(config)
 }
 
 // HandleSignal applies one Relay-routed offer or ICE message. The v0.6 client
@@ -241,6 +253,12 @@ func (c *PionHostChannel) receive(record []byte) error {
 	if err != nil {
 		return err
 	}
+	if !kind.dataChannelMessage() {
+		return fmt.Errorf("%w: record kind %d is not valid on DataChannel", ErrDirectTransport, kind)
+	}
+	if c.attempt.cfg.OnTraffic != nil {
+		c.attempt.cfg.OnTraffic(TrafficReceived, len(record))
+	}
 	if kind == RecordFragment {
 		frame, complete, err := c.reassembler.Add(plaintext, time.Now())
 		if err != nil || !complete {
@@ -249,19 +267,74 @@ func (c *PionHostChannel) receive(record []byte) error {
 		kind = RecordFrame
 		plaintext = frame
 	}
+	if kind == RecordConfigFragment {
+		configKind, message, complete, err := c.configReassembler.Add(plaintext, time.Now())
+		if err != nil || !complete {
+			return err
+		}
+		kind = configKind
+		plaintext = message
+	}
+	if kind.configMessage() {
+		if c.attempt.cfg.OnConfigMessage != nil {
+			if err := c.attempt.cfg.OnConfigMessage(kind, append([]byte(nil), plaintext...)); err != nil {
+				return fmt.Errorf("%w: config message: %w", ErrDirectTransport, err)
+			}
+		}
+		return nil
+	}
 	if c.attempt.cfg.OnRecord != nil {
 		c.attempt.cfg.OnRecord(kind, append([]byte(nil), plaintext...))
 	}
 	return nil
 }
 
+// SendConfigMessage encrypts one config logical message, fragmenting it
+// independently from terminal frames when needed.
+func (c *PionHostChannel) SendConfigMessage(ctx context.Context, kind RecordKind, message []byte) error {
+	if c == nil || c.dc == nil || c.sealer == nil || !kind.configMessage() {
+		return fmt.Errorf("%w: invalid config channel", ErrDirectTransport)
+	}
+	if len(message) > MaxConfigMessageSize {
+		return fmt.Errorf("%w: config message too large", ErrDirectTransport)
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if len(message) <= MaxRecordPlaintext {
+		return c.sendRecordLocked(ctx, kind, message)
+	}
+	fragments, err := FragmentConfigMessage(kind, c.nextMessageID, message)
+	if err != nil {
+		return err
+	}
+	c.nextMessageID++
+	for _, fragment := range fragments {
+		if err := c.sendRecordLocked(ctx, RecordConfigFragment, fragment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *PionHostChannel) SendRecord(ctx context.Context, kind RecordKind, plaintext []byte) error {
+	if !kind.dataChannelMessage() {
+		return fmt.Errorf("%w: record kind %d is not valid on DataChannel", ErrDirectTransport, kind)
+	}
 	if c == nil || c.dc == nil || c.sealer == nil {
 		return fmt.Errorf("%w: unauthenticated channel", ErrDirectTransport)
 	}
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	return c.sendRecordLocked(ctx, kind, plaintext)
+}
+
+// SendServiceMessage sends one bounded Preview byte-channel message without
+// wrapping it in a terminal proto.Frame.
+func (c *PionHostChannel) SendServiceMessage(ctx context.Context, payload []byte) error {
+	if _, err := DecodeServiceMessage(payload); err != nil {
+		return err
+	}
+	return c.SendRecord(ctx, RecordService, payload)
 }
 
 // SendFrame encrypts one marshaled proto.Frame, fragmenting it when needed.
@@ -307,6 +380,9 @@ func (c *PionHostChannel) sendRecordLocked(ctx context.Context, kind RecordKind,
 	if err := c.dc.Send(record); err != nil {
 		return fmt.Errorf("%w: send record: %v", ErrDirectTransport, err)
 	}
+	if c.attempt.cfg.OnTraffic != nil {
+		c.attempt.cfg.OnTraffic(TrafficSent, len(record))
+	}
 	return nil
 }
 
@@ -315,6 +391,20 @@ func (c *PionHostChannel) Close() error {
 		return nil
 	}
 	return c.attempt.Close()
+}
+
+// RemoteMembershipToken returns the Peer membership authenticated by this
+// channel. Relay-account channels return false.
+func (c *PionHostChannel) RemoteMembershipToken() (string, bool) {
+	if c == nil || c.attempt == nil {
+		return "", false
+	}
+	auth, ok := c.attempt.cfg.Authenticator.(interface{ RemoteMembershipToken() string })
+	if !ok {
+		return "", false
+	}
+	token := auth.RemoteMembershipToken()
+	return token, token != ""
 }
 
 func (a *PionHostAttempt) Close() error {

@@ -26,13 +26,14 @@ const (
 	authOKMessageSize       = handshakeHeaderSize
 	directHandshakeTimeout  = 10 * time.Second
 	sha256Size              = 32
+	maxAuthProofSize        = 1024
 )
 
 var ErrInvalidHandshake = errors.New("peertransport: invalid handshake")
 
-// Authorization is the exact Relay-issued pending authorization bound into a
-// direct handshake. Ticket is copied by NewHostHandshake and never retained by
-// the Relay-facing signaling layer after the attempt ends.
+// Authorization is the exact pending route authorization bound into a direct
+// handshake. Relay mode fills it from a direct ticket; Peer mode will fill it
+// from its authenticated gateway attempt. Ticket is always copied.
 type Authorization struct {
 	AttemptID           uuid.UUID
 	Ticket              []byte
@@ -52,7 +53,7 @@ const (
 	hostHandshakeComplete
 )
 
-// HostHandshake authenticates one DataChannel against a Relay authorization.
+// HostHandshake authenticates one DataChannel against a route authorization.
 // It is deliberately independent of Pion so the same state machine can be
 // tested without network timing and reused by later transports.
 type HostHandshake struct {
@@ -62,6 +63,7 @@ type HostHandshake struct {
 	clientPublicKey []byte
 	hostPublicKey   []byte
 	transcript      []byte
+	proofSize       int
 	state           hostHandshakeState
 	now             func() time.Time
 }
@@ -82,6 +84,10 @@ func NewHostHandshake(auth HandshakeAuthenticator, authorization Authorization) 
 	if authorization.AttemptID == uuid.Nil || authorization.SessionID == uuid.Nil || len(authorization.Ticket) != directTicketSize {
 		return nil, fmt.Errorf("%w: malformed authorization", ErrInvalidHandshake)
 	}
+	proofSize, err := validateProofSize(auth)
+	if err != nil {
+		return nil, err
+	}
 	privateKey, err := GenerateEphemeralKey()
 	if err != nil {
 		return nil, err
@@ -91,6 +97,7 @@ func NewHostHandshake(auth HandshakeAuthenticator, authorization Authorization) 
 	return &HostHandshake{
 		auth:          auth,
 		authorization: copyAuthorization,
+		proofSize:     proofSize,
 		privateKey:    privateKey,
 		hostPublicKey: privateKey.PublicKey().Bytes(),
 		state:         hostHandshakeAwaitClientHello,
@@ -146,13 +153,13 @@ func (h *HostHandshake) handleClientHello(message []byte) (HostHandshakeResult, 
 		return HostHandshakeResult{}, err
 	}
 	hostProof, err := h.auth.BuildProof(transcript, RoleHost)
-	if err != nil || len(hostProof) != sha256Size {
+	if err != nil || len(hostProof) != h.proofSize {
 		return HostHandshakeResult{}, fmt.Errorf("%w: build host proof", ErrInvalidHandshake)
 	}
 	h.transcript = transcript
 	h.clientPublicKey = clientPublicKey
 	h.state = hostHandshakeAwaitClientFinish
-	response := make([]byte, hostHelloMessageSize)
+	response := make([]byte, handshakeHeaderSize+p256PublicKeySize+h.proofSize)
 	response[0] = HandshakeVersion
 	response[1] = handshakeHostHello
 	copy(response[2:2+p256PublicKeySize], h.hostPublicKey)
@@ -161,15 +168,15 @@ func (h *HostHandshake) handleClientHello(message []byte) (HostHandshakeResult, 
 }
 
 func (h *HostHandshake) handleClientFinish(message []byte) (HostHandshakeResult, error) {
-	if len(message) != clientFinishMessageSize || message[0] != HandshakeVersion || message[1] != handshakeClientFinish {
+	if len(message) != handshakeHeaderSize+h.proofSize+sha256Size || message[0] != HandshakeVersion || message[1] != handshakeClientFinish {
 		return HostHandshakeResult{}, fmt.Errorf("%w: expected client finish", ErrInvalidHandshake)
 	}
-	clientProof := message[2 : 2+sha256Size]
+	clientProof := message[2 : 2+h.proofSize]
 	if err := h.auth.VerifyProof(h.transcript, RoleClient, clientProof); err != nil {
 		return HostHandshakeResult{}, fmt.Errorf("%w: client proof", ErrInvalidHandshake)
 	}
 	wantFinish, err := BuildFinishProof(h.auth, h.transcript)
-	if err != nil || !hmac.Equal(wantFinish, message[2+sha256Size:]) {
+	if err != nil || !hmac.Equal(wantFinish, message[2+h.proofSize:]) {
 		return HostHandshakeResult{}, fmt.Errorf("%w: finish proof", ErrInvalidHandshake)
 	}
 	keys, err := DeriveTrafficKeys(h.privateKey, h.clientPublicKey, h.transcript, h.auth)
@@ -204,7 +211,11 @@ func EncodeClientHello(attemptID uuid.UUID, ticket, clientPublicKey []byte) ([]b
 
 // DecodeHostHello returns copies of the host public key and proof.
 func DecodeHostHello(message []byte) (hostPublicKey, hostProof []byte, err error) {
-	if len(message) != hostHelloMessageSize || message[0] != HandshakeVersion || message[1] != handshakeHostHello {
+	return decodeHostHello(message, sha256Size)
+}
+
+func decodeHostHello(message []byte, proofSize int) (hostPublicKey, hostProof []byte, err error) {
+	if len(message) != handshakeHeaderSize+p256PublicKeySize+proofSize || message[0] != HandshakeVersion || message[1] != handshakeHostHello {
 		return nil, nil, fmt.Errorf("%w: malformed host hello", ErrInvalidHandshake)
 	}
 	publicKey := message[2 : 2+p256PublicKeySize]
@@ -215,15 +226,30 @@ func DecodeHostHello(message []byte) (hostPublicKey, hostProof []byte, err error
 }
 
 func EncodeClientFinish(clientProof, finishProof []byte) ([]byte, error) {
-	if len(clientProof) != sha256Size || len(finishProof) != sha256Size {
+	if len(clientProof) != sha256Size {
 		return nil, fmt.Errorf("%w: malformed client finish", ErrInvalidHandshake)
 	}
-	message := make([]byte, clientFinishMessageSize)
+	return encodeClientFinish(clientProof, finishProof, sha256Size)
+}
+
+func encodeClientFinish(clientProof, finishProof []byte, proofSize int) ([]byte, error) {
+	if proofSize <= 0 || proofSize > maxAuthProofSize || len(clientProof) != proofSize || len(finishProof) != sha256Size {
+		return nil, fmt.Errorf("%w: malformed client finish", ErrInvalidHandshake)
+	}
+	message := make([]byte, handshakeHeaderSize+proofSize+sha256Size)
 	message[0] = HandshakeVersion
 	message[1] = handshakeClientFinish
-	copy(message[2:2+sha256Size], clientProof)
-	copy(message[2+sha256Size:], finishProof)
+	copy(message[2:2+proofSize], clientProof)
+	copy(message[2+proofSize:], finishProof)
 	return message, nil
+}
+
+func validateProofSize(auth HandshakeAuthenticator) (int, error) {
+	size := auth.ProofSize()
+	if size <= 0 || size > maxAuthProofSize {
+		return 0, fmt.Errorf("%w: authenticator proof size %d", ErrInvalidHandshake, size)
+	}
+	return size, nil
 }
 
 func IsAuthOK(message []byte) bool {

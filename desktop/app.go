@@ -23,6 +23,7 @@ import (
 	"github.com/attson/atterm/desktop/hookinstall"
 	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/logging"
+	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
@@ -249,6 +250,10 @@ type StartupError struct {
 	LogPath string `json:"log_path"`
 }
 
+type quickTunnelLifecycle interface {
+	Stop() error
+}
+
 // App is the Wails-bound application surface.
 type App struct {
 	ctx         context.Context
@@ -309,6 +314,11 @@ type App struct {
 	// bridge. It is independent of PTY/session lifecycle and is stopped on
 	// relay reconfiguration or app shutdown.
 	servicePreviews servicePreviewManager
+
+	// quickTunnel is populated when the accountless Peer host is enabled.
+	// Keeping shutdown ownership here ensures the public route cannot outlive
+	// the desktop process even though its start/UI wiring lands separately.
+	quickTunnel quickTunnelLifecycle
 
 	// sftp holds the file explorer's SSH data source (see sftp_source.go).
 	// Built lazily by sftpBrowser() because App is constructed in a dozen
@@ -374,8 +384,30 @@ type App struct {
 
 	// nativeDirect owns Wails-side Pion client attempts. The browser transport
 	// remains in use on Web/Capacitor; desktop attempts never depend on WebKit.
-	nativeDirectMu sync.Mutex
-	nativeDirect   map[string]*nativeDirectClient
+	nativeDirectMu  sync.Mutex
+	nativeDirect    map[string]*nativeDirectClient
+	peerNativeMu    sync.Mutex
+	peerNative      map[string]*peerNativeDirectClient
+	peerRouteMu     sync.Mutex
+	peerRoutes      map[string]peerQuickTunnelRoute
+	peerHostLeaseMu sync.Mutex
+	peerHostLeases  map[peerHostRouteLeaseKey]*peerHostAttempt
+
+	// peerSpace is initialized lazily because most existing installations use
+	// only Relay mode and should not create Peer identity or keyring entries.
+	peerSpaceMu               sync.Mutex
+	peerSpace                 *peerSpaceManager
+	peerPublicRouteMu         sync.Mutex
+	peerRendezvousReconcileMu sync.Mutex
+	peerRendezvousMu          sync.Mutex
+	peerRendezvous            *peerRendezvousLifecycle
+	peerLANMu                 sync.Mutex
+	peerLAN                   *peerLANListener
+	peerLANPublish            peerLANPublishFunc
+	peerLANBrowse             peerLANBrowseFunc
+	peerManualCatalogMu       sync.Mutex
+	peerManualCatalog         map[uuid.UUID]peerDiscoveredSession
+	peerTraffic               *peertraffic.Store
 
 	startupFatalMu sync.RWMutex
 	startupFatal   StartupError
@@ -476,6 +508,11 @@ func (a *App) observeConfigStore() {
 // exists yet — they seed the first run.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if traffic, err := newPeerTrafficStore(); err != nil {
+		logWarn("peer-traffic", "initialize local meter: %v", err)
+	} else {
+		a.peerTraffic = traffic
+	}
 	wailsruntime.OnNotificationResponse(ctx, a.handleNotificationResponse)
 	a.pluginFS.setupWatcher(ctx)
 	// cfgStore must be ready before startRelayHost — the relay host's
@@ -533,6 +570,9 @@ func (a *App) startup(ctx context.Context) {
 			return
 		}
 	}
+	// Existing Peer Spaces restore their durable config replica opportunistically.
+	// A damaged or unavailable Peer store must not block local terminals or Relay.
+	a.restorePeerConfigReplica()
 	// Restore the E2EE account_key from the OS keychain if a previous
 	// login persisted one. Failures are logged but never fatal — a
 	// missing or corrupted entry just means the user has to log in
@@ -596,12 +636,29 @@ func (a *App) startup(ctx context.Context) {
 
 	// Feishu integration: choose mode based on relay login state.
 	a.startFeishu(ctx, cfg)
+	a.reconcilePeerRendezvous(cfg)
+	if err := a.reconcilePeerLAN(cfg); err != nil && cfg.PeerLANEnabled {
+		logWarn("peer-lan", "start manual Peer listener: %v", err)
+	}
 }
 
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
 func (a *App) shutdown(ctx context.Context) {
 	a.servicePreviews.stopAll()
+	if a.quickTunnel != nil {
+		if err := a.quickTunnel.Stop(); err != nil {
+			logWarn("quick-tunnel", "stop on app shutdown: %v", err)
+		}
+	}
+	a.stopPeerRendezvous()
+	a.stopPeerLAN()
 	a.stopNativeDirectClients()
+	a.stopPeerNativeDirectClients()
+	if a.peerTraffic != nil {
+		if err := a.peerTraffic.Flush(); err != nil {
+			logWarn("peer-traffic", "flush on app shutdown: %v", err)
+		}
+	}
 	a.mu.Lock()
 	if a.uplinkCancel != nil {
 		a.uplinkCancel()

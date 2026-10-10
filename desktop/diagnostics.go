@@ -97,24 +97,37 @@ type ConfigSummary struct {
 	CommandNotifyThresholdSeconds int    `json:"command_notify_threshold_seconds"`
 }
 
+// RendezvousDiagnostics contains only local operational metadata. It excludes
+// topics, presence IDs, member IDs, SDP, and signaling payloads.
+type RendezvousDiagnostics struct {
+	Mode             string `json:"mode"`
+	ServiceOrigin    string `json:"service_origin"`
+	State            string `json:"state"`
+	LastRegisteredAt int64  `json:"last_registered_at,omitempty"`
+	RegistrationMS   int64  `json:"registration_ms,omitempty"`
+	ReachablePeers   int    `json:"reachable_peers"`
+	LastErrorCode    string `json:"last_error_code,omitempty"`
+}
+
 // DiagnosticsPayload is the JSON shape exposed by App.GetDiagnostics and
 // consumed by formatDiagnostics in TypeScript.
 type DiagnosticsPayload struct {
-	GeneratedAt        string            `json:"generated_at"`
-	AppVersion         string            `json:"app_version"`
-	OS                 string            `json:"os"`
-	Arch               string            `json:"arch"`
-	OSVersion          string            `json:"os_version"`
-	WebViewSummary     string            `json:"webview_summary"`
-	UserAgent          string            `json:"user_agent"`
-	RelayURL           string            `json:"relay_url"`
-	RelayStatus        string            `json:"relay_status"`
-	RelayTokenRedacted string            `json:"relay_token_redacted"`
-	AllowInsecureRelay bool              `json:"allow_insecure_relay"`
-	RemotePermission   string            `json:"remote_permission"`
-	UplinkPaused       bool              `json:"uplink_paused"`
-	RecentRelayErrors  []RelayErrorEntry `json:"recent_relay_errors"`
-	Config             ConfigSummary     `json:"config"`
+	GeneratedAt        string                `json:"generated_at"`
+	AppVersion         string                `json:"app_version"`
+	OS                 string                `json:"os"`
+	Arch               string                `json:"arch"`
+	OSVersion          string                `json:"os_version"`
+	WebViewSummary     string                `json:"webview_summary"`
+	UserAgent          string                `json:"user_agent"`
+	RelayURL           string                `json:"relay_url"`
+	RelayStatus        string                `json:"relay_status"`
+	RelayTokenRedacted string                `json:"relay_token_redacted"`
+	AllowInsecureRelay bool                  `json:"allow_insecure_relay"`
+	RemotePermission   string                `json:"remote_permission"`
+	UplinkPaused       bool                  `json:"uplink_paused"`
+	RecentRelayErrors  []RelayErrorEntry     `json:"recent_relay_errors"`
+	Rendezvous         RendezvousDiagnostics `json:"rendezvous"`
+	Config             ConfigSummary         `json:"config"`
 }
 
 // collectDiagnostics gathers the runtime state of the desktop App into a
@@ -146,6 +159,7 @@ func collectDiagnostics(a *App, userAgent string) DiagnosticsPayload {
 	if errs == nil {
 		errs = []RelayErrorEntry{}
 	}
+	rendezvousStatus := a.GetPeerRendezvousStatus()
 
 	return DiagnosticsPayload{
 		GeneratedAt:        time.Now().UTC().Format(time.RFC3339),
@@ -162,6 +176,12 @@ func collectDiagnostics(a *App, userAgent string) DiagnosticsPayload {
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		UplinkPaused:       paused,
 		RecentRelayErrors:  errs,
+		Rendezvous: RendezvousDiagnostics{
+			Mode: rendezvousStatus.Mode, ServiceOrigin: redactURL(rendezvousStatus.URL),
+			State: rendezvousStatus.State, LastRegisteredAt: rendezvousStatus.LastRegisteredAt,
+			RegistrationMS: rendezvousStatus.RegistrationMS, ReachablePeers: rendezvousStatus.ReachablePeers,
+			LastErrorCode: rendezvousStatus.LastErrorCode,
+		},
 		Config: ConfigSummary{
 			DefaultShell:                  cfg.DefaultShellOrDefault(),
 			Locale:                        cfg.LocalePreferenceOrDefault(),

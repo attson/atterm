@@ -87,6 +87,24 @@ type appConfig struct {
 	// the existing "has URL → connect" behavior, so old config.json files
 	// deserialize correctly without any migration code.
 	RelayPaused bool `json:"relay_paused,omitempty"`
+	// Peer Rendezvous, STUN, and TURN are local reachability preferences. They are
+	// never included in Relay preferences, Peer config replication, or export.
+	PeerRendezvousMode string   `json:"peer_rendezvous_mode,omitempty"`
+	PeerRendezvousURL  string   `json:"peer_rendezvous_url,omitempty"`
+	PeerSTUNMode       string   `json:"peer_stun_mode,omitempty"`
+	PeerSTUNURLs       []string `json:"peer_stun_urls,omitempty"`
+	PeerTURNEnabled    bool     `json:"peer_turn_enabled,omitempty"`
+	PeerTURNURLs       []string `json:"peer_turn_urls,omitempty"`
+	PeerTURNUsername   string   `json:"peer_turn_username,omitempty"`
+	// Peer LAN-only policy and Manual LAN reachability are local-only. They are
+	// never replicated because they describe this installation's network and
+	// whether it may contact public Peer reachability services.
+	PeerLANOnly          bool                 `json:"peer_lan_only,omitempty"`
+	PeerLANEnabled       bool                 `json:"peer_lan_enabled,omitempty"`
+	PeerLANAutoDiscovery bool                 `json:"peer_lan_auto_discovery,omitempty"`
+	PeerLANAdvertiseHost string               `json:"peer_lan_advertise_host,omitempty"`
+	PeerLANPort          int                  `json:"peer_lan_port,omitempty"`
+	PeerLANRoutes        []PeerManualLANRoute `json:"peer_lan_routes,omitempty"`
 	// LocalePreference controls UI language. Empty means "system" so older
 	// configs keep following the OS/browser language after upgrade.
 	LocalePreference string `json:"locale_preference,omitempty"`
@@ -684,7 +702,8 @@ func loadConfig() *configStore {
 	return s
 }
 
-// detachMaps returns a copy of c whose map fields are freshly allocated.
+// detachMaps returns a copy of c whose reference-backed fields are freshly
+// allocated.
 //
 // appConfig is copied by value everywhere, but a struct copy duplicates a map
 // header, not its backing table — so a plain copy leaves PrefsMeta and
@@ -695,8 +714,14 @@ func loadConfig() *configStore {
 // background prefssync Push, and the relay prefs-watch Pull — which in Go is
 // a fatal "concurrent map writes" or a silently corrupted hash table.
 // Detaching on both Get and Set makes the store properly value-semantic, so
-// the only mutations of the stored maps happen under the lock.
+// the only mutations of stored maps and slices happen under the lock.
 func detachMaps(c appConfig) appConfig {
+	if c.PeerSTUNURLs != nil {
+		c.PeerSTUNURLs = append([]string(nil), c.PeerSTUNURLs...)
+	}
+	if c.PeerTURNURLs != nil {
+		c.PeerTURNURLs = append([]string(nil), c.PeerTURNURLs...)
+	}
 	if c.PrefsMeta != nil {
 		m := make(map[string]prefsMetaEntry, len(c.PrefsMeta))
 		for k, v := range c.PrefsMeta {

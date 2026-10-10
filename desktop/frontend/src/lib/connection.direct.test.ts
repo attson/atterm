@@ -131,6 +131,7 @@ describe("SessionConnection direct route handover", () => {
   afterEach(() => {
     setAccountKeyProvider(null);
     vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -271,6 +272,120 @@ describe("SessionConnection direct route handover", () => {
     ]);
     expect(decodeText(decodeFrame(fallback.sent[2]).payload)).toBe("queued-during-fallback");
     expect(statuses.at(-1)).toBe("attached");
+  });
+
+  test("rejects cross-route late callbacks through one hundred route flaps", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const output: string[] = [];
+    const expectedOutput: string[] = [];
+    const conn = new SessionConnection(relayEndpoint, sessionId, {
+      onOutput: (bytes) => output.push(decodeText(bytes)),
+    }, {
+      clientName: "flap-device",
+      remote: true,
+      preferDirect: true,
+      directEndpoint,
+      directTransportFactory: directFactory,
+    });
+    const countInput = (frames: Uint8Array[], value: string): number => frames.reduce((count, frame) => {
+      const decoded = decodeFrame(frame);
+      return decoded.type === TYPE.IN && decodeText(decoded.payload) === value ? count + 1 : count;
+    }, 0);
+    const countAllInputs = (value: string): number =>
+      FakeWebSocket.instances.reduce((count, socket) => count + countInput(socket.sent, value), 0) +
+      directInstances.reduce((count, direct) => count + countInput(direct.sent, value), 0);
+
+    conn.attach();
+    let relay = FakeWebSocket.instances[0];
+    relay.open();
+    const initialAttach = JSON.parse(decodeText(decodeFrame(relay.sent[0]).payload)) as { client_id: string };
+    relay.emitJSON(TYPE.META, {
+      driver_client_id: initialAttach.client_id,
+      driver_client_name: "flap-device",
+    });
+    relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
+
+    let direct = directInstances[0];
+    direct.authenticate();
+    direct.ready(0);
+    let seq = 0;
+
+    for (let cycle = 0; cycle < 100; cycle++) {
+      const directInput = `direct-input-${cycle}`;
+      const relaySentBefore = relay.sent.length;
+      conn.sendInput(directInput);
+      expect(countInput(direct.sent, directInput)).toBe(1);
+      expect(relay.sent).toHaveLength(relaySentBefore);
+
+      seq++;
+      const directOutput = `direct-output-${cycle}`;
+      expectedOutput.push(directOutput);
+      direct.emitFrame(TYPE.OUT, encodeOutPayload(seq, directOutput));
+      expect(output).toEqual(expectedOutput);
+
+      direct.fail(`route flap ${cycle}`);
+      expect(FakeWebSocket.instances).toHaveLength(cycle + 2);
+      const fallback = FakeWebSocket.instances.at(-1)!;
+      const queuedInput = `queued-input-${cycle}`;
+      conn.sendInput(queuedInput);
+      expect(countAllInputs(queuedInput)).toBe(0);
+
+      // The retired transport and Relay socket can still dispatch callbacks
+      // already queued by the browser. Neither may advance the cursor, emit
+      // output, or allocate another fallback route.
+      direct.emitFrame(TYPE.OUT, encodeOutPayload(seq + 1, `late-direct-${cycle}`));
+      direct.ready(seq + 1);
+      direct.authenticate();
+      direct.fail(`late direct failure ${cycle}`);
+      relay.emit(TYPE.OUT, encodeOutPayload(seq + 1, `late-relay-${cycle}`));
+      relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: seq + 1 });
+      relay.onclose?.();
+
+      expect(output).toEqual(expectedOutput);
+      expect(FakeWebSocket.instances).toHaveLength(cycle + 2);
+      expect(directInstances).toHaveLength(cycle + 1);
+
+      fallback.open();
+      expect(fallback.sent.map((frame) => decodeFrame(frame).type)).toEqual([TYPE.ATTACH]);
+      expect(JSON.parse(decodeText(decodeFrame(fallback.sent[0]).payload))).toMatchObject({
+        session_id: sessionId,
+        since_seq: seq,
+      });
+
+      seq++;
+      const relayOutput = `relay-output-${cycle}`;
+      expectedOutput.push(relayOutput);
+      fallback.emit(TYPE.OUT, encodeOutPayload(seq, relayOutput));
+      fallback.emitJSON(TYPE.META, { driver_client_id: "", driver_client_name: "" });
+      fallback.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq });
+
+      expect(output).toEqual(expectedOutput);
+      expect(countAllInputs(queuedInput)).toBe(1);
+      expect(fallback.sent.map((frame) => decodeFrame(frame).type)).toEqual([
+        TYPE.ATTACH,
+        TYPE.CLAIM_DRIVER,
+        TYPE.IN,
+      ]);
+
+      const relayInput = `relay-input-${cycle}`;
+      conn.sendInput(relayInput);
+      expect(countAllInputs(relayInput)).toBe(1);
+      expect(decodeFrame(fallback.sent.at(-1)!).type).toBe(TYPE.IN);
+
+      if (cycle === 99) break;
+      conn.setPreferDirect(false);
+      conn.setPreferDirect(true);
+      expect(directInstances).toHaveLength(cycle + 2);
+      relay = fallback;
+      direct = directInstances.at(-1)!;
+      direct.authenticate();
+      direct.ready(seq);
+      expect(relay.readyState).toBe(FakeWebSocket.CLOSED);
+    }
+
+    expect(output).toEqual(expectedOutput);
+    expect(output).toHaveLength(200);
+    conn.detach();
   });
 
   test("keeps Relay as the writer when a direct attempt fails before activation", () => {

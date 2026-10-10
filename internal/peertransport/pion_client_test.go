@@ -4,12 +4,60 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 )
+
+func TestPionConfigCallbackFailureFailsClosed(t *testing.T) {
+	sealer, opener := recordPair(t)
+	wantErr := errors.New("reject config")
+	terminalDelivered := false
+	channel := &PionClientChannel{
+		attempt: &PionClientAttempt{cfg: PionClientConfig{
+			OnRecord: func(RecordKind, []byte) { terminalDelivered = true },
+			OnConfigMessage: func(RecordKind, []byte) error {
+				return wantErr
+			},
+		}},
+		opener: opener,
+	}
+	record, err := sealer.Seal(RecordConfigInventory, []byte(`{"v":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.receive(record); !errors.Is(err, wantErr) || !errors.Is(err, ErrDirectTransport) {
+		t.Fatalf("config callback error=%v", err)
+	}
+	if terminalDelivered {
+		t.Fatal("rejected config message reached terminal callback")
+	}
+}
+
+func TestSelectedCandidateTypeReportsEitherRelayedSide(t *testing.T) {
+	tests := []struct {
+		name   string
+		local  *webrtc.ICECandidate
+		remote *webrtc.ICECandidate
+		want   string
+	}{
+		{name: "local relay", local: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeRelay}, remote: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeHost}, want: "relay"},
+		{name: "remote relay", local: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeHost}, remote: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeRelay}, want: "relay"},
+		{name: "direct keeps local type", local: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeSrflx}, remote: &webrtc.ICECandidate{Typ: webrtc.ICECandidateTypeHost}, want: "srflx"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := selectedCandidateType(&webrtc.ICECandidatePair{Local: tt.local, Remote: tt.remote}); got != tt.want {
+				t.Fatalf("selectedCandidateType()=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -22,8 +70,28 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 	errCh := make(chan error, 8)
 	hostRecord := make(chan []byte, 1)
 	clientFrame := make(chan []byte, 1)
+	hostConfig := make(chan []byte, 1)
+	clientConfig := make(chan []byte, 1)
+	hostService := make(chan []byte, 1)
+	clientService := make(chan []byte, 1)
 	clientReady := make(chan uint64, 1)
 	clientAuthenticated := make(chan struct{}, 1)
+	hostAuthenticated := make(chan *PionHostChannel, 1)
+	var clientTraffic, hostTraffic testTrafficTotals
+	largeConfig := bytes.Repeat([]byte("config"), 4096)
+	serviceID := uuid.New()
+	clientServiceMessage, err := EncodeServiceMessage(ServiceMessage{
+		ServiceID: serviceID, Kind: ServiceData, Connection: 1, Data: []byte("client service"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostServiceMessage, err := EncodeServiceMessage(ServiceMessage{
+		ServiceID: serviceID, Kind: ServiceData, Connection: 1, Data: []byte("host service"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var client *PionClientAttempt
 	host, err := NewPionHostAttempt(ctx, PionHostConfig{
@@ -37,6 +105,7 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 			return client.HandleSignal(signalType, payload)
 		},
 		OnAuthenticated: func(channel *PionHostChannel) {
+			hostAuthenticated <- channel
 			ready := make([]byte, 8)
 			binary.BigEndian.PutUint64(ready, 41)
 			if sendErr := channel.SendRecord(ctx, RecordDirectReady, ready); sendErr != nil {
@@ -47,12 +116,24 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 			}
 		},
 		OnRecord: func(kind RecordKind, payload []byte) {
-			if kind != RecordFrame {
+			switch kind {
+			case RecordFrame:
+				hostRecord <- payload
+			case RecordService:
+				hostService <- payload
+			default:
 				nonBlockingTestError(errCh, fmt.Errorf("host record kind=%d", kind))
-				return
 			}
-			hostRecord <- payload
 		},
+		OnConfigMessage: func(kind RecordKind, payload []byte) error {
+			if kind != RecordConfigBatch {
+				nonBlockingTestError(errCh, fmt.Errorf("host config kind=%d", kind))
+				return nil
+			}
+			hostConfig <- payload
+			return nil
+		},
+		OnTraffic: hostTraffic.observe,
 		OnClosed: func(closeErr error) {
 			if closeErr != nil && ctx.Err() == nil {
 				nonBlockingTestError(errCh, closeErr)
@@ -76,6 +157,12 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 			if sendErr := channel.SendFrame(ctx, []byte("client input")); sendErr != nil {
 				nonBlockingTestError(errCh, sendErr)
 			}
+			if sendErr := channel.SendConfigMessage(ctx, RecordConfigBatch, largeConfig); sendErr != nil {
+				nonBlockingTestError(errCh, sendErr)
+			}
+			if sendErr := channel.SendServiceMessage(ctx, clientServiceMessage); sendErr != nil {
+				nonBlockingTestError(errCh, sendErr)
+			}
 		},
 		OnRecord: func(kind RecordKind, payload []byte) {
 			switch kind {
@@ -87,10 +174,21 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 					return
 				}
 				clientReady <- binary.BigEndian.Uint64(payload)
+			case RecordService:
+				clientService <- payload
 			default:
 				nonBlockingTestError(errCh, fmt.Errorf("client record kind=%d", kind))
 			}
 		},
+		OnConfigMessage: func(kind RecordKind, payload []byte) error {
+			if kind != RecordConfigInventory {
+				nonBlockingTestError(errCh, fmt.Errorf("client config kind=%d", kind))
+				return nil
+			}
+			clientConfig <- payload
+			return nil
+		},
+		OnTraffic: clientTraffic.observe,
 		OnClosed: func(closeErr error) {
 			if closeErr != nil && ctx.Err() == nil {
 				nonBlockingTestError(errCh, closeErr)
@@ -105,7 +203,22 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for authenticated, gotHost, gotFrame, gotReady := false, false, false, false; !authenticated || !gotHost || !gotFrame || !gotReady; {
+	var hostChannel *PionHostChannel
+	select {
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	case err := <-errCh:
+		t.Fatal(err)
+	case hostChannel = <-hostAuthenticated:
+	}
+	if err := hostChannel.SendConfigMessage(ctx, RecordConfigInventory, largeConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := hostChannel.SendServiceMessage(ctx, hostServiceMessage); err != nil {
+		t.Fatal(err)
+	}
+
+	for authenticated, gotHost, gotFrame, gotReady, gotHostConfig, gotClientConfig, gotHostService, gotClientService := false, false, false, false, false, false, false, false; !authenticated || !gotHost || !gotFrame || !gotReady || !gotHostConfig || !gotClientConfig || !gotHostService || !gotClientService; {
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -128,6 +241,94 @@ func TestPionClientAndHostCarryEncryptedRecords(t *testing.T) {
 				t.Fatalf("ready seq=%d", seq)
 			}
 			gotReady = true
+		case payload := <-hostConfig:
+			if !bytes.Equal(payload, largeConfig) {
+				t.Fatalf("host config bytes=%d", len(payload))
+			}
+			gotHostConfig = true
+		case payload := <-clientConfig:
+			if !bytes.Equal(payload, largeConfig) {
+				t.Fatalf("client config bytes=%d", len(payload))
+			}
+			gotClientConfig = true
+		case payload := <-hostService:
+			if !bytes.Equal(payload, clientServiceMessage) {
+				t.Fatalf("host service payload=%x", payload)
+			}
+			gotHostService = true
+		case payload := <-clientService:
+			if !bytes.Equal(payload, hostServiceMessage) {
+				t.Fatalf("client service payload=%x", payload)
+			}
+			gotClientService = true
 		}
 	}
+
+	clientConfigFragments, err := FragmentConfigMessage(RecordConfigBatch, 1, largeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostConfigFragments, err := FragmentConfigMessage(RecordConfigInventory, 1, largeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSent := trafficForPlaintexts([][]byte{[]byte("client input"), clientServiceMessage}, clientConfigFragments)
+	hostSent := trafficForPlaintexts([][]byte{make([]byte, 8), []byte("host output"), hostServiceMessage}, hostConfigFragments)
+	if got := clientTraffic.snapshot(); got.sentBytes != clientSent.bytes || got.sentRecords != clientSent.records ||
+		got.receivedBytes != hostSent.bytes || got.receivedRecords != hostSent.records {
+		t.Fatalf("client traffic=%+v want sent=%+v received=%+v", got, clientSent, hostSent)
+	}
+	if got := hostTraffic.snapshot(); got.sentBytes != hostSent.bytes || got.sentRecords != hostSent.records ||
+		got.receivedBytes != clientSent.bytes || got.receivedRecords != clientSent.records {
+		t.Fatalf("host traffic=%+v want sent=%+v received=%+v", got, hostSent, clientSent)
+	}
+}
+
+type testTrafficTotals struct {
+	mu              sync.Mutex
+	sentBytes       int
+	receivedBytes   int
+	sentRecords     int
+	receivedRecords int
+}
+
+func (t *testTrafficTotals) observe(direction TrafficDirection, size int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if direction == TrafficSent {
+		t.sentBytes += size
+		t.sentRecords++
+	} else {
+		t.receivedBytes += size
+		t.receivedRecords++
+	}
+}
+
+func (t *testTrafficTotals) snapshot() testTrafficSnapshot {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return testTrafficSnapshot{
+		sentBytes: t.sentBytes, receivedBytes: t.receivedBytes,
+		sentRecords: t.sentRecords, receivedRecords: t.receivedRecords,
+	}
+}
+
+type testTrafficSnapshot struct {
+	sentBytes       int
+	receivedBytes   int
+	sentRecords     int
+	receivedRecords int
+}
+
+type expectedTraffic struct {
+	bytes   int
+	records int
+}
+
+func trafficForPlaintexts(plain [][]byte, fragmented [][]byte) expectedTraffic {
+	total := expectedTraffic{records: len(plain) + len(fragmented)}
+	for _, payload := range append(plain, fragmented...) {
+		total.bytes += recordHeaderSize + len(payload) + recordTagSize
+	}
+	return total
 }

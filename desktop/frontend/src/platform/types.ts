@@ -26,6 +26,16 @@ export type { SessionSummary } from '../lib/connection'
 export type DirEntry = _Models.DirEntry
 export type FileContent = _Models.FileContent
 export type FileMetaInfo = _Models.FileMetaInfo
+export type PeerSpaceStatus = _Models.PeerSpaceStatus
+export type PeerConfigSyncStatus = _Models.PeerConfigSyncStatus
+export type PeerInvitation = _Models.PeerInvitation
+export type PeerMember = _Models.PeerMember
+export type PeerConnectionPreview = _Models.PeerConnectionPreview
+export type PeerRendezvousConfig = _Models.PeerRendezvousConfig
+export type PeerRendezvousStatus = _Models.PeerRendezvousStatus
+export type PeerLANConfig = _Models.PeerLANConfig
+export type PeerRouteImportResult = _Models.PeerRouteImportResult
+export type PeerSessionRouteStatus = _Models.PeerSessionRouteStatus
 
 export interface EnvironmentInfo {
   buildType: string
@@ -129,6 +139,8 @@ export interface RemoteSession {
    *  have an unlocked account_key. See @lib/opaque openSessionFields
    *  for the decrypt path. */
   sealed?: string
+  /** Desktop-only accountless route discovered through encrypted Rendezvous. */
+  peer_direct?: boolean
 }
 
 export interface SessionBridge {
@@ -152,14 +164,13 @@ export interface SessionBridge {
   listRelaySessions?(): Promise<_RelaySessionRow[]>
   revokeRelaySession?(idHash: string): Promise<void>
   signOutOtherRelaySessions?(): Promise<_SignOutOthersResult>
-  /** Capacitor-only (design §5). Mobile cannot fork a PTY, so this asks a
-   *  specific connected desktop (by host_id, from RemoteSession.host_id) to
-   *  fork a session from one of its own saved profiles (by profile_id, from
-   *  ProfileView.id) and resolves with the new session_id on success. The
-   *  Wails platform never gains this — it already forks locally via
-   *  newSession, which is faster and cannot fail on relay routing.
+  /** Remote profile launch. This asks a specific connected desktop (by
+   *  host_id, from RemoteSession.host_id) to fork a session from one of its
+   *  own saved profiles (by profile_id, from ProfileView.id) and resolves
+   *  with the new session_id on success. Capacitor uses the Relay account
+   *  route; Wails can use an authenticated accountless Peer route.
    *
-   *  One round trip, no retry: rejects after a 30s timeout (matching the
+   *  One round trip, no request retry: rejects after a 30s timeout (matching the
    *  relay's own request_in_flight TTL headroom) with Error('timeout'), and
    *  the caller must not resend — a retried "start a shell" that actually
    *  succeeded the first time leaves an orphan process nobody asked for. On
@@ -168,7 +179,7 @@ export interface SessionBridge {
    *  SessionCreatedPayload.Error in internal/proto/frame.go (plus
    *  'relay_not_configured' when no relay session exists locally).
    *
-   *  Implementation opens a brand-new WebSocket to the relay's /client
+   *  The Capacitor implementation opens a brand-new WebSocket to the relay's /client
    *  endpoint for every call, rather than reusing one connection across
    *  requests (there is no existing attached connection to ride when the
    *  phone isn't attached to anything, unlike the FS request path's
@@ -188,7 +199,9 @@ export interface SessionBridge {
    *  account key's MaxConnectionsPerKey connection slots (shared with the
    *  sidebar's session list and any attached terminals) for up to 30s —
    *  bounded to one such slot at a time by that same JS guard, but worth
-   *  knowing if connection-limit errors ever show up here. */
+   *  knowing if connection-limit errors ever show up here. The Wails Peer
+   *  implementation similarly owns one temporary terminal route, but sends
+   *  no driver claim or terminal input and closes it after the response. */
   createSessionWithProfile?(hostID: string, profileID: string): Promise<string>
 }
 
@@ -272,6 +285,7 @@ export interface TemplateBridge {
 
 import type { AuxKey } from '../lib/auxKeys'
 import type { DirectClientOptions } from '../lib/directClient'
+import type { NativeDirectClientOptions } from '../lib/nativeDirectClient'
 import type { DirectTransport } from '../lib/connection'
 
 export interface AuxKeyBridge {
@@ -285,6 +299,87 @@ export interface DirectConnectionBridge {
   save(enabled: boolean): Promise<void>
   /** Desktop injects Go/Pion; browser/mobile omit this and use WebRTC. */
   createTransport?: (options: DirectClientOptions) => DirectTransport
+}
+
+export interface CreatePeerInvitationsRequest {
+  count: number
+  valid_for_hours: number
+  permission: 'view' | 'control' | 'full'
+  allowed_session_ids: string[]
+  can_invite: boolean
+  can_sync_secrets: boolean
+}
+
+export interface PeerQuickTunnelStatus {
+  running: boolean
+  starting: boolean
+  public_url?: string
+  local_origin?: string
+}
+
+export interface PeerTrafficRow {
+  day: string
+  route: 'direct' | 'quick_tunnel' | 'lan' | 'gateway'
+  bytes_sent: number
+  bytes_received: number
+  records_sent: number
+  records_received: number
+}
+
+// Peer trust is optional until each platform has its required secure identity
+// backend. Components must gate on platform.peer rather than importing Wails
+// bindings or silently falling back to Relay credentials.
+export interface PeerBridge {
+  status(): Promise<PeerSpaceStatus>
+  configSyncStatus(): Promise<PeerConfigSyncStatus>
+  acceptPendingConfig(): Promise<PeerConfigSyncStatus>
+  discardPendingConfig(): Promise<PeerConfigSyncStatus>
+  createSpace(): Promise<PeerSpaceStatus>
+  /** Desktop-only encrypted identity recovery. Browser keys are non-exportable. */
+  exportTrustBackup?(passphrase: string): Promise<string>
+  importTrustBackup?(encoded: string, passphrase: string): Promise<PeerSpaceStatus>
+  previewConnectionBundle(raw: string): Promise<PeerConnectionPreview>
+  joinSpace(req: { connection_bundle: string; expected_fingerprint: string }): Promise<PeerSpaceStatus>
+  importConnectionBundle(raw: string): Promise<PeerRouteImportResult>
+  createInvitations(req: CreatePeerInvitationsRequest): Promise<PeerInvitation[]>
+  listInvitations(): Promise<PeerInvitation[]>
+  revokeInvitation(inviteID: string): Promise<void>
+  revokeInvitationBatch(batchID: string): Promise<void>
+  listMembers(): Promise<PeerMember[]>
+  revokeMember(peerID: string): Promise<void>
+  getRendezvousConfig(): Promise<PeerRendezvousConfig>
+  setRendezvousConfig(req: {
+    mode: 'disabled' | 'official' | 'custom'
+    url: string
+    stun_mode: 'default' | 'custom' | 'disabled'
+    stun_urls: string[]
+    turn_enabled: boolean
+    turn_urls: string[]
+    turn_username: string
+    turn_credential: string
+  }): Promise<void>
+  getRendezvousStatus(): Promise<PeerRendezvousStatus>
+  reconnectRendezvous(): Promise<PeerRendezvousStatus>
+  getLANConfig?(): Promise<PeerLANConfig>
+  setLANConfig?(req: {
+    lan_only: boolean
+    enabled: boolean
+    auto_discovery: boolean
+    advertise_host: string
+    port: number
+    routes: Array<{ host: string; port: number; fingerprint: string }>
+  }): Promise<void>
+  syncConfigNow(): Promise<PeerConfigSyncStatus>
+  listSessions?(): Promise<RemoteSession[]>
+  getSessionRouteStatus?(sessionID: string): Promise<PeerSessionRouteStatus>
+  createSessionTransport?: (options: NativeDirectClientOptions) => DirectTransport
+  /** Desktop-only, device-local encrypted-record aggregates. */
+  getTraffic?(from: string, to: string): Promise<PeerTrafficRow[]>
+  /** Desktop host controls. Clients without a local gateway leave these absent. */
+  getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
+  startQuickTunnel?(): Promise<PeerQuickTunnelStatus>
+  stopQuickTunnel?(): Promise<void>
+  createConnectionBundle?(invitationToken: string): Promise<string>
 }
 
 // WidgetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the
@@ -306,6 +401,7 @@ export interface ServicePreviewMapping {
   hostToClientKey: Uint8Array
   port: number
   pathPrefix?: string
+  peerAttemptId?: string
 }
 
 export interface ServicePreviewStartRequest {
@@ -329,6 +425,7 @@ export interface ServicePreviewRebindRequest {
   clientTicket: string
   clientToHostKey: Uint8Array
   hostToClientKey: Uint8Array
+  peerAttemptId?: string
 }
 
 export interface ServicePreviewBridge {
@@ -353,6 +450,7 @@ export interface Platform {
   templates: TemplateBridge
   auxKeys: AuxKeyBridge
   directConnection: DirectConnectionBridge
+  peer?: PeerBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
   deskWidget?: WidgetBridge

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -406,6 +407,57 @@ func TestSessionCreateHandler_ConcurrencyBounded(t *testing.T) {
 	after := readSessionCreated(t, out)
 	if after.RequestID != "req-after" || !after.OK {
 		t.Fatalf("request after release = %+v, want ok for req-after", after)
+	}
+}
+
+func TestSessionCreateHandler_CustomLimitAndLiveAuthorization(t *testing.T) {
+	h := newTestRelayHost(t)
+	cfg := h.cfg.Get()
+	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "P1", Shell: "/bin/sh"}}
+	if err := h.cfg.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	out := make(chan proto.Frame, 4)
+	handler := newSessionCreateHandler(context.Background(), out, h, proto.RemotePermissionControl)
+	handler.limit = 1
+	var authorized atomic.Bool
+	authorized.Store(true)
+	handler.authorize = authorized.Load
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	handler.newSession = func(context.Context, NewSessionReq) (uuid.UUID, error) {
+		started <- struct{}{}
+		<-release
+		return uuid.MustParse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), nil
+	}
+
+	handler.submit(proto.SessionCreatePayload{RequestID: "first", HostID: "host-1", ProfileID: "p1"})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first request did not start")
+	}
+	handler.submit(proto.SessionCreatePayload{RequestID: "second", HostID: "host-1", ProfileID: "p1"})
+	busy := readSessionCreated(t, out)
+	if busy.RequestID != "second" || busy.Error != sessionCreateErrBusy {
+		t.Fatalf("custom-limit response = %+v", busy)
+	}
+	close(release)
+	if response := readSessionCreated(t, out); !response.OK || response.RequestID != "first" {
+		t.Fatalf("first response = %+v", response)
+	}
+
+	authorized.Store(false)
+	called := false
+	handler.newSession = func(context.Context, NewSessionReq) (uuid.UUID, error) {
+		called = true
+		return uuid.New(), nil
+	}
+	handler.run(proto.SessionCreatePayload{RequestID: "revoked", HostID: "host-1", ProfileID: "p1"})
+	revoked := readSessionCreated(t, out)
+	if revoked.OK || revoked.Error != sessionCreateErrPermissionDenied || called {
+		t.Fatalf("revoked response = %+v newSessionCalled=%v", revoked, called)
 	}
 }
 

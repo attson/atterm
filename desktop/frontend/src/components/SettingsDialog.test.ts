@@ -27,7 +27,9 @@ describe("SettingsDialog shell", () => {
   });
 
   test("tracks the active tab and switches via sidebar clicks", () => {
-    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']account["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']\s*\|\s*["']shortcuts["']/);
+    expect(source).toContain('type SettingsTabId = "general"');
+    expect(source).toContain('"peer"');
+    expect(source).toContain('const activeTab = ref<SettingsTabId>(initialTab)');
     expect(source).toContain('@click="switchTab(\'general\')"');
     expect(source).toContain('@click="switchTab(\'relay\')"');
     expect(source).toContain('@click="switchTab(\'updates\')"');
@@ -158,6 +160,7 @@ import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { createPinia } from "pinia";
 import SettingsDialog from "./SettingsDialog.vue";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsProfiles from "./SettingsProfiles.vue";
 import SettingsProfilesMobile from "./SettingsProfilesMobile.vue";
 
 const baseProps: { localSessionCount: number; remoteSessionCount: number; terminalThemeId: string; initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" } = { localSessionCount: 0, remoteSessionCount: 0, terminalThemeId: "default" };
@@ -294,6 +297,44 @@ describe("SettingsDialog caps gating", () => {
     expect(navLabels(mountDialog())).not.toContain(en.settings.account.title);
   });
 
+  it("shows and mounts Peer connection only when the platform provides a Peer bridge", async () => {
+    expect(navLabels(mountDialog())).not.toContain(en.settings.tabs.peer);
+
+    platform.peer = {
+      status: vi.fn().mockResolvedValue({
+        configured: false,
+        open_invitations: 0,
+        used_invitations: 0,
+        revoked_invitations: 0,
+        expired_invitations: 0,
+      }),
+      configSyncStatus: vi.fn(),
+      acceptPendingConfig: vi.fn(),
+      discardPendingConfig: vi.fn(),
+      createSpace: vi.fn(),
+      previewConnectionBundle: vi.fn(),
+      joinSpace: vi.fn(),
+      importConnectionBundle: vi.fn(),
+      createInvitations: vi.fn(),
+      listInvitations: vi.fn(),
+      revokeInvitation: vi.fn(),
+      revokeInvitationBatch: vi.fn(),
+      listMembers: vi.fn().mockResolvedValue([]),
+      revokeMember: vi.fn(),
+      getRendezvousConfig: vi.fn(),
+      setRendezvousConfig: vi.fn(),
+      getRendezvousStatus: vi.fn(),
+      reconnectRendezvous: vi.fn(),
+      syncConfigNow: vi.fn(),
+    };
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+
+    expect(navLabels(w)).toContain(en.settings.tabs.peer);
+    await switchToTab(w, en.settings.tabs.peer);
+    expect(w.find('[data-testid="settings-peer"]').exists()).toBe(true);
+  });
+
   it("hides Relay / Diagnostics / Received files / Feishu / Profiles on non-wails platforms", () => {
     platform.caps = { ...platform.caps, wailsBindings: false };
     __setPlatformForTests(platform);
@@ -410,6 +451,15 @@ describe("SettingsDialog appearance forwarding", () => {
 // under), switches to its tab, and proves both ends: the dialog is
 // listening on the child, and it re-emits exactly what it received.
 describe("SettingsDialog session-created forwarding", () => {
+  it("forwards session-created from desktop Peer profiles", async () => {
+    const w = mountDialog();
+    await switchToTab(w, en.settings.profiles.tab);
+
+    w.findComponent(SettingsProfiles).vm.$emit("session-created", "peer-session-id");
+
+    expect(w.emitted("session-created")!.at(-1)![0]).toEqual("peer-session-id");
+  });
+
   it("forwards session-created from SettingsProfilesMobile", async () => {
     platform.caps = { ...platform.caps, capacitor: true };
     __setPlatformForTests(platform);

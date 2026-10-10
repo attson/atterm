@@ -7,7 +7,8 @@ import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "xterm-addon-webgl";
 import { SearchAddon } from "xterm-addon-search";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-import { SessionConnection, type DirectFallbackReason, type SessionRouteDiagnostics, type Status } from "../lib/connection";
+import { SessionConnection, type ConnectionHandlers, type DirectFallbackReason, type SessionFSConnection, type SessionRouteDiagnostics, type Status } from "../lib/connection";
+import { PeerSessionConnection } from "../lib/peerSessionConnection";
 import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
@@ -58,15 +59,17 @@ import {
 import { useQuickTemplates } from "../composables/useQuickTemplates";
 import { setServicePreviewActive } from "../composables/useServicePreviewActive";
 import { usePlatform } from "../platform";
+import type { PeerSessionRouteStatus } from "../platform/types";
 import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import ServicePreviewSwitcher from "./ServicePreviewSwitcher.vue";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
+import { Cloud } from "lucide-vue-next";
 
 const props = withDefaults(
   defineProps<{
-    endpoint: Endpoint;
+    endpoint?: Endpoint | null;
     directEndpoint?: Endpoint | null;
     preferDirect?: boolean;
     sessionId: string;
@@ -86,6 +89,7 @@ const props = withDefaults(
     theme: ITheme;
     commandNotifyThresholdSec?: number;
     isLocalSession?: boolean;
+    peerDirect?: boolean;
     // True when this pane shares its tab with others, so "move to its own tab"
     // is a meaningful action. A single-pane tab already is that tab.
     canDetach?: boolean;
@@ -134,10 +138,21 @@ const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
 const replayProgress = ref<ReplayProgress | null>(null);
 const routeDiagnostics = ref<SessionRouteDiagnostics>({ route: "relay" });
+const peerQuickTunnelAvailable = ref(false);
+let peerRouteStatusPromise: Promise<PeerSessionRouteStatus> | null = null;
 const routeLabel = computed(() => {
   switch (routeDiagnostics.value.route) {
-    case "connecting-direct": return t("terminal.route.connectingDirect");
-    case "direct": return t("terminal.route.direct");
+    case "connecting-direct":
+      return props.peerDirect && routeDiagnostics.value.fallbackReason
+        ? t("terminal.route.directBlocked")
+        : t("terminal.route.connectingDirect");
+    case "connecting-quick-tunnel": return t("terminal.route.connectingQuickTunnel");
+    case "quick-tunnel": return t("terminal.route.quickTunnel");
+    case "connecting-lan": return t("terminal.route.connectingLAN");
+    case "lan": return t("terminal.route.lan");
+    case "direct": return routeDiagnostics.value.candidateType === "relay"
+      ? t("terminal.route.turnRelay")
+      : t("terminal.route.direct");
     default: return t("terminal.route.relay");
   }
 });
@@ -167,6 +182,25 @@ const routeDiagnosticsTitle = computed(() => {
   if (diagnostics.fallbackReason) lines.push(t("terminal.route.fallbackReason", { reason: fallbackReasonLabel(diagnostics.fallbackReason) }));
   return lines.join("\n");
 });
+const peerConnectionFailureHint = computed(() => {
+  if (!props.peerDirect) return "";
+  switch (routeDiagnostics.value.fallbackReason) {
+    case "ice_failed": return t("terminal.route.peerFailure.iceFailed");
+    case "signal_endpoint_unavailable": return t("terminal.route.peerFailure.rendezvousUnavailable");
+    case "host_unavailable": return t("terminal.route.peerFailure.peerOffline");
+    case "authentication_failed": return t("terminal.route.peerFailure.authenticationFailed");
+    case "timeout": return t("terminal.route.peerFailure.timeout");
+    case "transport_error": return t("terminal.route.peerFailure.transportError");
+    default: return "";
+  }
+});
+const canRetryPeerQuickTunnel = computed(() => (
+  props.peerDirect
+  && status.value === "reconnecting"
+  && peerQuickTunnelAvailable.value
+  && routeDiagnostics.value.route !== "connecting-quick-tunnel"
+  && routeDiagnostics.value.route !== "quick-tunnel"
+));
 const menuOpen = ref(false);
 const menuX = ref(0);
 const menuY = ref(0);
@@ -310,13 +344,50 @@ const searchOpen = ref(false);
 const searchFocusSeq = ref(0);
 const searchResultIndex = ref(-1);
 const searchResultCount = ref(0);
-let conn: SessionConnection | null = null;
+let conn: SessionConnection | PeerSessionConnection | null = null;
 let pluginInputSender: ((text: string) => void) | null = null;
 let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
 const replayInputGuard = createReplayInputGuard();
+
+async function loadPeerRouteStatus(): Promise<PeerSessionRouteStatus> {
+  const getStatus = platform.peer?.getSessionRouteStatus;
+  if (!props.peerDirect || !getStatus) return { direct: false, lan: false, quick_tunnel: false };
+  if (peerRouteStatusPromise) return peerRouteStatusPromise;
+  let timeout: number | null = null;
+  const request = Promise.race([
+    getStatus(props.sessionId).catch(() => ({ direct: false, lan: false, quick_tunnel: false })),
+    new Promise<PeerSessionRouteStatus>((resolve) => {
+      timeout = window.setTimeout(() => resolve({ direct: false, lan: false, quick_tunnel: false }), 1000);
+    }),
+  ]).then((next) => {
+    peerQuickTunnelAvailable.value = next.quick_tunnel;
+    return next;
+  }).finally(() => {
+    if (timeout !== null) window.clearTimeout(timeout);
+  });
+  peerRouteStatusPromise = request;
+  try {
+    return await request;
+  } finally {
+    if (peerRouteStatusPromise === request) peerRouteStatusPromise = null;
+  }
+}
+
+async function refreshPeerRouteStatus(): Promise<boolean> {
+  return (await loadPeerRouteStatus()).quick_tunnel;
+}
+
+async function resolvePeerDirectFailback(): Promise<boolean> {
+  return (await loadPeerRouteStatus()).direct;
+}
+
+function retryPeerThroughQuickTunnel(): void {
+  if (!canRetryPeerQuickTunnel.value || !(conn instanceof PeerSessionConnection)) return;
+  conn.setRoute("quick_tunnel");
+}
 
 // Map<sessionId, (text) => void> provided by App.vue. Plugins use it to
 // reuse the active driver SessionConnection for input. Absent (undefined)
@@ -326,7 +397,7 @@ const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
   null,
 );
 
-const pluginSessionConnections = inject<Map<string, SessionConnection> | null>(
+const pluginSessionConnections = inject<Map<string, SessionFSConnection> | null>(
   "atterm:pluginSessionConnections",
   null,
 );
@@ -520,6 +591,7 @@ async function reconnectPreviewMapping(gatewayId: string, index: number): Promis
         clientTicket: opened.clientTicket,
         clientToHostKey: opened.clientToHostKey,
         hostToClientKey: opened.hostToClientKey,
+        peerAttemptId: opened.peerAttemptId,
       });
       current.serviceIds[index] = opened.serviceId;
       clearPreviewReconnect(current);
@@ -655,6 +727,7 @@ async function openPreview(): Promise<void> {
         clientTicket: service.clientTicket,
         clientToHostKey: service.clientToHostKey,
         hostToClientKey: service.hostToClientKey,
+        peerAttemptId: service.peerAttemptId,
         port: ports[index],
         pathPrefix: normalizedPrefixes[index] || undefined,
       })),
@@ -1077,6 +1150,7 @@ async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
 }
 
 async function handleImagePaste(e: ClipboardEvent) {
+  if (!pasteBlobCanSend.value) return;
   const items = Array.from(e.clipboardData?.items || []);
   const anyFile = items.find((i) => i.kind === "file");
   if (!anyFile) return;
@@ -2214,58 +2288,78 @@ function startConnection() {
     conn.attach();
     return;
   }
-  conn = markRaw(new SessionConnection(
-    props.endpoint,
-    props.sessionId,
-    {
-      onOutput: (data) => term?.write(data),
-      onClose: (info) => {
-        term?.write(
-          `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`
-        );
-      },
-      onStatus: (s) => {
-        status.value = s;
-        if (s !== "attached" && previews.value.length) void stopAllPreviews();
-      },
-      onReplayProgress: (progress) => {
-        replayProgress.value = progress.phase === "end" ? null : progress;
-        if (progress.phase === "start" || progress.phase === "chunk") {
-          replayInputGuard.onProgress(progress.phase);
-        } else {
-          replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(release));
-        }
-      },
-      onRouteChange: (diagnostics) => {
-        routeDiagnostics.value = diagnostics;
-      },
-      onMeta: (meta) => {
-        if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
-        if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
-        applyViewerSize();
-      },
-      onDriverChange: (_driverID, isMe, driverName) => {
-        const wasDriver = isDriver.value;
-        isDriver.value = isMe;
-        driverHostname.value = isMe ? "" : driverName;
-        syncTerminalInputMode();
-        applyViewerSize();
-        if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
-        if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
-        if (!isMe && previews.value.length) void stopAllPreviews();
-        if (wasDriver !== isMe) {
-          emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
-        }
-      },
+  const handlers: ConnectionHandlers = {
+    onOutput: (data) => term?.write(data),
+    onClose: (info) => {
+      term?.write(
+        `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`,
+      );
     },
-    {
-      clientName: localHostname.value,
-      remote: !props.isLocalSession,
-      preferDirect: props.preferDirect,
-      directEndpoint: props.directEndpoint,
-      directTransportFactory: platform.directConnection.createTransport,
+    onStatus: (s) => {
+      status.value = s;
+      if (props.peerDirect && s === "reconnecting") void refreshPeerRouteStatus();
+      if (s !== "attached" && previews.value.length) void stopAllPreviews();
+    },
+    onReplayProgress: (progress) => {
+      replayProgress.value = progress.phase === "end" ? null : progress;
+      if (progress.phase === "start" || progress.phase === "chunk") {
+        replayInputGuard.onProgress(progress.phase);
+      } else {
+        replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(release));
+      }
+    },
+    onRouteChange: (diagnostics) => {
+      routeDiagnostics.value = diagnostics;
+    },
+    onMeta: (meta) => {
+      if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
+      if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
+      applyViewerSize();
+    },
+    onDriverChange: (_driverID, isMe, driverName) => {
+      const wasDriver = isDriver.value;
+      isDriver.value = isMe;
+      driverHostname.value = isMe ? "" : driverName;
+      syncTerminalInputMode();
+      applyViewerSize();
+      if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
+      if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
+      if (!isMe && previews.value.length) void stopAllPreviews();
+      if (wasDriver !== isMe) {
+        emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
+      }
+    },
+  };
+  if (props.peerDirect) {
+    const factory = platform.peer?.createSessionTransport;
+    if (!factory) {
+      status.value = "error";
+      return;
     }
-  ));
+    conn = markRaw(
+      new PeerSessionConnection(props.sessionId, handlers, {
+        clientName: localHostname.value,
+        transportFactory: factory,
+        resolveQuickTunnelFallback: refreshPeerRouteStatus,
+        resolveDirectFailback: resolvePeerDirectFailback,
+      }),
+    );
+    void refreshPeerRouteStatus();
+  } else {
+    if (!props.endpoint) {
+      status.value = "error";
+      return;
+    }
+    conn = markRaw(
+      new SessionConnection(props.endpoint, props.sessionId, handlers, {
+        clientName: localHostname.value,
+        remote: !props.isLocalSession,
+        preferDirect: props.preferDirect,
+        directEndpoint: props.directEndpoint,
+        directTransportFactory: platform.directConnection.createTransport,
+      }),
+    );
+  }
   conn.attach();
   pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins
@@ -2794,7 +2888,24 @@ watch(
         </div>
       </template>
       <span v-else-if="status === 'connecting'">{{ t("terminal.connecting") }}</span>
-      <span v-else-if="status === 'reconnecting'" class="warn">{{ t("terminal.reconnecting") }}</span>
+      <template v-else-if="status === 'reconnecting'">
+        <span class="warn">{{ t("terminal.reconnecting") }}</span>
+        <span
+          v-if="peerConnectionFailureHint"
+          class="peer-connection-failure"
+          data-testid="peer-connection-failure"
+        >{{ peerConnectionFailureHint }}</span>
+        <button
+          v-if="canRetryPeerQuickTunnel"
+          type="button"
+          class="peer-route-retry"
+          data-testid="peer-quick-tunnel-retry"
+          @click="retryPeerThroughQuickTunnel"
+        >
+          <Cloud :size="14" aria-hidden="true" />
+          {{ t("terminal.route.retryQuickTunnel") }}
+        </button>
+      </template>
       <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
       <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
     </div>
@@ -3443,6 +3554,12 @@ watch(
 :global(.session-route-indicator.route-direct) {
   color: #3fb950;
 }
+:global(.session-route-indicator.route-connecting-lan) {
+  color: #d29922;
+}
+:global(.session-route-indicator.route-lan) {
+  color: #58a6ff;
+}
 .viewer-overlay {
   position: absolute;
   inset: 0;
@@ -3494,6 +3611,29 @@ watch(
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }
 .overlay .dim { color: var(--fg-dim); }
+.peer-connection-failure {
+  display: block;
+  max-width: 360px;
+  margin-top: 4px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+  white-space: normal;
+}
+.peer-route-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  margin-top: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  color: var(--fg);
+  cursor: pointer;
+  pointer-events: auto;
+}
 .progress-track {
   width: 190px;
   height: 4px;

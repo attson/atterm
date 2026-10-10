@@ -167,10 +167,15 @@ func (h *peerQuickTunnelHost) redeemJoin(ctx context.Context, requestToken strin
 	if err != nil {
 		return quicktunnel.JoinBootstrap{}, err
 	}
+	connectionBundle, err := h.ConnectionBundle("")
+	if err != nil {
+		return quicktunnel.JoinBootstrap{}, quicktunnel.ErrJoinRejected
+	}
 	return quicktunnel.JoinBootstrap{
 		GenesisToken: result.GenesisToken, MembershipToken: result.MembershipToken,
 		Memberships: result.Memberships, Revocations: result.Revocations,
 		EpochRotations: result.EpochRotations, EpochEnvelopes: result.EpochEnvelopes,
+		ConnectionBundle: connectionBundle,
 	}, nil
 }
 

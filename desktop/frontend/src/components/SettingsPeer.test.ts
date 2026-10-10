@@ -43,6 +43,8 @@ const { fakePlatform, qrScanner } = vi.hoisted(() => ({
       getLANConfig: vi.fn(),
       setLANConfig: vi.fn(),
       createConnectionBundle: vi.fn(),
+      getQuickTunnelFallbackConsent: vi.fn(),
+      setQuickTunnelFallbackConsent: vi.fn(),
     },
   },
   qrScanner: {
@@ -152,6 +154,8 @@ beforeEach(() => {
     mode: 'official', state: 'connecting', url: 'https://rendezvous.atterm.dev', reachable_peers: 0,
   })
   fakePlatform.peer.syncConfigNow.mockResolvedValue(pendingSyncStatus)
+  fakePlatform.peer.getQuickTunnelFallbackConsent.mockResolvedValue(false)
+  fakePlatform.peer.setQuickTunnelFallbackConsent.mockResolvedValue(undefined)
   fakePlatform.system.setClipboardText.mockResolvedValue(undefined)
   qrScanner.requestPermissions.mockResolvedValue({ camera: 'granted' })
   qrScanner.scan.mockResolvedValue({ cancelled: false, rawValue: 'atc1.scanned-token' })
@@ -168,6 +172,19 @@ async function mountReady() {
 }
 
 describe('SettingsPeer', () => {
+  it('persists explicit Quick Tunnel fallback consent per device', async () => {
+    fakePlatform.peer.status.mockResolvedValue(configuredStatus)
+    const wrapper = await mountReady()
+    const checkbox = wrapper.get<HTMLInputElement>('[data-testid="peer-fallback-consent"]')
+    expect(checkbox.element.checked).toBe(false)
+
+    await checkbox.setValue(true)
+    await flushPromises()
+
+    expect(fakePlatform.peer.setQuickTunnelFallbackConsent).toHaveBeenCalledWith(true)
+    expect(checkbox.element.checked).toBe(true)
+  })
+
   it('previews pasted deep links and shows the authenticated trust details', async () => {
     const wrapper = await mountReady()
     const deepLink = 'https://app.example/connect#atc1.bundle-token'

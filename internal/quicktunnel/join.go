@@ -46,6 +46,10 @@ type JoinBootstrap struct {
 	Revocations     []string `json:"revocations,omitempty"`
 	EpochRotations  []string `json:"epoch_rotations"`
 	EpochEnvelopes  []string `json:"epoch_envelopes"`
+	// ConnectionBundle is a newly signed, ticketless route bundle. Clients
+	// persist this replacement instead of the first-join bundle so the pairing
+	// secret is erased with the request.
+	ConnectionBundle string `json:"connection_bundle"`
 }
 
 // JoinHostConfig supplies the invitation secret lookup and the issuer's

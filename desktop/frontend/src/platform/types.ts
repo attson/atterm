@@ -380,6 +380,10 @@ export interface PeerBridge {
   startQuickTunnel?(): Promise<PeerQuickTunnelStatus>
   stopQuickTunnel?(): Promise<void>
   createConnectionBundle?(invitationToken: string): Promise<string>
+  /** Quick Tunnel carries terminal bytes through Cloudflare. Automatic
+   * fallback stays disabled until this device records explicit consent. */
+  getQuickTunnelFallbackConsent(): Promise<boolean>
+  setQuickTunnelFallbackConsent(allowed: boolean): Promise<void>
 }
 
 // WidgetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the

@@ -377,7 +377,11 @@ async function loadPeerRouteStatus(): Promise<PeerSessionRouteStatus> {
 }
 
 async function refreshPeerRouteStatus(): Promise<boolean> {
-  return (await loadPeerRouteStatus()).quick_tunnel;
+  const [routes, consent] = await Promise.all([
+    loadPeerRouteStatus(),
+    platform.peer?.getQuickTunnelFallbackConsent() ?? Promise.resolve(false),
+  ]);
+  return routes.quick_tunnel && consent;
 }
 
 async function resolvePeerDirectFailback(): Promise<boolean> {

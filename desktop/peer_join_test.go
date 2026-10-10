@@ -20,16 +20,17 @@ import (
 )
 
 type peerJoinFixture struct {
-	source      *App
-	bundle      string
-	bootstrap   quicktunnel.JoinBootstrap
-	identity    *peercrypto.Identity
-	wrapping    *peercrypto.WrappingIdentity
-	now         time.Time
-	fingerprint string
-	destination *App
-	storePath   string
-	keyringPath string
+	source          *App
+	bundle          string
+	reconnectBundle string
+	bootstrap       quicktunnel.JoinBootstrap
+	identity        *peercrypto.Identity
+	wrapping        *peercrypto.WrappingIdentity
+	now             time.Time
+	fingerprint     string
+	destination     *App
+	storePath       string
+	keyringPath     string
 }
 
 const peerJoinSessionID = "00000000-0000-4000-8000-000000000001"
@@ -85,6 +86,12 @@ func newPeerJoinFixtureWithSessionScope(t *testing.T, allowedSessionIDs []string
 	if err != nil {
 		t.Fatal(err)
 	}
+	reconnectBundle, err := peerproto.NewMemberConnectionBundle(sourceIdentity, genesis, state.LocalMembership, []peerproto.ConnectionRoute{{
+		Kind: peerproto.RouteQuickTunnel, URL: "https://peer-join.trycloudflare.com",
+	}}, now, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	destinationRoot := t.TempDir()
 	keyringPath := filepath.Join(destinationRoot, "keyring")
@@ -115,12 +122,13 @@ func newPeerJoinFixtureWithSessionScope(t *testing.T, allowedSessionIDs []string
 		GenesisToken: result.GenesisToken, MembershipToken: result.MembershipToken,
 		Memberships: result.Memberships, Revocations: result.Revocations,
 		EpochRotations: result.EpochRotations, EpochEnvelopes: result.EpochEnvelopes,
+		ConnectionBundle: reconnectBundle,
 	}
 	manager.joinQuickTunnel = func(context.Context, quicktunnel.JoinClientConfig) (quicktunnel.JoinBootstrap, error) {
 		return bootstrap, nil
 	}
 	return peerJoinFixture{
-		source: source, bundle: bundle, bootstrap: bootstrap, identity: identity, wrapping: wrapping, now: now,
+		source: source, bundle: bundle, reconnectBundle: reconnectBundle, bootstrap: bootstrap, identity: identity, wrapping: wrapping, now: now,
 		fingerprint: "SHA256:" + genesis.Hash, destination: &App{ctx: context.Background(), peerSpace: manager},
 		storePath: storePath, keyringPath: keyringPath,
 	}
@@ -202,6 +210,23 @@ func TestJoinPeerSpaceRejectsMissingEpochEnvelopeWithoutStore(t *testing.T) {
 	}
 }
 
+func TestJoinPeerSpaceRejectsMissingTicketlessReconnectBundle(t *testing.T) {
+	fixture := newPeerJoinFixture(t)
+	fixture.destination.peerSpace.joinQuickTunnel = func(context.Context, quicktunnel.JoinClientConfig) (quicktunnel.JoinBootstrap, error) {
+		bootstrap := fixture.bootstrap
+		bootstrap.ConnectionBundle = ""
+		return bootstrap, nil
+	}
+	if _, err := fixture.destination.JoinPeerSpace(JoinPeerSpaceReq{
+		ConnectionBundle: fixture.bundle, ExpectedFingerprint: fixture.fingerprint,
+	}); err == nil {
+		t.Fatal("bootstrap without a ticketless reconnect bundle was accepted")
+	}
+	if _, err := os.Stat(fixture.storePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Peer store exists after failed bootstrap: %v", err)
+	}
+}
+
 func TestJoinPeerSpacePersistsBootstrapAndRecoversEpochKeys(t *testing.T) {
 	fixture := newPeerJoinFixture(t)
 	status, err := fixture.destination.JoinPeerSpace(JoinPeerSpaceReq{
@@ -252,7 +277,7 @@ func TestJoinPeerSpaceCachesOnlyTheVerifiedQuickTunnelIssuerRoute(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	verified, err := peerproto.VerifyConnectionBundle(fixture.bundle, fixture.now)
+	verified, err := peerproto.VerifyConnectionBundle(fixture.reconnectBundle, fixture.now)
 	if err != nil {
 		t.Fatal(err)
 	}

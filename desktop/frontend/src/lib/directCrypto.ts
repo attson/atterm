@@ -34,6 +34,15 @@ export enum DirectRecordKind {
   Ping = 4,
   Pong = 5,
   Close = 6,
+  ConfigInventory = 7,
+  ConfigBatch = 8,
+  ConfigAck = 9,
+  ConfigFragment = 10,
+  Signal = 11,
+  SignalFragment = 12,
+  Service = 13,
+  CatalogRequest = 14,
+  CatalogResponse = 15,
 }
 
 export interface DirectTranscript {
@@ -175,7 +184,7 @@ export function deriveDirectTrafficKeys(
 }
 
 function validRecordKind(kind: DirectRecordKind): boolean {
-  return kind >= DirectRecordKind.Frame && kind <= DirectRecordKind.Close
+  return kind >= DirectRecordKind.Frame && kind <= DirectRecordKind.CatalogResponse
 }
 
 function recordNonce(prefix: Uint8Array, counter: bigint): Uint8Array {

@@ -413,6 +413,11 @@ export function createWailsPlatform(): Platform {
       listSessions: listPeerRemoteSessions,
       getSessionRouteStatus: (sessionID) => GetPeerSessionRouteStatus(sessionID),
       createSessionTransport: (options) => new NativeDirectClientTransport(options, peerNativeBridge, 'peer-native-direct:event:'),
+      getQuickTunnelFallbackConsent: async () => localStorage.getItem('atterm.peer.quick-tunnel-fallback-consent') === '1',
+      setQuickTunnelFallbackConsent: async (allowed) => {
+        if (allowed) localStorage.setItem('atterm.peer.quick-tunnel-fallback-consent', '1')
+        else localStorage.removeItem('atterm.peer.quick-tunnel-fallback-consent')
+      },
     },
     updater: {
       getState: api.getUpdateState,

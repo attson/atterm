@@ -69,12 +69,18 @@ func (a *App) JoinPeerSpace(req JoinPeerSpaceReq) (PeerSpaceStatus, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, peerJoinTimeout)
 	defer cancel()
-	bundle, _, inspectErr := manager.inspectConnectionBundle(req.ConnectionBundle)
-	status, err := manager.joinSpace(ctx, req)
+	_, _, inspectErr := manager.inspectConnectionBundle(req.ConnectionBundle)
+	status, reconnectBundle, err := manager.joinSpace(ctx, req)
 	if err == nil {
-		if inspectErr == nil {
-			a.rememberPeerQuickTunnelRoute(bundle)
-			a.rememberPeerManualLANRoute(bundle)
+		if inspectErr == nil && reconnectBundle != "" {
+			now := time.Now()
+			if manager.now != nil {
+				now = manager.now()
+			}
+			if bundle, verifyErr := peerproto.VerifyConnectionBundle(reconnectBundle, now); verifyErr == nil {
+				a.rememberPeerQuickTunnelRoute(bundle)
+				a.rememberPeerManualLANRoute(bundle)
+			}
 		}
 		if a.cfgStore != nil {
 			a.reconcilePeerRendezvous(a.cfgStore.Get())
@@ -142,36 +148,36 @@ func peerGenesisFingerprint(genesis peerproto.VerifiedGenesis) string {
 	return "SHA256:" + genesis.Hash
 }
 
-func (m *peerSpaceManager) joinSpace(ctx context.Context, req JoinPeerSpaceReq) (PeerSpaceStatus, error) {
+func (m *peerSpaceManager) joinSpace(ctx context.Context, req JoinPeerSpaceReq) (PeerSpaceStatus, string, error) {
 	release, err := m.acquireBootstrapLock()
 	if err != nil {
-		return PeerSpaceStatus{}, err
+		return PeerSpaceStatus{}, "", err
 	}
 	defer release()
 
 	if status, err := m.status(); err == nil && status.Configured {
-		return PeerSpaceStatus{}, peerstore.ErrAlreadyExists
+		return PeerSpaceStatus{}, "", peerstore.ErrAlreadyExists
 	} else if err != nil && !errors.Is(err, peerstore.ErrNotInitialized) {
-		return PeerSpaceStatus{}, err
+		return PeerSpaceStatus{}, "", err
 	}
 	bundle, preview, err := m.inspectConnectionBundle(req.ConnectionBundle)
 	if err != nil {
-		return PeerSpaceStatus{}, err
+		return PeerSpaceStatus{}, "", err
 	}
 	expected := strings.TrimSpace(req.ExpectedFingerprint)
 	if expected == "" || subtle.ConstantTimeCompare([]byte(expected), []byte(preview.Fingerprint)) != 1 {
-		return PeerSpaceStatus{}, errors.New("Peer Space fingerprint confirmation does not match")
+		return PeerSpaceStatus{}, "", errors.New("Peer Space fingerprint confirmation does not match")
 	}
 	identity, err := m.ensureIdentity()
 	if err != nil {
-		return PeerSpaceStatus{}, err
+		return PeerSpaceStatus{}, "", err
 	}
 	wrapping, err := m.ensureWrappingIdentity()
 	if err != nil {
-		return PeerSpaceStatus{}, err
+		return PeerSpaceStatus{}, "", err
 	}
 	if err := m.ensureStoreKey(); err != nil {
-		return PeerSpaceStatus{}, err
+		return PeerSpaceStatus{}, "", err
 	}
 	join := m.joinQuickTunnel
 	if join == nil {
@@ -181,11 +187,11 @@ func (m *peerSpaceManager) joinSpace(ctx context.Context, req JoinPeerSpaceReq) 
 		BundleToken: bundle.Token, Identity: identity, WrappingPublicKey: wrapping.PublicBytes(),
 	})
 	if err != nil {
-		return PeerSpaceStatus{}, fmt.Errorf("%w: %v", errPeerJoinRejected, err)
+		return PeerSpaceStatus{}, "", fmt.Errorf("%w: %v", errPeerJoinRejected, err)
 	}
 	state, keys, err := validatePeerJoinBootstrap(bundle, bootstrap, identity, wrapping, m.now())
 	if err != nil {
-		return PeerSpaceStatus{}, fmt.Errorf("%w: bootstrap validation", errPeerJoinRejected)
+		return PeerSpaceStatus{}, "", fmt.Errorf("%w: bootstrap validation", errPeerJoinRejected)
 	}
 	savedClasses := make([]configsync.KeyClass, 0, len(keys))
 	for _, class := range []configsync.KeyClass{configsync.KeyClassSync, configsync.KeyClassVault} {
@@ -195,15 +201,16 @@ func (m *peerSpaceManager) joinSpace(ctx context.Context, req JoinPeerSpaceReq) 
 		}
 		if err := savePeerEpochKey(bundle.Genesis.Document.SpaceID, key); err != nil {
 			clearPeerJoinEpochKeys(bundle.Genesis.Document.SpaceID, savedClasses)
-			return PeerSpaceStatus{}, fmt.Errorf("save Peer Space %s epoch key: %w", class, err)
+			return PeerSpaceStatus{}, "", fmt.Errorf("save Peer Space %s epoch key: %w", class, err)
 		}
 		savedClasses = append(savedClasses, class)
 	}
 	if err := m.store.Initialize(state); err != nil {
 		clearPeerJoinEpochKeys(bundle.Genesis.Document.SpaceID, savedClasses)
-		return PeerSpaceStatus{}, err
+		return PeerSpaceStatus{}, "", err
 	}
-	return m.status()
+	status, err := m.status()
+	return status, bootstrap.ConnectionBundle, err
 }
 
 func validatePeerJoinBootstrap(
@@ -232,6 +239,18 @@ func validatePeerJoinBootstrap(
 	}
 	if err := validatePeerJoinGovernance(genesis, bootstrap, membership, now); err != nil {
 		return peerstore.State{}, nil, err
+	}
+	reconnect, err := peerproto.VerifyConnectionBundle(bootstrap.ConnectionBundle, now)
+	if err != nil || reconnect.Ticket != nil || reconnect.Genesis.Hash != genesis.Hash {
+		return peerstore.State{}, nil, errPeerJoinRejected
+	}
+	active, err := peerJoinActiveMembershipsAt(genesis, bootstrap, now)
+	if err != nil {
+		return peerstore.State{}, nil, errPeerJoinRejected
+	}
+	issuer := membershipForPeerID(active, reconnect.Document.IssuerPeerID)
+	if issuer == nil || issuer.Token != reconnect.Issuer.Token {
+		return peerstore.State{}, nil, errPeerJoinRejected
 	}
 	rotations, err := currentEpochRotations(bootstrap.EpochRotations, genesis)
 	if err != nil {

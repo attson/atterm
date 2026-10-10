@@ -1,0 +1,14 @@
+{
+  "genesis_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "client_membership": "apm1.client-token.signature",
+  "host_membership": "apm1.host-token.signature",
+  "client_private_key_hex": "0000000000000000000000000000000000000000000000000000000000000001",
+  "host_private_key_hex": "0000000000000000000000000000000000000000000000000000000000000002",
+  "transcript_hex": "61747465726d2d706565722d676f6c64656e2d7631",
+  "binding_hex": "9d98d1736bc9ab379368a0881593dbbb13fe4385808edb9296edce3ec51e0090",
+  "finish_proof_hex": "4969b1aa2e69cb10d540408ea474cf69af7399e007294411e3d151dbb0d4921b",
+  "client_to_host_key_hex": "5b58ccf68fe5a3a84f75e06a90e00d05e14699e5d4f33d71879b960d0fb7c8a4",
+  "host_to_client_key_hex": "1b44afdeda054e805f2cbdb372075491f0fa7008613237674a87f4b1d267af33",
+  "client_nonce_prefix_hex": "35880ff373588f60f5229cf24e76f460",
+  "host_nonce_prefix_hex": "c221f6b1bd94b47a0df13bd8ce7733ba"
+}

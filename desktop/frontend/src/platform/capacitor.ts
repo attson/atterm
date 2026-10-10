@@ -25,6 +25,9 @@ import { errText, logWarn } from "../lib/log";
 import { webSocketAuth, type Endpoint } from "../lib/connection";
 import { TYPE, NIL_SID, encodeFrame, decodeFrame, encodeText, decodeText } from "../lib/proto";
 import { NativeServicePreview } from './servicePreviewNative'
+import { createPeerClientBridge } from '../lib/peer/clientBridge'
+import { createSecurePeerStateStore } from '../lib/peer/clientState'
+import { loadOrCreateCapacitorPeerIdentity } from './capacitorPeerIdentity'
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
@@ -296,6 +299,10 @@ async function bootstrapCachedAccountKey(): Promise<void> {
 export function createCapacitorPlatform(): Platform {
   setAccountKeyProvider(() => cachedAccountKey)
   void bootstrapCachedAccountKey()
+  const peer = createPeerClientBridge({
+    loadIdentity: () => loadOrCreateCapacitorPeerIdentity(secureStorage),
+    store: createSecurePeerStateStore('atterm.peer.client-state.v1', secureStorage),
+  })
   return {
     caps: {
       localPty: false,
@@ -816,6 +823,7 @@ export function createCapacitorPlatform(): Platform {
         else localStorage.removeItem('atterm.direct_connection.enabled')
       },
     },
+    peer,
     // updater + pluginHost omitted — desktop-only
   }
 }

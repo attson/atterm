@@ -33,6 +33,8 @@ const configSyncLoading = ref(false)
 const configSyncAction = ref<'accept' | 'discard' | 'sync' | ''>('')
 const rendezvousBusy = ref<'save' | 'reconnect' | ''>('')
 const lanBusy = ref(false)
+const fallbackConsent = ref(false)
+const fallbackConsentBusy = ref(false)
 const discardPendingConfirming = ref(false)
 const copiedInvitationID = ref('')
 const error = ref('')
@@ -167,7 +169,7 @@ async function loadConfiguredPeerData(): Promise<void> {
   invitationsLoading.value = true
   membersLoading.value = true
   configSyncLoading.value = true
-  const [tunnelResult, invitationResult, memberResult, configSyncResult, rendezvousConfigResult, rendezvousStatusResult, lanConfigResult] = await Promise.allSettled([
+  const [tunnelResult, invitationResult, memberResult, configSyncResult, rendezvousConfigResult, rendezvousStatusResult, lanConfigResult, fallbackConsentResult] = await Promise.allSettled([
     peer.getQuickTunnelStatus?.() ?? Promise.resolve(null),
     peer.listInvitations(),
     peer.listMembers(),
@@ -175,6 +177,7 @@ async function loadConfiguredPeerData(): Promise<void> {
     peer.getRendezvousConfig(),
     peer.getRendezvousStatus(),
     peer.getLANConfig?.() ?? Promise.resolve(null),
+    peer.getQuickTunnelFallbackConsent(),
   ])
   if (tunnelResult.status === 'fulfilled') {
     tunnelStatus.value = tunnelResult.value
@@ -213,6 +216,22 @@ async function loadConfiguredPeerData(): Promise<void> {
     applyLANConfig(lanConfigResult.value)
   } else if (peer.getLANConfig) {
     error.value = t('settings.peer.errors.lanStatus')
+  }
+  if (fallbackConsentResult.status === 'fulfilled') fallbackConsent.value = fallbackConsentResult.value
+}
+
+async function saveFallbackConsent(): Promise<void> {
+  const peer = platform.peer
+  if (!peer || fallbackConsentBusy.value) return
+  fallbackConsentBusy.value = true
+  error.value = ''
+  try {
+    await peer.setQuickTunnelFallbackConsent(fallbackConsent.value)
+  } catch {
+    fallbackConsent.value = !fallbackConsent.value
+    error.value = t('settings.peer.errors.fallbackConsent')
+  } finally {
+    fallbackConsentBusy.value = false
   }
 }
 
@@ -784,6 +803,29 @@ function permissionLabel(permission: string): string {
         v-if="platform.caps.wailsBindings && platform.peer?.exportTrustBackup"
         :configured="true"
       />
+
+      <section class="peer-section" data-testid="peer-fallback-consent-section">
+        <div class="section-heading">
+          <Cable :size="17" aria-hidden="true" />
+          <div>
+            <h3>{{ t('settings.peer.fallback.title') }}</h3>
+            <p class="hint">{{ t('settings.peer.fallback.hint') }}</p>
+          </div>
+        </div>
+        <label class="checkbox-row">
+          <input
+            v-model="fallbackConsent"
+            data-testid="peer-fallback-consent"
+            type="checkbox"
+            :disabled="fallbackConsentBusy"
+            @change="saveFallbackConsent"
+          />
+          <span>
+            <strong>{{ t('settings.peer.fallback.allow') }}</strong>
+            <small>{{ t('settings.peer.fallback.disclosure') }}</small>
+          </span>
+        </label>
+      </section>
 
       <section class="peer-section" data-testid="peer-rendezvous-section">
         <div class="section-heading">

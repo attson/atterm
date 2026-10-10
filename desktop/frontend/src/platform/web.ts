@@ -7,6 +7,9 @@ import { logout as webLogout } from '@webshared/api/auth'
 import { loadAccountKey } from '@webshared/api/account-key'
 import { setAccountKeyProvider } from '../lib/account-key'
 import { errText, logWarn } from "../lib/log";
+import { createPeerClientBridge } from '../lib/peer/clientBridge'
+import { createLocalPeerStateStore } from '../lib/peer/clientState'
+import { createIndexedDBPeerIdentityStore, loadOrCreateWebPeerIdentity } from '../lib/peer/identity'
 // ^ single source of truth for web's relay storage key ('atterm.relay') and
 // shape ({ baseURL, sessionToken, expiresAt, allowInsecure, ... }) — apiFetch
 // itself reads auth through loadRelayConfig, so the bridge below must adapt
@@ -222,6 +225,10 @@ const auxKeys: AuxKeyBridge = {
 
 export function createWebPlatform(): Platform {
   setAccountKeyProvider(() => loadAccountKey())
+  const peer = createPeerClientBridge({
+    loadIdentity: () => loadOrCreateWebPeerIdentity(createIndexedDBPeerIdentityStore()),
+    store: createLocalPeerStateStore('atterm.peer.client-state.v1'),
+  })
   return {
     caps: CAPS,
     relay,
@@ -237,5 +244,6 @@ export function createWebPlatform(): Platform {
         else localStorage.removeItem(DIRECT_CONNECTION_KEY)
       },
     },
+    peer,
   }
 }

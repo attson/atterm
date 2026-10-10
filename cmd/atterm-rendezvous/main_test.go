@@ -51,6 +51,16 @@ func TestParseOptionsAcceptsDirectTLSLoopbackProxyAndExplicitDevelopment(t *test
 		t.Fatalf("proxy options=%+v", proxy)
 	}
 
+	containerProxy, err := parseOptions([]string{
+		"--addr", ":8081", "--origins", "https://app.example", "--behind-tls-proxy", "--allow-non-loopback-proxy",
+	}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containerProxy.useTLS || !containerProxy.allowNonLoopbackProxy {
+		t.Fatalf("container proxy options=%+v", containerProxy)
+	}
+
 	dev, err := parseOptions([]string{"--addr", "127.0.0.1:8081", "--dev-insecure"}, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +83,11 @@ func TestParseOptionsRejectsInvalidLimitsAndOrigin(t *testing.T) {
 		"--addr", "127.0.0.1:8081", "--behind-tls-proxy", "--origins", "https://app.example/path",
 	}, env); err == nil || !strings.Contains(err.Error(), "origin") {
 		t.Fatalf("invalid origin error=%v", err)
+	}
+	if _, err := parseOptions([]string{
+		"--addr", ":8443", "--allow-non-loopback-proxy", "--origins", "https://app.example",
+	}, env); err == nil || !strings.Contains(err.Error(), "requires --behind-tls-proxy") {
+		t.Fatalf("proxy opt-in error=%v", err)
 	}
 	if _, err := parseOptions(base, func(key string) string {
 		if key == "ATTERM_RENDEZVOUS_MAX_CONNECTIONS" {

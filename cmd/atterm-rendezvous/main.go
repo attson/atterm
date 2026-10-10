@@ -28,6 +28,7 @@ type options struct {
 	tlsKey                    string
 	useTLS                    bool
 	behindTLSProxy            bool
+	allowNonLoopbackProxy     bool
 	devInsecure               bool
 	logLevel                  string
 	maxConnections            int
@@ -84,7 +85,8 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	flags.StringVar(&opts.addr, "addr", envOr(getenv, "ATTERM_RENDEZVOUS_ADDR", ":8443"), "listen address")
 	flags.StringVar(&opts.tlsCert, "tls-cert", getenv("ATTERM_RENDEZVOUS_TLS_CERT"), "TLS certificate PEM")
 	flags.StringVar(&opts.tlsKey, "tls-key", getenv("ATTERM_RENDEZVOUS_TLS_KEY"), "TLS private key PEM")
-	flags.BoolVar(&opts.behindTLSProxy, "behind-tls-proxy", false, "serve plaintext on loopback behind a TLS-terminating reverse proxy")
+	flags.BoolVar(&opts.behindTLSProxy, "behind-tls-proxy", false, "serve plaintext behind a TLS-terminating reverse proxy")
+	flags.BoolVar(&opts.allowNonLoopbackProxy, "allow-non-loopback-proxy", false, "allow a containerized proxy backend to listen beyond loopback")
 	flags.BoolVar(&opts.devInsecure, "dev-insecure", false, "allow plaintext development service")
 	flags.StringVar(&opts.logLevel, "log-level", envOr(getenv, "ATTERM_RENDEZVOUS_LOG_LEVEL", "INFO"), "DEBUG, INFO, WARN, or ERROR")
 	flags.IntVar(&opts.maxConnections, "max-connections", envLimits[0], "global concurrent connection limit")
@@ -116,11 +118,14 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	if opts.devInsecure && opts.behindTLSProxy {
 		return options{}, errors.New("rendezvous: choose only one of --dev-insecure or --behind-tls-proxy")
 	}
+	if opts.allowNonLoopbackProxy && !opts.behindTLSProxy {
+		return options{}, errors.New("rendezvous: --allow-non-loopback-proxy requires --behind-tls-proxy")
+	}
 	if !opts.devInsecure && len(opts.origins) == 0 {
 		return options{}, errors.New("rendezvous: production mode requires --origins")
 	}
 	if opts.behindTLSProxy {
-		if !isLoopbackAddress(opts.addr) {
+		if !isLoopbackAddress(opts.addr) && !opts.allowNonLoopbackProxy {
 			return options{}, errors.New("rendezvous: --behind-tls-proxy requires a loopback listen address")
 		}
 		if opts.tlsCert != "" || opts.tlsKey != "" {

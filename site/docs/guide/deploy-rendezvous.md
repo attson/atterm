@@ -12,7 +12,8 @@ Rendezvous 是 Peer Space 的无账户发现与信令服务。它没有用户数
 - 公网入口必须是 HTTPS/WSS，TLS 最低版本为 1.3。
 - 必须配置浏览器 Origin 精确 allowlist，例如 `https://app.example.com`。
 - 服务直连 TLS 时必须提供真实证书，不生成或接受自签证书回退。
-- TLS 反代后端只能监听 loopback；反代必须和 Rendezvous 运行在同一台主机。
+- TLS 反代后端默认只能监听 loopback；容器内监听非 loopback 必须显式使用
+  `--allow-non-loopback-proxy`，同时将宿主机端口限制在 `127.0.0.1` 或只允许可信容器网络访问。
 - `--dev-insecure` 只用于本机开发，不用于公网部署。
 
 原生桌面客户端通常不发送 `Origin`，但仍必须完成 P-256 challenge。浏览器始终发送 Origin，
@@ -73,6 +74,11 @@ rendezvous.example.com {
     reverse_proxy 127.0.0.1:8081
 }
 ```
+
+仓库根目录的 Compose `rendezvous` profile 默认使用同一模式。Rendezvous 在容器内监听
+`:8081`，但宿主机只发布 `127.0.0.1:8081`，因此宿主机 Caddy 可以使用上面的配置。若 Caddy
+也在同一个 Compose 网络，可改为 `reverse_proxy atterm-rendezvous:8081`；不要把宿主机映射改成
+`0.0.0.0:8081`。
 
 `--behind-tls-proxy` 不信任 `X-Forwarded-For`，因此进程内 per-IP 限流看到的是反代地址。
 公网逐 IP 限流应在 Caddy、nginx 或边缘网关执行；进程内限制仍用于保护总连接数、topic 和 mailbox。

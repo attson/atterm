@@ -252,11 +252,13 @@ export function useSessionPins() {
 iOS 26 WebKit 把 `-apple-system` / `system-ui` 声明为含 CJK 覆盖、但实际渲染
 时不 fall through 到后续 family，结果 CJK 字符显示成 `[?]` 方框。修复模式：
 
-1. **ASCII mono 在前，CJK fallback 在后**：终端字体栈用 `'SF Mono', 'JetBrains
-   Mono', Consolas, 'Liberation Mono', monospace, 'PingFang SC', 'Hiragino Sans
-   GB'`。共享常量在 `desktop/frontend/src/lib/terminalFont.ts` 的
-   `TERMINAL_FONT_FAMILY`，desktop TerminalView 和 mobile MobileTerminal 都
-   import 它，避免两端漂移。
+1. **内置 ASCII mono 在前，CJK fallback 在后**：终端首先使用随应用打包的
+   `AT Term Mono`（JetBrains Mono Latin），再回退到 `PingFang SC` / `Microsoft
+   YaHei` / `Noto Sans Mono CJK SC`。不要把不存在的系统字体放在默认链首位：
+   Linux WebKitGTK/fontconfig 可能将其替换成比例字体而不是继续 fallback，导致
+   xterm 按 `W` 的宽度计算所有 cell、视觉上字距异常。共享常量和本地字体等宽
+   实测在 `desktop/frontend/src/lib/terminalFont.ts`，desktop / web / Capacitor
+   共用 `TerminalView.vue`，避免三端漂移。
 2. **UI 字体栈：`PingFang SC` 必须在 `-apple-system` 之前**（或干脆删掉
    `-apple-system`）；iOS 26 上把 `-apple-system` 放在 CJK 之前就会触发回
    归。`mobile/.../style.css` / `web/src/shared/tokens.css` 都受此约束。

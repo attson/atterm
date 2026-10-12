@@ -38,6 +38,7 @@ describe("SettingsTerminalAppearance", () => {
   afterEach(() => {
     __setBindingsForTest(undefined);
     __setPlatformForTests(null);
+    vi.restoreAllMocks();
   });
 
   async function mountAppearance() {
@@ -82,6 +83,22 @@ describe("SettingsTerminalAppearance", () => {
     const ev = w.emitted("appearance-changed");
     expect(ev).toBeTruthy();
     expect((ev!.at(-1)![0] as any).fontSize).toBe(16);
+  });
+
+  it("warns when the selected local font resolves to proportional metrics", async () => {
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      font: "",
+      measureText: (text: string) => ({ width: text.startsWith("i") ? 40 : 120 }),
+    } as unknown as CanvasRenderingContext2D);
+    const w = await mountAppearance();
+
+    const picker = w.get('[data-test="terminal-font"]');
+    await picker.get('[data-testid="select-trigger"]').trigger("click");
+    await picker.findAll('[data-testid="select-option"]')[1].trigger("click");
+    await flushPromises();
+
+    expect(w.get('[data-test="terminal-font-warning"]').text()).toContain("bundled font");
+    getContext.mockRestore();
   });
 
   // Task 4 (prefs-sync-l1 §7.2): a remote Pull re-fires "prefs:changed", the

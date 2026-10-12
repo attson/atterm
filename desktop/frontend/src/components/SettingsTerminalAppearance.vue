@@ -32,7 +32,11 @@ import {
   setTerminalScrollback,
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
-import { TERMINAL_FONT_PRESETS } from "../lib/terminalFont";
+import {
+  TERMINAL_FONT_FAMILY,
+  TERMINAL_FONT_PRESETS,
+  resolveTerminalFontFamily,
+} from "../lib/terminalFont";
 import { usePlatform } from "../platform";
 import SelectDropdown from "./SelectDropdown.vue";
 
@@ -44,6 +48,7 @@ const { t } = useI18n();
 const platform = usePlatform();
 const caps = platform.caps;
 const error = ref("");
+const fontWarning = ref("");
 
 // Loaded together in one Promise.all below since they're one logical unit —
 // Task 4's App.vue reads them the same way and expects them to arrive as a
@@ -75,6 +80,15 @@ const cursorStyleOptions = computed(() => [
 // before they raise it — this estimate feeds the {mb} placeholder below.
 const scrollbackEstimateMb = computed(() => Math.round((scrollback.value * 2.75) / 1000));
 
+async function refreshFontWarning(head: string) {
+  fontWarning.value = "";
+  if (!head) return;
+  const resolved = await resolveTerminalFontFamily(head);
+  if (resolved === TERMINAL_FONT_FAMILY) {
+    fontWarning.value = t("settings.general.terminalFontUnavailable");
+  }
+}
+
 // Shared by onMounted and the prefs:changed listener below (Task 4) so a
 // remote pull and a fresh mount observe Go the exact same way. Read-only:
 // assigns refs from what Go returns and nothing else. Must never call a
@@ -93,6 +107,7 @@ async function loadAppearance() {
     ]);
     fontHead.value = head;
     persistedFontHead.value = head;
+    await refreshFontWarning(head);
     fontSize.value = size;
     lineHeight.value = lh;
     cursorStyle.value = style;
@@ -155,11 +170,13 @@ async function onFontHeadChange() {
   const previous = persistedFontHead.value;
   error.value = "";
   try {
+    await refreshFontWarning(next);
     await setTerminalFontHead(next);
     persistedFontHead.value = next;
     emitAppearanceChanged();
   } catch (e: any) {
     fontHead.value = previous;
+    await refreshFontWarning(previous);
     error.value = e?.message ?? String(e);
   }
 }
@@ -274,6 +291,7 @@ async function onScrollbackChange(e: Event) {
         @update:modelValue="onFontHeadChange"
       />
       <p class="hint">{{ t("settings.general.terminalFontHint") }}</p>
+      <p v-if="fontWarning" class="warning" data-test="terminal-font-warning">{{ fontWarning }}</p>
     </div>
 
     <div class="settings-field-grid settings-field-grid--compact" data-test="terminal-compact-grid">
@@ -372,6 +390,11 @@ async function onScrollbackChange(e: Event) {
 }
 .error {
   color: var(--bad);
+  font-size: 12px;
+  margin: 0;
+}
+.warning {
+  color: var(--warn);
   font-size: 12px;
   margin: 0;
 }

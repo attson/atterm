@@ -14,7 +14,7 @@ import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { createReplayInputGuard } from "../lib/replayInputGuard";
 import { copyTerminalSelection, copyTextToClipboard, isTerminalCopyShortcut, type ClipboardWriter } from "../lib/terminalCopy";
-import { composeFontFamily } from "../lib/terminalFont";
+import { resolveTerminalFontFamily } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
 import {
   CommandTracker,
@@ -1927,9 +1927,15 @@ function safeFit() {
 // metricsChanged compares against lastAppliedMetrics (module-local, see its
 // declaration above), not a caller-supplied `prev` — that stays correct
 // whether props.appearance was replaced wholesale or mutated in place.
-function applyAppearance(next: TerminalAppearance) {
+let appearanceApplyVersion = 0;
+
+async function applyAppearance(next: TerminalAppearance) {
   if (!term) return;
-  term.options.fontFamily = composeFontFamily(next.fontHead);
+  const applyVersion = ++appearanceApplyVersion;
+  const fontFamily = await resolveTerminalFontFamily(next.fontHead);
+  if (!term || applyVersion !== appearanceApplyVersion) return;
+
+  term.options.fontFamily = fontFamily;
   term.options.fontSize = next.fontSize;
   term.options.lineHeight = next.lineHeight;
   term.options.cursorStyle = next.cursorStyle;
@@ -1942,7 +1948,11 @@ function applyAppearance(next: TerminalAppearance) {
     lastAppliedMetrics.fontSize !== next.fontSize ||
     lastAppliedMetrics.lineHeight !== next.lineHeight;
   lastAppliedMetrics = { fontHead: next.fontHead, fontSize: next.fontSize, lineHeight: next.lineHeight };
-  if (metricsChanged && isDriver.value) safeFit();
+  if (metricsChanged) {
+    term.clearTextureAtlas();
+    term.refresh(0, term.rows - 1);
+    if (isDriver.value) safeFit();
+  }
 }
 
 function scrollToBottomAfterWriteQueue(done?: () => void) {
@@ -1959,8 +1969,18 @@ function scrollToBottomAfterWriteQueue(done?: () => void) {
 
 async function ensureTerm() {
   if (term) return;
+  let resolvedHead = props.appearance.fontHead;
+  let fontFamily = await resolveTerminalFontFamily(resolvedHead);
+  // A synced preference can land while the bundled font is loading. Resolve
+  // the latest head before construction so the watch cannot miss the change
+  // merely because `term` did not exist when it fired.
+  while (resolvedHead !== props.appearance.fontHead) {
+    resolvedHead = props.appearance.fontHead;
+    fontFamily = await resolveTerminalFontFamily(resolvedHead);
+  }
+  if (!isAlive) return;
   term = new Terminal({
-    fontFamily: composeFontFamily(props.appearance.fontHead),
+    fontFamily,
     fontSize: props.appearance.fontSize,
     lineHeight: props.appearance.lineHeight,
     cursorStyle: props.appearance.cursorStyle,
@@ -2766,7 +2786,7 @@ watch(
 // lastAppliedMetrics is immune to that either way.
 watch(
   () => props.appearance,
-  (next) => applyAppearance(next),
+  (next) => void applyAppearance(next),
 );
 
 watch(status, (nextStatus) => {

@@ -1337,7 +1337,8 @@ describe("TerminalView appearance", () => {
     const ctor = source.match(/term = new Terminal\(\{[\s\S]*?\n\s*\}\);/);
     expect(ctor).not.toBeNull();
     const body = ctor![0];
-    expect(body).toMatch(/fontFamily:\s*composeFontFamily\(/);
+    expect(source).toMatch(/let fontFamily = await resolveTerminalFontFamily\(resolvedHead\)/);
+    expect(body).toMatch(/fontFamily,/);
     expect(body).toMatch(/fontSize:\s*props\.appearance\.fontSize/);
     expect(body).toMatch(/lineHeight:\s*props\.appearance\.lineHeight/);
     expect(body).toMatch(/cursorStyle:\s*props\.appearance\.cursorStyle/);
@@ -1354,7 +1355,7 @@ describe("TerminalView appearance", () => {
     // Pins the guard shape itself, not just that the two tokens appear
     // somewhere in the function — `metricsChanged &&` deleted from the guard
     // still satisfied the old looser regex.
-    expect(body![0]).toMatch(/if\s*\(\s*metricsChanged\s*&&\s*isDriver\.value\s*\)\s*safeFit\(\)/);
+    expect(body![0]).toMatch(/if\s*\(\s*metricsChanged\s*\)[\s\S]*if\s*\(\s*isDriver\.value\s*\)\s*safeFit\(\)/);
   });
 
   test("cursor and scrollback changes do not trigger a fit", () => {

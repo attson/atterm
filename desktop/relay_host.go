@@ -1032,16 +1032,23 @@ func defaultShellArgs(command string, args []string) []string {
 	return args
 }
 
-// mergeShellIntegrationPlan returns (argv', env') with the plan's args
-// appended after argv[0] and its env appended after base. Zero plans are
-// the identity transform.
+// mergeShellIntegrationPlan returns (argv', env') with the plan's args and
+// env merged into the shell invocation. Zero plans are the identity transform.
 func mergeShellIntegrationPlan(argv, env []string, p shellintegration.Plan) ([]string, []string) {
 	if len(p.ExtraArgs) == 0 && len(p.ExtraEnv) == 0 {
 		return argv, env
 	}
 	outArgv := append([]string{}, argv...)
 	if len(p.ExtraArgs) > 0 {
-		outArgv = append(outArgv, p.ExtraArgs...)
+		if p.Shell == "bash" && len(p.ExtraArgs) >= 2 && p.ExtraArgs[0] == "--rcfile" {
+			// Bash stops parsing long options once it sees a short option,
+			// so --rcfile must precede the default -l and caller-supplied -c.
+			outArgv = append([]string{argv[0]}, p.ExtraArgs[:2]...)
+			outArgv = append(outArgv, argv[1:]...)
+			outArgv = append(outArgv, p.ExtraArgs[2:]...)
+		} else {
+			outArgv = append(outArgv, p.ExtraArgs...)
+		}
 	}
 	outEnv := append([]string{}, env...)
 	if len(p.ExtraEnv) > 0 {

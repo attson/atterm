@@ -1,12 +1,43 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/attson/atterm/desktop/shellintegration"
 )
+
+func TestMergeShellIntegrationPlanBashLoginStarts(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	home := t.TempDir()
+	rc := filepath.Join(home, "test.rc")
+	if err := os.WriteFile(rc, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argv, env := mergeShellIntegrationPlan(
+		[]string{bash, "--noprofile", "-l"},
+		[]string{"HOME=" + home, "PATH=/usr/bin:/bin"},
+		shellintegration.Plan{Shell: "bash", ExtraArgs: []string{"--rcfile", rc, "-i"}},
+	)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader("printf atterm-ready\nexit\n")
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("bash login with shell integration failed: %v", err)
+	}
+	if string(output) != "atterm-ready" {
+		t.Fatalf("bash output = %q; want atterm-ready", output)
+	}
+}
 
 func TestMergeShellIntegrationPlanAppliesEnvAndArgs(t *testing.T) {
 	baseEnv := []string{"PATH=/bin", "TERM=xterm-256color"}

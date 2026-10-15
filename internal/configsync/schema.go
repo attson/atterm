@@ -65,7 +65,6 @@ const (
 var relayKeySpecs = []RelayKeySpec{
 	{Key: "ai_notifications_only", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "command_notify_threshold_seconds", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeInt},
-	{Key: "default_shell", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeString},
 	{Key: "locale_preference", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeString},
 	{Key: "notifications_enabled", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "pinned_session_ids", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeStringArray},

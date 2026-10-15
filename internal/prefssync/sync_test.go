@@ -64,7 +64,6 @@ func TestSyncedKeys_MatchesWhitelist(t *testing.T) {
 		"terminal_cursor_style",
 		"terminal_cursor_blink",
 		"terminal_scrollback",
-		"default_shell",
 		"shortcut_bindings",
 		"profiles_encrypted",
 	}
@@ -298,13 +297,13 @@ func TestPull_ResultSlicesAreSorted(t *testing.T) {
 	a := newFake()
 	a.WriteMeta("terminal_theme", Meta{UpdatedAtLocal: 100, Dirty: false})
 	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: false})
-	a.WriteMeta("default_shell", Meta{UpdatedAtLocal: 100, Dirty: true})
+	a.WriteMeta("terminal_font_head", Meta{UpdatedAtLocal: 100, Dirty: true})
 	a.WriteMeta("ai_notifications_only", Meta{UpdatedAtLocal: 100, Dirty: true})
 
 	r := &fakeRelay{getReturn: []ServerItem{
 		{Key: "terminal_theme", Value: json.RawMessage(`"dark"`), UpdatedAt: 500},
 		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
-		{Key: "default_shell", Value: json.RawMessage(`"zsh"`), UpdatedAt: 500},
+		{Key: "terminal_font_head", Value: json.RawMessage(`"monospace"`), UpdatedAt: 500},
 		{Key: "ai_notifications_only", Value: json.RawMessage(`true`), UpdatedAt: 500},
 	}}
 	e := NewEngine(a, r)
@@ -314,7 +313,7 @@ func TestPull_ResultSlicesAreSorted(t *testing.T) {
 	}
 
 	wantAdopted := []string{"locale_preference", "terminal_theme"}
-	wantConflict := []string{"ai_notifications_only", "default_shell"}
+	wantConflict := []string{"ai_notifications_only", "terminal_font_head"}
 	if !sort.StringsAreSorted(result.Adopted) || len(result.Adopted) != len(wantAdopted) {
 		t.Fatalf("Adopted = %v; want sorted %v", result.Adopted, wantAdopted)
 	}
@@ -549,5 +548,29 @@ func TestMarkDirty_TimestampIsMonotonicPerKey(t *testing.T) {
 	e.MarkDirty("pinned_session_ids", 5000)
 	if m := a.ReadMeta("pinned_session_ids"); m.UpdatedAtLocal != 5000 {
 		t.Fatalf("UpdatedAtLocal = %d; want 5000", m.UpdatedAtLocal)
+	}
+}
+
+func TestDefaultShellRemainsLocal(t *testing.T) {
+	a := newFake()
+	a.values["default_shell"] = json.RawMessage(`"/bin/local-shell"`)
+	a.meta["default_shell"] = Meta{UpdatedAtLocal: 1, Dirty: true}
+	r := &fakeRelay{getReturn: []ServerItem{{Key: "default_shell", Value: json.RawMessage(`"/usr/bin/remote-shell"`), UpdatedAt: 100}}}
+	e := NewEngine(a, r)
+	result, err := e.Pull(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Adopted) != 0 || len(result.Conflict) != 0 {
+		t.Fatalf("retired key reported: %+v", result)
+	}
+	if err := e.Push(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.putItems) != 0 {
+		t.Fatalf("uploaded local shell: %+v", r.putItems)
+	}
+	if string(a.values["default_shell"]) != `"/bin/local-shell"` {
+		t.Fatal("local shell overwritten")
 	}
 }

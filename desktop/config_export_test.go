@@ -330,7 +330,6 @@ func TestBuildConfigExport_HandlesEverySyncedKey(t *testing.T) {
 		"terminal_cursor_style",
 		"terminal_cursor_blink",
 		"terminal_scrollback",
-		"default_shell",
 		"shortcut_bindings",
 		"ssh_hosts_encrypted", // re-homed as "ssh_hosts", never sealed
 		"profiles_encrypted",  // re-homed as "profiles", never sealed

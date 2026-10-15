@@ -1339,7 +1339,7 @@ func (a *App) SetDefaultShell(shell string) error {
 	if err != nil {
 		return err
 	}
-	return a.updatePref("default_shell", func(cfg *appConfig) error {
+	return a.updatePref("", func(cfg *appConfig) error {
 		cfg.DefaultShell = shell
 		return nil
 	})
@@ -2117,8 +2117,6 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.TerminalCursorBlink != nil
 		case "terminal_scrollback":
 			return c.TerminalScrollback != 0
-		case "default_shell":
-			return c.DefaultShell != ""
 		case "shortcut_bindings":
 			return len(c.ShortcutBindings) > 0
 		case "profiles_encrypted":

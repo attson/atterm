@@ -70,7 +70,7 @@ func TestL1KeysAreWhitelisted(t *testing.T) {
 	keys := []string{
 		"terminal_theme", "terminal_font_head", "terminal_font_size",
 		"terminal_line_height", "terminal_cursor_style", "terminal_cursor_blink",
-		"terminal_scrollback", "default_shell", "shortcut_bindings",
+		"terminal_scrollback", "shortcut_bindings",
 	}
 	for _, k := range keys {
 		if !slices.Contains(prefssync.SyncedKeys(), k) {
@@ -161,16 +161,6 @@ func TestAdapterRoundTripsL1Keys(t *testing.T) {
 			verify: func(t *testing.T, cfg appConfig) {
 				if cfg.TerminalScrollback != 9000 {
 					t.Fatalf("TerminalScrollback = %d; want 9000", cfg.TerminalScrollback)
-				}
-			},
-		},
-		{
-			key:      "default_shell",
-			wantZero: `""`,
-			seed:     func(cfg *appConfig) { cfg.DefaultShell = "/bin/zsh" },
-			verify: func(t *testing.T, cfg appConfig) {
-				if cfg.DefaultShell != "/bin/zsh" {
-					t.Fatalf("DefaultShell = %q; want /bin/zsh", cfg.DefaultShell)
 				}
 			},
 		},
@@ -300,7 +290,7 @@ func TestIsPrefCustomizedCoversL1Keys(t *testing.T) {
 	for _, k := range []string{
 		"terminal_theme", "terminal_font_head", "terminal_font_size",
 		"terminal_line_height", "terminal_cursor_style", "terminal_cursor_blink",
-		"terminal_scrollback", "default_shell", "shortcut_bindings",
+		"terminal_scrollback", "shortcut_bindings",
 	} {
 		if !isCustom(k) {
 			t.Errorf("%s: explicitly set value must count as customized — otherwise first login pulls a remote value over it", k)
@@ -546,5 +536,25 @@ func TestAdapterProfilesEncryptedWriteValueDropsMalformedEntries(t *testing.T) {
 	}
 	if got.DefaultProfileID != "" {
 		t.Errorf("default profile id referencing a dropped entry must not linger, got %q", got.DefaultProfileID)
+	}
+}
+
+func TestDefaultShellExcludedFromPortableConfig(t *testing.T) {
+	cs := newTestConfigStore(t)
+	cfg := cs.Get()
+	cfg.DefaultShell = "/bin/local-shell"
+	if err := cs.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a := newAppConfigAdapter(cs, func() []byte { return nil })
+	if _, ok := a.ReadValue("default_shell"); ok {
+		t.Fatal("local shell exposed for sync")
+	}
+	if err := a.WriteValue("default_shell", json.RawMessage(`"/bin/remote-shell"`)); err == nil {
+		t.Fatal("accepted remote shell")
+	}
+	clearPortableConfigValue(&cfg, "default_shell")
+	if cfg.DefaultShell != "/bin/local-shell" || cs.Get().DefaultShell != "/bin/local-shell" {
+		t.Fatal("local shell changed")
 	}
 }

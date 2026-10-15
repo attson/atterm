@@ -478,16 +478,10 @@ func (c appConfig) PrefsSeedMarkerFor(userID string) bool {
 // DefaultShellOrDefault resolves the configured shell, falling back to auto
 // when it cannot be used on THIS machine.
 //
-// The existence check exists because this preference syncs across devices
-// (see the L1 prefs-sync design): an absolute path like
-// /opt/homebrew/bin/fish is valid on the Mac it was set on and an unopenable
-// path everywhere else, and a bad shell means new sessions fail to start.
-// Non-absolute values are PATH-resolved at spawn time, so validating them
-// here would reject perfectly good configs.
+// Default shell is device-local. Keep the existence check for older synced
+// values, imported configs, and shells removed after configuration.
+// Non-absolute values are PATH-resolved at spawn time.
 //
-// Validation lives on the read side deliberately. Rejecting on write would
-// leave the synced value sitting in config.json while silently not taking
-// effect, which is harder to diagnose than falling back.
 // isCrossPlatformAbs reports whether s looks like an absolute path under either
 // POSIX or Windows rules. filepath.IsAbs only knows the rules of the platform
 // it is compiled for, which is wrong for any value that travels between

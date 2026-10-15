@@ -24,7 +24,6 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 		"terminal_cursor_style":            `"bar"`,
 		"terminal_cursor_blink":            `true`,
 		"terminal_scrollback":              `9000`,
-		"default_shell":                    `"/bin/zsh"`,
 		"shortcut_bindings":                `{"tab.new":"Mod+T"}`,
 		"profiles_encrypted":               `"ZGVm"`,
 	}

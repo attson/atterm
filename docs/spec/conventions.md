@@ -680,3 +680,7 @@ gh run list --repo attson/atterm --limit 10
 4. 不在组件里写 fetch/WS——通过 `lib/api` 或 `lib/connection`
 5. 样式用 `var(--xxx)` 主题变量，不写硬编码颜色（除特殊视觉如 `#d29922` 远程 amber）
 6. 表单控件优先复用现有组件（如 `SelectDropdown`），不要新增系统默认下拉；细则见 `component-style.md`
+
+### 设备本地设置
+
+默认 shell（`default_shell`）仅在本机持久化，不参与 relay 或 Peer 配置同步，也不在同步清空时重置。旧 relay 中保留的该字段应忽略；服务端继续接受旧客户端的字段以保持兼容。本机路径与环境相关的设置不能仅因已持久化就加入同步白名单。

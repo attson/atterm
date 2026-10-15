@@ -8,6 +8,7 @@ package prefssync
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 
 	"github.com/attson/atterm/internal/logging"
@@ -66,7 +67,6 @@ var syncedKeys = []string{
 	"terminal_cursor_style",
 	"terminal_cursor_blink",
 	"terminal_scrollback",
-	"default_shell",
 	"shortcut_bindings",
 	"profiles_encrypted",
 }
@@ -121,6 +121,10 @@ func (e *Engine) Pull(ctx context.Context) (PullResult, error) {
 		return result, err
 	}
 	for _, it := range items {
+		// Ignore retired keys still stored by older clients on the relay.
+		if !slices.Contains(syncedKeys, it.Key) {
+			continue
+		}
 		local := e.adapter.ReadMeta(it.Key)
 		if it.UpdatedAt > local.UpdatedAtLocal {
 			if local.Dirty {
@@ -182,6 +186,9 @@ func (e *Engine) MarkDirty(key string, updatedAtLocalMs int64) {
 // to carry pre-sync customizations up to the server.
 func (e *Engine) SeedFromLocal(isCustomized func(key string) bool, updatedAtLocalMs int64) {
 	for _, k := range e.adapter.Keys() {
+		if !slices.Contains(syncedKeys, k) {
+			continue
+		}
 		if _, ok := e.adapter.ReadValue(k); !ok {
 			continue
 		}
@@ -202,6 +209,9 @@ func (e *Engine) SeedFromLocal(isCustomized func(key string) bool, updatedAtLoca
 func (e *Engine) Push(ctx context.Context) error {
 	var items []ClientItem
 	for _, k := range e.adapter.Keys() {
+		if !slices.Contains(syncedKeys, k) {
+			continue
+		}
 		m := e.adapter.ReadMeta(k)
 		if !m.Dirty {
 			continue

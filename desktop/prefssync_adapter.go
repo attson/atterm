@@ -83,9 +83,6 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 	case "terminal_scrollback":
 		b, _ := json.Marshal(c.TerminalScrollback)
 		return b, true
-	case "default_shell":
-		b, _ := json.Marshal(c.DefaultShell)
-		return b, true
 	case "shortcut_bindings":
 		b, _ := json.Marshal(c.ShortcutBindings)
 		return b, true
@@ -248,8 +245,6 @@ func applyPortableConfigValue(c *appConfig, key string, value json.RawMessage) (
 		return true, nil
 	case "terminal_scrollback":
 		return true, json.Unmarshal(value, &c.TerminalScrollback)
-	case "default_shell":
-		return true, json.Unmarshal(value, &c.DefaultShell)
 	case "shortcut_bindings":
 		var bindings map[string]string
 		if err := json.Unmarshal(value, &bindings); err != nil {
@@ -303,8 +298,6 @@ func clearPortableConfigValue(c *appConfig, key string) bool {
 		c.TerminalCursorBlink = nil
 	case "terminal_scrollback":
 		c.TerminalScrollback = 0
-	case "default_shell":
-		c.DefaultShell = ""
 	case "shortcut_bindings":
 		c.ShortcutBindings = nil
 	default:

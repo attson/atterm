@@ -7,8 +7,6 @@ if [[ -n "${ATTERM_SHELL_INTEGRATION_LOADED:-}" ]]; then
 fi
 ATTERM_SHELL_INTEGRATION_LOADED=1
 
-__atterm_prompt_start() { printf '\033]133;A\007'; }
-__atterm_prompt_end()   { printf '\033]133;B\007'; }
 # zsh passes preexec three forms of the command line:
 #   $1 — exactly what the user typed
 #   $2 — a single-line, history-expanded form that zsh SIZE-TRUNCATES (it can
@@ -29,5 +27,6 @@ preexec_functions+=(__atterm_preexec)
 
 # Wrap PS1 with prompt-start / prompt-end markers without disturbing the rest
 # of the prompt. %{ ... %} prevents zsh from counting these bytes against the
-# visible prompt width.
-PS1='%{$(__atterm_prompt_start)%}'"${PS1}"'%{$(__atterm_prompt_end)%}'
+# visible prompt width. Literal control bytes also work with PROMPT_SUBST off,
+# without enabling command substitution in the user's existing prompt.
+PS1=$'%{\033]133;A\007%}'"${PS1}"$'%{\033]133;B\007%}'

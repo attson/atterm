@@ -2,10 +2,35 @@ package shellintegration
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestZshPromptMarkersWithoutPromptSubstitution(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	for _, option := range []string{"off", "on"} {
+		t.Run(option, func(t *testing.T) {
+			script := "unsetopt promptsubst\n"
+			if option == "on" {
+				script = "setopt promptsubst\n"
+			}
+			script += "PS1='user@host %# '\n" + zshSnippet + "\nprint -r -- $options[promptsubst]\nprint -Pn -- \"$PS1\"\n"
+			out, err := exec.Command(zsh, "-f", "-c", script).CombinedOutput()
+			if err != nil {
+				t.Fatalf("render prompt: %v: %s", err, out)
+			}
+			wantPrefix := option + "\n\x1b]133;A\x07user@host "
+			if !strings.HasPrefix(string(out), wantPrefix) || !strings.HasSuffix(string(out), " \x1b]133;B\x07") {
+				t.Fatalf("unexpected prompt bytes: %q", out)
+			}
+		})
+	}
+}
 
 func TestPrepareZshWritesWrapperAndReturnsPlan(t *testing.T) {
 	dir := t.TempDir()

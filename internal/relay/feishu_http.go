@@ -227,10 +227,11 @@ func (h *FeishuHTTPHandler) handleDelete(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if b, err := h.store.GetFeishuBinding(r.Context(), uid); err == nil {
-		h.svc.InvalidateTokenForAppID(b.AppID)
-	}
-	if err := h.store.DeleteFeishuBinding(r.Context(), uid); err != nil {
+	if err := h.store.ClearFeishuBindingBound(r.Context(), uid); err != nil {
+		if errors.Is(err, userstore.ErrFeishuBindingNotFound) {
+			http.Error(w, "configure credentials first", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

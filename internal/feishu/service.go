@@ -189,7 +189,7 @@ func (s *Service) HandleEvent(ctx context.Context, appIDHash string, body []byte
 				Inject:     &Injection{SessionID: env.CardAction.SessionID, Text: env.CardAction.Text, OwnerUserID: b.UserID},
 				Reason:     "card_inject",
 			}, nil
-		case "input", "key", "end":
+		case "input", "key", "end", "page":
 			if s.cfg.Router == nil {
 				return &HandleResult{Reason: "ignored_card_action_no_router"}, nil
 			}

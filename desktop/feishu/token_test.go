@@ -103,3 +103,41 @@ func TestLocalTenantTokenSource_DelegatesToFeishuClient(t *testing.T) {
 		t.Fatalf("hash empty")
 	}
 }
+
+func TestLocalTenantTokenSource_InvalidateDropsCurrentAppToken(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0, "msg": "ok",
+			"tenant_access_token": "local-tt-" + string(rune('0'+n)),
+			"expire":              7200,
+		})
+	}))
+	defer upstream.Close()
+
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "cli_x", AppSecret: "sec"})
+	ts := NewLocalTenantTokenSource(store, upstream.URL, nil, func() time.Time { return time.Unix(1000, 0) })
+
+	first, _, _, err := ts.Get(context.Background())
+	if err != nil {
+		t.Fatalf("first Get: %v", err)
+	}
+	second, _, _, err := ts.Get(context.Background())
+	if err != nil {
+		t.Fatalf("cached Get: %v", err)
+	}
+	if first != second || calls.Load() != 1 {
+		t.Fatalf("token should be cached: first=%q second=%q calls=%d", first, second, calls.Load())
+	}
+
+	ts.Invalidate()
+	third, _, _, err := ts.Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get after Invalidate: %v", err)
+	}
+	if third == first || calls.Load() != 2 {
+		t.Fatalf("Invalidate must refetch: first=%q third=%q calls=%d", first, third, calls.Load())
+	}
+}

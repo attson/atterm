@@ -39,3 +39,36 @@ func TestStripANSI(t *testing.T) {
 		})
 	}
 }
+
+func TestANSIStreamStripperPreservesStateAcrossChunks(t *testing.T) {
+	raw := []byte("before\x1b]133;A\x07\x1b[31mred\x1b[0mafter")
+	for split := 1; split < len(raw); split++ {
+		var stripper ANSIStreamStripper
+		got := append(stripper.Strip(raw[:split]), stripper.Strip(raw[split:])...)
+		if string(got) != "beforeredafter" {
+			t.Fatalf("split=%d: got %q, want %q", split, got, "beforeredafter")
+		}
+	}
+}
+
+func TestANSIStreamStripperDropsC1ControlStrings(t *testing.T) {
+	var stripper ANSIStreamStripper
+	raw := []byte{'a', 0x9d, '1', '3', '3', ';', 'A', 0x9c, 'b'}
+	if got := string(stripper.Strip(raw)); got != "ab" {
+		t.Fatalf("Strip(C1 OSC) = %q, want %q", got, "ab")
+	}
+}
+
+func TestANSIStreamStripperPreservesC1ValuesInsideUTF8(t *testing.T) {
+	// U+0750..U+075F encode with continuation bytes in the raw C1 range,
+	// including the CSI/OSC/ST byte values handled by the terminal parser.
+	want := "边界\u0750\u0758\u075b\u075c\u075d\u075e\u075f"
+	var stripper ANSIStreamStripper
+	var got []byte
+	for _, b := range []byte(want) {
+		got = append(got, stripper.Strip([]byte{b})...)
+	}
+	if string(got) != want {
+		t.Fatalf("byte-wise UTF-8 stream = %q, want %q", got, want)
+	}
+}

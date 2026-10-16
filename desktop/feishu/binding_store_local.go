@@ -77,10 +77,14 @@ func (s *LocalKeychainBindingStore) SetCredentials(ctx context.Context, c Creden
 	var blob localBindingBlob
 	if err == nil {
 		blob = localBindingBlob{
-			OpenID:                cur.OpenID,
-			BoundAt:               cur.BoundAt,
 			RemoteTerminalEnabled: cur.RemoteTerminalEnabled,
 			SessionAutoAttach:     cur.SessionAutoAttach,
+		}
+		// A Feishu open_id is scoped to one app. Preserve the binding when only
+		// secrets rotate, but require a fresh /bind after changing App ID.
+		if cur.AppID == c.AppID {
+			blob.OpenID = cur.OpenID
+			blob.BoundAt = cur.BoundAt
 		}
 	}
 	blob.AppID = c.AppID
@@ -102,6 +106,21 @@ func (s *LocalKeychainBindingStore) SetBound(ctx context.Context, openID string)
 		OpenID:                openID,
 		BoundAt:               time.Now().Unix(),
 		DisabledAt:            v.DisabledAt,
+		RemoteTerminalEnabled: v.RemoteTerminalEnabled,
+		SessionAutoAttach:     v.SessionAutoAttach,
+	})
+}
+
+// Unbind removes the app-scoped user identity while retaining credentials and
+// user preferences so the same app can be paired again without reconfiguration.
+func (s *LocalKeychainBindingStore) Unbind(ctx context.Context) error {
+	v, err := s.Get(ctx)
+	if err != nil {
+		return err
+	}
+	return s.write(localBindingBlob{
+		AppID: v.AppID, AppSecret: v.AppSecret,
+		EncryptKey: v.EncryptKey, VerifyToken: v.VerifyToken,
 		RemoteTerminalEnabled: v.RemoteTerminalEnabled,
 		SessionAutoAttach:     v.SessionAutoAttach,
 	})

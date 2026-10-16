@@ -135,17 +135,20 @@ func (s *RelayBackedBindingStore) ClearDisabled(ctx context.Context) error {
 	return ErrRelayManagedBoundState
 }
 
-func (s *RelayBackedBindingStore) Delete(ctx context.Context) error {
+func (s *RelayBackedBindingStore) Unbind(ctx context.Context) error {
 	resp, err := s.do(ctx, "DELETE", "/v1/feishu/bindings/me", nil)
 	if err != nil {
-		return fmt.Errorf("relay delete binding: %w", err)
+		return fmt.Errorf("relay unbind: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("relay delete binding: status %d", resp.StatusCode)
+		return fmt.Errorf("relay unbind: status %d", resp.StatusCode)
 	}
 	return nil
 }
+
+// Delete is kept as a compatibility alias for callers outside BindingStore.
+func (s *RelayBackedBindingStore) Delete(ctx context.Context) error { return s.Unbind(ctx) }
 
 func readSnippet(r interface{ Read([]byte) (int, error) }) (string, error) {
 	buf := make([]byte, 256)

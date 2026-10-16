@@ -106,6 +106,9 @@ func (r *RelayBorrowedTokenSource) Get(ctx context.Context) (string, string, str
 type LocalTenantTokenSource struct {
 	store BindingStore
 	cache *feishu.TenantTokenCache
+
+	mu        sync.Mutex
+	lastAppID string
 }
 
 func NewLocalTenantTokenSource(store BindingStore, baseURL string, httpC *http.Client, now func() time.Time) *LocalTenantTokenSource {
@@ -115,7 +118,14 @@ func NewLocalTenantTokenSource(store BindingStore, baseURL string, httpC *http.C
 	}
 }
 
-func (l *LocalTenantTokenSource) Invalidate() {}
+func (l *LocalTenantTokenSource) Invalidate() {
+	l.mu.Lock()
+	appID := l.lastAppID
+	l.mu.Unlock()
+	if appID != "" {
+		l.cache.Invalidate(appID)
+	}
+}
 
 func (l *LocalTenantTokenSource) Get(ctx context.Context) (string, string, string, error) {
 	v, err := l.store.Get(ctx)
@@ -128,6 +138,9 @@ func (l *LocalTenantTokenSource) Get(ctx context.Context) (string, string, strin
 	if v.DisabledAt != 0 {
 		return "", "", "", ErrTokenDisabled
 	}
+	l.mu.Lock()
+	l.lastAppID = v.AppID
+	l.mu.Unlock()
 	tok, err := l.cache.Get(ctx, v.AppID, v.AppSecret)
 	if err != nil {
 		return "", "", "", fmt.Errorf("mint local token: %w", err)

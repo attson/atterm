@@ -13,15 +13,16 @@ import (
 	"time"
 )
 
-// CardAnchor is a single live anchor card. The fields are all immutable
-// after creation EXCEPT LastPatchAt, LastBody, and PatchSeq, which the
-// chunker updates under its own lock (not this index's lock).
+// CardAnchor is a single live anchor card. Runtime fields documented below
+// are mutated under SendMu; identity and ownership fields remain immutable
+// after creation.
 type CardAnchor struct {
 	SessionID   string
 	CardMsgID   string
 	CardToken   string
 	OwnerOpenID string
 	CreatedAt   time.Time
+	Pagination  bool // shell cards expose previous/next history buttons; only touched under SendMu
 
 	// Mutated by the outbound chunker; cardindex does not protect these
 	// because the chunker holds the only writer to a given session's anchor.
@@ -59,8 +60,8 @@ type CardAnchor struct {
 	// under SendMu.
 	FormMounted bool
 
-	// ButtonsMounted tracks whether the anchor buttons row (^C/^D/Esc/
-	// Enter/结束 or AskOptions swap) is currently on the card. Torn down
+	// ButtonsMounted tracks whether the anchor's mobile-sized primary controls
+	// (or AskOptions swap) are currently on the card. Torn down
 	// while an AskUserQuestion form is up (form has its own submit/reset)
 	// and rebuilt when the form goes away. Only touched under SendMu.
 	ButtonsMounted bool

@@ -81,6 +81,18 @@ const (
 	WaitingSourceHook
 )
 
+// CardNotificationType identifies an automatic standalone card. Anchor cards
+// are controlled separately by the remote-terminal setting.
+type CardNotificationType string
+
+const (
+	CardNotificationCommandSuccess CardNotificationType = "command_success"
+	CardNotificationCommandFailure CardNotificationType = "command_failure"
+	CardNotificationCommandSealed  CardNotificationType = "command_sealed"
+	CardNotificationWaitingInput   CardNotificationType = "waiting_input"
+	CardNotificationAskQuestion    CardNotificationType = "ask_question"
+)
+
 // DispatcherConfig holds the wired-in dependencies.
 type DispatcherConfig struct {
 	Store   BindingStore
@@ -89,6 +101,9 @@ type DispatcherConfig struct {
 	CardKit CardKitClient // optional; nil disables anchor card send/patch
 	// Now returns Unix seconds. Default = time.Now().Unix.
 	Now func() int64
+	// CardEnabled is evaluated immediately before automatic card dispatch.
+	// Nil preserves the historical behavior where every card type is enabled.
+	CardEnabled func(CardNotificationType) bool
 }
 
 // cardMsgMap maps a sent card's message_id → session id, so a user replying to
@@ -186,6 +201,16 @@ func (d *Dispatcher) DispatchCommandFinished(ctx context.Context, ev CommandFini
 	}
 	d.muD.Unlock()
 
+	cardType := CardNotificationCommandSuccess
+	if len(ev.SealedBody) != 0 {
+		cardType = CardNotificationCommandSealed
+	} else if ev.ExitCode != 0 {
+		cardType = CardNotificationCommandFailure
+	}
+	if !d.cardEnabled(cardType) {
+		return
+	}
+
 	d.dispatch(ctx, ev.SessionID, "cmd:"+sidStr, func() ([]byte, error) {
 		card := internalfeishu.RenderCommandFinishedCard(internalfeishu.CommandFinishedInput{
 			SessionID:    ev.SessionID,
@@ -203,6 +228,13 @@ func (d *Dispatcher) DispatchCommandFinished(ctx context.Context, ev CommandFini
 }
 
 func (d *Dispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent) {
+	cardType := CardNotificationWaitingInput
+	if len(ev.Options) > 0 {
+		cardType = CardNotificationAskQuestion
+	}
+	if !d.cardEnabled(cardType) {
+		return
+	}
 	// Anchor supersedes standalone WaitingInput: when a live AIChunker is
 	// attached for this session, the anchor card's status preamble
 	// (⏸ 等待输入 · 已 Nm) + fully interactive body already carries the
@@ -254,6 +286,10 @@ func (d *Dispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDi
 		}
 		return json.Marshal(card)
 	})
+}
+
+func (d *Dispatcher) cardEnabled(cardType CardNotificationType) bool {
+	return d.cfg.CardEnabled == nil || d.cfg.CardEnabled(cardType)
 }
 
 // dispatchWaiting is like dispatch but also blocks on and records the
@@ -500,16 +536,15 @@ func (d *Dispatcher) DeleteAnchorButtonsWithSeq(ctx context.Context, tenantToken
 		internalfeishu.AnchorButtonsElementID, sequence)
 }
 
-// CreateAnchorButtonsWithSeq re-inserts the default keystroke buttons row
-// (^C/^D/Esc/Enter/结束) after the input element. Used to restore the row
-// when an AskUserQuestion form is torn down.
-func (d *Dispatcher) CreateAnchorButtonsWithSeq(ctx context.Context, tenantToken, cardToken, sessionID, targetElementID string, sequence int64) error {
+// CreateAnchorButtonsWithSeq re-inserts the default controls after the input
+// element. Used to restore the row when an AskUserQuestion form is torn down.
+func (d *Dispatcher) CreateAnchorButtonsWithSeq(ctx context.Context, tenantToken, cardToken, sessionID, targetElementID string, pagination bool, sequence int64) error {
 	if d.cfg.CardKit == nil {
 		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
 	}
 	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
 		targetElementID, "insert_after",
-		[]map[string]any{internalfeishu.NewDefaultButtonsElement(sessionID)},
+		[]map[string]any{internalfeishu.NewDefaultButtonsElement(sessionID, pagination)},
 		sequence)
 }
 

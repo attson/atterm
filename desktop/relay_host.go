@@ -115,17 +115,92 @@ type relayHost struct {
 type feishuSession struct {
 	sub                *internalfeishu.FeishuSubscriber
 	anchor             *anchorRuntime
+	aiChunker          *internalfeishu.AIChunker
 	lazyAttachInFlight bool
 }
 
 // anchorRuntime is the per-session live state the anchor card's status
-// preamble depends on: task state, elapsed time, and the last inner body we
-// flushed (so a status-only refresh can re-emit without losing the AI body).
+// preamble depends on: task state, elapsed time, the last inner body we
+// flushed, and when that body last changed (so a status-only refresh can
+// re-emit without losing the AI body or moving the last-output clock).
 type anchorRuntime struct {
-	createdAt time.Time
-	taskState atomic.Value // string (proto.TaskState*)
-	lastInner atomic.Value // string
-	render    func()       // re-build wrapper from current state + re-PATCH
+	createdAt    time.Time
+	taskState    atomic.Value // string (proto.TaskState*)
+	lastInner    atomic.Value // string
+	lastOutputAt atomic.Value // time.Time
+	aiMode       atomic.Bool  // rejects late shell flushes after an AI upgrade
+	patches      *latestAnchorPatchQueue
+	flush        internalfeishu.FlushFunc
+	render       func() // re-build wrapper from current state + re-PATCH
+}
+
+// latestAnchorPatchQueue serializes slow CardKit PATCH calls while retaining
+// only the newest body snapshot. Feishu round trips are routinely slower than
+// the 100ms output cadence; queueing every intermediate snapshot makes fresh
+// output wait behind stale requests and can even apply old bodies late.
+type latestAnchorPatchQueue struct {
+	mu         sync.Mutex
+	apply      func(string)
+	running    bool
+	active     string
+	pending    string
+	hasPending bool
+	stopped    bool
+}
+
+func newLatestAnchorPatchQueue(apply func(string)) *latestAnchorPatchQueue {
+	return &latestAnchorPatchQueue{apply: apply}
+}
+
+func (q *latestAnchorPatchQueue) Enqueue(body string) {
+	q.mu.Lock()
+	if q.stopped {
+		q.mu.Unlock()
+		return
+	}
+	if q.running {
+		if body == q.active {
+			q.pending = ""
+			q.hasPending = false
+		} else {
+			q.pending = body
+			q.hasPending = true
+		}
+		q.mu.Unlock()
+		return
+	}
+	q.running = true
+	q.active = body
+	q.mu.Unlock()
+	go q.run(body)
+}
+
+func (q *latestAnchorPatchQueue) run(body string) {
+	for {
+		q.apply(body)
+		q.mu.Lock()
+		if q.stopped || !q.hasPending {
+			q.running = false
+			q.active = ""
+			q.pending = ""
+			q.hasPending = false
+			q.mu.Unlock()
+			return
+		}
+		body = q.pending
+		q.active = body
+		q.pending = ""
+		q.hasPending = false
+		q.mu.Unlock()
+	}
+}
+
+func (q *latestAnchorPatchQueue) Stop() {
+	q.mu.Lock()
+	q.stopped = true
+	q.pending = ""
+	q.hasPending = false
+	q.mu.Unlock()
 }
 
 // sessionPTY is the minimal contract activeSession needs from whatever backs
@@ -140,9 +215,10 @@ type sessionPTY interface {
 }
 
 type activeSession struct {
-	host     sessionPTY
-	cleanup  func()
-	restored bool // true when NewSession was invoked with AIKind set (recovery path)
+	host                sessionPTY
+	cleanup             func()
+	restored            bool // true when NewSession was invoked with AIKind set (recovery path)
+	feishuUserActivated atomic.Bool
 }
 
 // startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
@@ -705,6 +781,41 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			restoredStartKind = ""
 		}
 		resolveMu.Unlock()
+		var codexStreamOnce sync.Once
+		startCodexStream := func(aiSID string, replayExisting bool) {
+			if kind != "codex" || aiSID == "" {
+				return
+			}
+			codexStreamOnce.Do(func() {
+				go startCodexTurnStream(generationCtx, resolveCwd, aiSID, replayExisting, func(turn codexTranscriptTurn) {
+					disp := h.feishuDispatcher.Load()
+					if disp == nil {
+						return
+					}
+					event := feishu.TurnEvent{Kind: feishu.TurnAssistantFinal, Text: turn.Text}
+					if turn.Role == codexTurnRoleUser {
+						event.Kind = feishu.TurnUserPrompt
+						// AIChunker uses transcript identity to reset when a second
+						// Codex conversation starts in the same terminal pane.
+						event.TranscriptPath = "codex:" + aiSID
+					} else if turn.Role == codexTurnRoleQuestion {
+						event.FormQuestions = make([]feishu.AskUserQuestionEntry, 0, len(turn.Questions))
+						for _, q := range turn.Questions {
+							opts := make([]feishu.QuestionOption, 0, len(q.Options))
+							for _, opt := range q.Options {
+								opts = append(opts, feishu.QuestionOption{Label: opt.Label, Description: opt.Description})
+							}
+							event.FormQuestions = append(event.FormQuestions, feishu.AskUserQuestionEntry{
+								Question:  q.Question,
+								Options:   opts,
+								InputMode: internalfeishu.AskFormInputCodex,
+							})
+						}
+					}
+					disp.DispatchTurn(id.String(), event)
+				})
+			})
+		}
 
 		// SetOnAIClassified runs while session.mu is held, so event publication
 		// and resolver work must stay off that callback stack. This goroutine
@@ -732,11 +843,13 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 					// a new generation could publish its clearing event after this
 					// check, then this stale callback could overwrite it with an old SID.
 					h.onAISidCaptured(id, kind, aiSid)
+					startCodexStream(aiSid, initialSID == "")
 				}
 				resolveMu.Unlock()
 			})
 		}()
 		if kind == "codex" && initialSID != "" {
+			startCodexStream(initialSID, false)
 			go startCodexKnownTitleResolve(generationCtx, sess, resolveCwd, initialSID)
 		}
 	}
@@ -757,12 +870,25 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			}
 		})
 	}
+	active := &activeSession{host: pty, cleanup: combinedCleanup, restored: req.AIKind != ""}
+	active.feishuUserActivated.Store(!req.Recovered)
 
 	// Every top-level AI OSC 133 C starts a new resolver generation. The only
 	// exception is the first same-kind command injected for a restored pane: it
 	// confirms the generation already established below instead of clearing the
 	// known initial SID and starting a duplicate resolver.
 	if sess, ok := h.server.Registry().Get(id); ok {
+		if req.Recovered {
+			// Recovery deliberately skips eager Feishu attachment so restoring a
+			// workspace does not recreate cards for every idle pane. This gate also
+			// suppresses AI classification and task-state events emitted by the
+			// automatically injected resume command. The first accepted client input
+			// is authoritative user activity and opens the lazy-attach path.
+			sess.SetOnInput(func() {
+				active.feishuUserActivated.Store(true)
+				h.lazyAttachIfMissing(context.Background(), sess, id)
+			})
+		}
 		sess.SetOnAIClassified(func(commandLine, cwd string) {
 			kind := classifyAIKindFromCommand(commandLine)
 			if kind == "" {
@@ -775,22 +901,28 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if !confirmedRestoredStart {
 				startResolveGeneration(sess, kind, cwd, "", false)
 			}
+			// autoAttach="all" may have created this card while the PTY was
+			// still a shell. Switch its body source before the first AI hook
+			// event arrives so TUI redraw bytes cannot pollute the card.
+			h.upgradeFeishuSessionToAI(id.String())
 			// autoAttach="ai": attach the Feishu subscriber now that we know
-			// this is an AI session. Use background context (not the session's
-			// resolveCtx) so the anchor survives beyond the sniff lifetime.
-			go h.attachFeishuSubscriberForAutoAttach(context.Background(), sess, id, "ai")
+			// this is an AI session. A restored session remains silent while its
+			// resume command starts automatically; real client input opens the gate.
+			if active.feishuUserActivated.Load() {
+				h.lazyAttachIfMissing(context.Background(), sess, id)
+			}
 		})
 		sess.SetOnTaskStateChange(func(sid uuid.UUID, prev, next string, meta session.TaskMeta) {
 			disp := h.feishuDispatcher.Load()
 			if disp == nil {
 				return
 			}
-			// Lazy backfill: if the user toggled remote-terminal on after
-			// this AI session started, no subscriber was registered at
-			// NewSession time. Piggyback on the next task-state change to
-			// attach the anchor now. Idempotent (gate + attach's own
-			// double-attach guard) and non-blocking (goroutine inside).
-			h.lazyAttachIfMissing(context.Background(), sess, sid)
+			// Lazy backfill: piggyback on the next task-state change, except while
+			// a recovered pane is only replaying its automatic resume sequence.
+			// Idempotence and network I/O are handled by lazyAttachIfMissing.
+			if active.feishuUserActivated.Load() {
+				h.lazyAttachIfMissing(context.Background(), sess, sid)
+			}
 			// Anchor status preamble: update the per-session runtime so the
 			// next render() shows the new label. Done synchronously (no
 			// session.mu re-entry — only touches atomic.Value), then a
@@ -934,15 +1066,16 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		_ = pty.Close()
 		return uuid.Nil, fmt.Errorf("relay host stopped")
 	}
-	h.sessions[id] = &activeSession{host: pty, cleanup: combinedCleanup, restored: req.AIKind != ""}
+	h.sessions[id] = active
 	h.mu.Unlock()
 	h.notifyChange()
 
-	// autoAttach="all": attach the Feishu subscriber immediately for every
-	// new session regardless of session type. Run in a goroutine so Feishu
-	// I/O never blocks PTY creation.
-	if sess, ok := h.server.Registry().Get(id); ok {
-		go h.attachFeishuSubscriberForAutoAttach(ctx, sess, id, "all")
+	// autoAttach="all": attach immediately for genuinely new sessions. A
+	// recovery can recreate many idle panes at once; those defer attachment
+	// until their first accepted client input opens the lazy-attach gate.
+	// Run in a goroutine so Feishu I/O never blocks PTY creation.
+	if sess, ok := h.server.Registry().Get(id); ok && shouldEagerAttachFeishuSession(req) {
+		h.lazyAttachIfMissing(ctx, sess, id)
 	}
 
 	done := make(chan struct{})
@@ -963,6 +1096,10 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	}()
 
 	return id, nil
+}
+
+func shouldEagerAttachFeishuSession(req NewSessionReq) bool {
+	return !req.Recovered
 }
 
 // watchCwd polls the child's /proc-reported cwd once a second and broadcasts
@@ -1039,18 +1176,29 @@ func mergeShellIntegrationPlan(argv, env []string, p shellintegration.Plan) ([]s
 		return argv, env
 	}
 	outArgv := append([]string{}, argv...)
+	bashEmulateLogin := false
 	if len(p.ExtraArgs) > 0 {
 		if p.Shell == "bash" && len(p.ExtraArgs) >= 2 && p.ExtraArgs[0] == "--rcfile" {
-			// Bash stops parsing long options once it sees a short option,
-			// so --rcfile must precede the default -l and caller-supplied -c.
+			// Bash both stops parsing long options after a short option and ignores
+			// --rcfile entirely in login mode. Put --rcfile first, remove login
+			// flags, and let the generated rc reproduce login-profile loading.
 			outArgv = append([]string{argv[0]}, p.ExtraArgs[:2]...)
-			outArgv = append(outArgv, argv[1:]...)
+			for _, arg := range argv[1:] {
+				if arg == "-l" || arg == "--login" {
+					bashEmulateLogin = true
+					continue
+				}
+				outArgv = append(outArgv, arg)
+			}
 			outArgv = append(outArgv, p.ExtraArgs[2:]...)
 		} else {
 			outArgv = append(outArgv, p.ExtraArgs...)
 		}
 	}
 	outEnv := append([]string{}, env...)
+	if bashEmulateLogin {
+		outEnv = append(outEnv, "ATTERM_BASH_EMULATE_LOGIN=1")
+	}
 	if len(p.ExtraEnv) > 0 {
 		outEnv = append(outEnv, p.ExtraEnv...)
 	}

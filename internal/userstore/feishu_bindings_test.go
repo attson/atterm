@@ -132,6 +132,34 @@ func TestFeishuBinding_Delete(t *testing.T) {
 	}
 }
 
+func TestFeishuBinding_ClearBoundPreservesConfiguration(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, _ := s.CreateOpaqueUser(ctx, "fb-unbind@example.com")
+	want := FeishuBindingCredentials{AppID: "cli_keep", AppSecret: "s", EncryptKey: "k", VerifyToken: "t"}
+	_ = s.UpsertFeishuBinding(ctx, u.ID, want)
+	_ = s.SetRemoteTerminalSettings(ctx, u.ID, true, "all")
+	_ = s.MarkFeishuBindingBound(ctx, u.ID, "ou_remove")
+	_ = s.MarkFeishuBindingDisabled(ctx, u.ID)
+
+	if err := s.ClearFeishuBindingBound(ctx, u.ID); err != nil {
+		t.Fatalf("clear bound: %v", err)
+	}
+	got, err := s.GetFeishuBinding(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("get after clear bound: %v", err)
+	}
+	if got.OpenID != "" || got.BoundAt != 0 || got.DisabledAt != 0 {
+		t.Fatalf("binding state was not cleared: %+v", got)
+	}
+	if got.FeishuBindingCredentials != want {
+		t.Fatalf("credentials changed: got %+v want %+v", got.FeishuBindingCredentials, want)
+	}
+	if !got.RemoteTerminalEnabled || got.SessionAutoAttach != "all" {
+		t.Fatalf("remote-terminal settings changed: %+v", got)
+	}
+}
+
 func TestFeishuBinding_RequiresCipher(t *testing.T) {
 	ctx := context.Background()
 	// Bypass newTestStore — open without WithSecretCipher.

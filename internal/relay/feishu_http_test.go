@@ -181,12 +181,14 @@ func TestFeishuHTTP_GetBindingMe(t *testing.T) {
 	}
 }
 
-func TestFeishuHTTP_DeleteBinding(t *testing.T) {
+func TestFeishuHTTP_UnbindPreservesConfiguration(t *testing.T) {
 	ctx := context.Background()
 	st := newTestUserStoreWithCipher(t)
 	u, _ := st.CreateOpaqueUser(ctx, "del@example.com")
 	h, _ := newFeishuTestHandler(t, st, 0, "tt")
-	_ = st.UpsertFeishuBinding(ctx, u.ID, userstore.FeishuBindingCredentials{AppID: "x", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	want := userstore.FeishuBindingCredentials{AppID: "x", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"}
+	_ = st.UpsertFeishuBinding(ctx, u.ID, want)
+	_ = st.MarkFeishuBindingBound(ctx, u.ID, "ou_remove")
 
 	req := httptest.NewRequest("DELETE", "/v1/feishu/bindings/me", nil)
 	req = req.WithContext(ctxWithUser(req.Context(), u.ID))
@@ -195,8 +197,15 @@ func TestFeishuHTTP_DeleteBinding(t *testing.T) {
 	if rr.Code != 204 {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if _, err := st.GetFeishuBinding(ctx, u.ID); err != userstore.ErrFeishuBindingNotFound {
-		t.Fatalf("expected gone: %v", err)
+	got, err := st.GetFeishuBinding(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("configuration should remain: %v", err)
+	}
+	if got.OpenID != "" || got.BoundAt != 0 {
+		t.Fatalf("binding state was not cleared: %+v", got)
+	}
+	if got.FeishuBindingCredentials != want {
+		t.Fatalf("credentials changed: got %+v want %+v", got.FeishuBindingCredentials, want)
 	}
 }
 

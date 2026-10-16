@@ -28,6 +28,23 @@
         <span>{{ t('settings.feishu.aiOnlyNotifications') }}</span>
       </label>
     </section>
+    <section class="card-notifications" data-test="feishu-card-notifications">
+      <p class="card-notifications__title">{{ t('settings.feishu.cardNotifications.title') }}</p>
+      <div class="card-notifications__grid">
+        <label
+          v-for="option in cardNotificationOptions"
+          :key="option.value"
+          class="card-notifications__toggle"
+        >
+          <input
+            type="checkbox"
+            :checked="cardNotifications[option.value]"
+            @change="onToggleCardNotification(option.value, $event)"
+          />
+          <span>{{ option.label }}</span>
+        </label>
+      </div>
+    </section>
     <section class="remote-terminal" data-test="feishu-remote-terminal">
       <label class="remote-terminal__toggle">
         <input type="checkbox" :checked="remoteTerminalEnabled" @change="onRemoteTerminalToggleChange" />
@@ -78,6 +95,17 @@
           </span>
         </p>
       </div>
+      <div
+        v-if="status.configured"
+        class="feishu-connection"
+        data-test="feishu-connection-status"
+      >
+        <span class="feishu-connection__dot" :class="connectionDotClass"></span>
+        <span class="feishu-connection__label">{{ connectionLabel }}</span>
+        <span v-if="status.connection_error" class="feishu-connection__error">
+          {{ status.connection_error }}
+        </span>
+      </div>
       <template v-if="status.bound">
         <p>{{ t('settings.feishu.bound', { open_id: status.open_id }) }}</p>
         <section class="test-send" data-test="feishu-test-send">
@@ -101,7 +129,7 @@
             {{ t('settings.feishu.test_send.failed', { error: testResult.error }) }}
           </p>
         </section>
-        <button type="button" class="btn-danger" @click="onDelete">{{ t('settings.feishu.delete') }}</button>
+        <button type="button" class="btn-danger" data-test="feishu-unbind" @click="onDelete">{{ t('settings.feishu.delete') }}</button>
       </template>
       <!-- Credentials stored but not yet bound. Show a "configured" view so a
            reopened dialog reflects the saved state (secrets are never echoed
@@ -174,12 +202,16 @@ import {
   setAINotificationsOnly,
   getFeishuRemoteTerminalSettings,
   setFeishuRemoteTerminalSettings,
+  getFeishuCardNotificationSettings,
+  setFeishuCardNotificationEnabled,
   getFeishuModePref,
   setFeishuModePref,
   getFeishuEffectiveMode,
   type FeishuStatusResp,
   type FeishuCredentials,
   type HookInstallState,
+  type FeishuCardNotificationSettings,
+  type FeishuCardNotificationType,
 } from '../lib/api'
 
 const { t } = useI18n()
@@ -203,6 +235,22 @@ const saveError = ref('')
 // the backend default before onMounted reads the persisted value.
 const aiOnlyNotifications = ref(true)
 
+const defaultCardNotifications: FeishuCardNotificationSettings = {
+  command_success: true,
+  command_failure: true,
+  command_sealed: true,
+  waiting_input: true,
+  ask_question: true,
+}
+const cardNotifications = ref<FeishuCardNotificationSettings>({ ...defaultCardNotifications })
+const cardNotificationOptions = computed(() => [
+  { value: 'command_success' as const, label: t('settings.feishu.cardNotifications.commandSuccess') },
+  { value: 'command_failure' as const, label: t('settings.feishu.cardNotifications.commandFailure') },
+  { value: 'command_sealed' as const, label: t('settings.feishu.cardNotifications.commandSealed') },
+  { value: 'waiting_input' as const, label: t('settings.feishu.cardNotifications.waitingInput') },
+  { value: 'ask_question' as const, label: t('settings.feishu.cardNotifications.askQuestion') },
+])
+
 // Feishu mode preference + effective mode display.
 const feishuModePref = ref<'auto' | 'local' | 'relay'>('auto')
 const feishuEffectiveMode = ref('')
@@ -212,6 +260,21 @@ const feishuModeOptions = computed<SelectOption[]>(() => [
   { value: 'local', label: t('settings.feishu.mode.options.local') },
   { value: 'relay', label: t('settings.feishu.mode.options.relay') },
 ])
+
+const connectionDotClass = computed(() => {
+  switch (status.value.connection_state) {
+    case 'connected': return 'feishu-connection__dot--green'
+    case 'connecting':
+    case 'reconnecting': return 'feishu-connection__dot--amber'
+    case 'error': return 'feishu-connection__dot--red'
+    default: return 'feishu-connection__dot--gray'
+  }
+})
+
+const connectionLabel = computed(() => {
+  const state = status.value.connection_state || 'disconnected'
+  return t(`settings.feishu.connection.${state}`)
+})
 
 async function onToggleAIOnly(e: Event) {
   const on = (e.target as HTMLInputElement).checked
@@ -230,12 +293,27 @@ async function onToggleAIOnly(e: Event) {
   }
 }
 
+async function onToggleCardNotification(cardType: FeishuCardNotificationType, e: Event) {
+  const enabled = (e.target as HTMLInputElement).checked
+  try {
+    await setFeishuCardNotificationEnabled(cardType, enabled)
+    cardNotifications.value = { ...cardNotifications.value, [cardType]: enabled }
+  } catch {
+    try {
+      cardNotifications.value = await getFeishuCardNotificationSettings()
+    } catch (err) {
+      logWarn('feishu', 'card notification settings out of sync with backend', { error: errText(err) })
+    }
+  }
+}
+
 async function onFeishuModeChange(next: string) {
   try {
     await setFeishuModePref(next)
     feishuModePref.value = next as 'auto' | 'local' | 'relay'
     // Reconcile may have swapped the running mode synchronously; refresh.
     feishuEffectiveMode.value = await getFeishuEffectiveMode()
+    await refresh()
   } catch (err) {
     // Rollback the dropdown to the persisted value on failure.
     feishuModePref.value = (await getFeishuModePref()) as 'auto' | 'local' | 'relay'
@@ -298,7 +376,7 @@ const copied = ref(false)
 // and the settings.feishu.test_send.<scenario> i18n keys. testSending holds the
 // scenario currently in flight ('' = idle) so its button shows a spinner label
 // and all buttons disable. testResult shows the last outcome.
-const testScenarios = ['command_success', 'command_failure', 'command_sealed', 'waiting_input'] as const
+const testScenarios = ['command_success', 'command_failure', 'command_sealed', 'waiting_input', 'ask_question'] as const
 const testSending = ref('')
 const testResult = ref<{ ok: boolean; error: string }>({ ok: false, error: '' })
 
@@ -397,11 +475,17 @@ onMounted(async () => {
     // non-fatal; keep the defaults (false / "ai").
   }
   try {
+    cardNotifications.value = await getFeishuCardNotificationSettings()
+  } catch {
+    // non-fatal; all card types retain their backward-compatible defaults.
+  }
+  try {
     feishuModePref.value = (await getFeishuModePref()) as 'auto' | 'local' | 'relay'
     feishuEffectiveMode.value = await getFeishuEffectiveMode()
   } catch {
     // non-fatal; keep the defaults ('auto' / '').
   }
+  startStatusPolling()
 })
 
 async function onSave() {
@@ -439,7 +523,20 @@ async function onCopyCallback() {
 // 15-min code window lapses), then the bound view takes over automatically.
 const PAIR_POLL_INTERVAL_MS = 2500
 const PAIR_POLL_MAX_MS = 15 * 60 * 1000
+const STATUS_POLL_INTERVAL_MS = 3000
 let pairPollTimer: ReturnType<typeof setInterval> | null = null
+let statusPollTimer: ReturnType<typeof setInterval> | null = null
+
+function startStatusPolling() {
+  if (statusPollTimer) clearInterval(statusPollTimer)
+  statusPollTimer = setInterval(refresh, STATUS_POLL_INTERVAL_MS)
+}
+
+function stopStatusPolling() {
+  if (!statusPollTimer) return
+  clearInterval(statusPollTimer)
+  statusPollTimer = null
+}
 
 function stopPairPolling() {
   if (pairPollTimer) {
@@ -464,7 +561,10 @@ function startPairPolling() {
   }, PAIR_POLL_INTERVAL_MS)
 }
 
-onBeforeUnmount(stopPairPolling)
+onBeforeUnmount(() => {
+  stopPairPolling()
+  stopStatusPolling()
+})
 
 async function onPair() {
   try {
@@ -610,6 +710,30 @@ async function onDelete() {
   gap: 8px;
   color: var(--warn);
 }
+.feishu-connection {
+  display: grid;
+  grid-template-columns: 8px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin: 2px 0 12px;
+  font-size: 12px;
+}
+.feishu-connection__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.feishu-connection__dot--green { background: var(--good); }
+.feishu-connection__dot--amber { background: var(--warn); }
+.feishu-connection__dot--red { background: #f87171; }
+.feishu-connection__dot--gray { background: var(--neutral); }
+.feishu-connection__label { color: var(--fg); }
+.feishu-connection__error {
+  min-width: 0;
+  color: #f87171;
+  overflow-wrap: anywhere;
+}
 .hook-install {
   padding: 8px 0 12px;
   border-bottom: 1px solid var(--border);
@@ -639,6 +763,32 @@ async function onDelete() {
   margin-bottom: 12px;
 }
 .ai-only__toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.card-notifications {
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.card-notifications__title {
+  margin: 0 0 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.card-notifications__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 16px;
+}
+.card-notifications__toggle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font-size: 13px;
+}
+.card-notifications__toggle span { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .card-notifications__grid { grid-template-columns: minmax(0, 1fr); }
+}
 .remote-terminal {
   padding: 0 0 12px;
   border-bottom: 1px solid var(--border);

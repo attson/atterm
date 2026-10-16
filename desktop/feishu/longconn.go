@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -38,6 +39,31 @@ type LongConnConfig struct {
 	// error (invalid app secret, app disabled, etc.). The reconnect loop
 	// halts after invoking it.
 	OnAuthClassFailure func(ctx context.Context, err error)
+
+	// SDK lifecycle hooks are installed by LongConn.runLoop. Keeping them on
+	// the per-attempt config lets the production adapter report the physical
+	// WebSocket handshake without leaking the SDK client outside this package.
+	onReady        func()
+	onError        func(error)
+	onReconnecting func()
+	onReconnected  func()
+	onDisconnected func()
+}
+
+const (
+	LongConnDisconnected = "disconnected"
+	LongConnConnecting   = "connecting"
+	LongConnConnected    = "connected"
+	LongConnReconnecting = "reconnecting"
+	LongConnError        = "error"
+	LongConnRelayManaged = "relay_managed"
+)
+
+// LongConnStatus is a snapshot of the physical Feishu WebSocket lifecycle.
+// LastError is cleared after a successful connection.
+type LongConnStatus struct {
+	State     string
+	LastError string
 }
 
 // longConnRuntime is the boundary the SDK adapter satisfies.
@@ -57,6 +83,9 @@ type LongConn struct {
 	cancel  context.CancelFunc
 	rt      longConnRuntime
 	started bool
+
+	statusMu sync.RWMutex
+	status   LongConnStatus
 }
 
 // NewLongConn returns a LongConn using the production SDK-backed factory.
@@ -71,7 +100,37 @@ func newLongConnWithFactory(cfg LongConnConfig, factory runtimeFactory) *LongCon
 	if cfg.Backoff.Max == 0 {
 		cfg.Backoff.Max = 5 * time.Minute
 	}
-	return &LongConn{cfg: cfg, factory: factory}
+	return &LongConn{
+		cfg:     cfg,
+		factory: factory,
+		status:  LongConnStatus{State: LongConnDisconnected},
+	}
+}
+
+// Status returns the latest lifecycle state reported by the SDK callbacks.
+func (l *LongConn) Status() LongConnStatus {
+	l.statusMu.RLock()
+	defer l.statusMu.RUnlock()
+	return l.status
+}
+
+func (l *LongConn) setStatus(state string, err error) {
+	lastError := ""
+	if err != nil {
+		lastError = err.Error()
+	}
+	l.statusMu.Lock()
+	previous := l.status
+	l.status = LongConnStatus{State: state, LastError: lastError}
+	l.statusMu.Unlock()
+	if previous.State == state && previous.LastError == lastError {
+		return
+	}
+	if err != nil {
+		logging.Warn("feishu-longconn", "state=%s error=%v", state, err)
+		return
+	}
+	logging.Info("feishu-longconn", "state=%s", state)
 }
 
 // Start opens the long connection.
@@ -85,6 +144,7 @@ func (l *LongConn) Start(ctx context.Context) error {
 	l.cancel = cancel
 	l.started = true
 	l.mu.Unlock()
+	l.setStatus(LongConnConnecting, nil)
 	go l.runLoop(runCtx)
 	return nil
 }
@@ -93,18 +153,40 @@ func (l *LongConn) runLoop(ctx context.Context) {
 	backoff := l.cfg.Backoff.Initial
 	for {
 		if ctx.Err() != nil {
+			l.setStatus(LongConnDisconnected, nil)
 			return
 		}
-		rt, err := l.factory(l.cfg)
+		attemptCfg := l.cfg
+		attemptCfg.onReady = func() { l.setStatus(LongConnConnected, nil) }
+		attemptCfg.onError = func(err error) {
+			if ctx.Err() == nil {
+				l.setStatus(LongConnReconnecting, err)
+			}
+		}
+		attemptCfg.onReconnecting = func() {
+			if ctx.Err() == nil {
+				l.setStatus(LongConnReconnecting, nil)
+			}
+		}
+		attemptCfg.onReconnected = func() { l.setStatus(LongConnConnected, nil) }
+		attemptCfg.onDisconnected = func() {
+			if ctx.Err() == nil {
+				l.setStatus(LongConnReconnecting, nil)
+			}
+		}
+		rt, err := l.factory(attemptCfg)
 		if err != nil {
 			if isAuthClass(err) {
+				l.setStatus(LongConnError, err)
 				if l.cfg.OnAuthClassFailure != nil {
 					l.cfg.OnAuthClassFailure(ctx, err)
 				}
 				return
 			}
+			l.setStatus(LongConnReconnecting, err)
 			select {
 			case <-ctx.Done():
+				l.setStatus(LongConnDisconnected, nil)
 				return
 			case <-time.After(backoff):
 			}
@@ -117,16 +199,20 @@ func (l *LongConn) runLoop(ctx context.Context) {
 		err = rt.Run(ctx)
 		_ = rt.Close(context.Background())
 		if ctx.Err() != nil {
+			l.setStatus(LongConnDisconnected, nil)
 			return
 		}
 		if isAuthClass(err) {
+			l.setStatus(LongConnError, err)
 			if l.cfg.OnAuthClassFailure != nil {
 				l.cfg.OnAuthClassFailure(ctx, err)
 			}
 			return
 		}
+		l.setStatus(LongConnReconnecting, err)
 		select {
 		case <-ctx.Done():
+			l.setStatus(LongConnDisconnected, nil)
 			return
 		case <-time.After(backoff):
 		}
@@ -158,8 +244,11 @@ func (l *LongConn) Close(ctx context.Context) error {
 		err := l.rt.Close(ctx)
 		l.rt = nil
 		l.started = false
+		l.setStatus(LongConnDisconnected, nil)
 		return err
 	}
+	l.started = false
+	l.setStatus(LongConnDisconnected, nil)
 	return nil
 }
 
@@ -213,6 +302,21 @@ func extractCardActionFields(ev *callback.CardActionTriggerEvent) (sessionID, ki
 	return
 }
 
+func dispatchCardAction(ctx context.Context, cfg LongConnConfig, ev *callback.CardActionTriggerEvent) *callback.CardActionTriggerResponse {
+	if cfg.OnCardAction != nil {
+		sessionID, kind, eventStr, operatorOpenID, text := extractCardActionFields(ev)
+		var formValue map[string]any
+		if ev != nil && ev.Event != nil && ev.Event.Action != nil {
+			formValue = ev.Event.Action.FormValue
+		}
+		cfg.OnCardAction(ctx, sessionID, kind, eventStr, operatorOpenID, text, formValue)
+	}
+	// An explicit empty response acknowledges the callback immediately. A nil
+	// response can leave the input/button in a busy state until later CardKit
+	// DELETE/CREATE/PATCH traffic happens to repaint it.
+	return &callback.CardActionTriggerResponse{}
+}
+
 // newLarkRuntime is the production factory backed by the larksuite SDK.
 func newLarkRuntime(cfg LongConnConfig) (longConnRuntime, error) {
 	disp := dispatcher.NewEventDispatcher("", "")
@@ -249,20 +353,17 @@ func newLarkRuntime(cfg LongConnConfig) (longConnRuntime, error) {
 
 	// Card action handler → cfg.OnCardAction
 	disp.OnP2CardActionTrigger(func(ctx context.Context, ev *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
-		if cfg.OnCardAction != nil {
-			sessionID, kind, eventStr, operatorOpenID, text := extractCardActionFields(ev)
-			var formValue map[string]any
-			if ev != nil && ev.Event != nil && ev.Event.Action != nil {
-				formValue = ev.Event.Action.FormValue
-			}
-			cfg.OnCardAction(ctx, sessionID, kind, eventStr, operatorOpenID, text, formValue)
-		}
-		return nil, nil
+		return dispatchCardAction(ctx, cfg, ev), nil
 	})
 
 	cli := larkws.NewClient(cfg.AppID, cfg.AppSecret,
 		larkws.WithEventHandler(disp),
 		larkws.WithAutoReconnect(false),
+		larkws.WithOnReady(cfg.onReady),
+		larkws.WithOnError(cfg.onError),
+		larkws.WithOnReconnecting(cfg.onReconnecting),
+		larkws.WithOnReconnected(cfg.onReconnected),
+		larkws.WithOnDisconnected(cfg.onDisconnected),
 	)
 	return &larkRuntime{cli: cli}, nil
 }

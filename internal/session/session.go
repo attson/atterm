@@ -188,6 +188,11 @@ type Session struct {
 	// the session-list subscribers. The hook runs OUTSIDE the lock.
 	onMetaChanged func()
 
+	// onInput, if set, fires after a TypeIn frame is accepted into the
+	// inbound queue. It runs outside s.mu so callers may inspect the session
+	// or start asynchronous work without deadlocking the PTY path.
+	onInput func()
+
 	// onAIClassified fires for every top-level AI command observed by
 	// applyOSC133Locked, even when the sticky session type is already ai.
 	// Receives the OSC 133;C command line payload (stripped of "C;") and the
@@ -350,6 +355,15 @@ func (s *Session) SetSubscriberCountHook(fn func(int)) {
 func (s *Session) SetMetaChangedHook(fn func()) {
 	s.mu.Lock()
 	s.onMetaChanged = fn
+	s.mu.Unlock()
+}
+
+// SetOnInput registers a callback fired after an input frame is accepted.
+// Resize and other inbound frame types do not trigger it. The callback runs
+// outside the session lock and should return promptly.
+func (s *Session) SetOnInput(fn func()) {
+	s.mu.Lock()
+	s.onInput = fn
 	s.mu.Unlock()
 }
 
@@ -1251,6 +1265,14 @@ func (s *Session) Inbound() <-chan proto.Frame { return s.inbound }
 func (s *Session) SendInbound(f proto.Frame) bool {
 	select {
 	case s.inbound <- f:
+		if f.Type == proto.TypeIn {
+			s.mu.RLock()
+			onInput := s.onInput
+			s.mu.RUnlock()
+			if onInput != nil {
+				onInput()
+			}
+		}
 		return true
 	default:
 		return false

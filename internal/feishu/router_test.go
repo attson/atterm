@@ -24,7 +24,15 @@ type stubSubscriber struct {
 	mu      sync.Mutex
 	openID  string
 	sentIn  [][]byte
+	pages   []string
 	claimed bool
+}
+
+func (s *stubSubscriber) NavigatePage(direction string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pages = append(s.pages, direction)
+	return true
 }
 
 func (s *stubSubscriber) ClaimDriver() {
@@ -52,6 +60,12 @@ func (s *stubSubscriber) didClaim() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.claimed
+}
+
+func (s *stubSubscriber) pageEvents() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.pages...)
 }
 
 // waitForInputs polls until the stub has received want calls, or fails the
@@ -138,6 +152,24 @@ func TestRouter_CardActionKey(t *testing.T) {
 	}
 	if got := stub.inputs(); len(got) != 1 || got[0][0] != 0x03 {
 		t.Errorf("sentIn = %v, want one entry starting 0x03", got)
+	}
+}
+
+func TestRouter_CardActionPage(t *testing.T) {
+	idx := NewCardIndex()
+	idx.Put(&CardAnchor{SessionID: "s", CardMsgID: "m", CardToken: "t", OwnerOpenID: "ou_owner"})
+	stub := &stubSubscriber{openID: "ou_owner"}
+	r := NewRouter(idx, func(string) Subscriber { return stub })
+
+	dec := r.RouteCardAction("t", "ou_owner", "page", "previous", "")
+	if dec.Action != ActionInject {
+		t.Fatalf("action = %v, want inject", dec.Action)
+	}
+	if got := stub.pageEvents(); len(got) != 1 || got[0] != "previous" {
+		t.Fatalf("page events = %v, want [previous]", got)
+	}
+	if got := stub.inputs(); len(got) != 0 {
+		t.Fatalf("page action injected PTY input: %q", got)
 	}
 }
 

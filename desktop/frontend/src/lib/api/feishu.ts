@@ -1,6 +1,8 @@
 import { bindings } from "./_bindings";
 import type {
   FeishuCredentials,
+  FeishuCardNotificationSettings,
+  FeishuCardNotificationType,
   FeishuRemoteTerminalSettings,
   FeishuStatusResp,
   HookInstallState,
@@ -8,6 +10,8 @@ import type {
 
 export type {
   FeishuCredentials,
+  FeishuCardNotificationSettings,
+  FeishuCardNotificationType,
   FeishuRemoteTerminalSettings,
   FeishuStatusResp,
   HookInstallState,
@@ -33,6 +37,17 @@ export function setFeishuRemoteTerminalSettings(enabled: boolean, autoAttach: st
   return bindings().SetFeishuRemoteTerminalSettings(enabled, autoAttach);
 }
 
+export function getFeishuCardNotificationSettings(): Promise<FeishuCardNotificationSettings> {
+  return bindings().GetFeishuCardNotificationSettings();
+}
+
+export function setFeishuCardNotificationEnabled(
+  cardType: FeishuCardNotificationType,
+  enabled: boolean,
+): Promise<void> {
+  return bindings().SetFeishuCardNotificationEnabled(cardType, enabled);
+}
+
 export function getFeishuStatus(): Promise<FeishuStatusResp> {
   return bindings().GetFeishuStatus();
 }
@@ -51,8 +66,7 @@ export function deleteFeishuBinding(): Promise<void> {
 
 // sendFeishuTestCard renders and sends one notification card to the bound
 // OpenID through the live token + IM path, so the user can confirm delivery
-// from Settings. scenario ∈ {command_success, command_failure, command_sealed,
-// waiting_input}. Rejects with the backend error message on any failure.
+// from Settings. Rejects with the backend error message on any failure.
 export function sendFeishuTestCard(scenario: string): Promise<void> {
   return bindings().SendFeishuTestCard(scenario);
 }

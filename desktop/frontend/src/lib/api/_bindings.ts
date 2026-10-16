@@ -34,6 +34,9 @@ export interface NewSessionReq {
   cwd?: string;
   cols?: number;
   rows?: number;
+  // True only for local shells recreated from recovery.json. The backend
+  // defers Feishu anchor creation until the restored session becomes active.
+  recovered?: boolean;
   // Filled from the previous run's snapshot during executeRestore
   // (recoveryRestore.ts). Go-side sniff (desktop/ai_sid_sniff.go) also sets
   // this after the child prints its prompt so resume works. Empty value
@@ -482,6 +485,10 @@ export interface FeishuStatusResp {
   // callback_url: relay event endpoint to paste into the Feishu console. Set
   // only in relay mode; empty in local mode (long-conn, no public URL).
   callback_url?: string;
+  // Actual local LongConn WebSocket lifecycle. Relay mode is observed only as
+  // relay_managed because the socket lives in the relay process.
+  connection_state?: "disconnected" | "connecting" | "connected" | "reconnecting" | "error" | "relay_managed";
+  connection_error?: string;
 }
 
 // HookInstallState mirrors desktop/hookinstall.State (json tags). Returned by
@@ -598,6 +605,21 @@ export interface ConnHealthSnapshot {
 export interface FeishuRemoteTerminalSettings {
   enabled: boolean;
   auto_attach: string;
+}
+
+export type FeishuCardNotificationType =
+  | "command_success"
+  | "command_failure"
+  | "command_sealed"
+  | "waiting_input"
+  | "ask_question";
+
+export interface FeishuCardNotificationSettings {
+  command_success: boolean;
+  command_failure: boolean;
+  command_sealed: boolean;
+  waiting_input: boolean;
+  ask_question: boolean;
 }
 
 export interface NotificationRouteData {
@@ -808,6 +830,8 @@ export interface AppBindings {
   GetFeishuEffectiveMode(): Promise<string>;
   GetFeishuRemoteTerminalSettings(): Promise<FeishuRemoteTerminalSettings>;
   SetFeishuRemoteTerminalSettings(enabled: boolean, autoAttach: string): Promise<void>;
+  GetFeishuCardNotificationSettings(): Promise<FeishuCardNotificationSettings>;
+  SetFeishuCardNotificationEnabled(cardType: FeishuCardNotificationType, enabled: boolean): Promise<void>;
   GetPtyInputDebugEnabled(): Promise<boolean>;
   SetPtyInputDebugEnabled(enabled: boolean): Promise<void>;
   ShowNotification(title: string, body: string): Promise<void>;

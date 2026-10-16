@@ -65,6 +65,43 @@ func TestUpdateSizeChangesSessionInfo(t *testing.T) {
 	}
 }
 
+func TestSendInbound_OnInputOnlyFiresForAcceptedTypeIn(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	var fires atomic.Int32
+	s.SetOnInput(func() { fires.Add(1) })
+
+	if !s.SendInbound(proto.Frame{Type: proto.TypeResize}) {
+		t.Fatal("resize frame was not accepted")
+	}
+	if got := fires.Load(); got != 0 {
+		t.Fatalf("callback fires after resize = %d; want 0", got)
+	}
+	if !s.SendInbound(proto.Frame{Type: proto.TypeIn, Payload: []byte("x")}) {
+		t.Fatal("input frame was not accepted")
+	}
+	if got := fires.Load(); got != 1 {
+		t.Fatalf("callback fires after accepted input = %d; want 1", got)
+	}
+}
+
+func TestSendInbound_OnInputDoesNotFireWhenQueueIsFull(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	var fires atomic.Int32
+	s.SetOnInput(func() { fires.Add(1) })
+
+	for i := 0; i < inboundQueueDepth; i++ {
+		if !s.SendInbound(proto.Frame{Type: proto.TypeResize}) {
+			t.Fatalf("fill frame %d was not accepted", i)
+		}
+	}
+	if s.SendInbound(proto.Frame{Type: proto.TypeIn, Payload: []byte("x")}) {
+		t.Fatal("input frame was accepted with a full queue")
+	}
+	if got := fires.Load(); got != 0 {
+		t.Fatalf("callback fires after rejected input = %d; want 0", got)
+	}
+}
+
 func TestPushOutTracksTaskLifecycleFromOSC133(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 

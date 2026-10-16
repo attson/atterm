@@ -106,6 +106,45 @@ func TestStartCodexFileResolve_SameCwdUsesProcessOwnership(t *testing.T) {
 	t.Fatalf("titles = (%q, %q), want distinct process-owned titles", first.Info().Title, second.Info().Title)
 }
 
+func TestStartCodexFileResolve_FallsBackWhenDaemonOwnsRollout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// This process models the PTY tree while the rollout is owned by an
+	// unrelated app-server daemon, so process-fd matching must fail.
+	root := exec.Command("sleep", "10")
+	if err := root.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = root.Process.Kill()
+		_ = root.Wait()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	captured := make(chan string, 1)
+	go startCodexFileResolve(ctx, sess, cwd, root.Process.Pid, func(sid string) { captured <- sid })
+	time.Sleep(codexResolveInterval * 2)
+
+	sid := "01a14354-6bac-7050-a300-e3a51298ca68"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-10-16T14-09-28-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+	)
+
+	if got := receiveString(t, captured); got != sid {
+		t.Fatalf("captured sid = %q, want %q", got, sid)
+	}
+}
+
 func startProcessHoldingFile(t *testing.T, path string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command("sh", "-c", `exec 3<"$1"; printf x; exec sleep 10`, "holder", path)

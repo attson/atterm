@@ -35,6 +35,15 @@ func (s *inMemBindingStore) SetBound(ctx context.Context, openID string) error {
 	s.view.OpenID = openID
 	return nil
 }
+func (s *inMemBindingStore) Unbind(ctx context.Context) error {
+	if s.view == nil {
+		return ErrLocalBindingNotFound
+	}
+	s.view.OpenID = ""
+	s.view.BoundAt = 0
+	s.view.DisabledAt = 0
+	return nil
+}
 func (s *inMemBindingStore) SetDisabled(ctx context.Context) error {
 	if s.view == nil {
 		return ErrLocalBindingNotFound

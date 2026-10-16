@@ -18,6 +18,7 @@ describe("buildRestoreSessionReq", () => {
     expect(req.cwd).toBe("/x");
     expect(req.cols).toBe(80);
     expect(req.rows).toBe(24);
+    expect(req.recovered).toBe(true);
     expect(req.ai_kind).toBe("claude");
     expect(req.initial_ai_session_id).toBe("sid-1");
   });

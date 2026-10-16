@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 )
 
 // WaitingInputEvent is the normalized payload a HookAdapter emits when
@@ -316,6 +318,7 @@ type AskUserQuestionEntry struct {
 	Question    string
 	Options     []QuestionOption
 	MultiSelect bool
+	InputMode   internalfeishu.AskFormInputMode
 }
 
 func extractAllAskUserQuestions(rawToolInput json.RawMessage) []AskUserQuestionEntry {

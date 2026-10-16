@@ -87,6 +87,8 @@ export function GetDirectP2PEnabled():Promise<boolean>;
 
 export function GetEndpoint():Promise<main.Endpoint>;
 
+export function GetFeishuCardNotificationSettings():Promise<main.FeishuCardNotificationSettings>;
+
 export function GetFeishuEffectiveMode():Promise<string>;
 
 export function GetFeishuModePref():Promise<string>;
@@ -197,9 +199,9 @@ export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
 
-export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
-
 export function ListPeerHosts():Promise<Array<main.PeerHostDescriptor>>;
+
+export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
 
 export function ListPeerMembers():Promise<Array<main.PeerMember>>;
 
@@ -314,6 +316,8 @@ export function SetDefaultProfileID(arg1:string):Promise<void>;
 export function SetDefaultShell(arg1:string):Promise<void>;
 
 export function SetDirectP2PEnabled(arg1:boolean):Promise<void>;
+
+export function SetFeishuCardNotificationEnabled(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetFeishuCredentials(arg1:feishu.Credentials):Promise<void>;
 

@@ -47,6 +47,15 @@ type ServiceConfig struct {
 
 	// Sessions is the registry the hook server uses for existence checks.
 	Sessions SessionLookup
+
+	// CardEnabled controls automatic standalone notifications. Anchor-card
+	// lifecycle is intentionally governed by the remote-terminal settings.
+	CardEnabled func(CardNotificationType) bool
+
+	// OnBound runs after a local short-code bind has been persisted. Desktop
+	// uses it to backfill anchor cards when remote takeover stayed enabled
+	// across an unbind/rebind cycle.
+	OnBound func()
 }
 
 // Service is the top-level façade.
@@ -61,6 +70,9 @@ type Service struct {
 
 	lcMu     sync.Mutex // guards longConn (EnsureLongConn / CloseLongConn)
 	longConn *LongConn
+	// newLongConn is replaceable inside package tests so credential reloads can
+	// be exercised without opening a real Feishu WebSocket.
+	newLongConn func(LongConnConfig) *LongConn
 
 	routerMu sync.RWMutex
 	router   *internalfeishu.Router
@@ -137,11 +149,12 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	im := &authClassAdaptingClient{inner: internalfeishu.NewClient(cfg.FeishuBase, cfg.HTTPClient)}
 
 	d := NewDispatcher(DispatcherConfig{
-		Store:   store,
-		Token:   ts,
-		IM:      im,
-		CardKit: im,
-		Now:     cfg.Now,
+		Store:       store,
+		Token:       ts,
+		IM:          im,
+		CardKit:     im,
+		Now:         cfg.Now,
+		CardEnabled: cfg.CardEnabled,
 	})
 
 	if cfg.Sessions == nil {
@@ -153,6 +166,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	return &Service{
 		cfg: cfg, store: store, tokenSrc: ts,
 		imClient: im, dispatcher: d, hookSrv: hookSrv,
+		newLongConn: NewLongConn,
 	}, nil
 }
 
@@ -160,6 +174,56 @@ func (s *Service) Store() BindingStore     { return s.store }
 func (s *Service) Dispatcher() *Dispatcher { return s.dispatcher }
 func (s *Service) HookServer() *HookServer { return s.hookSrv }
 func (s *Service) Token() TokenSource      { return s.tokenSrc }
+
+// ConnectionStatus reports whether the local Feishu WebSocket is physically
+// connected. Relay mode is explicit because that socket belongs to the relay
+// process and cannot be observed from this desktop process.
+func (s *Service) ConnectionStatus() LongConnStatus {
+	if s.cfg.Mode == ModeRelay {
+		return LongConnStatus{State: LongConnRelayManaged}
+	}
+	s.lcMu.Lock()
+	lc := s.longConn
+	s.lcMu.Unlock()
+	if lc == nil {
+		return LongConnStatus{State: LongConnDisconnected}
+	}
+	return lc.Status()
+}
+
+// ConfigureCredentials validates local credentials before persisting them,
+// then refreshes all credential-dependent runtime state. Relay mode delegates
+// validation to its HTTP binding endpoint.
+func (s *Service) ConfigureCredentials(ctx context.Context, c Credentials) error {
+	c.AppID = strings.TrimSpace(c.AppID)
+	c.AppSecret = strings.TrimSpace(c.AppSecret)
+	c.EncryptKey = strings.TrimSpace(c.EncryptKey)
+	c.VerifyToken = strings.TrimSpace(c.VerifyToken)
+	if c.AppID == "" || c.AppSecret == "" {
+		return errors.New("desktop/feishu: app_id and app_secret are required")
+	}
+
+	if s.cfg.Mode == ModeLocal {
+		validator := internalfeishu.NewTenantTokenCache(s.cfg.FeishuBase, s.cfg.HTTPClient, time.Now)
+		if _, err := validator.Get(ctx, c.AppID, c.AppSecret); err != nil {
+			return fmt.Errorf("validate feishu credentials: %w", err)
+		}
+	}
+	if err := s.store.SetCredentials(ctx, c); err != nil {
+		return err
+	}
+	s.tokenSrc.Invalidate()
+	if s.cfg.Mode != ModeLocal {
+		return nil
+	}
+	if err := s.CloseLongConn(ctx); err != nil {
+		return fmt.Errorf("restart feishu long connection: close: %w", err)
+	}
+	if err := s.EnsureLongConn(ctx); err != nil {
+		return fmt.Errorf("restart feishu long connection: start: %w", err)
+	}
+	return nil
+}
 
 // Exists makes Service satisfy SessionLookup for embedded use; production
 // callers pass an external SessionLookup via ServiceConfig.
@@ -187,7 +251,11 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 	if s.longConn != nil {
 		return nil
 	}
-	lc := NewLongConn(LongConnConfig{
+	newLongConn := s.newLongConn
+	if newLongConn == nil {
+		newLongConn = NewLongConn
+	}
+	lc := newLongConn(LongConnConfig{
 		AppID:     v.AppID,
 		AppSecret: v.AppSecret,
 		Backoff:   BackoffConfig{Initial: time.Second, Max: 5 * time.Minute},
@@ -249,6 +317,9 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 		logging.Warn("feishu", "bind SetBound: %v", err)
 		s.replyText(ctx, senderOpenID, "❌ 服务端错误,请稍后再试")
 		return
+	}
+	if s.cfg.OnBound != nil {
+		s.cfg.OnBound()
 	}
 	s.replyText(ctx, senderOpenID, "✅ 已绑定到 atterm")
 }
@@ -315,7 +386,7 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 	switch kind {
 	case "form":
 		s.handleAskFormSubmit(ctx, sessionID, operatorOpenID, formValue)
-	case "input", "key", "end":
+	case "input", "key", "end", "page":
 		// Anchor card actions: route through the inbound router.
 		r := s.getRouter()
 		if r == nil {
@@ -406,9 +477,30 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		logging.Warn("feishu", "askform empty submit sid=%s", sessionID)
 		return
 	}
-	// Stroke sequence assembled per question via buildQuestionStrokes;
-	// the full key model lives in feedback_askform_key_model.md so this
-	// file doesn't rot every time claude's TUI shifts.
+	inputMode := questions[0].InputMode
+	for _, q := range questions[1:] {
+		if q.InputMode != inputMode {
+			logging.Warn("feishu", "askform mixed input modes sid=%s", sessionID)
+			return
+		}
+	}
+	if inputMode == internalfeishu.AskFormInputCodex {
+		// Codex advances one question per submitted answer. Skipping an empty
+		// Feishu row would apply the next row's keystrokes to the wrong question.
+		if len(slots) != len(questions) {
+			logging.Warn("feishu", "codex askform incomplete submit sid=%s answered=%d questions=%d", sessionID, len(slots), len(questions))
+			return
+		}
+		for i, sl := range slots {
+			if sl.idx != i {
+				logging.Warn("feishu", "codex askform missing slot sid=%s want=%d got=%d", sessionID, i, sl.idx)
+				return
+			}
+		}
+	}
+
+	// Claude and Codex expose different terminal state machines. Keep the
+	// proven Claude stroke model isolated from the Codex planner below.
 	strokes := make([][]byte, 0)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
@@ -416,16 +508,25 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 			return
 		}
 		q := questions[sl.idx]
-		qStrokes, ok := buildQuestionStrokes(q, sl, sessionID)
+		var qStrokes [][]byte
+		var ok bool
+		if inputMode == internalfeishu.AskFormInputCodex {
+			qStrokes, ok = buildCodexQuestionStrokes(q, sl, sessionID)
+		} else {
+			qStrokes, ok = buildQuestionStrokes(q, sl, sessionID)
+		}
 		if !ok {
 			return
 		}
 		strokes = append(strokes, qStrokes...)
 	}
-	// Review page: "Submit answers" is option 1.
-	strokes = append(strokes, []byte{'1'})
+	if inputMode != internalfeishu.AskFormInputCodex {
+		// Claude's final question advances to a review page where option 1 is
+		// "Submit answers". Codex submits immediately after its final answer.
+		strokes = append(strokes, []byte{'1'})
+	}
 	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 350*time.Millisecond)
-	logging.Info("feishu", "askform submit sid=%s q=%d strokes=%d action=%d", sessionID, len(slots), len(strokes), decision.Action)
+	logging.Info("feishu", "askform submit sid=%s mode=%s q=%d strokes=%d action=%d", sessionID, inputMode, len(slots), len(strokes), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
 	// not a bad form; leaving the form up would just confuse).
@@ -435,6 +536,57 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		}
 		s.deleteAnchorForm(anchor)
 	}()
+}
+
+// buildCodexQuestionStrokes mirrors request_user_input's keyboard model:
+// a digit commits a preset answer and advances; Tab opens notes for the
+// highlighted option; Enter submits notes and advances. The last question
+// submits the whole request directly, with no separate review page.
+func buildCodexQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sessionID string) ([][]byte, bool) {
+	if q.MultiSelect || len(sl.selMulti) != 0 {
+		logging.Warn("feishu", "codex askform does not support multi-select sid=%s q=%d", sessionID, sl.idx)
+		return nil, false
+	}
+	findOptIdx := func(label string) int {
+		for i, opt := range q.Options {
+			if opt.Label == label {
+				return i + 1
+			}
+		}
+		return 0
+	}
+
+	if sl.txt == "" {
+		optIdx := findOptIdx(sl.sel)
+		if optIdx == 0 || optIdx > 9 {
+			logging.Warn("feishu", "codex askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
+			return nil, false
+		}
+		return [][]byte{{'0' + byte(optIdx)}}, true
+	}
+
+	strokes := make([][]byte, 0, len([]rune(sl.txt))+len(q.Options)+2)
+	if len(q.Options) != 0 {
+		optIdx := len(q.Options) + 1 // Codex's generated "None of the above" row.
+		if sl.sel != "" {
+			optIdx = findOptIdx(sl.sel)
+			if optIdx == 0 {
+				logging.Warn("feishu", "codex askform note label not found sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
+				return nil, false
+			}
+		}
+		// The first option is highlighted initially. Arrow navigation changes
+		// selection without committing, allowing Tab to open the notes composer.
+		for i := 1; i < optIdx; i++ {
+			strokes = append(strokes, []byte{0x1b, 0x5b, 0x42})
+		}
+		strokes = append(strokes, []byte{0x09})
+	}
+	for _, r := range sl.txt {
+		strokes = append(strokes, []byte(string(r)))
+	}
+	strokes = append(strokes, []byte{0x0d})
+	return strokes, true
 }
 
 // buildQuestionStrokes assembles the keypress sequence for one question of

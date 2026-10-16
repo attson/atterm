@@ -51,7 +51,12 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 		for _, o := range q.Options {
 			opts = append(opts, internalfeishu.AskFormOpt{Label: o.Label})
 		}
-		specs = append(specs, internalfeishu.AskFormQuestion{Question: q.Question, Options: opts, MultiSelect: q.MultiSelect})
+		specs = append(specs, internalfeishu.AskFormQuestion{
+			Question:    q.Question,
+			Options:     opts,
+			MultiSelect: q.MultiSelect,
+			InputMode:   q.InputMode,
+		})
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -84,7 +89,7 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 				anchor.CurrentInputID = ""
 			}
 		}
-		// Same for the buttons row (^C/^D/Esc/Enter/结束). The form has its
+		// Same for the terminal controls (including shell pagination). The form has its
 		// own 提交/重置 buttons; the keystroke row on top of that is noise.
 		if anchor.ButtonsMounted {
 			seqBtn := atomic.AddInt64(&anchor.PatchSeq, 1)
@@ -155,7 +160,7 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 		anchor.CurrentInputID = newID
 		logInfo("feishu-form", "input restored session=%s seq=%d new_id=%s", anchor.SessionID, seqCre, newID)
 	}
-	// Restore the keystroke buttons row after the input so the on-card
+	// Restore the terminal controls after the input so the on-card
 	// element order stays: body → input → buttons. CurrentInputID is the
 	// insert-after anchor when present; when input somehow failed to
 	// restore, fall back to inserting after the body.
@@ -165,7 +170,7 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 		if target == "" {
 			target = internalfeishu.AnchorBodyElementID
 		}
-		if err := disp.CreateAnchorButtonsWithSeq(ctx, tok, anchor.CardToken, anchor.SessionID, target, seqCre); err != nil {
+		if err := disp.CreateAnchorButtonsWithSeq(ctx, tok, anchor.CardToken, anchor.SessionID, target, anchor.Pagination, seqCre); err != nil {
 			logWarn("feishu-form", "buttons CREATE (restore) failed session=%s: %v", anchor.SessionID, err)
 			return
 		}
@@ -175,7 +180,7 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 }
 
 // swapAnchorButtons PATCHes the anchor card's button row. options nil →
-// restore the default keystroke row (^C/^D/Esc/Enter/结束); options non-empty
+// restore the default terminal controls; options non-empty
 // → render one primary button per option label (clicking submits the label
 // as if typed into the input box). Best-effort: errors logged, never bubble.
 func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
@@ -187,15 +192,6 @@ func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
 	if anchor == nil {
 		return
 	}
-	var partial map[string]any
-	if len(options) > 0 {
-		partial = internalfeishu.AskOptionsColumnSet(sessionIDStr, options)
-	} else {
-		partial = internalfeishu.DefaultButtonsColumnSet(sessionIDStr)
-	}
-	// PATCH the column_set element; `tag` is immutable per V2 contract so
-	// strip it from the partial body.
-	delete(partial, "tag")
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -215,6 +211,14 @@ func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
 			logDebug("feishu-form", "skip (buttons not mounted) session=%s opts=%d", sessionIDStr, len(options))
 			return
 		}
+		var partial map[string]any
+		if len(options) > 0 {
+			partial = internalfeishu.AskOptionsColumnSet(sessionIDStr, options)
+		} else {
+			partial = internalfeishu.DefaultButtonsColumnSet(sessionIDStr, anchor.Pagination)
+		}
+		// PATCH addresses the column_set by element_id; its tag is immutable.
+		delete(partial, "tag")
 		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
 		err = disp.PatchAnchorElement(ctx, tok, anchor.CardToken,
 			internalfeishu.AnchorButtonsElementID, partial, seq)
@@ -314,12 +318,10 @@ func (h *relayHost) clearLazyAttachInFlight(sidStr string) {
 
 // lazyAttachIfMissing gates on tryStartLazyAttach and, on success, kicks
 // off attachFeishuSubscriberForAutoAttach in a goroutine (attach performs
-// a network round-trip so callers — task-state callbacks, hook HTTP
-// handlers — must not block). triggerMode "ai" is used so
-// SessionAutoAttach="ai" bindings also honor the lazy path; "all" bindings
-// still attach because their switch case is unconditional. Callers pass
-// a nil-safe context (attach's own guards handle a nil dispatcher etc.,
-// so a stale session that closed mid-flight is not a panic risk).
+// a network round-trip so callers — settings, task-state callbacks, hook HTTP
+// handlers — must not block). The attach path reads the session's actual type
+// so an "ai" policy cannot accidentally attach a shell session merely because
+// it emitted a task-state event.
 func (h *relayHost) lazyAttachIfMissing(ctx context.Context, sess *session.Session, sid uuid.UUID) {
 	sidStr := sid.String()
 	if !h.tryStartLazyAttach(sidStr) {
@@ -327,7 +329,7 @@ func (h *relayHost) lazyAttachIfMissing(ctx context.Context, sess *session.Sessi
 	}
 	go func() {
 		defer h.clearLazyAttachInFlight(sidStr)
-		h.attachFeishuSubscriberForAutoAttach(ctx, sess, sid, "ai")
+		h.attachFeishuSubscriberForAutoAttach(ctx, sess, sid)
 	}()
 }
 
@@ -341,6 +343,12 @@ func (h *relayHost) onTurnMissingChunker(sessionIDStr string) {
 	if err != nil {
 		return
 	}
+	h.mu.Lock()
+	active := h.sessions[sid]
+	h.mu.Unlock()
+	if active == nil || !active.feishuUserActivated.Load() {
+		return
+	}
 	sess, ok := h.server.Registry().Get(sid)
 	if !ok {
 		return
@@ -348,13 +356,11 @@ func (h *relayHost) onTurnMissingChunker(sessionIDStr string) {
 	h.lazyAttachIfMissing(context.Background(), sess, sid)
 }
 
-// attachFeishuSubscriberForAutoAttach is called either immediately on session
-// creation (triggerMode="all") or from the AI-classified callback
-// (triggerMode="ai"). It checks whether the user's binding allows the attach
-// given the configured SessionAutoAttach value, then posts an anchor card and
-// starts the subscriber. All Feishu I/O is error-swallowed and non-blocking
-// with respect to the session lifecycle.
-func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, sess *session.Session, sessID uuid.UUID, triggerMode string) {
+// attachFeishuSubscriberForAutoAttach checks whether the user's binding and
+// the session's current type allow an automatic attach, then posts an anchor
+// card and starts the subscriber. All Feishu I/O is error-swallowed and
+// non-blocking with respect to the session lifecycle.
+func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, sess *session.Session, sessID uuid.UUID) {
 	disp := h.feishuDispatcher.Load()
 	if disp == nil {
 		return
@@ -373,17 +379,19 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	if openID == "" {
 		return
 	}
-	// Gate on autoAttach: "ai" triggers only fire from the AI-classified
-	// callback; "all" triggers fire immediately. "none" never auto-attaches.
+	info := sess.Info()
+	// Gate on the authoritative session type rather than the event that happened
+	// to trigger this attempt. Toggle-on scans, task-state changes, and AI hook
+	// events can therefore share the same path without widening an "ai" policy.
 	switch autoAttach {
 	case "none":
 		return
 	case "ai":
-		if triggerMode != "ai" {
+		if info.Type != session.SessionTypeAI {
 			return
 		}
 	case "all":
-		// always proceed regardless of triggerMode
+		// All live session types are eligible.
 	default:
 		// unknown value — skip
 		return
@@ -407,7 +415,6 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		label = label[:8]
 	}
 
-	info := sess.Info()
 	h.mu.Lock()
 	restored := false
 	if as, ok := h.sessions[sessID]; ok {
@@ -415,6 +422,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	}
 	h.mu.Unlock()
 
+	pagination := info.Type != session.SessionTypeAI
 	cardBody, err := internalfeishu.RenderAnchorCreate(internalfeishu.AnchorState{
 		SessionID:    sessionIDStr,
 		SessionLabel: label,
@@ -428,6 +436,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		BodyMarkdown: "",
 		Template:     "blue",
 		Restored:     restored,
+		Pagination:   pagination,
 	})
 	if err != nil {
 		logError("feishu-anchor", "render create failed session=%s: %v", sessID, err)
@@ -446,134 +455,217 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		CardToken:      cardToken,
 		OwnerOpenID:    openID,
 		CreatedAt:      time.Now(),
+		Pagination:     pagination,
 		CurrentInputID: internalfeishu.AnchorInputElementID,
 		ButtonsMounted: true,
 	}
 	h.feishuCards.Put(anchor)
 
-	// rt threads the live status state. Updated by SetOnTaskStateChange and
-	// re-rendered on a 30s ticker so elapsed time refreshes even when the AI
-	// is idle. render() composes the wrapper (status preamble + inner body)
-	// from current state and PATCHes; everyone (chunker flush, state callback,
-	// ticker) goes through it so the wire body stays consistent.
+	// rt threads the live status state. render() composes the wrapper (status
+	// preamble + inner body) from current state and PATCHes on meaningful body
+	// or task-state changes. Do not periodically render an idle card: CardKit
+	// may clear an unsent anchor_input draft when a sibling element is patched.
 	rt := &anchorRuntime{createdAt: time.Now()}
 	rt.taskState.Store("")
 	rt.lastInner.Store("")
+	rt.lastOutputAt.Store(time.Time{})
+	rt.aiMode.Store(!pagination)
 
-	patchWrapped := func(wrapped string) {
-		go func() {
-			tok, _, err := disp.GetToken(context.Background())
-			if err != nil {
-				logWarn("feishu-anchor", "patch token failed session=%s: %v", sessID, err)
-				return
-			}
-			anchor.SendMu.Lock()
-			seq := atomic.AddInt64(&anchor.PatchSeq, 1)
-			err = internalfeishu.PatchWithRetry(func() error {
-				return disp.PatchAnchor(context.Background(), tok, anchor.CardToken, wrapped, seq)
-			})
-			anchor.SendMu.Unlock()
-			if err == nil {
-				logDebug("feishu-anchor", "patch ok session=%s seq=%d", sessID, seq)
-				return
-			}
-			if internalfeishu.IsCardGoneError(err) {
-				logInfo("feishu-anchor", "card gone session=%s — detaching", sessID)
-				h.feishuCards.RemoveBySessionID(sessID.String())
-				h.detachFeishuSubscriber(sessID)
-				return
-			}
-			var ace *internalfeishu.AuthClassError
-			if errors.As(err, &ace) {
-				logWarn("feishu-anchor", "auth refresh needed session=%s (%v)", sessID, err)
-				return
-			}
-			logWarn("feishu-anchor", "patch gave up after retry session=%s: %v", sessID, err)
-		}()
-	}
+	rt.patches = newLatestAnchorPatchQueue(func(wrapped string) {
+		started := time.Now()
+		tok, _, err := disp.GetToken(context.Background())
+		if err != nil {
+			logWarn("feishu-anchor", "patch token failed session=%s: %v", sessID, err)
+			return
+		}
+		anchor.SendMu.Lock()
+		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+		err = internalfeishu.PatchWithRetry(func() error {
+			return disp.PatchAnchor(context.Background(), tok, anchor.CardToken, wrapped, seq)
+		})
+		anchor.SendMu.Unlock()
+		if err == nil {
+			logDebug("feishu-anchor", "patch ok session=%s seq=%d elapsed=%s", sessID, seq, time.Since(started))
+			return
+		}
+		if internalfeishu.IsCardGoneError(err) {
+			logInfo("feishu-anchor", "card gone session=%s — detaching", sessID)
+			h.feishuCards.RemoveBySessionID(sessID.String())
+			h.detachFeishuSubscriber(sessID)
+			return
+		}
+		var ace *internalfeishu.AuthClassError
+		if errors.As(err, &ace) {
+			logWarn("feishu-anchor", "auth refresh needed session=%s (%v)", sessID, err)
+			return
+		}
+		logWarn("feishu-anchor", "patch gave up after retry session=%s: %v", sessID, err)
+	})
 
 	rt.render = func() {
 		state, _ := rt.taskState.Load().(string)
 		inner, _ := rt.lastInner.Load().(string)
-		wrapped := internalfeishu.PrependStatus(state, time.Since(rt.createdAt), inner)
-		patchWrapped(wrapped)
+		lastOutputAt, _ := rt.lastOutputAt.Load().(time.Time)
+		wrapped := internalfeishu.PrependStatusWithLastOutput(state, time.Since(rt.createdAt), lastOutputAt, inner)
+		rt.patches.Enqueue(wrapped)
 	}
 
-	// flush is the Chunker callback — stash the latest inner body and re-render.
-	flush := func(body string) {
+	// applyBody is the structured AI callback. shellFlush adds a generation
+	// gate so a PTY frame already being drained when shell→AI happens cannot
+	// restore the stale paginated body after the upgrade reset.
+	applyBody := func(body string) {
 		preview := body
 		if len(preview) > 60 {
 			preview = preview[:60]
 		}
 		logDebug("feishu-anchor", "flush session=%s body_len=%d preview=%q", sessID, len(body), preview)
 		rt.lastInner.Store(body)
+		rt.lastOutputAt.Store(time.Now())
 		rt.render()
 	}
+	shellFlush := func(body string) {
+		if rt.aiMode.Load() {
+			return
+		}
+		applyBody(body)
+	}
+	rt.flush = applyBody
 
 	h.feishuSubsMu.Lock()
 	h.getOrCreateFeishuSessionLocked(sessionIDStr).anchor = rt
 	h.feishuSubsMu.Unlock()
 
-	// AI sessions render their anchor card body from per-turn AIChunker events
-	// (👤/🤖/🛠), not from raw PTY bytes. Shell sessions still need the PTY
-	// roller because there are no hook events to fall back on. `info` was
-	// captured above for header rendering — reuse it here.
-	pumpPTYBytes := info.Type != session.SessionTypeAI
-	sub := internalfeishu.AttachFeishuSubscriber(sess, openID, pumpPTYBytes, flush)
+	// SendAnchorCard is a network round trip. The session may have launched an
+	// AI CLI while that request was in flight, so do not reuse the type snapshot
+	// captured for the card header when selecting the live body source.
+	pumpPTYBytes := sess.Info().Type != session.SessionTypeAI
+	sub := internalfeishu.AttachFeishuSubscriber(sess, openID, pumpPTYBytes, shellFlush)
 
 	h.feishuSubsMu.Lock()
 	h.getOrCreateFeishuSessionLocked(sessionIDStr).sub = sub
 	h.feishuSubsMu.Unlock()
 
-	// AI session only: wire a per-session AIChunker into the dispatcher so
-	// per-turn hook events stream into the same anchor card. The chunker
-	// shares the flush closure (same anchor + token path). The tick goroutine
-	// keeps the chunker flushing on idle; it exits cleanly via fs.Done().
-	if info.Type == session.SessionTypeAI {
-		aiChunker := internalfeishu.NewAIChunker(flush)
-		disp.AttachAIChunker(sessionIDStr, aiChunker)
-		go func() {
-			t := time.NewTicker(100 * time.Millisecond)
-			defer t.Stop()
-			for {
-				select {
-				case <-t.C:
-					aiChunker.Tick()
-				case <-sub.Done():
-					return
-				}
-			}
-		}()
+	// Check once more after publishing sub. This closes the remaining window:
+	// classification before publication could not upgrade the missing sub,
+	// while classification after publication upgrades through its callback.
+	finalType := sess.Info().Type
+	if finalType == session.SessionTypeAI {
+		h.upgradeFeishuSessionToAI(sessionIDStr)
 	}
 
-	// Status preamble refresher: re-render every 30s so elapsed time bumps
-	// even when the AI is idle (no body change means flush is never called
-	// otherwise). Exits with sub.Done() so detach kills it cleanly.
+	logInfo("feishu-anchor", "attached session=%s card_msg_id=%s initial_type=%s final_type=%s", sessID, msgID, info.Type, finalType)
+}
+
+// upgradeFeishuSessionToAI converts an already-attached shell anchor to the
+// structured AI event stream. It is intentionally safe to call before an
+// anchor exists and repeatedly for subsequent top-level AI commands.
+func (h *relayHost) upgradeFeishuSessionToAI(sessionIDStr string) {
+	disp := h.feishuDispatcher.Load()
+	if disp == nil {
+		return
+	}
+
+	h.feishuSubsMu.Lock()
+	fs := h.feishuSessions[sessionIDStr]
+	if fs == nil || fs.sub == nil || fs.anchor == nil || fs.anchor.flush == nil {
+		h.feishuSubsMu.Unlock()
+		return
+	}
+	fs.sub.SetPumpPTYBytes(false)
+	if fs.aiChunker != nil {
+		h.feishuSubsMu.Unlock()
+		return
+	}
+	rt := fs.anchor
+	rt.aiMode.Store(true)
+	rt.lastInner.Store("")
+	rt.lastOutputAt.Store(time.Time{})
+	chunker := internalfeishu.NewAIChunker(rt.flush)
+	fs.aiChunker = chunker
+	sub := fs.sub
+	// Register while holding feishuSubsMu so detach cannot remove the session
+	// and its dispatcher entry between our local state change and this call.
+	disp.AttachAIChunker(sessionIDStr, chunker)
+	h.feishuSubsMu.Unlock()
+	// Remove the shell page marker/history immediately. The first structured
+	// turn may arrive later (Codex binds its rollout asynchronously), but the
+	// card must already present itself as an AI conversation.
+	if rt.render != nil {
+		rt.render()
+	}
+
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		t := time.NewTicker(100 * time.Millisecond)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
-				rt.render()
+				chunker.Tick()
 			case <-sub.Done():
 				return
 			}
 		}
 	}()
 
-	logInfo("feishu-anchor", "attached session=%s card_msg_id=%s", sessID, msgID)
+	// CardKit operations are network I/O and this helper may run inside the
+	// session's locked classification callback, so update controls async.
+	go h.patchAnchorForAIMode(sessionIDStr, disp)
+}
+
+func (h *relayHost) patchAnchorForAIMode(sessionIDStr string, disp *feishu.Dispatcher) {
+	anchor := h.feishuCards.BySessionID(sessionIDStr)
+	if anchor == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tok, _, err := disp.GetToken(ctx)
+	if err != nil {
+		logWarn("feishu-anchor", "AI controls token failed session=%s: %v", sessionIDStr, err)
+		return
+	}
+
+	anchor.SendMu.Lock()
+	defer anchor.SendMu.Unlock()
+	anchor.Pagination = false
+	if !anchor.ButtonsMounted {
+		return
+	}
+	partial := internalfeishu.DefaultButtonsColumnSet(sessionIDStr, false)
+	delete(partial, "tag")
+	seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+	if err := disp.PatchAnchorElement(ctx, tok, anchor.CardToken,
+		internalfeishu.AnchorButtonsElementID, partial, seq); err != nil {
+		logWarn("feishu-anchor", "AI controls PATCH failed session=%s: %v", sessionIDStr, err)
+		return
+	}
+	logInfo("feishu-anchor", "upgraded shell anchor to AI session=%s seq=%d", sessionIDStr, seq)
 }
 
 // OnRemoteTerminalToggle reacts to changes in the binding's
-// RemoteTerminalEnabled flag. When flipped off, detach every active
-// FeishuSubscriber and PATCH each anchor to its archived state. Sessions
-// themselves are unaffected. When flipped on, no bulk re-attach — new
-// sessions pick up via autoAttach; pre-existing sessions need to recreate
-// (P2 — explicit /attach command).
+// RemoteTerminalEnabled flag. When flipped on, it immediately backfills live
+// sessions allowed by SessionAutoAttach. When flipped off, it detaches every
+// active FeishuSubscriber and PATCHes each anchor to its archived state.
+// Sessions themselves are unaffected.
 func (h *relayHost) OnRemoteTerminalToggle(enabled bool) {
 	if enabled {
-		return // No bulk re-attach on enable; new sessions pick up naturally.
+		if h.feishuRemoteTermState == nil {
+			return
+		}
+		stateEnabled, _, autoAttach, ok := h.feishuRemoteTermState(context.Background())
+		if !ok || !stateEnabled || autoAttach == "none" {
+			return
+		}
+		for _, sess := range h.server.Registry().List() {
+			if autoAttach == "ai" && sess.Info().Type != session.SessionTypeAI {
+				continue
+			}
+			if autoAttach != "ai" && autoAttach != "all" {
+				return
+			}
+			h.lazyAttachIfMissing(context.Background(), sess, sess.ID)
+		}
+		return
 	}
 	// Snapshot the current session IDs under the lock, then release before
 	// calling detachFeishuSubscriber (which re-acquires the lock for each
@@ -598,11 +690,16 @@ func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
 
 	h.feishuSubsMu.Lock()
 	var sub *internalfeishu.FeishuSubscriber
+	var rt *anchorRuntime
 	if fs := h.feishuSessions[sessionIDStr]; fs != nil {
 		sub = fs.sub
+		rt = fs.anchor
 	}
 	delete(h.feishuSessions, sessionIDStr)
 	h.feishuSubsMu.Unlock()
+	if rt != nil && rt.patches != nil {
+		rt.patches.Stop()
+	}
 
 	// Detach the AIChunker BEFORE sub.Detach() so in-flight hook events do not
 	// push turns into a chunker whose tick goroutine is already exiting.

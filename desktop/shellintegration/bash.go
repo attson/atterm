@@ -27,8 +27,22 @@ func prepareBash(sessionID string) Plan {
 		return Plan{}
 	}
 
-	rcfile := fmt.Sprintf(`# atterm bash rcfile — sources user rc then injects OSC 133 hooks.
-[[ -f ~/.bashrc ]] && source ~/.bashrc
+	rcfile := fmt.Sprintf(`# atterm bash rcfile — preserves login startup, then injects OSC 133 hooks.
+# Bash ignores --rcfile in login mode. relay_host removes -l and sets this
+# marker so the rcfile can reproduce Bash's login startup order itself.
+if [[ "${ATTERM_BASH_EMULATE_LOGIN:-}" == "1" ]]; then
+  [[ -f /etc/profile ]] && source /etc/profile
+  if [[ -f ~/.bash_profile ]]; then
+    source ~/.bash_profile
+  elif [[ -f ~/.bash_login ]]; then
+    source ~/.bash_login
+  elif [[ -f ~/.profile ]]; then
+    source ~/.profile
+  fi
+else
+  [[ -f ~/.bashrc ]] && source ~/.bashrc
+fi
+unset ATTERM_BASH_EMULATE_LOGIN
 source %q || true
 `, snippetPath)
 

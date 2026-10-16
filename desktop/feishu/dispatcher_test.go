@@ -131,6 +131,74 @@ func TestDispatcher_CommandFinishedHappy(t *testing.T) {
 	}
 }
 
+func TestDispatcher_CardTypeFilters(t *testing.T) {
+	tests := []struct {
+		name     string
+		blocked  CardNotificationType
+		dispatch func(*Dispatcher)
+	}{
+		{
+			name:    "command success",
+			blocked: CardNotificationCommandSuccess,
+			dispatch: func(d *Dispatcher) {
+				d.DispatchCommandFinished(context.Background(), CommandFinishedEvent{SessionID: uuid.New(), ExitCode: 0})
+			},
+		},
+		{
+			name:    "command failure",
+			blocked: CardNotificationCommandFailure,
+			dispatch: func(d *Dispatcher) {
+				d.DispatchCommandFinished(context.Background(), CommandFinishedEvent{SessionID: uuid.New(), ExitCode: 1})
+			},
+		},
+		{
+			name:    "sealed command",
+			blocked: CardNotificationCommandSealed,
+			dispatch: func(d *Dispatcher) {
+				d.DispatchCommandFinished(context.Background(), CommandFinishedEvent{SessionID: uuid.New(), ExitCode: 1, SealedBody: []byte("sealed")})
+			},
+		},
+		{
+			name:    "waiting input",
+			blocked: CardNotificationWaitingInput,
+			dispatch: func(d *Dispatcher) {
+				d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{SessionID: uuid.New(), QuestionText: "wait"})
+			},
+		},
+		{
+			name:    "ask question",
+			blocked: CardNotificationAskQuestion,
+			dispatch: func(d *Dispatcher) {
+				d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+					SessionID: uuid.New(), QuestionText: "pick", Options: []QuestionOption{{Label: "A"}},
+				})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &inMemBindingStore{}
+			_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s"})
+			_ = store.SetBound(context.Background(), "ou_x")
+			im := &capturingIM{}
+			d := NewDispatcher(DispatcherConfig{
+				Store: store,
+				Token: &stubTokenSource{tok: "tt", openID: "ou_x"},
+				IM:    im,
+				CardEnabled: func(cardType CardNotificationType) bool {
+					return cardType != tc.blocked
+				},
+			})
+
+			tc.dispatch(d)
+			if len(im.bodies) != 0 {
+				t.Fatalf("blocked %s card sent %d message(s)", tc.blocked, len(im.bodies))
+			}
+		})
+	}
+}
+
 func TestDispatcher_NoBindingDrops(t *testing.T) {
 	store := &inMemBindingStore{}
 	d := NewDispatcher(DispatcherConfig{
@@ -582,6 +650,30 @@ func TestDispatcher_DispatchTurnRoutesToChunker(t *testing.T) {
 
 	if !strings.Contains(got, "hello") {
 		t.Errorf("got = %q, want it to contain 'hello'", got)
+	}
+}
+
+func TestDispatcher_DispatchTurnPreservesCodexFormMode(t *testing.T) {
+	d := NewDispatcher(DispatcherConfig{})
+	d.AttachAIChunker("sess-codex", internalfeishu.NewAIChunker(func(string) {}))
+	got := make(chan []AskUserQuestionEntry, 1)
+	d.SetOnAskForm(func(_ string, questions []AskUserQuestionEntry) { got <- questions })
+	d.DispatchTurn("sess-codex", TurnEvent{
+		Kind: TurnAssistantFinal,
+		Text: "Pick one",
+		FormQuestions: []AskUserQuestionEntry{{
+			Question:  "Pick one",
+			Options:   []QuestionOption{{Label: "A"}},
+			InputMode: internalfeishu.AskFormInputCodex,
+		}},
+	})
+	select {
+	case questions := <-got:
+		if len(questions) != 1 || questions[0].InputMode != internalfeishu.AskFormInputCodex {
+			t.Fatalf("questions = %+v", questions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Codex form callback did not fire")
 	}
 }
 

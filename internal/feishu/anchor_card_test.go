@@ -56,17 +56,17 @@ func TestRenderAnchorCreate_NoLegacyActionTag(t *testing.T) {
 	}
 }
 
-// All five button labels (^C, ^D, Esc, Enter, 结束) and their event payloads
-// must round-trip through the renderer regardless of container shape.
-func TestRenderAnchorCreate_ContainsAllButtons(t *testing.T) {
+// AI cards keep only the controls that matter for conversational TUIs. Four
+// columns remain readable on Feishu mobile; low-frequency ^D is intentionally
+// omitted from the card surface.
+func TestRenderAnchorCreate_AIControlsFitMobile(t *testing.T) {
 	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc"})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	s := string(body)
 	for _, want := range []string{
-		`"content":"^C"`, `"event":"ctrl_c"`,
-		`"content":"^D"`, `"event":"ctrl_d"`,
+		`"content":"中断"`, `"event":"ctrl_c"`,
 		`"content":"Esc"`, `"event":"esc"`,
 		`"content":"Enter"`, `"event":"enter"`,
 		`"content":"结束"`, `"kind":"end"`,
@@ -74,6 +74,47 @@ func TestRenderAnchorCreate_ContainsAllButtons(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("body missing %q: %s", want, s)
 		}
+	}
+	if strings.Contains(s, `"event":"ctrl_d"`) || strings.Contains(s, `"kind":"page"`) {
+		t.Errorf("AI card contains non-primary mobile controls: %s", s)
+	}
+	if got := strings.Count(s, `"tag":"column"`); got != 4 {
+		t.Errorf("AI control columns = %d, want 4: %s", got, s)
+	}
+}
+
+func TestRenderAnchorCreate_ShellPaginationButtons(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc", Pagination: true})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		`"content":"上页"`, `"event":"previous"`,
+		`"content":"下页"`, `"event":"next"`,
+		`"content":"中断"`, `"event":"ctrl_c"`,
+		`"content":"结束"`, `"kind":"end"`,
+		`"kind":"page"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("shell card missing %q: %s", want, s)
+		}
+	}
+	for _, omitted := range []string{`"event":"ctrl_d"`, `"event":"esc"`, `"event":"enter"`} {
+		if strings.Contains(s, omitted) {
+			t.Errorf("shell card contains secondary control %q: %s", omitted, s)
+		}
+	}
+	if got := strings.Count(s, `"tag":"column"`); got != 4 {
+		t.Errorf("shell control columns = %d, want 4: %s", got, s)
+	}
+
+	aiBody, err := RenderAnchorCreate(AnchorState{SessionID: "ai"})
+	if err != nil {
+		t.Fatalf("render AI card: %v", err)
+	}
+	if strings.Contains(string(aiBody), `"kind":"page"`) {
+		t.Fatalf("AI card unexpectedly contains pagination: %s", aiBody)
 	}
 }
 
@@ -163,6 +204,32 @@ func TestPrependStatus_RunningWithElapsed(t *testing.T) {
 	}
 	if !strings.Contains(got, "👤 hi") {
 		t.Errorf("inner body lost: %q", got)
+	}
+}
+
+func TestPrependStatusWithLastOutput_IncludesLocalClockTime(t *testing.T) {
+	lastOutputAt := time.Date(2026, time.October, 15, 20, 49, 32, 0, time.Local)
+	got := PrependStatusWithLastOutput("", time.Minute, lastOutputAt, "output")
+	if !strings.HasPrefix(got, "> ▸ 活跃 · 已 1m · 最后输出 20:49:32") {
+		t.Errorf("missing last-output timestamp: %q", got)
+	}
+}
+
+func TestPrependStatusWithLastOutput_ZeroTimeIsOmitted(t *testing.T) {
+	got := PrependStatusWithLastOutput("", time.Minute, time.Time{}, "output")
+	if strings.Contains(got, "最后输出") {
+		t.Errorf("zero last-output timestamp should be omitted: %q", got)
+	}
+}
+
+func TestPrependStatusWithLastOutput_StatusRefreshPreservesTime(t *testing.T) {
+	lastOutputAt := time.Date(2026, time.October, 15, 20, 49, 32, 0, time.Local)
+	first := PrependStatusWithLastOutput("running", time.Minute, lastOutputAt, "output")
+	later := PrependStatusWithLastOutput("waiting_input", 2*time.Minute, lastOutputAt, "output")
+	for _, got := range []string{first, later} {
+		if !strings.Contains(got, "最后输出 20:49:32") {
+			t.Errorf("status refresh changed last-output timestamp: %q", got)
+		}
 	}
 }
 

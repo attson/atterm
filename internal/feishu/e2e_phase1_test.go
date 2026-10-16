@@ -118,7 +118,8 @@ func TestPhase1_ShellAttachOutputReplyInject(t *testing.T) {
 // Subscriber interface for the e2e test.
 type feishuSubAdapter struct{ fs *FeishuSubscriber }
 
-func (a *feishuSubAdapter) ClaimDriver()              { a.fs.ClaimDriver() }
-func (a *feishuSubAdapter) SendInput(b []byte) bool   { return a.fs.SendInput(b) }
-func (a *feishuSubAdapter) OwnerOpenID() string       { return a.fs.OwnerOpenID() }
-func (a *feishuSubAdapter) CurrentDriverName() string { return a.fs.CurrentDriverName() }
+func (a *feishuSubAdapter) ClaimDriver()               { a.fs.ClaimDriver() }
+func (a *feishuSubAdapter) SendInput(b []byte) bool    { return a.fs.SendInput(b) }
+func (a *feishuSubAdapter) NavigatePage(d string) bool { return a.fs.NavigatePage(d) }
+func (a *feishuSubAdapter) OwnerOpenID() string        { return a.fs.OwnerOpenID() }
+func (a *feishuSubAdapter) CurrentDriverName() string  { return a.fs.CurrentDriverName() }

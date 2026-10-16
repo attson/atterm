@@ -21,6 +21,13 @@ const HOOK_OK: api.HookInstallState = {
 
 beforeEach(() => {
   vi.spyOn(api, 'getHookInstallState').mockResolvedValue(HOOK_OK as never)
+  vi.spyOn(api, 'getFeishuCardNotificationSettings').mockResolvedValue({
+    command_success: true,
+    command_failure: true,
+    command_sealed: true,
+    waiting_input: true,
+    ask_question: true,
+  })
 })
 
 afterEach(() => {
@@ -37,6 +44,7 @@ describe('SettingsFeishu configured view', () => {
       disabled: false,
       configured: true,
       app_id: 'cli_app',
+      connection_state: 'connected',
     } as never)
 
     const w = mount(SettingsFeishu)
@@ -44,6 +52,8 @@ describe('SettingsFeishu configured view', () => {
 
     expect(w.find('[data-test="feishu-configured"]').exists()).toBe(true)
     expect(w.find('[data-test="feishu-longconn-hint"]').exists()).toBe(true)
+    expect(w.get('[data-test="feishu-connection-status"]').text()).toContain('settings.feishu.connection.connected')
+    expect(w.get('.feishu-connection__dot').classes()).toContain('feishu-connection__dot--green')
     expect(w.find('[data-test="feishu-callback-url"]').exists()).toBe(false)
     // Start-pair button is present and not disabled (the old bug greyed it out
     // after reopen because `saved` reset to false).
@@ -120,6 +130,32 @@ describe('SettingsFeishu configured view', () => {
     vi.useRealTimers()
   })
 
+  it('after unbinding, keeps the configured view instead of showing empty credentials', async () => {
+    const bound = {
+      enabled: true,
+      mode: 'local',
+      bound: true,
+      open_id: 'ou_x',
+      disabled: false,
+      configured: true,
+      app_id: 'cli_app',
+    }
+    const statusSpy = vi.spyOn(api, 'getFeishuStatus')
+      .mockResolvedValueOnce(bound as never)
+      .mockResolvedValue({ ...bound, bound: false, open_id: '' } as never)
+    const unbind = vi.spyOn(api, 'deleteFeishuBinding').mockResolvedValue(undefined)
+
+    const w = mount(SettingsFeishu)
+    await flushPromises()
+    await w.get('[data-test="feishu-unbind"]').trigger('click')
+    await flushPromises()
+
+    expect(unbind).toHaveBeenCalledOnce()
+    expect(statusSpy).toHaveBeenCalled()
+    expect(w.find('[data-test="feishu-configured"]').exists()).toBe(true)
+    expect(w.find('.feishu-fieldset').exists()).toBe(false)
+  })
+
   it('unconfigured: shows the empty credentials form', async () => {
     vi.spyOn(api, 'getFeishuStatus').mockResolvedValue({
       enabled: true,
@@ -152,5 +188,28 @@ describe('SettingsFeishu configured view', () => {
     const grid = w.get('[data-test="feishu-credentials-grid"]')
 
     expect(grid.findAll('input')).toHaveLength(4)
+  })
+
+  it('toggles one card notification type without changing the others', async () => {
+    vi.spyOn(api, 'getFeishuStatus').mockResolvedValue({
+      enabled: true,
+      mode: 'local',
+      bound: true,
+      open_id: 'ou_x',
+      disabled: false,
+    } as never)
+    const setEnabled = vi.spyOn(api, 'setFeishuCardNotificationEnabled').mockResolvedValue(undefined)
+
+    const w = mount(SettingsFeishu)
+    await flushPromises()
+    const switches = w.findAll('[data-test="feishu-card-notifications"] input[type="checkbox"]')
+    expect(switches).toHaveLength(5)
+
+    await switches[1].setValue(false)
+    await flushPromises()
+
+    expect(setEnabled).toHaveBeenCalledWith('command_failure', false)
+    expect((switches[0].element as HTMLInputElement).checked).toBe(true)
+    expect((switches[1].element as HTMLInputElement).checked).toBe(false)
   })
 })

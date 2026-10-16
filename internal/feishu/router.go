@@ -40,6 +40,7 @@ type Decision struct {
 type Subscriber interface {
 	ClaimDriver()
 	SendInput([]byte) bool
+	NavigatePage(string) bool
 	OwnerOpenID() string
 	// CurrentDriverName returns the human-readable name of the session's
 	// current driver, or "" when there's no driver / Feishu is already driver.
@@ -112,6 +113,22 @@ func (r *Router) routeCardActionWith(anchor *CardAnchor, operatorOpenID, kind, e
 		if operatorOpenID != anchor.OwnerOpenID {
 			return Decision{Action: ActionReject, Toast: "无权限"}
 		}
+		return Decision{Action: ActionInject}
+	case "page":
+		if operatorOpenID != anchor.OwnerOpenID {
+			return Decision{Action: ActionReject, Toast: "无权限"}
+		}
+		if event != "previous" && event != "next" {
+			return Decision{Action: ActionReject, Toast: "未知分页操作"}
+		}
+		sub := r.lookup(anchor.SessionID)
+		if sub == nil {
+			return Decision{Action: ActionReject, Toast: "会话已结束"}
+		}
+		// Reaching either boundary is an idempotent success. Sending a toast
+		// for every extra click would create a separate chat message and make
+		// the remote-terminal card unnecessarily noisy.
+		sub.NavigatePage(event)
 		return Decision{Action: ActionInject}
 	default:
 		return Decision{Action: ActionReject, Toast: "未知交互"}

@@ -6,11 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	internalfeishu "github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/google/uuid"
 	"github.com/zalando/go-keyring"
 )
@@ -36,6 +39,101 @@ func TestService_LocalMode_SelectsLocalStore(t *testing.T) {
 	if _, ok := svc.store.(*LocalKeychainBindingStore); !ok {
 		t.Fatalf("local mode should pick local store, got %T", svc.store)
 	}
+}
+
+func TestService_ConnectionStatusDistinguishesRelayOwnership(t *testing.T) {
+	relaySvc, err := NewService(ServiceConfig{
+		Mode:       ModeRelay,
+		RelayURL:   "http://example",
+		RelayToken: func() string { return "tok" },
+	})
+	if err != nil {
+		t.Fatalf("NewService relay: %v", err)
+	}
+	if got := relaySvc.ConnectionStatus().State; got != LongConnRelayManaged {
+		t.Fatalf("relay state = %q, want relay_managed", got)
+	}
+
+	keyring.MockInit()
+	defer keyring.MockInitWithError(nil)
+	localSvc, err := NewService(ServiceConfig{Mode: ModeLocal})
+	if err != nil {
+		t.Fatalf("NewService local: %v", err)
+	}
+	if got := localSvc.ConnectionStatus().State; got != LongConnDisconnected {
+		t.Fatalf("local state without LongConn = %q, want disconnected", got)
+	}
+}
+
+func TestService_ConfigureCredentialsValidatesAndRestartsLocalLongConn(t *testing.T) {
+	safekeyring.SetFileDirForTest(t.TempDir())
+	safekeyring.UseFileStore()
+	t.Cleanup(func() {
+		safekeyring.Reset()
+		safekeyring.SetFileDirForTest("")
+	})
+
+	var tokenCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenCalls.Add(1)
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["app_secret"] == "bad" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 10003, "msg": "invalid param"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0, "msg": "ok", "tenant_access_token": "token", "expire": 7200,
+		})
+	}))
+	defer upstream.Close()
+
+	svc, err := NewService(ServiceConfig{Mode: ModeLocal, FeishuBase: upstream.URL})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	svc.newLongConn = func(cfg LongConnConfig) *LongConn {
+		return newLongConnWithFactory(cfg, func(LongConnConfig) (longConnRuntime, error) {
+			return &fakeRuntime{}, nil
+		})
+	}
+
+	ctx := context.Background()
+	bad := Credentials{AppID: "cli_x", AppSecret: "bad"}
+	if err := svc.ConfigureCredentials(ctx, bad); err == nil {
+		t.Fatal("invalid credentials must be rejected")
+	}
+	if _, err := svc.Store().Get(ctx); !errors.Is(err, ErrLocalBindingNotFound) {
+		t.Fatalf("invalid credentials must not be persisted, got %v", err)
+	}
+
+	good := Credentials{AppID: " cli_x ", AppSecret: " good ", EncryptKey: " enc ", VerifyToken: " verify "}
+	if err := svc.ConfigureCredentials(ctx, good); err != nil {
+		t.Fatalf("ConfigureCredentials: %v", err)
+	}
+	firstConn := svc.longConn
+	if firstConn == nil || firstConn.cfg.AppID != "cli_x" || firstConn.cfg.AppSecret != "good" {
+		t.Fatalf("long connection did not start with normalized credentials: %+v", firstConn)
+	}
+	v, err := svc.Store().Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if v.AppID != "cli_x" || v.AppSecret != "good" || v.EncryptKey != "enc" || v.VerifyToken != "verify" {
+		t.Fatalf("normalized credentials not persisted: %+v", v)
+	}
+
+	good.AppSecret = "new-secret"
+	if err := svc.ConfigureCredentials(ctx, good); err != nil {
+		t.Fatalf("reconfigure credentials: %v", err)
+	}
+	if svc.longConn == nil || svc.longConn == firstConn || svc.longConn.cfg.AppSecret != "new-secret" {
+		t.Fatalf("credential update must replace the running long connection")
+	}
+	if tokenCalls.Load() != 3 {
+		t.Fatalf("each save must validate against Feishu, calls=%d", tokenCalls.Load())
+	}
+	t.Cleanup(func() { _ = svc.CloseLongConn(context.Background()) })
 }
 
 func TestService_DispatchExposesDispatcher(t *testing.T) {
@@ -270,11 +368,18 @@ func TestHandleCardAction_EmptyTextIgnored(t *testing.T) {
 type stubRouterSubscriber struct {
 	mu         sync.Mutex
 	sentInputs [][]byte
+	pages      []string
 	owner      string
 }
 
 func (s *stubRouterSubscriber) ClaimDriver()        {}
 func (s *stubRouterSubscriber) OwnerOpenID() string { return s.owner }
+func (s *stubRouterSubscriber) NavigatePage(direction string) bool {
+	s.mu.Lock()
+	s.pages = append(s.pages, direction)
+	s.mu.Unlock()
+	return true
+}
 func (s *stubRouterSubscriber) SendInput(b []byte) bool {
 	s.mu.Lock()
 	s.sentInputs = append(s.sentInputs, append([]byte(nil), b...))
@@ -288,6 +393,12 @@ func (s *stubRouterSubscriber) snapshotInputs() [][]byte {
 	out := make([][]byte, len(s.sentInputs))
 	copy(out, s.sentInputs)
 	return out
+}
+
+func (s *stubRouterSubscriber) snapshotPages() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.pages...)
 }
 
 // TestHandleCardAction_RouterInput verifies that handleCardAction with kind="input"
@@ -326,6 +437,25 @@ func TestHandleCardAction_RouterInput(t *testing.T) {
 	}
 }
 
+func TestHandleCardAction_RouterPage(t *testing.T) {
+	const ownerOpenID = "ou_owner"
+	sessID := uuid.New().String()
+	stub := &stubRouterSubscriber{owner: ownerOpenID}
+	idx := internalfeishu.NewCardIndex()
+	idx.Put(&internalfeishu.CardAnchor{SessionID: sessID, CardToken: "tok_page", OwnerOpenID: ownerOpenID})
+	router := internalfeishu.NewRouter(idx, func(string) internalfeishu.Subscriber { return stub })
+	s := &Service{cfg: ServiceConfig{Sessions: &fakeInjector{}}}
+	s.SetRouter(router)
+
+	s.handleCardAction(context.Background(), sessID, "page", "previous", ownerOpenID, "", nil)
+	if got := stub.snapshotPages(); len(got) != 1 || got[0] != "previous" {
+		t.Fatalf("page events = %v, want [previous]", got)
+	}
+	if got := stub.snapshotInputs(); len(got) != 0 {
+		t.Fatalf("page action injected PTY input: %q", got)
+	}
+}
+
 // TestHandleCardAction_RouterInputWrongOwner verifies that handleCardAction
 // rejects input from an operator who is not the anchor owner.
 func TestHandleCardAction_RouterInputWrongOwner(t *testing.T) {
@@ -359,6 +489,55 @@ func TestHandleCardAction_RouterInputWrongOwner(t *testing.T) {
 	}
 }
 
+func TestBuildCodexQuestionStrokes(t *testing.T) {
+	q := internalfeishu.AskFormQuestion{
+		Question:  "Pick one",
+		Options:   []internalfeishu.AskFormOpt{{Label: "A"}, {Label: "B"}, {Label: "C"}},
+		InputMode: internalfeishu.AskFormInputCodex,
+	}
+	tests := []struct {
+		name string
+		slot askFormSlot
+		want [][]byte
+	}{
+		{
+			name: "preset digit commits and advances",
+			slot: askFormSlot{idx: 0, sel: "B"},
+			want: [][]byte{{'2'}},
+		},
+		{
+			name: "selected option with notes",
+			slot: askFormSlot{idx: 0, sel: "B", txt: "ok"},
+			want: [][]byte{{0x1b, 0x5b, 0x42}, {0x09}, {'o'}, {'k'}, {0x0d}},
+		},
+		{
+			name: "custom answer uses none of the above",
+			slot: askFormSlot{idx: 0, txt: "自定义"},
+			want: [][]byte{
+				{0x1b, 0x5b, 0x42}, {0x1b, 0x5b, 0x42}, {0x1b, 0x5b, 0x42}, {0x09},
+				[]byte("自"), []byte("定"), []byte("义"), {0x0d},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := buildCodexQuestionStrokes(q, tt.slot, "sid")
+			if !ok || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("strokes = %q ok=%v, want %q", got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCodexQuestionStrokes_Freeform(t *testing.T) {
+	q := internalfeishu.AskFormQuestion{Question: "Explain", InputMode: internalfeishu.AskFormInputCodex}
+	got, ok := buildCodexQuestionStrokes(q, askFormSlot{idx: 0, txt: "yes"}, "sid")
+	want := [][]byte{{'y'}, {'e'}, {'s'}, {0x0d}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("strokes = %q ok=%v, want %q", got, ok, want)
+	}
+}
+
 // bindReplyService wires a Service whose replyText path is fully stubbed: an
 // in-memory store with saved credentials, a fixed token source, and a
 // capturing IM so tests can assert the confirmation text sent back to Feishu.
@@ -373,6 +552,8 @@ func TestHandleBindMessage_SuccessRepliesConfirmation(t *testing.T) {
 	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s"})
 	im := &capturingIM{}
 	s := bindReplyService(store, im)
+	boundCalls := 0
+	s.cfg.OnBound = func() { boundCalls++ }
 	code := s.IssuePending()
 
 	s.handleBindMessage(context.Background(), "ou_user", "/bind "+code)
@@ -383,6 +564,9 @@ func TestHandleBindMessage_SuccessRepliesConfirmation(t *testing.T) {
 	if len(im.texts) != 1 || im.texts[0] != "✅ 已绑定到 atterm" {
 		t.Fatalf("want one success reply, got %v", im.texts)
 	}
+	if boundCalls != 1 {
+		t.Fatalf("OnBound calls = %d, want 1", boundCalls)
+	}
 }
 
 func TestHandleBindMessage_InvalidCodeRepliesError(t *testing.T) {
@@ -390,6 +574,8 @@ func TestHandleBindMessage_InvalidCodeRepliesError(t *testing.T) {
 	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s"})
 	im := &capturingIM{}
 	s := bindReplyService(store, im)
+	boundCalls := 0
+	s.cfg.OnBound = func() { boundCalls++ }
 
 	s.handleBindMessage(context.Background(), "ou_user", "/bind NOPE12")
 
@@ -399,6 +585,9 @@ func TestHandleBindMessage_InvalidCodeRepliesError(t *testing.T) {
 	if len(im.texts) != 1 || im.texts[0] != "❌ 短码无效或已过期" {
 		t.Fatalf("want one invalid-code reply, got %v", im.texts)
 	}
+	if boundCalls != 0 {
+		t.Fatalf("OnBound calls = %d after invalid code, want 0", boundCalls)
+	}
 }
 
 func TestHandleBindMessage_SetBoundErrorRepliesError(t *testing.T) {
@@ -407,11 +596,16 @@ func TestHandleBindMessage_SetBoundErrorRepliesError(t *testing.T) {
 	store := &inMemBindingStore{}
 	im := &capturingIM{}
 	s := bindReplyService(store, im)
+	boundCalls := 0
+	s.cfg.OnBound = func() { boundCalls++ }
 	code := s.IssuePending()
 
 	s.handleBindMessage(context.Background(), "ou_user", "/bind "+code)
 
 	if len(im.texts) != 1 || im.texts[0] != "❌ 服务端错误,请稍后再试" {
 		t.Fatalf("want one server-error reply, got %v", im.texts)
+	}
+	if boundCalls != 0 {
+		t.Fatalf("OnBound calls = %d after SetBound error, want 0", boundCalls)
 	}
 }

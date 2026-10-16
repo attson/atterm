@@ -162,6 +162,14 @@ type appConfig struct {
 	// sessions (shell sessions are skipped). Nil means "never set" and
 	// defaults to true.
 	AINotificationsOnly *bool `json:"ai_notifications_only,omitempty"`
+	// Feishu card notification switches are local host policy: each pointer is
+	// nil for configs written before the switch existed and therefore resolves
+	// to enabled, preserving the notification behavior users already had.
+	FeishuNotifyCommandSuccess *bool `json:"feishu_notify_command_success,omitempty"`
+	FeishuNotifyCommandFailure *bool `json:"feishu_notify_command_failure,omitempty"`
+	FeishuNotifyCommandSealed  *bool `json:"feishu_notify_command_sealed,omitempty"`
+	FeishuNotifyWaitingInput   *bool `json:"feishu_notify_waiting_input,omitempty"`
+	FeishuNotifyAskQuestion    *bool `json:"feishu_notify_ask_question,omitempty"`
 
 	// FeishuModePref is the user's explicit choice for Feishu integration
 	// mode. "auto" (default) follows the relay login state; "local" forces
@@ -293,6 +301,20 @@ func (c appConfig) AINotificationsOnlyOrDefault() bool {
 		return true
 	}
 	return *c.AINotificationsOnly
+}
+
+func enabledByDefault(v *bool) bool {
+	return v == nil || *v
+}
+
+func (c appConfig) FeishuCardNotificationSettingsOrDefault() FeishuCardNotificationSettings {
+	return FeishuCardNotificationSettings{
+		CommandSuccess: enabledByDefault(c.FeishuNotifyCommandSuccess),
+		CommandFailure: enabledByDefault(c.FeishuNotifyCommandFailure),
+		CommandSealed:  enabledByDefault(c.FeishuNotifyCommandSealed),
+		WaitingInput:   enabledByDefault(c.FeishuNotifyWaitingInput),
+		AskQuestion:    enabledByDefault(c.FeishuNotifyAskQuestion),
+	}
 }
 
 // FeishuModePrefOrDefault returns the persisted preference, normalizing

@@ -103,7 +103,7 @@ func TestRelayBackedBindingStore_SetCredentials(t *testing.T) {
 	}
 }
 
-func TestRelayBackedBindingStore_Delete(t *testing.T) {
+func TestRelayBackedBindingStore_Unbind(t *testing.T) {
 	var hit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/feishu/bindings/me" && r.Method == "DELETE" {
@@ -116,8 +116,8 @@ func TestRelayBackedBindingStore_Delete(t *testing.T) {
 	defer srv.Close()
 
 	s := NewRelayBackedBindingStore(srv.URL, func() string { return "token" })
-	if err := s.Delete(context.Background()); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := s.Unbind(context.Background()); err != nil {
+		t.Fatalf("Unbind: %v", err)
 	}
 	if !hit {
 		t.Fatalf("expected DELETE request")

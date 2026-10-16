@@ -1,7 +1,7 @@
 # Feishu — 远程终端与 AskUserQuestion form 子系统
 
 > **Audience**: 实现或审计 atterm 飞书集成路径的工程师(anchor card 生命周期 / AskUserQuestion 表单式远程回答 / local vs relay 模式分流)
-> **Last updated**: 2026-07-31
+> **Last updated**: 2026-10-15
 > **Status**: shipped through v0.2.171
 > **See also**: [architecture.md](./architecture.md) · [protocol.md](./protocol.md) · [auth.md](./auth.md) · [../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md](../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md)
 
@@ -22,7 +22,7 @@
 
 飞书集成经历了三个阶段:
 
-1. **命令完成通知**(早期,通用 webhook 路径,已下线):任务完成时 relay 曾通过 `internal/webhook` 向飞书 open API 推 IM 消息卡片。该通用 outbound webhook 已由 migration 删除,当前通知路径收敛到 Web Push 与下述飞书 anchor card 模式。
+1. **独立通知卡**:早期 relay 通用 webhook 路径已经下线;当前由 desktop 飞书 service 在 local / relay 两种模式下统一发送命令完成、等待输入和 Agent 提问卡片。
 2. **anchor card 作为远程终端**(v0.2.15x+,PR 系列 `feishu-as-terminal`):把 IM 卡片升级成**持续更新的锚点卡** —— body 流式承载 assistant 输出、卡片自带输入框 + `^C/^D/Esc/Enter/结束` 按钮直接把用户操作送回本地 pty。用户不用打开桌面就能远程回复正在等待的 AI 会话。
 3. **AskUserQuestion 表单式回答**(v0.2.171,PR #261):claude-code 触发 AskUserQuestion tool 时,锚点卡片挂载一份 form container —— 每题一行下拉 + 自定义输入框,提交后系统按反向工程的按键模型自动送 stroke 到本地 claude TUI。
 
@@ -40,6 +40,32 @@
 
 **模式切换是显式的**(桌面 Settings 有 mode selector),两种模式的 credential 不共享。切换模式不迁移凭据,需要在新模式下重新绑定飞书应用。
 
+Local 模式保存凭据时先向飞书换取一次 `tenant_access_token` 做校验；校验失败不覆盖原配置。校验成功后清理旧 token 缓存并立即重建 LongConn，无需重启桌面 app。仅轮换同一 App ID 的 secret 时保留已有绑定；App ID 改变时必须清除旧 `open_id`，由用户重新执行 `/bind`（飞书 `open_id` 是 app-scoped）。
+
+设置页“解绑”只清除 `open_id`、绑定时间和 disabled 状态，保留四项应用凭据、通知开关与远程接管设置；同时必须调用 `OnRemoteTerminalToggle(false)` 拆除运行中的 subscriber 并归档旧 Anchor Card，避免重新绑定时被误判为已经挂载。解绑后可直接生成新短码重新 `/bind`。Local Keyring 与 Relay DB 必须保持相同语义。彻底删除 Relay 配置属于管理操作，不复用用户侧解绑入口。
+
+Local 短码绑定成功后必须触发一次存量会话回填。原因是远程接管设置会跨解绑保留：若开关原本已经开启，重新绑定只改变 `open_id`，不会再产生 toggle 事件。`ServiceConfig.OnBound` 在 `SetBound` 成功后调用 `relayHost.OnRemoteTerminalToggle(true)`，按当前 `SessionAutoAttach` 扫描 live sessions；无效短码或持久化失败不得触发。
+
+### 2.1 连接状态
+
+Settings → Feishu 每 3 秒刷新一次事件连接状态。Local 模式的状态直接来自飞书 SDK LongConn 的物理 WebSocket 生命周期回调，而不是根据“已保存凭据”推断：`disconnected`、`connecting`、`connected`、`reconnecting`、`error`。最近一次连接错误随状态一起展示；连接成功后清除旧错误。Relay 模式的 WebSocket 位于 relay 进程，desktop 无法直接观测，因此明确显示 `relay_managed`，不伪装成 `connected`。
+
+“长连接已连接”只表示飞书事件可以到达当前进程，不代表 CardKit / IM HTTP API 调用一定成功；发卡、更新卡片的 token 或权限错误仍由对应操作和日志单独报告。多个本地 AT Term 实例若用同一飞书应用同时建立 LongConn，飞书可能把 `/bind` 事件投递给任一实例；开发调试时应只保留一个消费实例，否则某实例生成的短码可能被另一实例收到并判定无效。
+
+### 2.2 独立通知卡开关
+
+Settings → Feishu 的“自动发送的通知卡片”提供 5 个本机持久化开关，local / relay 模式共用同一策略：
+
+| 配置值 | 卡片 | 判定 |
+|---|---|---|
+| `command_success` | 命令完成（成功） | command event 未 sealed 且 exit code = 0 |
+| `command_failure` | 命令完成（失败） | command event 未 sealed 且 exit code != 0 |
+| `command_sealed` | 命令完成（仅本机可见） | command event 带 sealed body；优先级高于 exit code |
+| `waiting_input` | 等待输入 | waiting-input event 不带结构化选项 |
+| `ask_question` | Agent 提问 | waiting-input event 带结构化选项 |
+
+旧配置没有这些字段时全部按开启处理，保证升级后通知行为不变。“仅 AI 会话通知”是独立的会话范围过滤，会与卡片类型开关叠加。远程终端 Anchor Card 仍只受“启用飞书远程接管”控制；设置页手动测试发送也不受自动通知开关限制。
+
 **红线**:
 - Local 模式的钥匙串存储在 `desktop/feishu/binding_store_local.go`,不要走 sqlite。
 - Relay 模式的字段加密走 `internal/relay/admin_config.go::AdminConfig.Feishu.EncryptKey`(base64 32B),持久化在 DB `relay_config` 表(SQLite/Postgres,由 `ATTERM_RELAY_DB_DRIVER`/`ATTERM_RELAY_DB_DSN` 选后端;`relay.json` 已完全退役,不再读写),GET 只回显末 4 位。见 [AGENTS.md 红线 #26](../../AGENTS.md#关键设计原则红线)。
@@ -55,7 +81,7 @@
 |---|---|---|
 | `anchor_body_md` | Markdown 流式输出(assistant text + status preamble) | 始终存在,不删 |
 | `anchor_input` | 单行 text 输入框,提交后触发 `input` card action | `CardAnchor.CurrentInputID != ""` |
-| `anchor_buttons` | 5 列 column_set:`^C / ^D / Esc / Enter / 结束` | `CardAnchor.ButtonsMounted` |
+| `anchor_buttons` | shell: `上页 / 下页 / 中断 / 结束`;AI:`中断 / Esc / Enter / 结束` | `CardAnchor.ButtonsMounted` |
 | `anchor_askform` | AskUserQuestion form container(仅在 tool 触发时挂) | `CardAnchor.FormMounted` |
 
 **三件独立**:input / buttons / form 各自 gate 在自己的 mounted 标记,DELETE 和 CREATE 幂等。挂 form 时先 DELETE input 和 buttons(form 独占交互面),拆 form 时按 mounted 标记独立重建 input 和 buttons。
@@ -76,18 +102,39 @@ stateDiagram-v2
 
 `CardAnchor.SendMu` 是同一 anchor 的 send 序列化锁。**每一个** CREATE / DELETE / PATCH / UpdateCardElement 都在 SendMu 内分配 `PatchSeq` 并发出 —— 飞书对同一 card 的 op 用 monotonic sequence 强校验(`code=300317 sequence compare failed`),SendMu 保证同一 anchor 下不会有 seq 交叉。
 
-流式 body PATCH 频率高(默认 30s 心跳 + 事件驱动),要确保它和 form / input / buttons 的 op 都排队走 SendMu。
+流式 body PATCH 频率高(事件驱动),要确保它和 form / input / buttons 的 op 都排队走 SendMu。PTY / hook chunker 最快每 100ms 产生一个 body 快照,但 CardKit HTTP 往返通常明显更慢;`latestAnchorPatchQueue` 保证每张卡最多一个 body PATCH 在途,等待期间只保留最新快照,禁止把每个中间态都排进 `SendMu`。否则输入框的 DELETE+CREATE 和新输出会被旧 PATCH 队列挡住,表现为提交后数秒才回显。detach 时必须先 Stop queue、丢弃 pending body,再归档卡片,避免归档后被旧 body PATCH 覆盖。
 
-### 3.4 Takeover 中途开启的懒回填(lazy backfill)
+Anchor body 顶部状态行同时显示任务态、运行时长和最近一次正文刷新的本地时间,例如 `活跃 · 已 1m · 最后输出 20:49:32`。尚未收到正文时省略“最后输出”。运行时长只在正文或任务态真实变化时顺带刷新;禁止为了推进运行时长对空闲卡片做周期 PATCH,因为飞书客户端可能在 sibling body 更新时重建 `anchor_input`,清空用户尚未提交的草稿。
 
-`OnRemoteTerminalToggle(true)` 本身**仍然是 no-op** —— binding 的 `RemoteTerminalEnabled` 打开时不会批量给所有已在跑的 AI 会话补 anchor card(`desktop/relay_host.go::OnRemoteTerminalToggle`)。真正的补卡入口在别处,懒触发而非跟随开关事件:
+Local LongConn 的 `card.action.trigger` 必须同步返回非 nil 的空 `CardActionTriggerResponse`,明确结束飞书客户端的控件 busy 状态;PTY 注入、输入框 DELETE+CREATE 和 body PATCH 仍走异步路径。返回 nil 虽然 WS status 仍是 200,但客户端可能一直显示发送中,直到后续 CardKit 操作触发重绘。
 
-- `sess.SetOnTaskStateChange` 回调里,每次任务态转换都先调 `h.lazyAttachIfMissing(ctx, sess, sid)`。
-- `Dispatcher.SetOnTurnMissingChunker` 注册 `h.onTurnMissingChunker` —— 一个 `TurnEvent` 到达但该 session 还没有 `AIChunker` 时(即中途开启 takeover、`NewSession` 时没注册 subscriber 的会话)触发同一条懒回填路径。
+Shell anchor 不是完整终端模拟器,但必须正确投影 PTY 的行控制:`CRLF` 结束一行,独立 `CR` 表示光标回到第 0 列并由后续文本覆盖当前 open line。不能把 `\r` 原样写进 Markdown code fence;bash 在关闭 bracketed-paste (`CSI ?2004l`) 后常发一个独立 `\r`,飞书会把它渲染成下一行开头的大段空白。`session.Subscribe()` 交付的 `TypeOut.Payload` 是 wire payload,前 8 字节为 big-endian sequence;飞书 subscriber 必须先调 `proto.DecodeOut`,只把解出的 PTY data 交给 roller。直接消费 `frame.Payload` 会在 sequence 低字节为 `0x0a` / `0x0d` / `0x20` 时伪造换行、回车和缩进。
 
-两个入口都收敛到 `lazyAttachIfMissing → attachFeishuSubscriberForAutoAttach(ctx, sess, sid, "ai")`,并用 `tryStartLazyAttach` / `clearLazyAttachInFlight` 做 per-session in-flight 门控,防止任务态转换和 TurnEvent 并发触发时重复 attach。
+Shell roller 保留最近 300 行 / 50KB 的有界历史,但卡片只承担消息预览:每页最多 12 行 / 3KB,使用转义后的普通 Markdown,不使用 fenced code block。原因是飞书移动端会把长代码块强制折叠为“N 行代码”,每次查看都要二次点击;短预览比模拟完整终端更符合消息交互。连续空格转为 NBSP 以尽量保留终端列布局,Markdown 控制符必须转义。默认最新页跟随输出;“上页”会把页尾固定在当前历史索引,因此后续 PTY 输出不会把正在阅读的页面顶走;“下页”向新输出移动,到达最新页后恢复自动跟随。分页 action 必须经 `FeishuSubscriber.drainLoop` 与 `PushBytes` 串行,只 PATCH body,不向 PTY 注入任何字节。
 
-**行为**:用户在会话跑起来之后才打开 remote-terminal takeover,不需要重启会话或手动 `/attach`,anchor card 会在下一次任务态变化或下一个 turn 事件时自动补上 —— 触发那一刻的 turn body 会丢(attach 是异步的,补上的是"下一条"起的流式输出),但从下一个 turn 开始 anchor card 就跟得上。
+Anchor controls 以手机宽度为基准,一行最多四列。Shell 默认只保留 `上页 / 下页 / 中断(^C) / 结束`,因为输入框提交已经隐含 Enter,`exit` 可替代低频 ^D;AI 不需要分页,显示 `中断(^C) / Esc / Enter / 结束`。不要再把分页和全部终端按键同时塞进一行,否则飞书移动端会把标签全部截成省略号。
+
+同一 PTY 从 shell 启动 AI CLI 时必须原地升级 anchor:先把 `anchorRuntime.aiMode` 置为 true,让已经在 drain 中的 shell flush 失效；再清空 `lastInner` / `lastOutputAt` 并立即 render,移除旧的“第 N/N 页”正文；最后挂 `AIChunker` 并把按钮切为 AI controls。顺序不能反,否则慢到达的 shell PATCH 会把已经切换的 AI 正文覆盖回去。
+
+结构化 turn 有两个来源:Claude 由 `UserPromptSubmit` / `Stop` / `PreToolUse` / `PostToolUse` hooks 进入 `AIChunker`;Codex 由已经绑定到当前 PTY 的 rollout JSONL 增量读取 `item_completed.UserMessage` / `AgentMessage`,并从 `response_item.function_call(name=request_user_input)` 提取交互式问题。Codex 新会话解析 SID 时首个 turn 往往已经落盘,允许回放当前文件；恢复会话从 EOF 开始,禁止把历史对话整批重发到卡片。新版 Codex 可能由独立 app-server daemon 持有 rollout fd,所以 SID 解析先尝试 PTY 进程树归属,失败后仅在同 cwd 只有一个 resolver 时使用新建/变更文件 fallback；多个同 cwd resolver 时仍宁可不抓也不能串会话。
+
+Claude `AskUserQuestion` 与 Codex `request_user_input` 可复用同一套飞书 form,但不能复用同一套 PTY 按键序列:Claude 每题完成后还会进入 review 页并用 `1` 确认;Codex 的数字键会直接提交当前选项并前进,最后一题立即完成,自定义内容则走“方向键选中目标 → Tab 进入 notes → 文本 → Enter”。`AskFormQuestion.InputMode` 必须跟随 form 挂载到 `CardAnchor.PendingForm`,提交时按 mode 分流;禁止在 Claude 的 `buildQuestionStrokes` 上叠加 Codex 分支。
+
+### 3.4 Takeover 中途开启的存量回填
+
+`OnRemoteTerminalToggle(true)` 会立即扫描当前 live session,按 `SessionAutoAttach` 回填 anchor card:`all` 处理全部会话,`ai` 只处理已经分类为 AI 的会话,`none` 不处理。关闭→开启、以及开启状态下修改自动接入策略都会触发扫描。创建卡片涉及飞书网络请求,每个会话仍通过 `lazyAttachIfMissing` 异步执行,设置保存不会被阻塞。
+
+立即扫描之外仍保留三个懒触发入口,用于覆盖扫描时尚未分类为 AI、首次创建卡片失败、或恢复后已经收到真实输入的会话:
+
+- `sess.SetOnTaskStateChange` 回调里,每次任务态转换都尝试 `h.lazyAttachIfMissing(ctx, sess, sid)`；恢复会话在真实输入前由 `feishuUserActivated` 门控跳过。
+- `Dispatcher.SetOnTurnMissingChunker` 注册 `h.onTurnMissingChunker` —— 一个 `TurnEvent` 到达但该 session 还没有 `AIChunker` 时(即中途开启 takeover、`NewSession` 时没注册 subscriber 的会话)触发同一条懒回填路径；它同样检查恢复会话的 `feishuUserActivated`。
+- 仅 `NewSessionReq.recovered=true` 的会话注册 `sess.SetOnInput`:首个成功进入 inbound queue 的 `TypeIn` 触发同一条懒回填路径;`RESIZE`、队列已满而被拒绝的输入都不触发。
+
+这些入口都收敛到 `lazyAttachIfMissing → attachFeishuSubscriberForAutoAttach`,并用 `tryStartLazyAttach` / `clearLazyAttachInFlight` 做 per-session in-flight 门控,防止开关扫描、任务态转换、输入和 TurnEvent 并发触发时重复 attach。`auto_attach=ai` 最终依据 `sess.Info().Type` 判定,不会因普通 shell 的 task-state 或输入事件误建卡。
+
+**行为**:用户在会话跑起来之后才打开 remote-terminal takeover,不需要重启会话或再执行命令,符合自动接入策略的旧会话会立即收到 anchor card。若扫描时 AI 会话尚未完成分类,会在后续分类/任务态变化或下一个 turn 事件时补上;触发懒补的当次 turn body 可能赶不上异步建卡,之后的 turn 会正常流式更新。
+
+恢复会话是例外：`executeRestore` 创建的本地 shell 在 `NewSessionReq.recovered=true` 下跳过 `NewSession` 末尾的 eager attach，避免应用启动时恢复多个空闲 pane 就向飞书群发一批空 Anchor Card。恢复 AI 自动注入的 resume 命令会产生 AI 分类、任务态和 hook turn 事件，这些都属于启动机制，在首个成功入队的真实 `TypeIn` 前统一由 `feishuUserActivated` 门控抑制；首个真实输入会先打开门控再立即懒回填。这个抑制不影响用户手动开启接管或重新绑定时对当前 live sessions 的显式扫描。
 
 ## 4. AskUserQuestion form flow
 
@@ -259,7 +306,7 @@ memory `feedback_askform_permission_grant.md` 有详细指引。
 
 ### 6.4 其他
 
-- **飞书 API rate limit**:飞书对 `cardkit:card:write` 有 QPS 上限,body 流式 PATCH 频率过高会拿 `code=99991672`(rate limited)。目前默认 30s 心跳节流,事件驱动的 PATCH 靠 `internal/feishu.AIRoller` 合并 chunk。改动流式频率前测一下 rate limit。
+- **飞书 API rate limit**:飞书对 `cardkit:card:write` 有 QPS 上限,body 流式 PATCH 频率过高会拿 `code=99991672`(rate limited)。事件驱动的 PATCH 靠 `internal/feishu.AIRoller` 合并 chunk,空闲时不发状态心跳。改动流式频率前测一下 rate limit。
 - **飞书 element 20 字符限制**:`element_id` 最长 20 字符,只能字母数字下划线。widget id `askform_q<i>_sel_<mountSeq>` 里 `<mountSeq>` 数字大时可能超限 —— 但 PatchSeq 一般 <100 每张卡片,实际不会撞到。发生时会拿 `code=300301 elementID format error`,监控日志里出现应该考虑改用 hash 而非 seq。
 
 ## 7. 错误码与常见故障

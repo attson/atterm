@@ -55,6 +55,65 @@ type FeishuRemoteTerminalSettings struct {
 	AutoAttach string `json:"auto_attach"`
 }
 
+// FeishuCardNotificationSettings is the resolved automatic-card policy exposed
+// to Settings. Every field defaults to true for configs created before these
+// switches existed. Anchor cards remain under FeishuRemoteTerminalSettings.
+type FeishuCardNotificationSettings struct {
+	CommandSuccess bool `json:"command_success"`
+	CommandFailure bool `json:"command_failure"`
+	CommandSealed  bool `json:"command_sealed"`
+	WaitingInput   bool `json:"waiting_input"`
+	AskQuestion    bool `json:"ask_question"`
+}
+
+// GetFeishuCardNotificationSettings returns the resolved per-card policy.
+func (a *App) GetFeishuCardNotificationSettings() FeishuCardNotificationSettings {
+	if a.cfgStore == nil {
+		return (appConfig{}).FeishuCardNotificationSettingsOrDefault()
+	}
+	return a.cfgStore.Get().FeishuCardNotificationSettingsOrDefault()
+}
+
+// SetFeishuCardNotificationEnabled changes one automatic card type without
+// disturbing the other switches.
+func (a *App) SetFeishuCardNotificationEnabled(cardType string, enabled bool) error {
+	return a.updatePref("", func(cfg *appConfig) error {
+		switch feishu.CardNotificationType(cardType) {
+		case feishu.CardNotificationCommandSuccess:
+			cfg.FeishuNotifyCommandSuccess = &enabled
+		case feishu.CardNotificationCommandFailure:
+			cfg.FeishuNotifyCommandFailure = &enabled
+		case feishu.CardNotificationCommandSealed:
+			cfg.FeishuNotifyCommandSealed = &enabled
+		case feishu.CardNotificationWaitingInput:
+			cfg.FeishuNotifyWaitingInput = &enabled
+		case feishu.CardNotificationAskQuestion:
+			cfg.FeishuNotifyAskQuestion = &enabled
+		default:
+			return fmt.Errorf("invalid feishu card notification type %q", cardType)
+		}
+		return nil
+	})
+}
+
+func (a *App) feishuCardNotificationEnabled(cardType feishu.CardNotificationType) bool {
+	settings := a.GetFeishuCardNotificationSettings()
+	switch cardType {
+	case feishu.CardNotificationCommandSuccess:
+		return settings.CommandSuccess
+	case feishu.CardNotificationCommandFailure:
+		return settings.CommandFailure
+	case feishu.CardNotificationCommandSealed:
+		return settings.CommandSealed
+	case feishu.CardNotificationWaitingInput:
+		return settings.WaitingInput
+	case feishu.CardNotificationAskQuestion:
+		return settings.AskQuestion
+	default:
+		return false
+	}
+}
+
 // GetFeishuRemoteTerminalSettings returns the current binding's remote
 // terminal settings. Returns defaults (false, "ai") when the relay host is
 // unavailable or no binding exists.
@@ -100,9 +159,9 @@ func (a *App) GetFeishuRemoteTerminalSettings() (FeishuRemoteTerminalSettings, e
 }
 
 // SetFeishuRemoteTerminalSettings updates the remote terminal toggle and
-// autoAttach mode for the current user's Feishu binding. If the enabled flag
-// flipped, OnRemoteTerminalToggle is called to tear down (or arm) active
-// subscribers.
+// autoAttach mode for the current user's Feishu binding. Toggle changes tear
+// down or backfill active subscribers; changing autoAttach while enabled also
+// backfills sessions newly admitted by the policy.
 //
 // Wails-bound methods must not declare context.Context in their signature.
 func (a *App) SetFeishuRemoteTerminalSettings(enabled bool, autoAttach string) error {
@@ -113,14 +172,23 @@ func (a *App) SetFeishuRemoteTerminalSettings(enabled bool, autoAttach string) e
 	// against the in-memory subscriber map below.
 	if ls := a.localBindingStore(); ls != nil {
 		prevEnabled := false
+		prevAutoAttach := "ai"
 		if v, err := ls.Get(a.ctx); err == nil {
 			prevEnabled = v.RemoteTerminalEnabled
+			if v.SessionAutoAttach != "" {
+				prevAutoAttach = v.SessionAutoAttach
+			}
 		}
 		if err := ls.SetRemoteTerminalSettings(a.ctx, enabled, autoAttach); err != nil {
 			return err
 		}
-		if a.host != nil && prevEnabled != enabled {
-			a.host.OnRemoteTerminalToggle(enabled)
+		if a.host != nil {
+			switch {
+			case prevEnabled && !enabled:
+				a.host.OnRemoteTerminalToggle(false)
+			case enabled && (!prevEnabled || prevAutoAttach != autoAttach):
+				a.host.OnRemoteTerminalToggle(true)
+			}
 		}
 		return nil
 	}
@@ -129,11 +197,19 @@ func (a *App) SetFeishuRemoteTerminalSettings(enabled bool, autoAttach string) e
 		return fmt.Errorf("relay host unavailable")
 	}
 	prev, _ := a.host.sqliteStore.GetFeishuBinding(a.ctx, a.host.adminUserID)
+	prevEnabled := prev != nil && prev.RemoteTerminalEnabled
+	prevAutoAttach := "ai"
+	if prev != nil && prev.SessionAutoAttach != "" {
+		prevAutoAttach = prev.SessionAutoAttach
+	}
 	if err := a.host.sqliteStore.SetRemoteTerminalSettings(a.ctx, a.host.adminUserID, enabled, autoAttach); err != nil {
 		return err
 	}
-	if prev != nil && prev.RemoteTerminalEnabled != enabled {
-		a.host.OnRemoteTerminalToggle(enabled)
+	switch {
+	case prevEnabled && !enabled:
+		a.host.OnRemoteTerminalToggle(false)
+	case enabled && (!prevEnabled || prevAutoAttach != autoAttach):
+		a.host.OnRemoteTerminalToggle(true)
 	}
 	return nil
 }
@@ -181,9 +257,22 @@ func (a *App) feishuServiceConfig(cfg appConfig) (feishu.ServiceConfig, string) 
 			// http/1.1 and trusts a self-signed relay when the user opted in.
 			RelayHTTPClient: relayHTTPClient(cfg.AllowInsecureRelay, 10*time.Second),
 			Sessions:        a.host,
+			CardEnabled:     a.feishuCardNotificationEnabled,
+			OnBound:         a.onFeishuBound,
 		}, "relay"
 	}
-	return feishu.ServiceConfig{Mode: feishu.ModeLocal, Sessions: a.host}, "local"
+	return feishu.ServiceConfig{
+		Mode:        feishu.ModeLocal,
+		Sessions:    a.host,
+		CardEnabled: a.feishuCardNotificationEnabled,
+		OnBound:     a.onFeishuBound,
+	}, "local"
+}
+
+func (a *App) onFeishuBound() {
+	if a.host != nil {
+		a.host.OnRemoteTerminalToggle(true)
+	}
 }
 
 // startFeishu constructs feishu.Service, starts the HookServer, writes the
@@ -345,6 +434,10 @@ type FeishuStatusResp struct {
 	// CallbackURL is the relay event endpoint to paste into the Feishu console.
 	// Set only in relay mode; empty in local mode (long-conn, no public URL).
 	CallbackURL string `json:"callback_url,omitempty"`
+	// ConnectionState is the actual local LongConn WebSocket lifecycle. Relay
+	// mode reports "relay_managed" because its connection lives server-side.
+	ConnectionState string `json:"connection_state,omitempty"`
+	ConnectionError string `json:"connection_error,omitempty"`
 }
 
 // GetFeishuStatus returns the current Feishu integration state.
@@ -390,16 +483,19 @@ func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
 			Bound:   false,
 		}, nil
 	}
+	connection := svc.ConnectionStatus()
 	return FeishuStatusResp{
-		Enabled:     true,
-		Mode:        mode,
-		Bound:       v.OpenID != "",
-		OpenID:      v.OpenID,
-		Disabled:    v.DisabledAt != 0,
-		Configured:  true,
-		AppID:       v.AppID,
-		AppIDHash:   v.AppIDHash,
-		CallbackURL: v.CallbackURL,
+		Enabled:         true,
+		Mode:            mode,
+		Bound:           v.OpenID != "",
+		OpenID:          v.OpenID,
+		Disabled:        v.DisabledAt != 0,
+		Configured:      true,
+		AppID:           v.AppID,
+		AppIDHash:       v.AppIDHash,
+		CallbackURL:     v.CallbackURL,
+		ConnectionState: connection.State,
+		ConnectionError: connection.LastError,
 	}, nil
 }
 
@@ -458,10 +554,7 @@ func (a *App) SetFeishuCredentials(c feishu.Credentials) error {
 	if svc == nil {
 		return errors.New("feishu disabled")
 	}
-	if err := svc.Store().SetCredentials(a.ctx, c); err != nil {
-		return err
-	}
-	return svc.EnsureLongConn(a.ctx)
+	return svc.ConfigureCredentials(a.ctx, c)
 }
 
 // BeginFeishuPair issues a short-code that the user sends to the bot via
@@ -475,13 +568,20 @@ func (a *App) BeginFeishuPair() (string, error) {
 	return svc.BeginPair(a.ctx)
 }
 
-// DeleteFeishuBinding removes the bound OpenID from the store.
+// DeleteFeishuBinding unbinds the Feishu user while retaining app credentials
+// and integration preferences so the app can be paired again directly.
 func (a *App) DeleteFeishuBinding() error {
 	svc, _ := a.currentFeishu()
 	if svc == nil {
 		return errors.New("feishu disabled")
 	}
-	return svc.Store().Delete(a.ctx)
+	if err := svc.Store().Unbind(a.ctx); err != nil {
+		return err
+	}
+	if a.host != nil {
+		a.host.OnRemoteTerminalToggle(false)
+	}
+	return nil
 }
 
 // SendFeishuTestCard renders and sends one notification card to the bound

@@ -33,16 +33,22 @@ type FeishuSubscriber struct {
 	// pumpPTYBytes — when false, drainLoop drops TypeOut frames instead of
 	// pushing them to chunk. Set false for AI sessions so the AIChunker is
 	// the sole body source; see AttachFeishuSubscriber for the full rationale.
-	pumpPTYBytes bool
+	pumpPTYBytes atomic.Bool
 
 	openID     string // anchor owner, recorded for permission gate at attach
 	clientID   string // unique per attach, used in driver meta
 	clientName string
 
 	tick   chan struct{} // timer signals sent to drainLoop (sole Chunker owner)
+	page   chan pageRequest
 	done   chan struct{}
 	wg     sync.WaitGroup
 	closed atomic.Bool
+}
+
+type pageRequest struct {
+	direction string
+	result    chan bool
 }
 
 // AttachFeishuSubscriber subscribes to sess as a passive viewer (no auto-drive)
@@ -65,16 +71,17 @@ type FeishuSubscriber struct {
 func AttachFeishuSubscriber(sess *session.Session, ownerOpenID string, pumpPTYBytes bool, flush FlushFunc) *FeishuSubscriber {
 	sub, _ := sess.Subscribe(0, "feishu:"+sess.ID.String(), "feishu-bot", session.WithoutAutoDrive())
 	fs := &FeishuSubscriber{
-		sess:         sess,
-		sub:          sub,
-		chunk:        NewChunker(flush),
-		pumpPTYBytes: pumpPTYBytes,
-		openID:       ownerOpenID,
-		clientID:     "feishu:" + sess.ID.String(),
-		clientName:   "feishu-bot",
-		tick:         make(chan struct{}, 1),
-		done:         make(chan struct{}),
+		sess:       sess,
+		sub:        sub,
+		chunk:      NewChunker(flush),
+		openID:     ownerOpenID,
+		clientID:   "feishu:" + sess.ID.String(),
+		clientName: "feishu-bot",
+		tick:       make(chan struct{}, 1),
+		page:       make(chan pageRequest),
+		done:       make(chan struct{}),
 	}
+	fs.pumpPTYBytes.Store(pumpPTYBytes)
 	fs.wg.Add(2)
 	go fs.drainLoop()
 	go fs.tickLoop()
@@ -92,15 +99,52 @@ func (f *FeishuSubscriber) drainLoop() {
 		case <-f.sub.Done():
 			return
 		case <-f.tick:
-			f.chunk.Tick()
+			if f.pumpPTYBytes.Load() {
+				f.chunk.Tick()
+			}
+		case req := <-f.page:
+			req.result <- f.chunk.NavigatePage(req.direction)
 		case frame, ok := <-f.sub.Out():
 			if !ok {
 				return
 			}
-			if frame.Type == proto.TypeOut && f.pumpPTYBytes {
-				f.chunk.PushBytes(frame.Payload)
+			if frame.Type == proto.TypeOut && f.pumpPTYBytes.Load() {
+				_, data, err := proto.DecodeOut(frame.Payload)
+				if err != nil {
+					continue
+				}
+				f.chunk.PushBytes(data)
 			}
 		}
+	}
+}
+
+// SetPumpPTYBytes switches the subscriber's body source at runtime. A session
+// can start as a shell and later launch an AI TUI in the same PTY; disabling
+// this pump prevents cursor-redraw bytes from overwriting structured AI turns.
+func (f *FeishuSubscriber) SetPumpPTYBytes(enabled bool) {
+	f.pumpPTYBytes.Store(enabled)
+}
+
+// NavigatePage moves the shell roller to the previous or next history page.
+// The request is serialized through drainLoop with PTY output and returns
+// false at a boundary, for an unknown direction, or after detach.
+func (f *FeishuSubscriber) NavigatePage(direction string) bool {
+	req := pageRequest{direction: direction, result: make(chan bool, 1)}
+	select {
+	case f.page <- req:
+	case <-f.done:
+		return false
+	case <-f.sub.Done():
+		return false
+	}
+	select {
+	case changed := <-req.result:
+		return changed
+	case <-f.done:
+		return false
+	case <-f.sub.Done():
+		return false
 	}
 }
 

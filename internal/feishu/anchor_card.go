@@ -12,9 +12,9 @@ package feishu
 //	         live by the outbound chunker
 //	input:   single-line text element; submits card.action.trigger with
 //	         value.kind="input"
-//	buttons: five-column column_set (^C, ^D, Esc, Enter, 结束) — schema V2
-//	         rejects the legacy `tag:"action"` container, so each button gets
-//	         its own column.
+//	buttons: column_set with optional history paging plus terminal keys —
+//	         schema V2 rejects the legacy `tag:"action"` container, so each
+//	         button gets its own column.
 //
 // The archive variant strips the input element and action buttons, sets
 // the template to grey, and appends a footer line.
@@ -38,8 +38,8 @@ const AnchorBodyElementID = "anchor_body_md"
 const AnchorInputElementID = "anchor_input"
 
 // AnchorButtonsElementID is the stable element_id on the bottom buttons row
-// (the column_set). PATCHed at runtime to swap the default 5 keystroke
-// buttons (^C ^D Esc Enter 结束) for AskUserQuestion option buttons.
+// (the column_set). PATCHed at runtime to swap the default terminal controls
+// for AskUserQuestion option buttons.
 const AnchorButtonsElementID = "anchor_buttons"
 
 // AnchorAskFormElementID is the element_id for the AskUserQuestion form
@@ -55,7 +55,18 @@ type AskFormQuestion struct {
 	Question    string       // human-facing question text; shown as dropdown placeholder
 	Options     []AskFormOpt // radio-style choices
 	MultiSelect bool         // true → render as multi_select_static so users can pick several
+	InputMode   AskFormInputMode
 }
+
+// AskFormInputMode identifies the terminal UI that receives a submitted form.
+// Its keyboard state machine is not interchangeable: Claude reviews answers
+// after all questions, while Codex commits each question as it advances.
+type AskFormInputMode string
+
+const (
+	AskFormInputClaude AskFormInputMode = ""
+	AskFormInputCodex  AskFormInputMode = "codex"
+)
 
 // AskFormOpt is one selectable option in a question.
 type AskFormOpt struct {
@@ -174,6 +185,7 @@ type AnchorState struct {
 	BodyMarkdown string // streaming tail body
 	Template     string // "blue" | "green" | "grey" | "red"
 	Restored     bool   // true for AI sessions revived via --resume; swaps the empty-body hint
+	Pagination   bool   // shell anchors expose previous/next history controls
 }
 
 // RenderAnchorCreate returns the full create-card POST body for SendInteractiveToOpenID.
@@ -193,7 +205,7 @@ func RenderAnchorCreate(s AnchorState) ([]byte, error) {
 			"elements": []any{
 				bodyMarkdown(initialBodyContent(s)),
 				inputElement(s.SessionID),
-				buttonsRow(s.SessionID),
+				buttonsRow(s.SessionID, s.Pagination),
 			},
 		},
 	}
@@ -221,10 +233,20 @@ func initialBodyContent(s AnchorState) string {
 // elapsed=0 omits the "· 已 …" suffix; unknown taskState falls through to
 // "活跃" so the line always renders rather than vanishing.
 func PrependStatus(taskState string, elapsed time.Duration, body string) string {
+	return PrependStatusWithLastOutput(taskState, elapsed, time.Time{}, body)
+}
+
+// PrependStatusWithLastOutput adds the wall-clock time of the most recent
+// body flush. A zero timestamp is omitted so a newly-created card does not
+// imply that output has already arrived.
+func PrependStatusWithLastOutput(taskState string, elapsed time.Duration, lastOutputAt time.Time, body string) string {
 	label := statusLabel(taskState)
 	header := "> " + label
 	if elapsed > 0 {
 		header += " · 已 " + formatElapsedDuration(elapsed)
+	}
+	if !lastOutputAt.IsZero() {
+		header += " · 最后输出 " + lastOutputAt.Format("15:04:05")
 	}
 	if body == "" {
 		return header + "\n"
@@ -341,12 +363,12 @@ func inputElement(sessionID string) map[string]any {
 	}
 }
 
-func buttonsRow(sessionID string) map[string]any {
+func buttonsRow(sessionID string, pagination bool) map[string]any {
 	// V2 callback contract: the click payload sits inside behaviors[0].value.
 	// A top-level `value` on the button is silently ignored — no
 	// card.action.trigger fires, the click looks dead. (Verified against the
 	// "Configuring card interactions" V2 doc.)
-	makeBtn := func(label, event string) map[string]any {
+	makeBtn := func(label, kind, event string) map[string]any {
 		return map[string]any{
 			"tag":  "button",
 			"text": map[string]any{"tag": "plain_text", "content": label},
@@ -354,7 +376,7 @@ func buttonsRow(sessionID string) map[string]any {
 			"behaviors": []any{map[string]any{
 				"type": "callback",
 				"value": map[string]any{
-					"kind":       "key",
+					"kind":       kind,
 					"session_id": sessionID,
 					"event":      event,
 				},
@@ -381,17 +403,28 @@ func buttonsRow(sessionID string) map[string]any {
 			"elements": []any{btn},
 		}
 	}
+	columns := make([]any, 0, 4)
+	if pagination {
+		columns = append(columns,
+			column(makeBtn("上页", "page", "previous")),
+			column(makeBtn("下页", "page", "next")),
+			column(makeBtn("中断", "key", "ctrl_c")),
+		)
+	} else {
+		columns = append(columns,
+			column(makeBtn("中断", "key", "ctrl_c")),
+			column(makeBtn("Esc", "key", "esc")),
+			column(makeBtn("Enter", "key", "enter")),
+		)
+	}
+	columns = append(columns,
+		column(endBtn),
+	)
 	return map[string]any{
 		"tag":                "column_set",
 		"element_id":         AnchorButtonsElementID,
 		"horizontal_spacing": "small",
-		"columns": []any{
-			column(makeBtn("^C", "ctrl_c")),
-			column(makeBtn("^D", "ctrl_d")),
-			column(makeBtn("Esc", "esc")),
-			column(makeBtn("Enter", "enter")),
-			column(endBtn),
-		},
+		"columns":            columns,
 	}
 }
 
@@ -406,11 +439,11 @@ func NewInputElement(sessionID, elementID string) map[string]any {
 	return el
 }
 
-// NewDefaultButtonsElement returns the full default buttons row (^C ^D Esc
-// Enter 结束) with its element_id, ready to POST via CreateCardElement.
+// NewDefaultButtonsElement returns the full default buttons row with its
+// element_id, ready to POST via CreateCardElement.
 // Used to restore the buttons when an AskUserQuestion form gets torn down.
-func NewDefaultButtonsElement(sessionID string) map[string]any {
-	return buttonsRow(sessionID)
+func NewDefaultButtonsElement(sessionID string, pagination bool) map[string]any {
+	return buttonsRow(sessionID, pagination)
 }
 
 // AskOptionsColumnSet builds the column_set payload that replaces the default
@@ -449,13 +482,13 @@ func AskOptionsColumnSet(sessionID string, optionLabels []string) map[string]any
 	}
 }
 
-// DefaultButtonsColumnSet returns the default keystroke buttons (^C ^D Esc
-// Enter 结束). PATCH-set back into the anchor after AskUserQuestion resolves.
-func DefaultButtonsColumnSet(sessionID string) map[string]any {
+// DefaultButtonsColumnSet returns the default terminal controls. PATCH-set
+// back into the anchor after AskUserQuestion resolves.
+func DefaultButtonsColumnSet(sessionID string, pagination bool) map[string]any {
 	// Reuse the same renderer used at card create time so the two stay in
 	// sync; just drop the element_id field (PATCH addresses by element_id
 	// already, no need to repeat it in the partial body).
-	cs := buttonsRow(sessionID)
+	cs := buttonsRow(sessionID, pagination)
 	delete(cs, "element_id")
 	return cs
 }

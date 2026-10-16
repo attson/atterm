@@ -44,6 +44,7 @@ type BindingStore interface {
 	Get(ctx context.Context) (*BindingView, error)
 	SetCredentials(ctx context.Context, c Credentials) error
 	SetBound(ctx context.Context, openID string) error
+	Unbind(ctx context.Context) error
 	SetDisabled(ctx context.Context) error
 	ClearDisabled(ctx context.Context) error
 	Delete(ctx context.Context) error

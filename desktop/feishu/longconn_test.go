@@ -44,6 +44,45 @@ type fakeRuntime struct {
 	closed int32 // accessed atomically
 }
 
+type readyRuntime struct {
+	cfg LongConnConfig
+}
+
+func (r *readyRuntime) Run(ctx context.Context) error {
+	if r.cfg.onReady != nil {
+		r.cfg.onReady()
+	}
+	<-ctx.Done()
+	return nil
+}
+
+func (r *readyRuntime) Close(context.Context) error { return nil }
+
+func TestLongConn_StatusTracksPhysicalConnection(t *testing.T) {
+	lc := newLongConnWithFactory(LongConnConfig{AppID: "cli_x", AppSecret: "s"}, func(cfg LongConnConfig) (longConnRuntime, error) {
+		return &readyRuntime{cfg: cfg}, nil
+	})
+	if got := lc.Status().State; got != LongConnDisconnected {
+		t.Fatalf("initial state = %q, want disconnected", got)
+	}
+	if err := lc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for lc.Status().State != LongConnConnected && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := lc.Status(); got.State != LongConnConnected || got.LastError != "" {
+		t.Fatalf("ready status = %+v, want connected with no error", got)
+	}
+	if err := lc.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := lc.Status().State; got != LongConnDisconnected {
+		t.Fatalf("closed state = %q, want disconnected", got)
+	}
+}
+
 func (r *fakeRuntime) Run(ctx context.Context) error { <-ctx.Done(); return nil }
 func (r *fakeRuntime) Close(ctx context.Context) error {
 	atomic.StoreInt32(&r.closed, 1)
@@ -111,6 +150,31 @@ func TestLongConn_OnReplyMessage_RoutesParentID(t *testing.T) {
 	}
 }
 
+func TestDispatchCardAction_ReturnsImmediateAck(t *testing.T) {
+	called := false
+	cfg := LongConnConfig{OnCardAction: func(_ context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any) {
+		called = true
+		if sessionID != "sid-1" || kind != "input" || operatorOpenID != "ou-1" || text != "ls" {
+			t.Fatalf("unexpected callback fields: sid=%q kind=%q event=%q operator=%q text=%q", sessionID, kind, event, operatorOpenID, text)
+		}
+	}}
+	ev := &callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
+		Operator: &callback.Operator{OpenID: "ou-1"},
+		Action: &callback.CallBackAction{
+			InputValue: "ls",
+			Value:      map[string]any{"session_id": "sid-1", "kind": "input"},
+		},
+	}}
+
+	resp := dispatchCardAction(context.Background(), cfg, ev)
+	if !called {
+		t.Fatal("OnCardAction was not called")
+	}
+	if resp == nil {
+		t.Fatal("card action must return an explicit success response")
+	}
+}
+
 func TestLongConn_OnCardAction_RoutesAck(t *testing.T) {
 	called := 0
 	gotSID := ""
@@ -171,6 +235,9 @@ func TestLongConn_AuthClassDisablesAndStops(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	if atomic.LoadInt32(&disabled) != 1 {
 		t.Fatalf("expected OnAuthClassFailure to fire")
+	}
+	if got := lc.Status(); got.State != LongConnError || got.LastError == "" {
+		t.Fatalf("auth failure status = %+v, want error with detail", got)
 	}
 	_ = lc.Close(context.Background())
 }

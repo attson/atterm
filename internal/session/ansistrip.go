@@ -1,9 +1,135 @@
 package session
 
+type ansiStripState uint8
+
+const (
+	ansiStripText ansiStripState = iota
+	ansiStripAfterESC
+	ansiStripCSI
+	ansiStripOSC
+	ansiStripOSCEscape
+	ansiStripString
+	ansiStripStringEscape
+)
+
+// ANSIStreamStripper removes terminal escape sequences while retaining parser
+// state between calls. PTY frame boundaries are arbitrary and frequently land
+// inside OSC 133 or SGR sequences, so streaming consumers must reuse one
+// instance instead of calling StripANSI independently for each frame.
+type ANSIStreamStripper struct {
+	state             ansiStripState
+	started           bool
+	utf8Continuations uint8
+}
+
+// Strip returns the visible bytes from the next terminal stream chunk. The
+// returned slice is newly allocated and remains valid after later calls.
+func (s *ANSIStreamStripper) Strip(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	if !s.started {
+		// A late subscriber's first frame may begin inside a CSI sequence.
+		b = stripLeadingCSITail(b)
+		s.started = true
+	}
+
+	out := make([]byte, 0, len(b))
+	for _, c := range b {
+		if s.state == ansiStripText && s.utf8Continuations != 0 {
+			if c&0xc0 == 0x80 {
+				out = append(out, c)
+				s.utf8Continuations--
+				continue
+			}
+			// The previous UTF-8 lead byte was invalid. Its consumer will drop
+			// it; process this byte normally so an ESC still starts a sequence.
+			s.utf8Continuations = 0
+		}
+		switch s.state {
+		case ansiStripText:
+			switch c {
+			case 0x1b:
+				s.state = ansiStripAfterESC
+			case 0x9b: // 8-bit CSI
+				s.state = ansiStripCSI
+			case 0x9d: // 8-bit OSC
+				s.state = ansiStripOSC
+			case 0x90, 0x98, 0x9e, 0x9f: // DCS, SOS, PM, APC
+				s.state = ansiStripString
+			case 0x9c: // orphan 8-bit ST
+			default:
+				out = append(out, c)
+				s.utf8Continuations = utf8ContinuationCount(c)
+			}
+		case ansiStripAfterESC:
+			switch c {
+			case '[':
+				s.state = ansiStripCSI
+			case ']':
+				s.state = ansiStripOSC
+			case 'P', 'X', '^', '_':
+				s.state = ansiStripString
+			default:
+				// ESC plus a single final/intermediate command has no visible text.
+				s.state = ansiStripText
+			}
+		case ansiStripCSI:
+			if c >= 0x40 && c <= 0x7e {
+				s.state = ansiStripText
+			} else if c == 0x1b {
+				s.state = ansiStripAfterESC
+			}
+		case ansiStripOSC:
+			switch c {
+			case 0x07, 0x9c: // BEL or 8-bit ST
+				s.state = ansiStripText
+			case 0x1b:
+				s.state = ansiStripOSCEscape
+			}
+		case ansiStripOSCEscape:
+			if c == '\\' {
+				s.state = ansiStripText
+			} else {
+				// A malformed ESC inside OSC remains part of the control string.
+				s.state = ansiStripOSC
+			}
+		case ansiStripString:
+			switch c {
+			case 0x9c:
+				s.state = ansiStripText
+			case 0x1b:
+				s.state = ansiStripStringEscape
+			}
+		case ansiStripStringEscape:
+			if c == '\\' {
+				s.state = ansiStripText
+			} else {
+				s.state = ansiStripString
+			}
+		}
+	}
+	return out
+}
+
+func utf8ContinuationCount(c byte) uint8 {
+	switch {
+	case c >= 0xc2 && c <= 0xdf:
+		return 1
+	case c >= 0xe0 && c <= 0xef:
+		return 2
+	case c >= 0xf0 && c <= 0xf4:
+		return 3
+	default:
+		return 0
+	}
+}
+
 // StripANSI removes ANSI / VT escape sequences from b, returning a fresh
-// slice. Three sequence shapes are stripped:
+// slice. It handles both 7-bit ESC-prefixed and 8-bit C1 forms, including:
 //   - CSI:  ESC '[' ... <final byte in 0x40..0x7E>
 //   - OSC:  ESC ']' ... <BEL (0x07) or ST (ESC '\')>
+//   - DCS/SOS/PM/APC control strings terminated by ST
 //   - Other single-byte ESC sequences (ESC X): the ESC and the following byte
 //
 // Additionally, a leading "orphan CSI tail" is stripped: if the input
@@ -19,59 +145,8 @@ package session
 //
 // Single-pass, O(len(b)) time, no regex.
 func StripANSI(b []byte) []byte {
-	b = stripLeadingCSITail(b)
-	const (
-		stateText = iota
-		stateAfterEsc
-		stateCSI
-		stateOSC
-	)
-	out := make([]byte, 0, len(b))
-	state := stateText
-	for i := 0; i < len(b); i++ {
-		c := b[i]
-		switch state {
-		case stateText:
-			if c == 0x1b { // ESC
-				state = stateAfterEsc
-				continue
-			}
-			out = append(out, c)
-		case stateAfterEsc:
-			switch c {
-			case '[':
-				state = stateCSI
-			case ']':
-				state = stateOSC
-			default:
-				// ESC X — drop ESC and X.
-				state = stateText
-			}
-		case stateCSI:
-			// CSI parameter bytes 0x30-0x3F, intermediates 0x20-0x2F, final 0x40-0x7E.
-			if c >= 0x40 && c <= 0x7E {
-				state = stateText
-			}
-			// else stay in CSI consuming parameter/intermediate bytes.
-		case stateOSC:
-			if c == 0x07 { // BEL terminator
-				state = stateText
-				continue
-			}
-			if c == 0x1b { // ST is ESC + '\'. Consume ESC; look for '\' next.
-				// Peek next byte.
-				if i+1 < len(b) && b[i+1] == '\\' {
-					i++
-					state = stateText
-					continue
-				}
-				// Lone ESC inside OSC — treat as text-state reset.
-				state = stateText
-				continue
-			}
-		}
-	}
-	return out
+	var stripper ANSIStreamStripper
+	return stripper.Strip(b)
 }
 
 // stripLeadingCSITail drops a run of digits / semicolons at the start of

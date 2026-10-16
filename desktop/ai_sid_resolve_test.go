@@ -32,6 +32,130 @@ func TestNormalizeAITitle(t *testing.T) {
 	}
 }
 
+func TestParseCodexTranscriptTurn_ItemCompletedOnly(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		wantRole string
+		wantText string
+		wantOK   bool
+	}{
+		{
+			name:     "user",
+			line:     `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"hello"}]}}}`,
+			wantRole: codexTurnRoleUser,
+			wantText: "hello",
+			wantOK:   true,
+		},
+		{
+			name:     "assistant current capitalization",
+			line:     `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"Text","text":"Hello! What can I help you with?"}]}}}`,
+			wantRole: codexTurnRoleAssistant,
+			wantText: "Hello! What can I help you with?",
+			wantOK:   true,
+		},
+		{
+			name: "duplicate response item ignored",
+			line: `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"duplicate"}]}}`,
+		},
+		{
+			name: "injected environment ignored",
+			line: `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"<environment_context>x</environment_context>"}]}}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseCodexTranscriptTurn([]byte(tt.line))
+			if ok != tt.wantOK || got.Role != tt.wantRole || got.Text != tt.wantText {
+				t.Fatalf("parse = (%+v, %v), want role=%q text=%q ok=%v", got, ok, tt.wantRole, tt.wantText, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestParseCodexTranscriptTurn_RequestUserInput(t *testing.T) {
+	line := `{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","arguments":"{\"questions\":[{\"header\":\"Choice\",\"id\":\"choice\",\"question\":\"Pick one\",\"options\":[{\"label\":\"A\",\"description\":\"first\"},{\"label\":\"B\",\"description\":\"second\"}]}]}"}}`
+	got, ok := parseCodexTranscriptTurn([]byte(line))
+	if !ok || got.Role != codexTurnRoleQuestion {
+		t.Fatalf("parse = (%+v, %v), want question turn", got, ok)
+	}
+	if len(got.Questions) != 1 || got.Questions[0].Question != "Pick one" || len(got.Questions[0].Options) != 2 {
+		t.Fatalf("questions = %+v", got.Questions)
+	}
+	for _, want := range []string{"Pick one", "1. A", "first", "2. B", "second"} {
+		if !strings.Contains(got.Text, want) {
+			t.Fatalf("text %q missing %q", got.Text, want)
+		}
+	}
+}
+
+func TestFollowCodexTranscript_ReplayAndTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	writeJsonl(t, path,
+		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"first prompt"}]}}}`,
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	turns := make(chan codexTranscriptTurn, 3)
+	go followCodexTranscript(ctx, path, true, func(turn codexTranscriptTurn) { turns <- turn })
+
+	select {
+	case got := <-turns:
+		if got.Role != codexTurnRoleUser || got.Text != "first prompt" {
+			t.Fatalf("initial turn = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("existing Codex turn was not replayed")
+	}
+
+	appendJsonl(t, path, `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"Text","text":"final answer"}]}}}`)
+	select {
+	case got := <-turns:
+		if got.Role != codexTurnRoleAssistant || got.Text != "final answer" {
+			t.Fatalf("tailed turn = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("appended Codex turn was not tailed")
+	}
+
+	appendJsonl(t, path, `{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","arguments":"{\"questions\":[{\"header\":\"Choice\",\"id\":\"choice\",\"question\":\"Pick one\",\"options\":[{\"label\":\"A\",\"description\":\"first\"}]}]}"}}`)
+	select {
+	case got := <-turns:
+		if got.Role != codexTurnRoleQuestion || len(got.Questions) != 1 || got.Questions[0].Options[0].Label != "A" {
+			t.Fatalf("tailed question = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("appended Codex request_user_input was not tailed")
+	}
+}
+
+func TestFollowCodexTranscript_ResumeStartsAtEOF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	writeJsonl(t, path,
+		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"old history"}]}}}`,
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	turns := make(chan codexTranscriptTurn, 2)
+	go followCodexTranscript(ctx, path, false, func(turn codexTranscriptTurn) { turns <- turn })
+	time.Sleep(codexResolveInterval * 2)
+	select {
+	case got := <-turns:
+		t.Fatalf("resume replayed old turn %+v", got)
+	default:
+	}
+
+	appendJsonl(t, path, `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"Text","text":"new answer"}]}}}`)
+	select {
+	case got := <-turns:
+		if got.Text != "new answer" {
+			t.Fatalf("new resume turn = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resume did not tail new turn")
+	}
+}
+
 func writeJsonl(t *testing.T, path string, lines ...string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {

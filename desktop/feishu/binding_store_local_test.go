@@ -111,6 +111,55 @@ func TestLocalKeychainBindingStore_CredentialUpsertPreservesBoundState(t *testin
 	}
 }
 
+func TestLocalKeychainBindingStore_ChangingAppIDClearsBoundState(t *testing.T) {
+	keyring.MockInit()
+	defer keyring.MockInitWithError(nil)
+
+	s := NewLocalKeychainBindingStore()
+	ctx := context.Background()
+	_ = s.SetCredentials(ctx, Credentials{AppID: "cli_old", AppSecret: "old"})
+	_ = s.SetBound(ctx, "ou_old_app")
+	_ = s.SetCredentials(ctx, Credentials{AppID: "cli_new", AppSecret: "new"})
+
+	v, err := s.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if v.OpenID != "" || v.BoundAt != 0 {
+		t.Fatalf("binding from the old app must be cleared, got %+v", v)
+	}
+}
+
+func TestLocalKeychainBindingStore_UnbindPreservesConfiguration(t *testing.T) {
+	keyring.MockInit()
+	defer keyring.MockInitWithError(nil)
+
+	s := NewLocalKeychainBindingStore()
+	ctx := context.Background()
+	want := Credentials{AppID: "cli_keep", AppSecret: "secret", EncryptKey: "encrypt", VerifyToken: "verify"}
+	_ = s.SetCredentials(ctx, want)
+	_ = s.SetRemoteTerminalSettings(ctx, true, "all")
+	_ = s.SetBound(ctx, "ou_remove")
+	_ = s.SetDisabled(ctx)
+
+	if err := s.Unbind(ctx); err != nil {
+		t.Fatalf("Unbind: %v", err)
+	}
+	v, err := s.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get after Unbind: %v", err)
+	}
+	if v.OpenID != "" || v.BoundAt != 0 || v.DisabledAt != 0 {
+		t.Fatalf("binding state was not cleared: %+v", v)
+	}
+	if v.AppID != want.AppID || v.AppSecret != want.AppSecret || v.EncryptKey != want.EncryptKey || v.VerifyToken != want.VerifyToken {
+		t.Fatalf("credentials were not preserved: %+v", v)
+	}
+	if !v.RemoteTerminalEnabled || v.SessionAutoAttach != "all" {
+		t.Fatalf("remote-terminal settings were not preserved: %+v", v)
+	}
+}
+
 func TestLocalStore_RemoteTerminalRoundTrip(t *testing.T) {
 	safekeyring.SetFileDirForTest(t.TempDir())
 	safekeyring.UseFileStore()

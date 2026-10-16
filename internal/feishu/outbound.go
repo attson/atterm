@@ -2,7 +2,7 @@
 // (shell) or hook (AI) events into rate-limited PATCH calls against an
 // anchor card. Two concerns kept separate:
 //
-//	ShellRoller — bytes in, bounded markdown out (last ≤5KB AND ≤30 lines).
+//	ShellRoller — bytes in, bounded markdown out (last ≤3KB AND ≤12 lines).
 //	Chunker     — wraps a roller with a 100ms-window throttle, diff-skip,
 //	              and a flush callback that does the actual PATCH.
 //
@@ -12,87 +12,269 @@ package feishu
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/attson/atterm/internal/session"
 )
 
 const (
-	rollerMaxBytes     = 5 * 1024
-	rollerMaxLines     = 30
-	chunkerFlushPeriod = 100 * time.Millisecond
-	chunkerBufferBytes = 4 * 1024
+	rollerMaxBytes        = 3 * 1024
+	rollerMaxLines        = 12
+	rollerHistoryMaxBytes = 50 * 1024
+	rollerHistoryMaxLines = 300
+	chunkerFlushPeriod    = 100 * time.Millisecond
+	chunkerBufferBytes    = 4 * 1024
 )
 
-// ShellRoller accumulates ANSI-stripped output and renders the last
-// ≤5KB AND ≤30 lines on demand. Not goroutine-safe; the chunker owns one.
+// ShellRoller accumulates bounded ANSI-stripped history and renders one
+// ≤5KB, ≤30-line page on demand. Not goroutine-safe; the chunker owns one.
 type ShellRoller struct {
-	lines    []string
-	lineOpen bool // true when the last element of lines is an unterminated (no \n) line
+	lines       []string
+	lineOpen    bool // true when the last element of lines is an unterminated (no \n) line
+	pendingCR   bool // CR may be the first half of CRLF or a cursor return
+	stripper    session.ANSIStreamStripper
+	utf8Pending []byte
+	pageEnd     int // exclusive absolute line index; -1 follows the latest page
 }
 
 func NewShellRoller() *ShellRoller {
-	return &ShellRoller{}
+	return &ShellRoller{pageEnd: -1}
 }
 
 // Append takes raw PTY bytes (possibly with ANSI), strips, and merges into
 // the rolling per-line buffer. A line ends at `\n`; partial lines (no
 // terminator) are kept "open" so the next Append's leading bytes merge in.
 func (r *ShellRoller) Append(data []byte) {
-	clean := session.StripANSI(data)
+	clean := r.stripper.Strip(data)
 	if len(clean) == 0 {
 		return
 	}
-	chunk := string(clean)
-
-	// If the last line is open (unterminated), absorb up to the first \n.
-	if r.lineOpen && len(r.lines) > 0 {
-		nl := strings.IndexByte(chunk, '\n')
-		if nl < 0 {
-			r.lines[len(r.lines)-1] += chunk
-			return
-		}
-		r.lines[len(r.lines)-1] += chunk[:nl]
-		r.lineOpen = false
-		chunk = chunk[nl+1:]
-	}
+	chunk := r.decodeTerminalText(clean)
 	if chunk == "" {
 		return
 	}
 
-	// Split remaining chunk into lines. A trailing "" element from a
-	// terminating \n marks the last line as closed; otherwise the final
-	// element is the new "open" line.
-	parts := strings.Split(chunk, "\n")
-	if parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
-		r.lineOpen = false
-	} else {
-		r.lineOpen = true
+	// PTYs use both CRLF and bare CR. A bare CR means "cursor to column 0",
+	// not a printable character; feeding it to Feishu markdown renders as a
+	// wide blank indent. Project the stream into lines before rendering:
+	// CRLF closes the line, while CR followed by text replaces the current
+	// open line (the useful approximation for prompts/progress redraws).
+	for chunk != "" {
+		i := strings.IndexAny(chunk, "\r\n")
+		if i < 0 {
+			r.appendVisible(chunk)
+			break
+		}
+		r.appendVisible(chunk[:i])
+		switch chunk[i] {
+		case '\r':
+			r.pendingCR = true
+		case '\n':
+			r.finishLine()
+		}
+		chunk = chunk[i+1:]
 	}
-	r.lines = append(r.lines, parts...)
 
-	if len(r.lines) > rollerMaxLines {
-		r.lines = r.lines[len(r.lines)-rollerMaxLines:]
+	r.trimHistory()
+}
+
+func (r *ShellRoller) trimHistory() {
+	removed := 0
+	if len(r.lines) > rollerHistoryMaxLines {
+		removed = len(r.lines) - rollerHistoryMaxLines
+		r.lines = r.lines[removed:]
+	}
+	for historyBytes(r.lines) > rollerHistoryMaxBytes && len(r.lines) > 1 {
+		r.lines = r.lines[1:]
+		removed++
+	}
+	if len(r.lines) == 1 && len(r.lines[0]) > rollerHistoryMaxBytes {
+		r.lines[0] = trimUTF8Front(r.lines[0], rollerHistoryMaxBytes)
+	}
+	if removed == 0 || r.pageEnd < 0 {
+		return
+	}
+	r.pageEnd -= removed
+	if r.pageEnd < 1 {
+		r.pageEnd = min(rollerMaxLines, len(r.lines))
 	}
 }
 
-// Render returns the current rolling window as a markdown code-fenced string
-// capped at rollerMaxBytes, so shell output renders as monospace in Feishu.
+func historyBytes(lines []string) int {
+	if len(lines) == 0 {
+		return 0
+	}
+	total := len(lines) - 1
+	for _, line := range lines {
+		total += len(line)
+	}
+	return total
+}
+
+func (r *ShellRoller) appendVisible(text string) {
+	if text == "" {
+		return
+	}
+	if r.pendingCR {
+		if r.lineOpen && len(r.lines) != 0 {
+			r.lines[len(r.lines)-1] = ""
+		}
+		r.pendingCR = false
+	}
+	if !r.lineOpen {
+		r.lines = append(r.lines, "")
+		r.lineOpen = true
+	}
+	r.lines[len(r.lines)-1] += text
+}
+
+func (r *ShellRoller) finishLine() {
+	// A newline after CR is the normal PTY CRLF pair. With no open content,
+	// retain one empty line just as strings.Split did previously.
+	r.pendingCR = false
+	if !r.lineOpen {
+		r.lines = append(r.lines, "")
+	}
+	r.lineOpen = false
+}
+
+// decodeTerminalText joins UTF-8 code points split across PTY frames and
+// drops invalid bytes plus non-layout C0 controls. Passing an incomplete or
+// orphan control byte through encoding/json makes Feishu render U+FFFD.
+func (r *ShellRoller) decodeTerminalText(clean []byte) string {
+	data := clean
+	if len(r.utf8Pending) != 0 {
+		data = make([]byte, 0, len(r.utf8Pending)+len(clean))
+		data = append(data, r.utf8Pending...)
+		data = append(data, clean...)
+		r.utf8Pending = nil
+	}
+
+	out := make([]byte, 0, len(data))
+	for len(data) != 0 {
+		if data[0] < utf8.RuneSelf {
+			c := data[0]
+			if c == '\n' || c == '\r' || c == '\t' || (c >= 0x20 && c != 0x7f) {
+				out = append(out, c)
+			}
+			data = data[1:]
+			continue
+		}
+		if !utf8.FullRune(data) {
+			r.utf8Pending = append(r.utf8Pending[:0], data...)
+			break
+		}
+		rn, size := utf8.DecodeRune(data)
+		if rn != utf8.RuneError || size != 1 {
+			out = append(out, data[:size]...)
+		}
+		data = data[size:]
+	}
+	return string(out)
+}
+
+// NavigatePage moves between fixed 30-line history pages. The latest page is
+// live; older pages keep an absolute end cursor so fresh PTY output does not
+// replace the lines the user is reading.
+func (r *ShellRoller) NavigatePage(direction string) bool {
+	if len(r.lines) == 0 {
+		return false
+	}
+	switch direction {
+	case "previous":
+		end := r.pageEnd
+		if end < 0 {
+			end = len(r.lines)
+		}
+		if end <= rollerMaxLines {
+			return false
+		}
+		r.pageEnd = end - rollerMaxLines
+		return true
+	case "next":
+		if r.pageEnd < 0 {
+			return false
+		}
+		next := r.pageEnd + rollerMaxLines
+		if next > len(r.lines)-rollerMaxLines {
+			r.pageEnd = -1
+		} else {
+			r.pageEnd = next
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// Render returns the selected history page as escaped markdown capped at
+// rollerMaxBytes. Feishu mobile automatically collapses long fenced code
+// blocks, so terminal output is deliberately rendered as a short message
+// preview instead of a code block.
 func (r *ShellRoller) Render() string {
 	if len(r.lines) == 0 {
 		return ""
 	}
-	body := strings.Join(r.lines, "\n")
+	end := len(r.lines)
+	if r.pageEnd >= 0 && r.pageEnd < end {
+		end = r.pageEnd
+	}
+	start := max(0, end-rollerMaxLines)
+	body := strings.Join(r.lines[start:end], "\n")
 	if len(body) > rollerMaxBytes {
-		body = body[len(body)-rollerMaxBytes:]
+		body = trimUTF8Front(body, rollerMaxBytes)
 		if i := strings.IndexByte(body, '\n'); i >= 0 {
 			body = body[i+1:]
 		}
 	}
-	return "```\n" + body + "\n```"
+	pageCount := (len(r.lines) + rollerMaxLines - 1) / rollerMaxLines
+	pageLabel := ""
+	if pageCount > 1 {
+		page := pageCount
+		if r.pageEnd >= 0 {
+			page = (r.pageEnd + rollerMaxLines - 1) / rollerMaxLines
+		}
+		pageLabel = fmt.Sprintf("第 %d/%d 页\n\n", page, pageCount)
+	}
+	return pageLabel + renderTerminalPreview(body)
+}
+
+func renderTerminalPreview(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		lines[i] = escapeTerminalMarkdown(preserveTerminalSpacing(line))
+	}
+	preview := strings.Join(lines, "\n")
+	if len(preview) <= rollerMaxBytes {
+		return preview
+	}
+	return trimUTF8Front(preview, rollerMaxBytes)
+}
+
+func preserveTerminalSpacing(line string) string {
+	line = strings.ReplaceAll(line, "\t", "\u00a0\u00a0\u00a0\u00a0")
+	for strings.Contains(line, "  ") {
+		line = strings.ReplaceAll(line, "  ", "\u00a0\u00a0")
+	}
+	return line
+}
+
+func escapeTerminalMarkdown(line string) string {
+	return strings.NewReplacer(
+		`\`, `\\`,
+		"`", "\\`",
+		"*", "\\*",
+		"_", "\\_",
+		"~", "\\~",
+		"[", "\\[",
+		"]", "\\]",
+		"<", "\\<",
+		">", "\\>",
+	).Replace(line)
 }
 
 // FlushFunc is the callback the chunker invokes when it has new body
@@ -162,6 +344,17 @@ func (c *Chunker) Tick() {
 		return
 	}
 	c.flushNow(now)
+}
+
+// NavigatePage changes the shell history page and immediately flushes the
+// resulting snapshot. The FeishuSubscriber serializes this with PushBytes.
+func (c *Chunker) NavigatePage(direction string) bool {
+	if !c.roller.NavigatePage(direction) {
+		return false
+	}
+	c.dirty = true
+	c.flushNow(c.clock.Now())
+	return true
 }
 
 func (c *Chunker) flushNow(now time.Time) {
@@ -277,9 +470,20 @@ func (r *AIRoller) Render() string {
 	out := sb.String()
 	// Cap at rollerMaxBytes the same way ShellRoller does, from the front.
 	if len(out) > rollerMaxBytes {
-		out = out[len(out)-rollerMaxBytes:]
+		out = trimUTF8Front(out, rollerMaxBytes)
 	}
 	return out
+}
+
+func trimUTF8Front(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	start := len(s) - maxBytes
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }
 
 // AIChunker is the AI-side analogue of Chunker; it owns an AIRoller and

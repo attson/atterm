@@ -231,6 +231,23 @@ func (s *DBStore) ClearFeishuBindingDisabled(ctx context.Context, userID string)
 	return nil
 }
 
+// ClearFeishuBindingBound removes the app-scoped user identity but preserves
+// encrypted credentials and preferences for a later rebind.
+func (s *DBStore) ClearFeishuBindingBound(ctx context.Context, userID string) error {
+	res, err := s.db.ExecContext(ctx,
+		s.dia.Rebind(`UPDATE feishu_bindings
+		 SET open_id = NULL, bound_at = NULL, disabled_at = NULL
+		 WHERE user_id = ?`), userID)
+	if err != nil {
+		return fmt.Errorf("clear bound: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrFeishuBindingNotFound
+	}
+	return nil
+}
+
 func (s *DBStore) DeleteFeishuBinding(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`DELETE FROM feishu_bindings WHERE user_id = ?`), userID)

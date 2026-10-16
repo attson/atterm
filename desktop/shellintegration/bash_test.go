@@ -28,8 +28,11 @@ func TestPrepareBashWritesRcfileAndReturnsArgs(t *testing.T) {
 		t.Fatalf("read rcfile %s: %v", rcPath, err)
 	}
 	got := string(body)
+	if !strings.Contains(got, "ATTERM_BASH_EMULATE_LOGIN") || !strings.Contains(got, "/etc/profile") {
+		t.Fatalf("rcfile does not preserve login startup; got %q", got)
+	}
 	if !strings.Contains(got, "~/.bashrc") {
-		t.Fatalf("rcfile does not source ~/.bashrc; got %q", got)
+		t.Fatalf("non-login rcfile does not source ~/.bashrc; got %q", got)
 	}
 	if !strings.Contains(got, "atterm.bash") {
 		t.Fatalf("rcfile does not source atterm.bash; got %q", got)

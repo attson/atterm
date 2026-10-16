@@ -38,3 +38,24 @@ func TestAINotificationsOnlyOrDefault(t *testing.T) {
 		t.Errorf("&true = %v, want true", got)
 	}
 }
+
+func TestFeishuCardNotificationSettingsDefaultEnabled(t *testing.T) {
+	got := (appConfig{}).FeishuCardNotificationSettingsOrDefault()
+	if !got.CommandSuccess || !got.CommandFailure || !got.CommandSealed || !got.WaitingInput || !got.AskQuestion {
+		t.Fatalf("fresh config should enable every Feishu card type, got %+v", got)
+	}
+}
+
+func TestFeishuCardNotificationSettingsPreserveExplicitValues(t *testing.T) {
+	f, tr := false, true
+	got := (appConfig{
+		FeishuNotifyCommandSuccess: &f,
+		FeishuNotifyCommandFailure: &tr,
+		FeishuNotifyCommandSealed:  &f,
+		FeishuNotifyWaitingInput:   &tr,
+		FeishuNotifyAskQuestion:    &f,
+	}).FeishuCardNotificationSettingsOrDefault()
+	if got.CommandSuccess || !got.CommandFailure || got.CommandSealed || !got.WaitingInput || got.AskQuestion {
+		t.Fatalf("explicit Feishu card settings changed while resolving defaults: %+v", got)
+	}
+}

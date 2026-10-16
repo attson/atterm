@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -494,8 +496,10 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 				trackCodexUserTitle(ctx, sess, files[sid].Path)
 				return
 			}
-			before = files
-			continue
+			// Recent Codex releases delegate persistence to the long-lived
+			// app-server daemon, so the rollout fd is no longer guaranteed to sit
+			// under the PTY process tree. Fall through to the guarded filename
+			// heuristic; it remains disabled when another resolver shares the cwd.
 		}
 		// A rollout contains its cwd but no terminal/session identifier. When
 		// multiple PTYs are resolving Codex in that cwd, every watcher observes
@@ -685,6 +689,209 @@ func joinCodexMessageContent(content []codexMessageContent) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+const (
+	codexTurnRoleUser      = "user"
+	codexTurnRoleAssistant = "assistant"
+	codexTurnRoleQuestion  = "question"
+)
+
+type codexInputOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+type codexInputQuestion struct {
+	Header   string             `json:"header"`
+	ID       string             `json:"id"`
+	Question string             `json:"question"`
+	Options  []codexInputOption `json:"options"`
+}
+
+type codexTranscriptTurn struct {
+	Role      string
+	Text      string
+	Questions []codexInputQuestion
+}
+
+// parseCodexTranscriptTurn accepts non-duplicated item_completed messages and
+// request_user_input function calls. Ordinary messages also have response_item
+// copies, so those remain ignored; interactive questions exist only in their
+// response_item function_call form.
+func parseCodexTranscriptTurn(line []byte) (codexTranscriptTurn, bool) {
+	var rec struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if json.Unmarshal(line, &rec) != nil {
+		return codexTranscriptTurn{}, false
+	}
+	if rec.Type == "response_item" {
+		var payload struct {
+			Type      string          `json:"type"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if json.Unmarshal(rec.Payload, &payload) != nil || payload.Type != "function_call" || payload.Name != "request_user_input" {
+			return codexTranscriptTurn{}, false
+		}
+		questions := parseCodexInputQuestions(payload.Arguments)
+		if len(questions) == 0 {
+			return codexTranscriptTurn{}, false
+		}
+		return codexTranscriptTurn{
+			Role:      codexTurnRoleQuestion,
+			Text:      formatCodexInputQuestions(questions),
+			Questions: questions,
+		}, true
+	}
+	if rec.Type != "event_msg" {
+		return codexTranscriptTurn{}, false
+	}
+	var payload struct {
+		Type string `json:"type"`
+		Item struct {
+			Type    string                `json:"type"`
+			Content []codexMessageContent `json:"content"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(rec.Payload, &payload) != nil || payload.Type != "item_completed" {
+		return codexTranscriptTurn{}, false
+	}
+	role := ""
+	switch payload.Item.Type {
+	case "UserMessage":
+		role = codexTurnRoleUser
+	case "AgentMessage":
+		role = codexTurnRoleAssistant
+	default:
+		return codexTranscriptTurn{}, false
+	}
+	parts := make([]string, 0, len(payload.Item.Content))
+	for _, part := range payload.Item.Content {
+		if !strings.EqualFold(part.Type, "text") && !strings.EqualFold(part.Type, "input_text") && !strings.EqualFold(part.Type, "output_text") {
+			continue
+		}
+		if text := strings.TrimSpace(part.Text); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	text := strings.Join(parts, "\n")
+	if text == "" || (role == codexTurnRoleUser && isCodexInjectedUserContext(text)) {
+		return codexTranscriptTurn{}, false
+	}
+	return codexTranscriptTurn{Role: role, Text: text}, true
+}
+
+func parseCodexInputQuestions(raw json.RawMessage) []codexInputQuestion {
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err == nil {
+		raw = json.RawMessage(encoded)
+	}
+	var args struct {
+		Questions []codexInputQuestion `json:"questions"`
+	}
+	if json.Unmarshal(raw, &args) != nil {
+		return nil
+	}
+	out := make([]codexInputQuestion, 0, len(args.Questions))
+	for _, q := range args.Questions {
+		q.Question = strings.TrimSpace(q.Question)
+		if q.Question != "" {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+func formatCodexInputQuestions(questions []codexInputQuestion) string {
+	var body strings.Builder
+	for qi, q := range questions {
+		if qi > 0 {
+			body.WriteString("\n\n")
+		}
+		body.WriteString("❓ ")
+		body.WriteString(q.Question)
+		for i, opt := range q.Options {
+			fmt.Fprintf(&body, "\n%d. %s", i+1, opt.Label)
+			if opt.Description != "" {
+				body.WriteString(" — ")
+				body.WriteString(opt.Description)
+			}
+		}
+	}
+	body.WriteString("\n\n_💡 每道题可选预设答案，也可填写自定义说明_")
+	return body.String()
+}
+
+func startCodexTurnStream(ctx context.Context, cwd, sid string, replayExisting bool, onTurn func(codexTranscriptTurn)) {
+	if sid == "" || onTurn == nil {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		logWarn("ai-stream", "no home for codex stream: %v", err)
+		return
+	}
+	path, ok := codexRolloutPathBySid(home, cwd, sid)
+	if !ok {
+		logWarn("ai-stream", "codex sid %s rollout not found", sid)
+		return
+	}
+	followCodexTranscript(ctx, path, replayExisting, onTurn)
+}
+
+// followCodexTranscript incrementally tails a rollout rather than rescanning
+// the growing JSONL on every tick. Existing rows are replayed only for a new
+// Codex launch, where resolution commonly finishes after the first turn was
+// already written. Resume sessions begin at EOF to avoid replaying history.
+func followCodexTranscript(ctx context.Context, path string, replayExisting bool, onTurn func(codexTranscriptTurn)) {
+	var offset int64
+	if !replayExisting {
+		if stat, err := os.Stat(path); err == nil {
+			offset = stat.Size()
+		}
+	}
+	var pending []byte
+	readNew := func() {
+		f, err := os.Open(path)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return
+		}
+		chunk, err := io.ReadAll(f)
+		if err != nil || len(chunk) == 0 {
+			return
+		}
+		offset += int64(len(chunk))
+		pending = append(pending, chunk...)
+		for {
+			i := bytes.IndexByte(pending, '\n')
+			if i < 0 {
+				return
+			}
+			line := pending[:i]
+			pending = pending[i+1:]
+			if turn, ok := parseCodexTranscriptTurn(line); ok {
+				onTurn(turn)
+			}
+		}
+	}
+	readNew()
+	ticker := time.NewTicker(codexResolveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			readNew()
+		}
+	}
 }
 
 func isCodexInjectedUserContext(message string) bool {

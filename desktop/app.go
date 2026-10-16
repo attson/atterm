@@ -46,6 +46,10 @@ type NewSessionReq struct {
 	Cwd     string   `json:"cwd,omitempty"`
 	Cols    uint16   `json:"cols,omitempty"`
 	Rows    uint16   `json:"rows,omitempty"`
+	// Recovered marks a local shell recreated from recovery.json. Feishu uses
+	// it to defer anchor creation until the session produces real activity,
+	// avoiding a burst of empty cards when many panes are restored at boot.
+	Recovered bool `json:"recovered,omitempty"`
 
 	// ProfileID explicitly selects a SessionProfile for this session,
 	// overriding the configured default profile (see relayHost.NewSession's

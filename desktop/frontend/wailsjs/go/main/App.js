@@ -166,6 +166,10 @@ export function GetEndpoint() {
   return window['go']['main']['App']['GetEndpoint']();
 }
 
+export function GetFeishuCardNotificationSettings() {
+  return window['go']['main']['App']['GetFeishuCardNotificationSettings']();
+}
+
 export function GetFeishuEffectiveMode() {
   return window['go']['main']['App']['GetFeishuEffectiveMode']();
 }
@@ -386,12 +390,12 @@ export function ListKnownHosts() {
   return window['go']['main']['App']['ListKnownHosts']();
 }
 
-export function ListPeerInvitations() {
-  return window['go']['main']['App']['ListPeerInvitations']();
-}
-
 export function ListPeerHosts() {
   return window['go']['main']['App']['ListPeerHosts']();
+}
+
+export function ListPeerInvitations() {
+  return window['go']['main']['App']['ListPeerInvitations']();
 }
 
 export function ListPeerMembers() {
@@ -620,6 +624,10 @@ export function SetDefaultShell(arg1) {
 
 export function SetDirectP2PEnabled(arg1) {
   return window['go']['main']['App']['SetDirectP2PEnabled'](arg1);
+}
+
+export function SetFeishuCardNotificationEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetFeishuCardNotificationEnabled'](arg1, arg2);
 }
 
 export function SetFeishuCredentials(arg1) {

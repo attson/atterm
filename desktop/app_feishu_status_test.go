@@ -175,6 +175,9 @@ func TestGetFeishuStatus_LocalConfigured(t *testing.T) {
 	if resp.AppIDHash == "" {
 		t.Fatalf("want app_id_hash populated, got %+v", resp)
 	}
+	if resp.ConnectionState != feishu.LongConnDisconnected {
+		t.Fatalf("connection state = %q, want disconnected before EnsureLongConn", resp.ConnectionState)
+	}
 }
 
 // TestGetFeishuStatus_LocalStaleBindWithoutSecret: a keychain blob carrying an

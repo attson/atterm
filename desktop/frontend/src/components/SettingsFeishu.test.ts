@@ -20,6 +20,21 @@ describe("SettingsFeishu", () => {
     expect(source).toContain("onToggleAIOnly");
   });
 
+  test("renders and persists all automatic card notification switches", () => {
+    expect(source).toContain("getFeishuCardNotificationSettings");
+    expect(source).toContain("setFeishuCardNotificationEnabled");
+    for (const cardType of [
+      "command_success",
+      "command_failure",
+      "command_sealed",
+      "waiting_input",
+      "ask_question",
+    ]) {
+      expect(source).toContain(cardType);
+    }
+    expect(source).toContain('data-test="feishu-card-notifications"');
+  });
+
   test("imports the remote terminal bindings from the api layer", () => {
     expect(source).toContain("getFeishuRemoteTerminalSettings");
     expect(source).toContain("setFeishuRemoteTerminalSettings");
@@ -57,5 +72,13 @@ describe("SettingsFeishu", () => {
   test("renders effective-mode line and a fallback warning", () => {
     expect(source).toContain("settings.feishu.mode.effective.label");
     expect(source).toContain("settings.feishu.mode.effective.fallbackWarn");
+  });
+
+  test("renders and polls the physical Feishu connection state", () => {
+    expect(source).toContain('data-test="feishu-connection-status"');
+    expect(source).toContain("status.value.connection_state");
+    expect(source).toContain("status.connection_error");
+    expect(source).toContain("startStatusPolling");
+    expect(source).toContain("STATUS_POLL_INTERVAL_MS");
   });
 });

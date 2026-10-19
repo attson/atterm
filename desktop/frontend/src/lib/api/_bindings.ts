@@ -778,6 +778,7 @@ export interface AppBindings {
   GetAccountKey(): Promise<string>;
   LoadSavedRelayPassword(): Promise<string>;
   RememberRelayPassword(password: string): Promise<void>;
+  FetchRelayVersion(arg1: string, arg2: boolean): Promise<string>;
   ProbeRelayVersion(arg1: string, arg2: boolean): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   ListRelaySessions(): Promise<RelaySessionRow[]>;

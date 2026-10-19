@@ -811,6 +811,7 @@ export const en = {
       uplink: "Uplink",
       off: "OFF",
       on: "ON",
+      serverVersion: "Server version: {version}",
       connectedAs: "connected as {identity}",
       notConfigured: "not configured",
       paused: "paused (config kept)",

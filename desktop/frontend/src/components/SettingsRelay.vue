@@ -2,7 +2,7 @@
 import { errText, logWarn } from "../lib/log";
 import { Info } from "lucide-vue-next";
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword, rememberRelayPassword, clearRelayConfig } from "../lib/api";
+import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, fetchRelayVersion, loadSavedRelayPassword, rememberRelayPassword, clearRelayConfig } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import PairingPanel from "./PairingPanel.vue";
@@ -66,6 +66,7 @@ const claimToken = ref("");
 // In-memory only (SEC-1): never persisted or logged.
 const connectedUserID = ref("");
 const connectedEmail = ref("");
+const serverVersion = ref("");
 
 const persistedHost = ref("");
 const persistedScheme = ref<RelayScheme>("https");
@@ -104,6 +105,20 @@ const relayConfigUrl = computed(() => {
   const h = stripScheme(host.value);
   if (!h) return "";
   return `${relayScheme.value === "http" ? "ws" : "wss"}://${h}`;
+});
+
+// Invalidate the previous result as soon as the endpoint changes.
+watch([fullUrl, allowInsecureRelay], async ([url, insecure], _, onCleanup) => {
+  let stale = false;
+  onCleanup(() => { stale = true; });
+  serverVersion.value = "";
+  if (!url) return;
+  try {
+    const version = await fetchRelayVersion(url, insecure);
+    if (!stale) serverVersion.value = version;
+  } catch {
+    // Version discovery must not prevent local use or relay configuration.
+  }
 });
 
 const dirty = computed(
@@ -509,6 +524,10 @@ defineExpose({
         <span class="dot">●</span>
         {{ statusPill.text }}
       </div>
+
+      <p v-if="serverVersion" class="hint">
+        {{ t("settings.relay.serverVersion", { version: serverVersion }) }}
+      </p>
 
       <p class="hint">
         {{ t("settings.relay.hint") }}

@@ -24,6 +24,10 @@ func TestProbeRelayVersion_Success(t *testing.T) {
 	if err := app.ProbeRelayVersion(srv.URL, false); err != nil {
 		t.Fatalf("ProbeRelayVersion: %v", err)
 	}
+	version, err := app.FetchRelayVersion(srv.URL, false)
+	if err != nil || version != "v0.2.99" {
+		t.Fatalf("FetchRelayVersion: version=%q err=%v", version, err)
+	}
 }
 
 func TestProbeRelayVersion_404(t *testing.T) {

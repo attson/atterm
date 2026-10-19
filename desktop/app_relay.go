@@ -226,16 +226,22 @@ func (a *App) RememberRelayPassword(password string) error {
 // are sent. 5-second timeout keeps the UI from blocking on a stalled
 // connection — the user can re-click "保存并连接" if the relay just woke up.
 func (a *App) ProbeRelayVersion(relayURL string, allowInsecure bool) error {
+	_, err := a.FetchRelayVersion(relayURL, allowInsecure)
+	return err
+}
+
+// FetchRelayVersion reads the running server version without sending credentials.
+func (a *App) FetchRelayVersion(relayURL string, allowInsecure bool) (string, error) {
 	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
 	if relayURL == "" {
-		return fmt.Errorf("relay url is empty")
+		return "", fmt.Errorf("relay url is empty")
 	}
 	httpURL, wsURL, err := relayLoginEndpoints(relayURL)
 	if err != nil {
-		return fmt.Errorf("invalid relay url: %w", err)
+		return "", fmt.Errorf("invalid relay url: %w", err)
 	}
 	if err := validateRelayEndpoint(wsURL, allowInsecure); err != nil {
-		return err
+		return "", err
 	}
 	ctx := a.ctx
 	if ctx == nil {
@@ -243,27 +249,27 @@ func (a *App) ProbeRelayVersion(relayURL string, allowInsecure bool) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", httpURL+"/api/version", nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	client := relayHTTPClient(allowInsecure, 5*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return "", fmt.Errorf("connect: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
 	var out struct {
 		Version string `json:"version"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return fmt.Errorf("not an atterm relay (decode): %w", err)
+		return "", fmt.Errorf("not an atterm relay (decode): %w", err)
 	}
 	if out.Version == "" {
-		return fmt.Errorf("not an atterm relay (no version field)")
+		return "", fmt.Errorf("not an atterm relay (no version field)")
 	}
-	return nil
+	return out.Version, nil
 }
 
 // relayLoginEndpoints normalizes a user-entered relay URL into the (http(s),

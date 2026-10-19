@@ -778,6 +778,7 @@ export const zhCN = {
       uplink: "Uplink",
       off: "关",
       on: "开",
+      serverVersion: "服务端版本：{version}",
       connectedAs: "已连接为 {identity}",
       notConfigured: "未配置",
       paused: "已暂停（保留配置）",

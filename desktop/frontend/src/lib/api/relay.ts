@@ -164,3 +164,7 @@ export async function listRemoteSessions(): Promise<SessionInfo[]> {
   // unlocked account_key the same way the WS META and Capacitor list paths do.
   return decryptSessionFields(parsed ?? []);
 }
+
+export function fetchRelayVersion(url: string, allowInsecure: boolean): Promise<string> {
+  return bindings().FetchRelayVersion(url, allowInsecure);
+}

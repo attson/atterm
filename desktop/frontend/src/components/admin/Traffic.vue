@@ -18,6 +18,9 @@ import {
   Users,
   X,
 } from 'lucide-vue-next'
+import TrafficTimeControls from '../TrafficTimeControls.vue'
+import TrafficTimeChart from '../TrafficTimeChart.vue'
+import { useTrafficWindow } from '../../composables/useTrafficWindow'
 import { ApiError } from '@shared/api/client'
 import { getAdminHealth, getTrafficStats } from '@shared/api/admin'
 import type { AdminHealthResponse, AdminTrafficRow } from '@shared/api/types'
@@ -29,7 +32,6 @@ import {
   selectedRows,
   timelineSeries,
   totalMetric,
-  trafficRange,
   trendPercent,
   userIdentity,
   userSummaries,
@@ -44,12 +46,18 @@ const message = useMessage()
 const rows = ref<AdminTrafficRow[]>([])
 const health = ref<AdminHealthResponse | null>(null)
 const loading = ref(false)
-const rangeDays = ref(7)
+const { mode, minutes, date, granularity, hour, rangeDays, bucket, seconds, range, now, autoRefresh, drillDown } = useTrafficWindow(load)
+const updatedAt = ref<string>()
+const serverTime = ref<string>()
+const loadFailed = ref(false)
+let loadGeneration = 0
 const metric = ref<TrafficMetric>('bytes')
 const dimension = ref<TimelineDimension>('group')
 const direction = ref<DirectionFilter>('all')
 const selectedUserIDs = ref<string[]>([])
 const selectionInitialized = ref(false)
+const followAllUsers = ref(true)
+const knownUsers = ref<{ id: string; email: string }[]>([])
 const userFilterOpen = ref(false)
 const userQuery = ref('')
 const userTableUserID = ref<string | null>(null)
@@ -57,8 +65,8 @@ const categoryFilter = ref('all')
 const drawerUserID = ref<string | null>(null)
 const selectorRoot = ref<HTMLElement | null>(null)
 
-const range = computed(() => trafficRange(rangeDays.value))
-const allUsers = computed(() => userIdentity(rows.value))
+
+const allUsers = computed(() => knownUsers.value)
 const selectedSet = computed(() => new Set(selectedUserIDs.value))
 const currentRows = computed(() => selectedRows(rows.value, selectedSet.value, new Set(range.value.days)))
 const previousRows = computed(() => selectedRows(rows.value, selectedSet.value, new Set(range.value.previousDays)))
@@ -141,31 +149,43 @@ const categoryDensity = computed(() => categories.value.map((category) => ({
 const densityMax = computed(() => Math.max(1, ...categoryDensity.value.map((item) => item.density)))
 
 async function load() {
+  const generation = ++loadGeneration
+  now.value = Date.now()
   loading.value = true
-  const requestedRange = trafficRange(rangeDays.value)
+  loadFailed.value = false
+  const requestedRange = range.value
   try {
     const [trafficResult, healthResult] = await Promise.allSettled([
-      getTrafficStats({ view: 'detail', bucket: 'day', from: requestedRange.from, to: requestedRange.to }),
+      getTrafficStats({ view: 'detail', bucket: bucket.value ?? 'day', from: bucket.value ? requestedRange.currentFrom : requestedRange.from, to: requestedRange.to }),
       getAdminHealth(),
     ])
+    if (generation !== loadGeneration) return
     if (trafficResult.status === 'rejected') throw trafficResult.reason
     const traffic = trafficResult.value
     const platform = healthResult.status === 'fulfilled' ? healthResult.value : null
+    updatedAt.value = traffic.updated_at
+    serverTime.value = traffic.server_time
+    const selectionWasAll = followAllUsers.value
     rows.value = traffic.rows
     health.value = platform
-    const ids = userIdentity(traffic.rows).map((user) => user.id)
+    const identities = new Map(knownUsers.value.map(user => [user.id, user]))
+    for (const user of userIdentity(traffic.rows)) identities.set(user.id, user)
+    knownUsers.value = [...identities.values()].sort((a, b) => a.email.localeCompare(b.email))
+    const ids = knownUsers.value.map((user) => user.id)
     if (!selectionInitialized.value) {
       selectedUserIDs.value = ids
       selectionInitialized.value = true
     } else {
-      const valid = new Set(ids)
-      selectedUserIDs.value = selectedUserIDs.value.filter((id) => valid.has(id))
+      const previousIDs = new Set(selectedUserIDs.value)
+      if (selectionWasAll) selectedUserIDs.value = ids
+      else selectedUserIDs.value = [...previousIDs]
     }
   } catch (error) {
+    if (generation !== loadGeneration) return
+    loadFailed.value = true
     if (error instanceof ApiError) message.error(t('admin.traffic.loadFailed'))
-    rows.value = []
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -181,20 +201,24 @@ function setDimension(next: TimelineDimension) {
 }
 
 function toggleUser(id: string) {
+  followAllUsers.value = false
   selectedUserIDs.value = selectedSet.value.has(id)
     ? selectedUserIDs.value.filter((value) => value !== id)
     : [...selectedUserIDs.value, id]
 }
 
 function onlyUser(id: string) {
+  followAllUsers.value = false
   selectedUserIDs.value = [id]
 }
 
 function selectAllUsers() {
+  followAllUsers.value = true
   selectedUserIDs.value = allUsers.value.map((user) => user.id)
 }
 
 function clearAllUsers() {
+  followAllUsers.value = false
   selectedUserIDs.value = []
 }
 
@@ -233,7 +257,7 @@ function categoryName(key: string): string {
 }
 
 function shortDay(day: string): string {
-  return day.slice(5).replace('-', '/')
+  return day.includes('T') ? day.slice(11, 16) : day.slice(5).replace('-', '/')
 }
 
 function linePoints(values: number[]): string {
@@ -260,7 +284,7 @@ onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointer)
   void load()
 })
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointer))
+onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerdown', onDocumentPointer) })
 </script>
 
 <template>
@@ -282,7 +306,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
             <span>{{ t('admin.traffic.platformScope') }}</span>
             <h2>{{ t('admin.traffic.platformStatus') }}</h2>
           </div>
-          <small><Radio />{{ t('admin.traffic.globalRealtime') }}</small>
+          <small><Radio />{{ t('admin.traffic.platformLive') }}</small>
         </div>
         <div class="platform-strip" data-test="platform-status">
           <div class="platform-cell platform-health">
@@ -337,7 +361,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
             <h2>{{ t('admin.traffic.userAnalysis') }}</h2>
           </div>
           <div class="filterbar">
-            <div class="segmented" role="group" :aria-label="t('admin.traffic.range')">
+            <div v-if="mode === 'summary'" class="segmented" role="group" :aria-label="t('admin.traffic.range')">
               <button v-for="days in [7, 30, 90]" :key="days" type="button" :class="{ active: rangeDays === days }" :data-test="`range-${days}`" @click="setRange(days)">{{ t('admin.traffic.days', { days }) }}</button>
             </div>
             <div ref="selectorRoot" class="user-selector">
@@ -370,6 +394,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
           </div>
         </div>
 
+        <TrafficTimeControls v-model:mode="mode" v-model:minutes="minutes" v-model:date="date" v-model:granularity="granularity" v-model:hour="hour" :auto-refresh="autoRefresh" :now="now" :updated-at="updatedAt" :failed="loadFailed" />
+        <p v-if="loadFailed" role="alert" class="traffic-load-error">{{ t('admin.traffic.loadFailed') }}</p>
         <div v-if="!selectedUsers.length" class="selection-empty" data-test="traffic-selection-empty">
           <Users />
           <h3>{{ t('admin.traffic.noUsersSelected') }}</h3>
@@ -387,7 +413,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
           <div class="kpi-strip">
             <div v-for="kpi in kpis" :key="kpi.key" class="kpi-cell">
               <span>{{ kpi.label }}</span>
-              <div><strong>{{ kpi.value }}</strong><small :class="{ up: kpi.trend !== null && kpi.trend > 0, down: kpi.trend !== null && kpi.trend < 0 }">
+              <div><strong>{{ kpi.value }}</strong><small v-if="mode === 'summary'" :class="{ up: kpi.trend !== null && kpi.trend > 0, down: kpi.trend !== null && kpi.trend < 0 }">
                 <ArrowUpRight v-if="kpi.trend !== null && kpi.trend > 0" />
                 <ArrowDownRight v-else-if="kpi.trend !== null && kpi.trend < 0" />
                 <Minus v-else />{{ trendText(kpi.trend) }}
@@ -408,9 +434,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
                 <div><small>{{ t('admin.traffic.metric') }}</small><div class="segmented"><button type="button" :class="{ active: metric === 'bytes' }" data-test="metric-bytes" @click="metric = 'bytes'">{{ t('admin.traffic.bytes') }}</button><button type="button" :class="{ active: metric === 'frames' }" data-test="metric-frames" @click="metric = 'frames'">{{ t('admin.traffic.frames') }}</button></div></div>
               </div>
             </div>
-            <div class="chart-meta"><span>{{ isMatrix ? t('admin.traffic.multiUserMatrix') : dimension === 'direction' ? t('admin.traffic.directionTrend') : t('admin.traffic.stackedTimeline') }}</span><small>{{ t('admin.traffic.bucketCount', { count: range.days.length }) }}</small></div>
+            <div v-if="mode === 'summary'" class="chart-meta"><span>{{ isMatrix ? t('admin.traffic.multiUserMatrix') : dimension === 'direction' ? t('admin.traffic.directionTrend') : t('admin.traffic.stackedTimeline') }}</span><small>{{ t('admin.traffic.bucketCount', { count: range.days.length }) }}</small></div>
 
-            <div v-if="!currentRows.length" class="chart-empty">{{ t('admin.traffic.empty') }}</div>
+            <TrafficTimeChart v-if="mode !== 'summary'" :rows="currentRows" :dates="range.days" :seconds="seconds" :realtime="mode === 'realtime'" :dimension="dimension" :direction="direction" :metric="metric" :server-time="serverTime" @drill-down="drillDown" />
+            <div v-else-if="!currentRows.length" class="chart-empty">{{ t('admin.traffic.empty') }}</div>
             <div v-else-if="dimension === 'direction'" class="svg-chart" data-test="direction-chart">
               <svg viewBox="0 0 1000 320" preserveAspectRatio="none" role="img" :aria-label="t('admin.traffic.directionTrend')">
                 <g class="grid-lines"><line v-for="y in [52, 108, 164, 220, 276]" :key="y" x1="64" :y1="y" x2="968" :y2="y" /></g>
@@ -430,16 +457,16 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
               <div class="matrix-axis" :style="{ '--columns': String(range.days.length) }"><span v-for="day in range.days" :key="day">{{ shortDay(day) }}</span></div>
             </div>
             <div v-else class="bar-chart" data-test="stacked-chart">
-              <div v-for="(day, dayIndex) in range.days" :key="day" class="bar-column">
+              <div v-for="(day, dayIndex) in range.days" :key="day" class="bar-column" role="button" tabindex="0" @click="drillDown(day)" @keydown.enter="drillDown(day)">
                 <div class="bar-stack">
                   <i v-for="series in chartSeries.slice(0, 8)" :key="series.key" :style="{ height: `${(series.values[dayIndex] / stackedMax) * 100}%`, background: series.color }" :title="`${series.label} · ${formatMetric(series.values[dayIndex])}`"></i>
                 </div>
                 <span>{{ shortDay(day) }}</span>
               </div>
             </div>
-            <div v-if="dimension !== 'direction' && currentRows.length" class="series-legend"><span v-for="series in chartSeries.slice(0, 8)" :key="series.key"><i :style="{ background: series.color }"></i>{{ dimension === 'group' ? categoryName(series.label) : series.label }}</span></div>
+            <div v-if="mode === 'summary' && dimension !== 'direction' && currentRows.length" class="series-legend"><span v-for="series in chartSeries.slice(0, 8)" :key="series.key"><i :style="{ background: series.color }"></i>{{ dimension === 'group' ? categoryName(series.label) : series.label }}</span></div>
 
-            <div v-if="dimension !== 'direction' && chartSeries.length" class="timeline-table-wrap">
+            <div v-if="mode === 'summary' && dimension !== 'direction' && chartSeries.length" class="timeline-table-wrap">
               <table class="timeline-table">
                 <thead><tr><th>{{ t('admin.traffic.colUser') }}</th><th>{{ dimension === 'group' ? t('admin.traffic.colCategory') : t('admin.traffic.colFrameType') }}</th><th>{{ t('admin.traffic.total') }}</th><th v-for="day in range.days" :key="day">{{ shortDay(day) }}</th></tr></thead>
                 <tbody><tr v-for="series in chartSeries.slice(0, 16)" :key="series.key"><td>{{ series.userLabel || t('admin.traffic.selectedAggregate') }}</td><td>{{ dimension === 'group' ? categoryName(series.label) : series.label }}</td><td>{{ formatMetric(series.total) }}</td><td v-for="(value, index) in series.values" :key="index">{{ formatMetric(value) }}</td></tr></tbody>
@@ -477,14 +504,14 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
               </div>
               <div class="data-table-wrap">
                 <table class="data-table" data-test="traffic-user-table">
-                  <thead><tr><th>{{ t('admin.traffic.colUser') }}</th><th>{{ t('admin.traffic.totalTraffic') }}</th><th>{{ t('admin.traffic.share') }}</th><th>{{ t('admin.traffic.periodTrend') }}</th><th>{{ t('admin.traffic.activeDays') }}</th><th></th></tr></thead>
-                  <tbody><tr v-for="user in userRows" :key="user.id"><td><strong>{{ user.email }}</strong><small>{{ user.id }}</small></td><td>{{ humanBytes(user.bytes) }}</td><td><span class="share"><i :style="{ width: `${user.share}%` }"></i></span>{{ user.share.toFixed(1) }}%</td><td :class="{ positive: user.trend !== null && user.trend > 0, negative: user.trend !== null && user.trend < 0 }">{{ trendText(user.trend) }}</td><td>{{ user.activeDays }} / {{ rangeDays }}</td><td><button class="icon-button small" type="button" :aria-label="t('admin.traffic.viewUser', { user: user.email })" :data-test="`open-user-${user.id}`" @click="openDrawer(user.id)"><Eye /></button></td></tr></tbody>
+                  <thead><tr><th>{{ t('admin.traffic.colUser') }}</th><th>{{ t('admin.traffic.totalTraffic') }}</th><th>{{ t('admin.traffic.share') }}</th><th v-if="mode === 'summary'">{{ t('admin.traffic.periodTrend') }}</th><th v-if="mode === 'summary'">{{ t('admin.traffic.activeDays') }}</th><th></th></tr></thead>
+                  <tbody><tr v-for="user in userRows" :key="user.id"><td><strong>{{ user.email }}</strong><small>{{ user.id }}</small></td><td>{{ humanBytes(user.bytes) }}</td><td><span class="share"><i :style="{ width: `${user.share}%` }"></i></span>{{ user.share.toFixed(1) }}%</td><td v-if="mode === 'summary'" :class="{ positive: user.trend !== null && user.trend > 0, negative: user.trend !== null && user.trend < 0 }">{{ trendText(user.trend) }}</td><td v-if="mode === 'summary'">{{ user.activeDays }} / {{ rangeDays }}</td><td><button class="icon-button small" type="button" :aria-label="t('admin.traffic.viewUser', { user: user.email })" :data-test="`open-user-${user.id}`" @click="openDrawer(user.id)"><Eye /></button></td></tr></tbody>
                 </table>
               </div>
             </section>
           </div>
 
-          <section class="diagnostics">
+          <section v-if="mode === 'summary'" class="diagnostics">
             <div class="panel-head"><div><h3>{{ t('admin.traffic.diagnostics') }}</h3><p>{{ t('admin.traffic.diagnosticsRange', { days: rangeDays }) }}</p></div></div>
             <div class="diagnostic-grid">
               <div class="diagnostic-block">
@@ -506,8 +533,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
     <div v-if="drawerUser" class="drawer-backdrop" data-test="traffic-user-drawer" @click.self="drawerUserID = null">
       <aside class="user-drawer">
         <div class="drawer-head"><div><span>{{ t('admin.traffic.userTraffic') }}</span><h3>{{ drawerUser.email }}</h3><small>{{ drawerUser.id }}</small></div><button class="icon-button" type="button" :aria-label="t('common.close')" @click="drawerUserID = null"><X /></button></div>
-        <div class="drawer-kpis"><div><span>{{ t('admin.traffic.totalTraffic') }}</span><strong>{{ humanBytes(drawerUser.bytes) }}</strong></div><div><span>{{ t('admin.traffic.periodTrend') }}</span><strong>{{ trendText(drawerUser.trend) }}</strong></div><div><span>{{ t('admin.traffic.kpiFrames') }}</span><strong>{{ compactNumber(drawerUser.frames) }}</strong></div></div>
-        <section><h4><Clock3 />{{ t('admin.traffic.dailyTraffic') }}</h4><div class="drawer-bars"><div v-for="(value, index) in drawerDays" :key="range.days[index]"><i :style="{ height: `${(value / drawerDayMax) * 100}%` }" :title="`${range.days[index]} · ${humanBytes(value)}`"></i><span>{{ shortDay(range.days[index]) }}</span></div></div></section>
+        <div class="drawer-kpis"><div><span>{{ t('admin.traffic.totalTraffic') }}</span><strong>{{ humanBytes(drawerUser.bytes) }}</strong></div><div v-if="mode === 'summary'"><span>{{ t('admin.traffic.periodTrend') }}</span><strong>{{ trendText(drawerUser.trend) }}</strong></div><div><span>{{ t('admin.traffic.kpiFrames') }}</span><strong>{{ compactNumber(drawerUser.frames) }}</strong></div></div>
+        <section v-if="mode === 'summary'"><h4><Clock3 />{{ t('admin.traffic.dailyTraffic') }}</h4><div class="drawer-bars"><div v-for="(value, index) in drawerDays" :key="range.days[index]"><i :style="{ height: `${(value / drawerDayMax) * 100}%` }" :title="`${range.days[index]} · ${humanBytes(value)}`"></i><span>{{ shortDay(range.days[index]) }}</span></div></div></section>
+        <section v-if="mode !== 'summary'"><TrafficTimeChart :rows="drawerRows" :dates="range.days" :seconds="seconds" :realtime="mode === 'realtime'" :dimension="dimension" :direction="direction" :metric="metric" :server-time="serverTime" @drill-down="drillDown" /></section>
         <section><h4><Activity />{{ t('admin.traffic.frameBreakdown') }}</h4><table><thead><tr><th>{{ t('admin.traffic.colFrameType') }}</th><th>{{ t('admin.traffic.colCategory') }}</th><th>{{ t('admin.traffic.colBytes') }}</th><th>{{ t('admin.traffic.colFrames') }}</th></tr></thead><tbody><tr v-for="frame in drawerFrames" :key="frame.name"><td>{{ frame.name }}</td><td>{{ categoryName(frame.category) }}</td><td>{{ humanBytes(frame.bytes) }}</td><td>{{ compactNumber(frame.frames) }}</td></tr></tbody></table></section>
       </aside>
     </div>

@@ -20,6 +20,7 @@ const (
 // trafficDelta is one accumulated (user, frame type, direction) bucket
 // drained from a trafficMeter snapshot.
 type trafficDelta struct {
+	Minute    int64
 	UserID    string
 	FrameType int
 	Direction int
@@ -28,6 +29,7 @@ type trafficDelta struct {
 }
 
 type trafficKey struct {
+	minute int64
 	userID string
 	ft     int
 	dir    int
@@ -41,7 +43,7 @@ type trafficCell struct {
 // trafficMeter accumulates per-(user, frame type, direction) byte and frame
 // counts in memory. It is written on the hot send/receive paths (add) and
 // drained on a fixed interval (snapshot). A single mutex is sufficient:
-// snapshot runs at flush cadence (~60s), so lock contention on add is
+// snapshot runs at flush cadence (~10s), so lock contention on add is
 // negligible relative to the WebSocket I/O it accompanies.
 type trafficMeter struct {
 	mu    sync.Mutex
@@ -55,10 +57,14 @@ func newTrafficMeter() *trafficMeter {
 // add records wireBytes for one frame. A zero-length userID (pre-auth /
 // anonymous frames) is dropped: traffic is only meaningful per account.
 func (m *trafficMeter) add(userID string, t proto.Type, dir int, wireBytes int) {
+	m.addAt(userID, t, dir, wireBytes, time.Now())
+}
+
+func (m *trafficMeter) addAt(userID string, t proto.Type, dir int, wireBytes int, captured time.Time) {
 	if userID == "" {
 		return
 	}
-	k := trafficKey{userID: userID, ft: int(t), dir: dir}
+	k := trafficKey{minute: captured.Unix() / 60 * 60, userID: userID, ft: int(t), dir: dir}
 	m.mu.Lock()
 	c := m.cells[k]
 	if c == nil {
@@ -79,6 +85,7 @@ func (m *trafficMeter) snapshot() []trafficDelta {
 	out := make([]trafficDelta, 0, len(m.cells))
 	for k, c := range m.cells {
 		out = append(out, trafficDelta{
+			Minute:    k.minute,
 			UserID:    k.userID,
 			FrameType: k.ft,
 			Direction: k.dir,
@@ -91,17 +98,29 @@ func (m *trafficMeter) snapshot() []trafficDelta {
 }
 
 // trafficFlushInterval is how often accumulated traffic is folded into the
-// daily rollup. A crash loses at most this window (see spec §Error handling).
-const trafficFlushInterval = 60 * time.Second
+// minute/hour/day rollups. A crash loses at most this window (see spec §Error handling).
+const trafficFlushInterval = 10 * time.Second
 
-// trafficFlushLoop periodically drains the meter into the daily rollup, and
+// trafficFlushLoop periodically drains the meter into the minute/hour/day rollups, and
 // does a final drain on stop. Started by NewServer only when a store exists.
 func (s *Server) trafficFlushLoop(store userstore.Store) {
 	defer close(s.flushDone)
 	t := time.NewTicker(trafficFlushInterval)
+	prune := time.NewTicker(time.Hour)
+	defer prune.Stop()
+	pruneBuckets := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := store.PruneTrafficBuckets(ctx, time.Now()); err != nil {
+			logging.Warn("relay-traffic", "prune buckets: %v", err)
+		}
+	}
+	pruneBuckets()
 	defer t.Stop()
 	for {
 		select {
+		case <-prune.C:
+			pruneBuckets()
 		case <-t.C:
 			s.flushTraffic(store)
 		case <-s.flushStop:
@@ -111,8 +130,8 @@ func (s *Server) trafficFlushLoop(store userstore.Store) {
 	}
 }
 
-// flushTraffic snapshots the meter and folds the deltas into the current UTC
-// day's rollup. A failed persist logs a warning and drops the window's data
+// flushTraffic persists each relay delta into its captured UTC minute/hour/day
+// rollups, including windows crossing midnight. A failed persist logs a warning and drops the window's data
 // (accepted trade-off; the snapshot has already reset the meter).
 func (s *Server) flushTraffic(store userstore.Store) {
 	s.trafficFlushMu.Lock()
@@ -127,6 +146,7 @@ func (s *Server) flushTraffic(store userstore.Store) {
 	conv := make([]userstore.TrafficDelta, len(deltas))
 	for i, d := range deltas {
 		conv[i] = userstore.TrafficDelta{
+			Minute:    d.Minute,
 			UserID:    d.UserID,
 			FrameType: d.FrameType,
 			Direction: d.Direction,

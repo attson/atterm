@@ -418,6 +418,61 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		}
 	})
 
+	t.Run("traffic time buckets", func(t *testing.T) {
+		st := open(t)
+		base := time.Date(2026, 10, 19, 23, 59, 0, 0, time.UTC)
+		deltas := []TrafficDelta{
+			{UserID: "u1", Minute: base.Unix(), FrameType: 3, Direction: 1, Bytes: 100, Frames: 2},
+			{UserID: "u1", Minute: base.Add(time.Minute).Unix(), FrameType: 3, Direction: 1, Bytes: 200, Frames: 3},
+			{UserID: "u2", Minute: base.Unix(), FrameType: 3, Direction: 1, Bytes: 999, Frames: 1},
+		}
+		for i := 0; i < 2; i++ {
+			if err := st.AddTrafficDeltas(ctx, "2099-01-01", deltas); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, bucket := range []string{"minute", "hour"} {
+			from := base.Truncate(time.Hour).Unix()
+			rows, err := st.QueryTrafficBuckets(ctx, "u1", bucket, from, base.Add(2*time.Minute).Unix())
+			if err != nil || len(rows) != 2 {
+				t.Fatalf("%s: rows=%+v err=%v", bucket, rows, err)
+			}
+			if rows[0].Bytes != 200 || rows[1].Bytes != 400 || rows[0].Frames != 4 || rows[1].Frames != 6 || rows[0].UpdatedAt == 0 {
+				t.Fatalf("%s totals: %+v", bucket, rows)
+			}
+			all, err := st.QueryTrafficBuckets(ctx, "", bucket, from, base.Add(2*time.Minute).Unix())
+			if err != nil || len(all) != 3 {
+				t.Fatalf("all %s: rows=%+v err=%v", bucket, all, err)
+			}
+		}
+		days, err := st.QueryTrafficForUser(ctx, "u1", "2026-10-19", "2026-10-20")
+		if err != nil || len(days) != 2 || days[0].Bytes != 200 || days[1].Bytes != 400 {
+			t.Fatalf("capture date lost: %+v %v", days, err)
+		}
+		if err := st.PruneTrafficBuckets(ctx, base.AddDate(0, 0, 9)); err != nil {
+			t.Fatal(err)
+		}
+		minutes, err := st.QueryTrafficBuckets(ctx, "", "minute", 0, base.AddDate(0, 0, 10).Unix())
+		if err != nil || len(minutes) != 0 {
+			t.Fatalf("expired minutes: %+v %v", minutes, err)
+		}
+		hours, err := st.QueryTrafficBuckets(ctx, "u1", "hour", 0, base.AddDate(0, 0, 10).Unix())
+		if err != nil || len(hours) != 2 {
+			t.Fatalf("hours pruned early: %+v %v", hours, err)
+		}
+		if err := st.PruneTrafficBuckets(ctx, base.AddDate(0, 0, 92)); err != nil {
+			t.Fatal(err)
+		}
+		hours, err = st.QueryTrafficBuckets(ctx, "", "hour", 0, base.AddDate(0, 0, 100).Unix())
+		if err != nil || len(hours) != 0 {
+			t.Fatalf("expired hours: %+v %v", hours, err)
+		}
+		days, err = st.QueryTrafficForUser(ctx, "u1", "2026-10-19", "2026-10-20")
+		if err != nil || len(days) != 2 {
+			t.Fatalf("daily history pruned: %+v %v", days, err)
+		}
+	})
+
 	t.Run("direct traffic rollup", func(t *testing.T) {
 		st := open(t)
 		day := "2026-09-15"

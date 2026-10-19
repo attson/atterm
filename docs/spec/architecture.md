@@ -811,3 +811,7 @@ push tag v* →
 dev/empty Version 的整个路径短路（不查 GitHub、UI 显示 "development build"）。
 跨实例 attach 的远程 session 在 fit 后的 cols/rows 与 SessionInfo 一致时跳过初始
 RESIZE，避免对端 zsh 的 `PROMPT_EOL_MARK` 噪声。
+
+## 流量时间序列
+
+Relay 的分钟／小时／日统计、实时刷新、保留期及个人／管理 API 口径见 [traffic.md](./traffic.md)。

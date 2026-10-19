@@ -71,7 +71,7 @@ func TestMeTraffic_RequiresAuthenticationAndValidRange(t *testing.T) {
 	}
 }
 
-func TestMeTraffic_FlushesPendingMetricsBeforeQuery(t *testing.T) {
+func TestMeTraffic_ReadsIndependentlyFlushedMetrics(t *testing.T) {
 	srv, _, userID, token := newAdminTestServer(t)
 	day := time.Now().UTC().Format("2006-01-02")
 	srv.recordTraffic(userID, proto.TypeOut, trafficOut, 73)
@@ -79,6 +79,7 @@ func TestMeTraffic_FlushesPendingMetricsBeforeQuery(t *testing.T) {
 	srv.directStats.recordSuccess(userID)
 	srv.directStats.recordBytes(userID, 123, 45)
 
+	srv.flushTraffic(srv.cfg.Store)
 	rec := adminGetBearer(srv, "/api/me/traffic?from="+day+"&to="+day, token)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())

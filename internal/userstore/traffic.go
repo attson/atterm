@@ -3,11 +3,14 @@ package userstore
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 )
 
 // TrafficDelta is one increment to fold into the daily rollup.
 type TrafficDelta struct {
+	// Minute is the UTC capture time; zero denotes a legacy daily-only increment.
+	Minute    int64
 	UserID    string
 	FrameType int
 	Direction int
@@ -15,8 +18,10 @@ type TrafficDelta struct {
 	Frames    int64
 }
 
-// TrafficRow is one persisted daily rollup row.
+// TrafficRow is a persisted rollup. Day is a UTC date for daily queries,
+// or an RFC3339 bucket start for minute/hour queries.
 type TrafficRow struct {
+	UpdatedAt int64
 	UserID    string
 	Day       string
 	FrameType int
@@ -47,17 +52,35 @@ type DirectTrafficRow struct {
 }
 
 // AddTrafficDeltas folds deltas into relay_traffic_daily for the given UTC
-// day. Each (user_id, day, frame_type, direction) row is upserted with
+// day (or the capture date when Minute is set), atomically with its minute
+// and hour totals. Each (user_id, day, frame_type, direction) row is upserted with
 // bytes/frames accumulated, so multiple relay instances writing the same
 // row converge to a global total.
 func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []TrafficDelta) error {
 	if len(deltas) == 0 {
 		return nil
 	}
+	// Shared Postgres writers must acquire daily and fine-grained row locks
+	// in a stable order, including flushes spanning a UTC day boundary.
+	deltas = append([]TrafficDelta(nil), deltas...)
+	sort.Slice(deltas, func(i, j int) bool {
+		a, b := deltas[i], deltas[j]
+		if a.UserID != b.UserID {
+			return a.UserID < b.UserID
+		}
+		if a.FrameType != b.FrameType {
+			return a.FrameType < b.FrameType
+		}
+		if a.Direction != b.Direction {
+			return a.Direction < b.Direction
+		}
+		return a.Minute < b.Minute
+	})
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin traffic tx: %w", err)
 	}
+	defer tx.Rollback()
 	now := time.Now().Unix()
 	stmt := s.dia.Rebind(`INSERT INTO relay_traffic_daily
 		(user_id, day, frame_type, direction, bytes, frames, updated_at)
@@ -68,9 +91,25 @@ func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []Tra
 		              updated_at = excluded.updated_at`)
 	for _, d := range deltas {
 		if _, err := tx.ExecContext(ctx, stmt,
-			d.UserID, day, d.FrameType, d.Direction, d.Bytes, d.Frames, now); err != nil {
-			tx.Rollback()
+			d.UserID, trafficDeltaDay(day, d), d.FrameType, d.Direction, d.Bytes, d.Frames, now); err != nil {
 			return fmt.Errorf("upsert traffic: %w", err)
+		}
+		if d.Minute != 0 {
+			for _, bucket := range []struct {
+				name    string
+				seconds int64
+			}{{"minute", 60}, {"hour", 3600}} {
+				_, err := tx.ExecContext(ctx, s.dia.Rebind(`INSERT INTO relay_traffic_buckets
+				(user_id, bucket, started_at, frame_type, direction, bytes, frames, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (user_id, bucket, started_at, frame_type, direction)
+				DO UPDATE SET bytes = relay_traffic_buckets.bytes + excluded.bytes,
+				frames = relay_traffic_buckets.frames + excluded.frames, updated_at = excluded.updated_at`),
+					d.UserID, bucket.name, d.Minute/bucket.seconds*bucket.seconds, d.FrameType, d.Direction, d.Bytes, d.Frames, now)
+				if err != nil {
+					return fmt.Errorf("upsert traffic bucket: %w", err)
+				}
+			}
 		}
 	}
 	return tx.Commit()
@@ -177,4 +216,48 @@ func (s *DBStore) QueryDirectTraffic(ctx context.Context, userID, from, to strin
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func trafficDeltaDay(fallback string, d TrafficDelta) string {
+	if d.Minute == 0 {
+		return fallback
+	}
+	return time.Unix(d.Minute, 0).UTC().Format("2006-01-02")
+}
+
+// QueryTrafficBuckets filters personal queries in SQL and reads shared rollups
+// so every relay instance exposes the same durable traffic history.
+func (s *DBStore) QueryTrafficBuckets(ctx context.Context, userID, bucket string, from, to int64) ([]TrafficRow, error) {
+	query := `SELECT user_id, started_at, frame_type, direction, bytes, frames, updated_at
+	FROM relay_traffic_buckets WHERE bucket = ? AND started_at >= ? AND started_at < ?`
+	args := []any{bucket, from, to}
+	if userID != "" {
+		query += " AND user_id = ?"
+		args = append(args, userID)
+	}
+	query += " ORDER BY started_at, user_id, frame_type, direction"
+	rows, err := s.db.QueryContext(ctx, s.dia.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("query traffic buckets: %w", err)
+	}
+	defer rows.Close()
+	out := make([]TrafficRow, 0)
+	for rows.Next() {
+		var row TrafficRow
+		var started int64
+		if err := rows.Scan(&row.UserID, &started, &row.FrameType, &row.Direction, &row.Bytes, &row.Frames, &row.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan traffic bucket: %w", err)
+		}
+		row.Day = time.Unix(started, 0).UTC().Format(time.RFC3339)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// PruneTrafficBuckets bounds fine-grained storage independently of daily totals.
+func (s *DBStore) PruneTrafficBuckets(ctx context.Context, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, s.dia.Rebind(`DELETE FROM relay_traffic_buckets
+	WHERE (bucket = 'minute' AND started_at < ?) OR (bucket = 'hour' AND started_at < ?)`),
+		now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -7).Unix(), now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -90).Unix())
+	return err
 }

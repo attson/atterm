@@ -55,6 +55,27 @@ describe('AccountTrafficDashboard', () => {
     expect(wrapper.get('[data-testid="direct-success-rate"]').text()).toContain('75.0%')
   })
 
+  it('requests minute data and retains successful results after a refresh failure', async () => {
+    const wrapper = mount(AccountTrafficDashboard)
+    await flushPromises()
+    getMeTrafficMock.mockResolvedValueOnce({ bucket: 'minute', server_time: '2026-09-23T12:02:30Z', updated_at: '2026-09-23T12:02:20Z', relay: [], direct: [], relay_detail: [
+      { day: '2026-09-23T12:01:00Z', frame_type: 3, frame_type_name: 'OUT', category: 'terminal', direction: 1, bytes: 6000, frames: 2 },
+    ] })
+    vi.setSystemTime(new Date('2026-09-23T12:02:30Z'))
+    await wrapper.get('[data-testid="traffic-mode-realtime"]').trigger('click')
+    await flushPromises()
+    expect(getMeTrafficMock).toHaveBeenLastCalledWith(expect.stringContaining('T'), expect.stringContaining('T'), 'minute')
+    expect(wrapper.get('[data-testid="relay-traffic-total"]').text()).toContain('5.86 KB')
+    expect(wrapper.find('[data-testid="traffic-time-chart"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="direct-traffic-total"]').exists()).toBe(false)
+    getMeTrafficMock.mockRejectedValueOnce(new Error('offline'))
+    await wrapper.get('.icon-button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="relay-traffic-total"]').text()).toContain('5.86 KB')
+    expect(wrapper.text()).toContain('settings.account.traffic.time.stale')
+    wrapper.unmount()
+  })
+
   it('switches between category, frame, and direction analysis', async () => {
     const wrapper = mount(AccountTrafficDashboard)
     await flushPromises()

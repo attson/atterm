@@ -64,6 +64,27 @@ describe('Traffic', () => {
     expect(wrapper.find('[data-test="traffic-user-table"]').exists()).toBe(true)
   })
 
+  test('keeps user selection across minute refreshes and discovers users after an empty result', async () => {
+    const wrapper = mountTraffic()
+    await flushPromises()
+    await wrapper.get('[data-test="user-filter-trigger"]').trigger('click')
+    await wrapper.get('[data-test="only-u1"]').trigger('click')
+    getTrafficStatsMock.mockResolvedValueOnce({ bucket: 'minute', rows: [] })
+    await wrapper.get('[data-testid="traffic-mode-realtime"]').trigger('click')
+    await flushPromises()
+    expect(getTrafficStatsMock).toHaveBeenLastCalledWith(expect.objectContaining({ bucket: 'minute', from: expect.stringContaining('T') }))
+    expect(wrapper.find('[data-test="traffic-selection-empty"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="traffic-time-chart"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="user-filter-trigger"]').text()).toContain('alice@example.com')
+    await wrapper.get('[data-test="restore-users"]').trigger('click')
+    getTrafficStatsMock.mockResolvedValueOnce({ bucket: 'minute', rows: [{ ...currentRows()[0], user_id: 'u3', email: 'new@example.com' }] })
+    await wrapper.get('[data-test="traffic-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="user-filter-trigger"]').text()).not.toContain('alice@example.com')
+    expect(wrapper.text()).toContain('new@example.com')
+    wrapper.unmount()
+  })
+
   test('supports clearing and restoring the complete user selection', async () => {
     const wrapper = mountTraffic()
     await flushPromises()

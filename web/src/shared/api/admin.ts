@@ -106,8 +106,8 @@ export async function generateFeishuKey(): Promise<string> {
 
 // getTrafficStats fetches per-user network traffic rollups. view selects the
 // aggregation granularity (detail = per frame type, group = per semantic
-// category, summary = per direction). from/to are YYYY-MM-DD; omit to let the
-// server default to the last 7 days.
+// category, summary = per direction). Daily from/to use YYYY-MM-DD; minute/hour
+// queries use RFC3339 UTC timestamps with an exclusive end.
 export async function getTrafficStats(params: {
   view?: TrafficView
   bucket?: TrafficBucket

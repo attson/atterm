@@ -10,8 +10,9 @@ export async function getMe(): Promise<MeResponse> {
   return data
 }
 
-export async function getMeTraffic(from: string, to: string): Promise<MeTrafficResponse> {
+export async function getMeTraffic(from: string, to: string, bucket?: 'minute' | 'hour'): Promise<MeTrafficResponse> {
   const query = new URLSearchParams({ from, to })
+  if (bucket) query.set('bucket', bucket)
   const { data } = await apiFetch<MeTrafficResponse>(`/api/me/traffic?${query}`)
   return data
 }

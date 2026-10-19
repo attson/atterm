@@ -170,8 +170,9 @@ export const zhCN = {
     feishuTab: '飞书',
     trafficTab: '流量',
     traffic: {
+      platformLive: "平台状态（当前节点 / 实例心跳）",
       title: '流量分析',
-      timezone: '按 UTC 日聚合',
+      timezone: 'UTC · 按所选时间粒度统计',
       refresh: '刷新数据',
       platformScope: '平台范围',
       platformStatus: '平台状态',

@@ -56,6 +56,13 @@ func (s *Server) handleMeTrafficHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if bucket := r.URL.Query().Get("bucket"); bucket == "minute" || bucket == "hour" {
+		s.handleTrafficBucketsHTTP(w, r, user.ID, bucket)
+		return
+	} else if bucket != "" && bucket != "day" {
+		http.Error(w, "invalid bucket", http.StatusBadRequest)
+		return
+	}
 	today := time.Now().UTC()
 	to := r.URL.Query().Get("to")
 	from := r.URL.Query().Get("from")
@@ -75,10 +82,6 @@ func (s *Server) handleMeTrafficHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid date range", http.StatusBadRequest)
 		return
 	}
-
-	// Personal usage is an explicit refresh surface. Persist the current
-	// in-memory window so active low-volume sessions are visible immediately.
-	s.flushTraffic(s.cfg.Store)
 
 	relayRows, err := s.cfg.Store.QueryTrafficForUser(r.Context(), user.ID, from, to)
 	if err != nil {

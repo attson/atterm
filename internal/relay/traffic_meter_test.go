@@ -108,3 +108,20 @@ func TestServerFlushTrafficPersists(t *testing.T) {
 		t.Errorf("persisted direct traffic = %+v", direct)
 	}
 }
+
+func TestTrafficMeterPreservesCaptureMinutesAcrossMidnight(t *testing.T) {
+	m := newTrafficMeter()
+	before := time.Date(2026, 10, 19, 23, 59, 59, 0, time.UTC)
+	m.addAt("u1", proto.TypeOut, trafficOut, 100, before)
+	m.addAt("u1", proto.TypeOut, trafficOut, 200, before.Add(time.Second))
+	totals := map[int64]int64{}
+	for _, row := range m.snapshot() {
+		totals[row.Minute] += row.Bytes
+	}
+	if len(totals) != 2 || totals[before.Truncate(time.Minute).Unix()] != 100 || totals[before.Add(time.Second).Unix()] != 200 {
+		t.Fatalf("capture minutes = %+v", totals)
+	}
+	if len(m.snapshot()) != 0 {
+		t.Fatal("snapshot did not drain")
+	}
+}

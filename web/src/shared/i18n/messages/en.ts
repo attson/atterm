@@ -168,8 +168,9 @@ export const en = {
     feishuTab: 'Feishu',
     trafficTab: 'Traffic',
     traffic: {
+      platformLive: "Platform status (local node / instance heartbeats)",
       title: 'Traffic analysis',
-      timezone: 'Daily aggregation in UTC',
+      timezone: 'UTC · selected time granularity',
       refresh: 'Refresh data',
       platformScope: 'Platform scope',
       platformStatus: 'Platform status',

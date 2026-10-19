@@ -49,6 +49,10 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	bucket := r.URL.Query().Get("bucket")
+	if bucket == "minute" || bucket == "hour" {
+		s.handleTrafficBucketsHTTP(w, r, "", bucket)
+		return
+	}
 	switch bucket {
 	case "range", "day":
 	case "":

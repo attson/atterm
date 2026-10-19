@@ -32,7 +32,16 @@ export interface MeRelayTrafficDetail {
   frames: number
 }
 
-export interface MeTrafficResponse {
+export interface TrafficTimeMetadata {
+  bucket?: TrafficBucket
+  bucket_seconds?: number
+  updated_at?: string
+  server_time?: string
+  retention_from?: string
+  flush_interval_seconds?: number
+}
+
+export interface MeTrafficResponse extends TrafficTimeMetadata {
   from: string
   to: string
   relay: MeRelayTrafficDay[]
@@ -182,7 +191,7 @@ export type TaskState =
   | 'closed'
 
 export type TrafficView = 'detail' | 'group' | 'summary'
-export type TrafficBucket = 'range' | 'day'
+export type TrafficBucket = 'range' | 'day' | 'minute' | 'hour'
 
 export interface AdminTrafficRow {
   user_id: string
@@ -196,7 +205,7 @@ export interface AdminTrafficRow {
   frames: number
 }
 
-export interface AdminTrafficResponse {
+export interface AdminTrafficResponse extends TrafficTimeMetadata {
   view: TrafficView
   bucket: TrafficBucket
   from: string

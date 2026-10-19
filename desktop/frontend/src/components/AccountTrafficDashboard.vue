@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Activity, ArrowDownRight, ArrowUpRight, Gauge, Minus, Network, Radio, RefreshCw } from "lucide-vue-next";
+import TrafficTimeControls from "./TrafficTimeControls.vue";
+import TrafficTimeChart from "./TrafficTimeChart.vue";
+import { useTrafficWindow } from "../composables/useTrafficWindow";
 import { getMeTraffic } from "@shared/api/me";
 import type { AdminTrafficRow, MeTrafficResponse } from "@shared/api/types";
 import type { MessageKey } from "../i18n";
@@ -12,7 +15,6 @@ import {
   directionSeries,
   timelineSeries,
   totalMetric,
-  trafficRange,
   trendPercent,
   type DirectionFilter,
   type TimelineDimension,
@@ -22,7 +24,7 @@ import {
 const props = withDefaults(defineProps<{ relayConnected?: boolean }>(), { relayConnected: true });
 const { t } = useI18n();
 const platform = usePlatform();
-const rangeDays = ref(7);
+const { mode, minutes, date, granularity, hour, rangeDays, bucket, seconds, range, now, autoRefresh, drillDown } = useTrafficWindow(load);
 const metric = ref<TrafficMetric>("bytes");
 const dimension = ref<TimelineDimension>("group");
 const direction = ref<DirectionFilter>("all");
@@ -31,21 +33,22 @@ const error = ref(false);
 const partialError = ref(false);
 const traffic = ref<MeTrafficResponse | null>(null);
 const peerTraffic = ref<PeerTrafficRow[] | null>(null);
-const range = computed(() => trafficRange(rangeDays.value));
+
 const peerTrafficAvailable = computed(() => typeof platform.peer?.getTraffic === "function");
 let loadGeneration = 0;
 
 async function load(): Promise<void> {
+  now.value = Date.now();
   const generation = ++loadGeneration;
   loading.value = true;
   error.value = false;
   partialError.value = false;
   const relayRequest = props.relayConnected
-    ? getMeTraffic(range.value.from, range.value.to)
+    ? bucket.value ? getMeTraffic(range.value.currentFrom, range.value.to, bucket.value) : getMeTraffic(range.value.from, range.value.to)
     : Promise.resolve<MeTrafficResponse | null>(null);
   const getPeerTraffic = platform.peer?.getTraffic;
   const peerFrom = rangeDays.value === 90 ? range.value.days[0] : range.value.from;
-  const peerRequest = getPeerTraffic
+  const peerRequest = getPeerTraffic && mode.value === "summary"
     ? getPeerTraffic(peerFrom, range.value.to)
     : Promise.resolve<PeerTrafficRow[] | null>(null);
   const [relayResult, peerResult] = await Promise.allSettled([relayRequest, peerRequest]);
@@ -59,18 +62,18 @@ async function load(): Promise<void> {
       traffic.value = relayResult.value;
       succeeded++;
     } else {
-      traffic.value = null;
+      // Preserve the last successful projection during transient refresh failures.
     }
   } else {
     traffic.value = null;
   }
-  if (getPeerTraffic) {
+  if (getPeerTraffic && mode.value === "summary") {
     expected++;
     if (peerResult.status === "fulfilled") {
       peerTraffic.value = peerResult.value;
       succeeded++;
     } else {
-      peerTraffic.value = null;
+      // Preserve prior local totals during refresh failures.
     }
   } else {
     peerTraffic.value = null;
@@ -229,29 +232,34 @@ function linePoints(values: number[]): string {
 }
 
 onMounted(load);
-watch(() => props.relayConnected, () => { void load(); });
+onBeforeUnmount(() => { loadGeneration++; });
+watch(() => props.relayConnected, (connected) => {
+  if (!connected && mode.value !== "summary") { mode.value = "summary"; return; }
+  void load();
+});
 </script>
 
 <template>
   <div class="traffic-dashboard" data-testid="account-traffic-dashboard">
     <div class="traffic-heading">
-      <div><h3>{{ t("settings.account.traffic.title") }}</h3><p>{{ t("settings.account.traffic.period", { days: rangeDays }) }}</p></div>
+      <div><h3>{{ t("settings.account.traffic.title") }}</h3><p v-if="mode === 'summary'">{{ t("settings.account.traffic.period", { days: rangeDays }) }}</p></div>
       <div class="traffic-actions">
-        <div class="segmented" role="group" :aria-label="t('settings.account.traffic.range')">
+        <div v-if="mode === 'summary'" class="segmented" role="group" :aria-label="t('settings.account.traffic.range')">
           <button v-for="days in [7, 30, 90]" :key="days" type="button" :class="{ active: rangeDays === days }" :data-testid="`traffic-range-${days}`" @click="setRange(days)">{{ days }}{{ t("settings.account.traffic.dayUnit") }}</button>
         </div>
         <button class="icon-button" type="button" :title="t('settings.account.traffic.refresh')" :aria-label="t('settings.account.traffic.refresh')" :disabled="loading" @click="load"><RefreshCw :class="{ spinning: loading }" /></button>
       </div>
     </div>
 
-    <p v-if="error" class="traffic-state error" role="alert">{{ t("settings.account.traffic.loadFailed") }}<button type="button" @click="load">{{ t("settings.account.traffic.retry") }}</button></p>
+    <TrafficTimeControls v-if="relayConnected" v-model:mode="mode" v-model:minutes="minutes" v-model:date="date" v-model:granularity="granularity" v-model:hour="hour" :auto-refresh="autoRefresh" :now="now" :updated-at="traffic?.updated_at" :failed="error || partialError" />
+    <p v-if="error && !traffic" class="traffic-state error" role="alert">{{ t("settings.account.traffic.loadFailed") }}<button type="button" @click="load">{{ t("settings.account.traffic.retry") }}</button></p>
     <div v-else-if="loading && !traffic && !peerTraffic" class="traffic-state">{{ t("common.loading") }}</div>
     <template v-else>
       <p v-if="partialError" class="partial-error" role="status">{{ t("settings.account.traffic.partialLoadFailed") }}</p>
 
       <div v-if="relayConnected && traffic" class="kpi-strip" data-testid="relay-kpis">
         <div v-for="kpi in kpis" :key="kpi.key" class="kpi-cell" :data-testid="kpi.key === 'total' ? 'relay-traffic-total' : `relay-kpi-${kpi.key}`">
-          <span>{{ kpi.label }}</span><div><strong>{{ kpi.value }}</strong><small :class="{ up: kpi.trend !== null && kpi.trend > 0, down: kpi.trend !== null && kpi.trend < 0 }"><ArrowUpRight v-if="kpi.trend !== null && kpi.trend > 0" /><ArrowDownRight v-else-if="kpi.trend !== null && kpi.trend < 0" /><Minus v-else />{{ trendText(kpi.trend) }}</small></div>
+          <span>{{ kpi.label }}</span><div><strong>{{ kpi.value }}</strong><small v-if="mode === 'summary'" :class="{ up: kpi.trend !== null && kpi.trend > 0, down: kpi.trend !== null && kpi.trend < 0 }"><ArrowUpRight v-if="kpi.trend !== null && kpi.trend > 0" /><ArrowDownRight v-else-if="kpi.trend !== null && kpi.trend < 0" /><Minus v-else />{{ trendText(kpi.trend) }}</small></div>
         </div>
       </div>
 
@@ -264,13 +272,14 @@ watch(() => props.relayConnected, () => { void load(); });
             <div><small>{{ t("settings.account.traffic.metric") }}</small><div class="segmented compact"><button type="button" :class="{ active: metric === 'bytes' }" data-testid="traffic-metric-bytes" @click="metric = 'bytes'">{{ t("settings.account.traffic.bytes") }}</button><button type="button" :class="{ active: metric === 'frames' }" data-testid="traffic-metric-frames" @click="metric = 'frames'">{{ t("settings.account.traffic.frames") }}</button></div></div>
           </div>
         </div>
-        <div v-if="!currentRows.length" class="chart-empty">{{ t("settings.account.traffic.empty") }}</div>
+        <TrafficTimeChart v-if="mode !== 'summary'" :rows="currentRows" :dates="range.days" :seconds="seconds" :realtime="mode === 'realtime'" :dimension="dimension" :direction="direction" :metric="metric" :server-time="traffic?.server_time" @drill-down="drillDown" />
+        <div v-else-if="!currentRows.length" class="chart-empty">{{ t("settings.account.traffic.empty") }}</div>
         <div v-else-if="dimension === 'direction'" class="line-chart" data-testid="traffic-direction-chart">
           <svg viewBox="0 0 1000 230" preserveAspectRatio="none" role="img" :aria-label="t('settings.account.traffic.directionTrend')"><g class="grid-lines"><line v-for="y in [36, 78, 120, 162, 204]" :key="y" x1="34" :y1="y" x2="966" :y2="y" /></g><polyline class="line outbound" :points="linePoints(chartDirection.outbound)" /><polyline class="line inbound" :points="linePoints(chartDirection.inbound)" /></svg>
           <div class="legend"><span><i class="outbound"></i>{{ t("settings.account.traffic.dirOut") }}</span><span><i class="inbound"></i>{{ t("settings.account.traffic.dirIn") }}</span></div>
         </div>
-        <div v-else class="bar-chart" data-testid="traffic-stacked-chart"><div v-for="(day, dayIndex) in range.days" :key="day" class="bar-column"><div class="bar-stack"><i v-for="series in chartSeries.slice(0, 8)" :key="series.key" :style="{ height: `${(series.values[dayIndex] / stackedMax) * 100}%`, background: series.color }" :title="`${series.label} · ${day} · ${formatMetric(series.values[dayIndex])}`"></i></div><span>{{ showDayLabel(dayIndex) ? shortDay(day) : '' }}</span></div></div>
-        <div v-if="dimension !== 'direction' && currentRows.length" class="legend series-legend"><span v-for="series in chartSeries.slice(0, 8)" :key="series.key"><i :style="{ background: series.color }"></i>{{ dimension === "group" ? categoryName(series.label) : series.label }}</span></div>
+        <div v-else class="bar-chart" data-testid="traffic-stacked-chart"><div v-for="(day, dayIndex) in range.days" :key="day" class="bar-column" role="button" tabindex="0" :title="t('settings.account.traffic.time.drillDown')" @click="drillDown(day)" @keydown.enter="drillDown(day)"><div class="bar-stack"><i v-for="series in chartSeries.slice(0, 8)" :key="series.key" :style="{ height: `${(series.values[dayIndex] / stackedMax) * 100}%`, background: series.color }" :title="`${series.label} · ${day} · ${formatMetric(series.values[dayIndex])}`"></i></div><span>{{ showDayLabel(dayIndex) ? shortDay(day) : '' }}</span></div></div>
+        <div v-if="mode === 'summary' && dimension !== 'direction' && currentRows.length" class="legend series-legend"><span v-for="series in chartSeries.slice(0, 8)" :key="series.key"><i :style="{ background: series.color }"></i>{{ dimension === "group" ? categoryName(series.label) : series.label }}</span></div>
       </section>
 
       <div v-if="relayConnected && traffic" class="detail-grid">
@@ -278,13 +287,13 @@ watch(() => props.relayConnected, () => { void load(); });
         <section class="detail-panel"><div class="panel-head"><div><h4>{{ t("settings.account.traffic.frameBreakdown") }}</h4><p>{{ t("settings.account.traffic.topFrames") }}</p></div></div><div v-if="frameRows.length" class="frame-table-wrap"><table><thead><tr><th>{{ t("settings.account.traffic.colFrameType") }}</th><th>{{ t("settings.account.traffic.colBytes") }}</th><th>{{ t("settings.account.traffic.colFrames") }}</th></tr></thead><tbody><tr v-for="frame in frameRows" :key="`${frame.name}:${frame.category}`"><td><strong>{{ frame.name }}</strong><small>{{ categoryName(frame.category) }}</small></td><td>{{ humanBytes(frame.bytes) }}</td><td>{{ compactNumber(frame.frames) }}</td></tr></tbody></table></div><p v-else class="detail-empty">{{ t("settings.account.traffic.empty") }}</p></section>
       </div>
 
-      <section v-if="relayConnected && traffic" class="direct-panel">
+      <section v-if="mode === 'summary' && relayConnected && traffic" class="direct-panel">
         <div class="panel-head"><div><span>{{ t("settings.account.traffic.p2p") }}</span><h4>{{ t("settings.account.traffic.directQuality") }}</h4></div><small><Network />{{ t("settings.account.traffic.aggregateOnly") }}</small></div>
         <div class="direct-strip"><div v-for="item in directKpis" :key="item.key" :data-testid="item.key === 'direct' ? 'direct-traffic-total' : item.key === 'success' ? 'direct-success-rate' : undefined"><span><component :is="item.icon" />{{ item.label }}</span><strong>{{ item.value }}</strong><small>{{ item.hint }}</small><em v-if="item.trend !== null">{{ trendText(item.trend) }}</em></div></div>
         <div class="success-meter" :title="`${successRate.toFixed(1)}%`"><i :style="{ width: `${successRate}%` }"></i></div>
       </section>
 
-      <section v-if="peerTrafficAvailable && peerTraffic" class="peer-panel" data-testid="peer-traffic-panel">
+      <section v-if="mode === 'summary' && peerTrafficAvailable && peerTraffic" class="peer-panel" data-testid="peer-traffic-panel">
         <div class="panel-head">
           <div><span>{{ t("settings.account.traffic.peerLocal") }}</span><h4>{{ t("settings.account.traffic.peerLocalTitle") }}</h4></div>
           <small><Network />{{ t("settings.account.traffic.peerRouteHint") }}</small>

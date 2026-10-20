@@ -10,9 +10,8 @@ import (
 	"github.com/attson/atterm/internal/proto"
 )
 
-func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
+func (s *Session) applyOSC133Locked(data []byte, now time.Time) (changed, commandActivity bool) {
 	events := s.consumeOSC133Locked(data)
-	changed := false
 	for _, payload := range events {
 		if payload == "" {
 			continue
@@ -26,6 +25,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.onFirstPrompt()
 			}
 		case 'C':
+			commandActivity = true
 			command := strings.TrimSpace(strings.TrimPrefix(payload, "C;"))
 			exitNil := (*int)(nil)
 			prevStateC := s.meta.TaskState
@@ -84,6 +84,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			if s.meta.TaskState != proto.TaskStateRunning && s.meta.CommandStartedAt == 0 {
 				continue
 			}
+			commandActivity = true
 			prevStateD := s.meta.TaskState
 			exitCode := parseOSC133Exit(payload)
 			state := proto.TaskStateCompleted
@@ -151,7 +152,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			})
 		}
 	}
-	return changed
+	return changed, commandActivity
 }
 
 // applyOSCTitleLocked scans data for OSC 0/1/2 (icon/window title) sequences

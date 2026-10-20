@@ -65,6 +65,203 @@ func TestUpdateSizeChangesSessionInfo(t *testing.T) {
 	}
 }
 
+func TestResizeRepaintPreservesLastOutputActivity(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "32")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.LastOutputAt = lastOutputAt
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+	var notifications atomic.Int32
+	s.SetMetaChangedHook(func() { notifications.Add(1) })
+
+	s.UpdateSize(120, 30)
+	repaint := []byte(strings.Repeat("r", 4096))
+	s.PushOut(1, repaint)
+
+	info := s.Info()
+	if info.LastOutputAt != lastOutputAt {
+		t.Fatalf("LastOutputAt after resize repaint = %d; want %d", info.LastOutputAt, lastOutputAt)
+	}
+	if info.TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("TaskState after resize repaint = %q; want waiting_input", info.TaskState)
+	}
+	if got := s.TailOutput(len(repaint)); !reflect.DeepEqual(got, repaint) {
+		t.Fatalf("TailOutput after resize repaint = %q; want repaint bytes preserved", got)
+	}
+	if got := notifications.Load(); got != 0 {
+		t.Fatalf("list activity notifications after resize repaint = %d; want 0", got)
+	}
+}
+
+func TestSameSizeResizeRepaintPreservesActivity(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "32")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.LastOutputAt = lastOutputAt
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+
+	// Reconnect and manual repair paths deliberately force-send the current
+	// dimensions. The PTY can still repaint even though SessionInfo is unchanged.
+	s.UpdateSize(80, 24)
+	s.PushOut(1, []byte(strings.Repeat("r", 4096)))
+
+	info := s.Info()
+	if info.LastOutputAt != lastOutputAt {
+		t.Fatalf("LastOutputAt after same-size repaint = %d; want %d", info.LastOutputAt, lastOutputAt)
+	}
+	if info.TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("TaskState after same-size repaint = %q; want waiting_input", info.TaskState)
+	}
+}
+
+func TestResizeRepaintDoesNotTriggerWaitingKeywordHeuristic(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateIdle
+	s.meta.LastOutputAt = lastOutputAt
+	s.mu.Unlock()
+
+	s.UpdateSize(100, 30)
+	s.PushOut(1, []byte("Proceed? [y/N]"))
+
+	info := s.Info()
+	if info.TaskState != proto.TaskStateIdle {
+		t.Fatalf("TaskState after resize prompt repaint = %q; want idle", info.TaskState)
+	}
+	if info.LastOutputAt != lastOutputAt {
+		t.Fatalf("LastOutputAt after resize prompt repaint = %d; want %d", info.LastOutputAt, lastOutputAt)
+	}
+}
+
+func TestAcceptedInputEndsResizeRepaintGrace(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "4")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.LastOutputAt = lastOutputAt
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+
+	s.UpdateSize(80, 24)
+	if !s.SendInbound(proto.Frame{Type: proto.TypeIn, Payload: []byte("x")}) {
+		t.Fatal("input frame was not accepted")
+	}
+	s.PushOut(1, []byte("real output"))
+
+	info := s.Info()
+	if info.LastOutputAt == lastOutputAt {
+		t.Fatalf("LastOutputAt stayed at %d after accepted input", lastOutputAt)
+	}
+	if info.TaskState != proto.TaskStateRunning {
+		t.Fatalf("TaskState after accepted input output = %q; want running", info.TaskState)
+	}
+}
+
+func TestConcurrentOutputAfterAcceptedInputEndsResizeGrace(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "4")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.LastOutputAt = lastOutputAt
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	s.SetOnInput(func() {
+		close(callbackEntered)
+		<-releaseCallback
+	})
+	outputDone := make(chan struct{})
+	go func() {
+		<-s.Inbound()
+		s.PushOut(1, []byte("concurrent output"))
+		close(outputDone)
+	}()
+	s.UpdateSize(80, 24)
+	sendDone := make(chan bool, 1)
+	go func() {
+		sendDone <- s.SendInbound(proto.Frame{Type: proto.TypeIn, Payload: []byte("x")})
+	}()
+
+	<-callbackEntered
+	<-outputDone
+	close(releaseCallback)
+	if !<-sendDone {
+		t.Fatal("input frame was not accepted")
+	}
+	info := s.Info()
+	if info.LastOutputAt == lastOutputAt {
+		t.Fatalf("LastOutputAt stayed at %d when output raced SendInbound return", lastOutputAt)
+	}
+	if info.TaskState != proto.TaskStateRunning {
+		t.Fatalf("TaskState after concurrent accepted input output = %q; want running", info.TaskState)
+	}
+}
+
+func TestRejectedInputDoesNotEndResizeRepaintGrace(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "4")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.LastOutputAt = lastOutputAt
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+
+	s.UpdateSize(80, 24)
+	for i := 0; i < inboundQueueDepth; i++ {
+		if !s.SendInbound(proto.Frame{Type: proto.TypeResize}) {
+			t.Fatalf("fill frame %d was not accepted", i)
+		}
+	}
+	if s.SendInbound(proto.Frame{Type: proto.TypeIn, Payload: []byte("x")}) {
+		t.Fatal("input frame was accepted with a full queue")
+	}
+	s.PushOut(1, []byte("real-looking output"))
+
+	info := s.Info()
+	if info.LastOutputAt != lastOutputAt {
+		t.Fatalf("LastOutputAt after rejected input = %d; want %d", info.LastOutputAt, lastOutputAt)
+	}
+	if info.TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("TaskState after rejected input = %q; want waiting_input", info.TaskState)
+	}
+}
+
+func TestOutputActivityResumesAfterResizeGraceExpires(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "4")
+	t.Setenv("ATTERM_TASK_SILENCE_RESIZE_GRACE_MS", "20")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.LastOutputAt = lastOutputAt
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+
+	s.UpdateSize(80, 24)
+	time.Sleep(40 * time.Millisecond)
+	s.PushOut(1, []byte("real output"))
+
+	info := s.Info()
+	if info.LastOutputAt == lastOutputAt {
+		t.Fatalf("LastOutputAt stayed at %d after resize grace expired", lastOutputAt)
+	}
+	if info.TaskState != proto.TaskStateRunning {
+		t.Fatalf("TaskState after resize grace expired = %q; want running", info.TaskState)
+	}
+}
+
 func TestSendInbound_OnInputOnlyFiresForAcceptedTypeIn(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{})
 	var fires atomic.Int32
@@ -143,6 +340,25 @@ func TestPushOutTracksTaskLifecycleFromOSC133(t *testing.T) {
 	}
 	if info.CommandExitCode == nil || *info.CommandExitCode != 0 {
 		t.Fatalf("CommandExitCode = %v; want 0", info.CommandExitCode)
+	}
+}
+
+func TestOSC133CommandEndsResizeRepaintGrace(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.LastOutputAt = lastOutputAt
+	s.mu.Unlock()
+
+	s.UpdateSize(80, 24)
+	s.PushOut(1, []byte("\x1b]133;C;go test ./...\x07"))
+
+	info := s.Info()
+	if info.LastOutputAt == lastOutputAt {
+		t.Fatalf("LastOutputAt stayed at %d after OSC 133 C", lastOutputAt)
+	}
+	if info.TaskState != proto.TaskStateRunning {
+		t.Fatalf("TaskState after OSC 133 C = %q; want running", info.TaskState)
 	}
 }
 

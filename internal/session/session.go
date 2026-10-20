@@ -120,8 +120,8 @@ type Session struct {
 	silenceActivityBytes        int64
 	silenceActivityStartedMono  time.Time
 
-	// lastResizeMono stamps the monotonic time of the last UpdateSize call
-	// that actually changed cols/rows. PTY resize → SIGWINCH → TUIs
+	// lastResizeMono stamps the monotonic time of the last valid UpdateSize
+	// call, including a same-size forced repair. PTY resize → SIGWINCH → TUIs
 	// (claude, codex, vim, htop, …) repaint the entire screen, which can
 	// be several KB of OUT in the next instant. Without a grace window
 	// those repaint bytes blow past silenceRestoreByteThreshold and
@@ -133,9 +133,9 @@ type Session struct {
 	silenceResizeGraceMS int64
 
 	// lastOutputMono is a monotonic wall-clock stamp of the last meaningful
-	// output for silence detection. LastOutputAt still records every OUT
-	// chunk for display; this field deliberately ignores isolated tiny TUI
-	// redraws so idle Codex/Claude prompts can settle to waiting_input.
+	// output for silence detection. LastOutputAt records display activity too,
+	// except for output inside the resize grace window; this field additionally
+	// ignores isolated tiny TUI redraws so idle Codex/Claude prompts can settle.
 	// It uses monotonic time because LastOutputAt is unix-seconds, which
 	// silently rounds sub-second silenceThresholdMS values up to the next
 	// integer-second boundary.
@@ -147,10 +147,10 @@ type Session struct {
 	resyncCount      uint64
 	lastResyncLogged time.Time
 
-	// lastListActivityNotify throttles session-list refreshes driven by raw
-	// output. LastOutputAt updates for every OUT chunk, but LIST_RESP is a full
-	// snapshot; pushing one per chunk would turn terminal output into a hot
-	// metadata path. The first chunk notifies immediately, then at most once per
+	// lastListActivityNotify throttles session-list refreshes driven by meaningful
+	// output. Resize-repaint OUT is excluded together with LastOutputAt; pushing a
+	// full LIST_RESP for every other chunk would turn metadata into a hot path.
+	// The first eligible chunk notifies immediately, then at most once per
 	// interval while output continues. Uses monotonic time via time.Time.
 	lastListActivityNotify time.Time
 
@@ -558,8 +558,9 @@ func (s *Session) UpdateRemotePermission(value string) {
 }
 
 // UpdateSize records the latest PTY window size advertised by a client resize.
-// On real change, broadcasts a META frame so viewers can update their xterm
-// dims to match the new PTY size.
+// Every valid resize starts repaint grace because force-sending the current
+// dimensions can still make a PTY application redraw. Only a real size change
+// broadcasts META so viewers are not churned by same-size repair requests.
 func (s *Session) UpdateSize(cols, rows uint16) {
 	s.mu.Lock()
 	changed := false
@@ -571,9 +572,8 @@ func (s *Session) UpdateSize(cols, rows uint16) {
 		s.meta.Rows = rows
 		changed = true
 	}
-	if changed {
-		// SIGWINCH will follow; record the moment so updateTerminalState
-		// can discount the repaint bytes in its silence-restore accumulator.
+	if cols > 0 && rows > 0 {
+		// SIGWINCH may follow even when the dimensions are unchanged.
 		s.lastResizeMono = time.Now()
 	}
 	metaCopy := s.meta
@@ -924,19 +924,30 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	s.mu.Lock()
 	changed := false
 	now := time.Now()
+	inResizeGrace := s.inResizeGraceLocked(now)
 	if s.meta.TaskState == "" {
 		s.meta.TaskState = proto.TaskStateIdle
 		changed = true
 	}
-	s.meta.LastOutputAt = now.Unix()
-	listActivityDue := s.lastListActivityNotify.IsZero() ||
-		now.Sub(s.lastListActivityNotify) >= listActivityNotifyInterval
-	if listActivityDue {
-		s.lastListActivityNotify = now
+	oscChanged, oscActivity := s.applyOSC133Locked(data, now)
+	if oscActivity {
+		// Shell integration supplies an explicit command boundary, which is
+		// stronger evidence of activity than a preceding resize timestamp.
+		s.lastResizeMono = time.Time{}
+		inResizeGrace = false
 	}
-	if s.applyOSC133Locked(data, now) {
+	listActivityDue := false
+	if !inResizeGrace {
+		s.meta.LastOutputAt = now.Unix()
+		listActivityDue = s.lastListActivityNotify.IsZero() ||
+			now.Sub(s.lastListActivityNotify) >= listActivityNotifyInterval
+		if listActivityDue {
+			s.lastListActivityNotify = now
+		}
+	}
+	if oscChanged {
 		changed = true
-	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
+	} else if !inResizeGrace && s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
 		prevStateW := s.meta.TaskState
 		s.meta.TaskState = proto.TaskStateWaitingInput
 		s.meta.AttentionAt = now.Unix()
@@ -970,8 +981,6 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	// waitingFromSilence == false.
 	restoredFromSilence := false
 	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
-		inResizeGrace := !s.lastResizeMono.IsZero() &&
-			now.Sub(s.lastResizeMono) < time.Duration(s.silenceResizeGraceMS)*time.Millisecond
 		if inResizeGrace {
 			// SIGWINCH-driven repaint after a sidebar collapse / window
 			// resize / font change. Don't count these bytes; reset the
@@ -993,7 +1002,9 @@ func (s *Session) updateTerminalState(data []byte) bool {
 				s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
 		}
 	}
-	if !restoredFromSilence {
+	if inResizeGrace {
+		s.resetSilenceActivityBurstLocked()
+	} else if !restoredFromSilence {
 		s.noteRunningSilenceActivityLocked(data, now)
 	}
 	// Always reschedule at the tail. The helper itself decides whether to
@@ -1263,16 +1274,26 @@ func (s *Session) Inbound() <-chan proto.Frame { return s.inbound }
 // SendInbound enqueues a client-originated frame for the agent.
 // Returns false if the queue is full (caller may drop or disconnect the client).
 func (s *Session) SendInbound(f proto.Frame) bool {
-	select {
-	case s.inbound <- f:
-		if f.Type == proto.TypeIn {
-			s.mu.RLock()
+	if f.Type == proto.TypeIn {
+		// Hold the same lock PushOut needs so the PTY consumer cannot produce
+		// output between a successful enqueue and clearing repaint grace.
+		s.mu.Lock()
+		select {
+		case s.inbound <- f:
+			s.lastResizeMono = time.Time{}
 			onInput := s.onInput
-			s.mu.RUnlock()
+			s.mu.Unlock()
 			if onInput != nil {
 				onInput()
 			}
+			return true
+		default:
+			s.mu.Unlock()
+			return false
 		}
+	}
+	select {
+	case s.inbound <- f:
 		return true
 	default:
 		return false

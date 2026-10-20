@@ -29,6 +29,11 @@ func (s *Session) ApplyHookState(next string) {
 		s.mu.Unlock()
 		return
 	}
+	if next == proto.TaskStateRunning {
+		// A client hook is authoritative evidence that a new turn started;
+		// subsequent output is real activity even if a resize just happened.
+		s.lastResizeMono = time.Time{}
+	}
 	prev := s.meta.TaskState
 	s.hookDriven = true
 	// The heuristic's bookkeeping is dead weight from here on; clear it so a

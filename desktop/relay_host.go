@@ -518,6 +518,9 @@ func (h *relayHost) RequestLocalRepaint(id uuid.UUID) {
 		logDebug("repaint", "skip session=%s reason=invalid_size cols=%d rows=%d", id, info.Cols, info.Rows)
 		return
 	}
+	// Register the same-size resize before touching the PTY so the resulting
+	// SIGWINCH redraw is displayed without being mistaken for task activity.
+	sess.UpdateSize(info.Cols, info.Rows)
 	logDebug("repaint", "nudge_start session=%s cols=%d rows=%d", id, info.Cols, info.Rows)
 	go func(cols, rows uint16) {
 		if err := active.host.Resize(cols, rows-1); err != nil {

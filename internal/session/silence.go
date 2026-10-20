@@ -69,6 +69,17 @@ func envSilenceResizeGraceMS() int64 {
 	return n
 }
 
+// inResizeGraceLocked reports whether output should still be treated as a
+// SIGWINCH-driven repaint. The timestamp carries a monotonic component, so
+// wall-clock adjustments cannot stretch or shorten the protection window.
+func (s *Session) inResizeGraceLocked(now time.Time) bool {
+	if s.lastResizeMono.IsZero() || s.silenceResizeGraceMS <= 0 {
+		return false
+	}
+	age := now.Sub(s.lastResizeMono)
+	return age >= 0 && age < time.Duration(s.silenceResizeGraceMS)*time.Millisecond
+}
+
 // silenceAppliesToLocked decides whether the silence heuristic should apply
 // to this session in its current state. The alt-screen guard catches classic
 // TUIs (vim, fzf, older Claude Code), but Claude Code v2.x — and similar

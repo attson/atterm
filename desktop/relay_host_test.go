@@ -16,6 +16,7 @@ import (
 	desktopfeishu "github.com/attson/atterm/desktop/feishu"
 	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/relay"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
 )
@@ -758,5 +759,63 @@ func TestShouldNotifySession(t *testing.T) {
 			t.Errorf("%s: shouldNotifySession(%q, %v) = %v, want %v",
 				c.name, c.sessionType, c.aiOnly, got, c.want)
 		}
+	}
+}
+
+type repaintRecordingPTY struct {
+	mu      sync.Mutex
+	resizes [][2]uint16
+}
+
+func (p *repaintRecordingPTY) Read([]byte) (int, error)    { return 0, io.EOF }
+func (p *repaintRecordingPTY) Write(b []byte) (int, error) { return len(b), nil }
+func (p *repaintRecordingPTY) Close() error                { return nil }
+func (p *repaintRecordingPTY) Resize(cols, rows uint16) error {
+	p.mu.Lock()
+	p.resizes = append(p.resizes, [2]uint16{cols, rows})
+	p.mu.Unlock()
+	return nil
+}
+
+func TestRequestLocalRepaintPreservesSessionActivity(t *testing.T) {
+	sid := uuid.New()
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	sess := session.New(sid, proto.SessionInfo{
+		Cols:         80,
+		Rows:         24,
+		TaskState:    proto.TaskStateWaitingInput,
+		LastOutputAt: lastOutputAt,
+	})
+	srv := relay.NewServer(relay.Config{})
+	if _, err := srv.Registry().Add(sess); err != nil {
+		t.Fatalf("add session: %v", err)
+	}
+	pty := &repaintRecordingPTY{}
+	h := &relayHost{
+		server:   srv,
+		sessions: map[uuid.UUID]*activeSession{sid: {host: pty}},
+	}
+
+	h.RequestLocalRepaint(sid)
+	sess.PushOut(1, []byte(strings.Repeat("r", 4096)))
+
+	if got := sess.Info().LastOutputAt; got != lastOutputAt {
+		t.Fatalf("LastOutputAt after requested repaint = %d; want %d", got, lastOutputAt)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		pty.mu.Lock()
+		resizes := append([][2]uint16(nil), pty.resizes...)
+		pty.mu.Unlock()
+		if len(resizes) == 2 {
+			if resizes[0] != [2]uint16{80, 23} || resizes[1] != [2]uint16{80, 24} {
+				t.Fatalf("repaint resizes = %v; want [[80 23] [80 24]]", resizes)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("repaint resize calls = %v; want two calls", resizes)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

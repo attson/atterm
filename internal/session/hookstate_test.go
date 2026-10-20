@@ -45,6 +45,23 @@ func TestApplyHookState_RunningDoesNotBumpAttention(t *testing.T) {
 	}
 }
 
+func TestApplyHookState_RunningEndsResizeRepaintGrace(t *testing.T) {
+	s := aiSession(t)
+	lastOutputAt := time.Now().Add(-3 * time.Hour).Unix()
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.LastOutputAt = lastOutputAt
+	s.mu.Unlock()
+
+	s.UpdateSize(80, 24)
+	s.ApplyHookState(proto.TaskStateRunning)
+	s.PushOut(1, []byte("model output"))
+
+	if got := s.Info().LastOutputAt; got == lastOutputAt {
+		t.Fatalf("LastOutputAt stayed at %d after hook reported running", lastOutputAt)
+	}
+}
+
 // A hook event that arrives after the CLI has exited must not drag an ordinary
 // shell into an AI state.
 func TestApplyHookState_IgnoredForNonAISessions(t *testing.T) {

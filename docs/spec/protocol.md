@@ -148,7 +148,7 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
 - `cols` / `rows` 是 PTY 当前真实尺寸；viewer 把自己的 xterm `term.resize(cols, rows)` 锁到这个值（不跑 FitAddon）
 - `task_state` 是任务状态：`idle` / `running` / `waiting_input` / `completed` / `failed` / `disconnected` / `closed`
 - `current_command` / `command_started_at` / `command_ended_at` / `command_duration_ms` / `command_exit_code` 来自 OSC 133 命令生命周期；`command_exit_code` 只在命令结束后出现，`0` 表示 completed，非 0 表示 failed
-- `last_output_at` 是 relay 最近看到该 session OUT 字节的 unix 秒时间戳
+- `last_output_at` 是 relay 最近判定为真实活动的 session OUT 字节的 unix 秒时间戳。PTY resize 后 grace 窗口内的 SIGWINCH/TUI 重绘仍作为 OUT 正常传输和保存，但不刷新该字段，也不靠启发式改变 `task_state`；成功接受的 IN、AI hook 进入 `running`、OSC 133 命令边界或 grace 到期会恢复正常活动记账
 - `type` 是 session workload 分类：`shell` / `ai` / `test` / `build` / `deploy`；relay 在 OSC 133 `C` 时按命令 base name 计算（详见 `internal/session/classify.go`），并应用 sticky-non-shell 语义——一旦升过 non-shell 就不会再退回 `shell`
 - `summary` 是上一条命令的 ANSI-stripped 尾部输出 + 抽取的错误行；只在 OSC 133 `D` 事件触发时刷新（recent_output ≤ 4 KiB；error_lines 仅在 `command_exit_code != 0` 时填充，最多 5 行）。subscriber 应当显示 `summary.error_lines[0]` 作为失败任务一行错误摘要。详细生成规则见 `internal/session/summary.go`
 

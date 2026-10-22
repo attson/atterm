@@ -13,6 +13,9 @@ const editing = ref<{ id: string; label: string; text: string; hotkey: string; i
 const resetOpen = ref(false)
 const hidden = ref(false)
 const error = ref('')
+const historyStatus = ref({ enabled: false, count: 0 })
+const historyClearOpen = ref(false)
+const canManagePromptHistory = platform.caps.wailsBindings && Boolean(platform.promptHistory)
 // The template being run across hosts, or null when the run panel is closed.
 // Only one at a time: SnippetRunPanel is a modal, so opening it for a second
 // row while one is already open is not a state this list can reach.
@@ -36,6 +39,50 @@ async function reload() {
   const list = await effectiveTemplates(platform.templates)
   items.value = [...list]
   hidden.value = await platform.templates.loadHidden()
+  await reloadPromptHistory()
+}
+
+async function reloadPromptHistory() {
+  if (!canManagePromptHistory || !platform.promptHistory) return
+  try {
+    historyStatus.value = await platform.promptHistory.status()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function notifyPromptHistoryChanged() {
+  platform.events.emit('promptHistory:changed', null)
+}
+
+async function onPromptHistoryToggle(enabled: boolean) {
+  if (!platform.promptHistory) return
+  const previous = historyStatus.value.enabled
+  historyStatus.value.enabled = enabled
+  error.value = ''
+  try {
+    await platform.promptHistory.setEnabled(enabled)
+    await reloadPromptHistory()
+    notifyPromptHistoryChanged()
+  } catch (e) {
+    historyStatus.value.enabled = previous
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function startPromptHistoryClear() { historyClearOpen.value = true }
+function cancelPromptHistoryClear() { historyClearOpen.value = false }
+async function confirmPromptHistoryClear() {
+  if (!platform.promptHistory) return
+  historyClearOpen.value = false
+  error.value = ''
+  try {
+    await platform.promptHistory.clear()
+    await reloadPromptHistory()
+    notifyPromptHistoryChanged()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
 }
 
 // prefsSync (Go / Capacitor / Web) writes synced values straight into local
@@ -140,6 +187,29 @@ function cancelReset() { resetOpen.value = false }
       <span>{{ t('settings.templates.showBar') }}</span>
     </label>
 
+    <section v-if="canManagePromptHistory" class="history-settings">
+      <div class="history-heading">{{ t('settings.templates.history.title') }}</div>
+      <label class="show-toggle">
+        <input
+          type="checkbox"
+          data-testid="prompt-history-toggle"
+          :checked="historyStatus.enabled"
+          @change="onPromptHistoryToggle(($event.target as HTMLInputElement).checked)"
+        />
+        <span>{{ t('settings.templates.history.enabled') }}</span>
+      </label>
+      <div class="history-meta">
+        <span data-testid="prompt-history-count">{{ t('settings.templates.history.count', { count: historyStatus.count }) }}</span>
+        <button
+          type="button"
+          class="del"
+          data-testid="prompt-history-clear"
+          :disabled="historyStatus.count === 0"
+          @click="startPromptHistoryClear"
+        >{{ t('settings.templates.history.clear') }}</button>
+      </div>
+    </section>
+
     <ul class="list">
       <li
         v-for="(it, idx) in items"
@@ -222,6 +292,16 @@ function cancelReset() { resetOpen.value = false }
       </div>
     </div>
 
+    <div v-if="historyClearOpen" class="dialog-backdrop" @click="cancelPromptHistoryClear">
+      <div class="dialog" @click.stop>
+        <p>{{ t('settings.templates.history.clearConfirm') }}</p>
+        <div class="actions">
+          <button @click="cancelPromptHistoryClear">{{ t('common.cancel') }}</button>
+          <button class="del" data-testid="prompt-history-clear-confirm" @click="confirmPromptHistoryClear">{{ t('settings.templates.history.clear') }}</button>
+        </div>
+      </div>
+    </div>
+
     <SnippetRunPanel
       v-if="runningTemplate"
       :snippet-label="runningTemplate.label"
@@ -235,6 +315,11 @@ function cancelReset() { resetOpen.value = false }
 .tab-pane { display: flex; flex-direction: column; gap: 10px; }
 .hint { font-size: 12px; color: var(--fg-dim); margin: 0; line-height: 1.5; }
 .show-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); }
+.history-settings { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.history-heading { font-size: 13px; font-weight: 600; color: var(--fg); }
+.history-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--fg-dim); font-size: 12px; }
+.history-meta button { height: 26px; padding: 0 9px; }
+.del { color: var(--bad); border-color: rgba(248, 81, 73, 0.4); }
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .row { display: grid; grid-template-columns: 7rem 1fr 5rem auto; gap: 8px; align-items: center; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
 .label { font-weight: 600; font-family: var(--font-mono); font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

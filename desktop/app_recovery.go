@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/attson/atterm/internal/appdir"
+	"github.com/google/uuid"
 )
 
 // LoadRecoverySnapshot returns the most recent snapshot, or a zero value
@@ -29,10 +30,13 @@ func (a *App) LoadRecoverySnapshot() (RecoverySnapshot, error) {
 	if snap.Tabs == nil {
 		snap.Tabs = []TabSnapshot{}
 	}
+	clearRecoveryRuntimeHints(&snap)
 	a.mu.Lock()
 	a.lastSnapshot = snap
 	a.mu.Unlock()
-	return snap, nil
+	runtimeSnap := cloneRecoverySnapshotStructure(snap)
+	markLiveLocalRecoveryPanes(a.host, &runtimeSnap)
+	return runtimeSnap, nil
 }
 
 // SaveRecoverySnapshot accepts a JSON-encoded RecoverySnapshot from the
@@ -50,6 +54,7 @@ func (a *App) SaveRecoverySnapshot(payload string) error {
 	snap.Version = recoverySnapshotVersion
 	snap.HostID = a.host.hostID
 	snap.SavedAtUnix = a.recoveryStore.nowUnix()
+	clearRecoveryRuntimeHints(&snap)
 	a.mu.Lock()
 	a.lastSnapshot = snap
 	a.mu.Unlock()
@@ -57,6 +62,46 @@ func (a *App) SaveRecoverySnapshot(payload string) error {
 		logDebug("recovery", "save %s", summarizeRecoverySnapshot(snap))
 	}
 	return a.recoveryStore.Save(snap)
+}
+
+func clearRecoveryRuntimeHints(snap *RecoverySnapshot) {
+	for tabIdx := range snap.Tabs {
+		for paneIdx := range snap.Tabs[tabIdx].Panes {
+			snap.Tabs[tabIdx].Panes[paneIdx].Reattach = false
+		}
+	}
+}
+
+// cloneRecoverySnapshotStructure isolates the tab/pane slices that receive
+// ephemeral runtime hints. Nested AIInfo values are read-only on this path.
+func cloneRecoverySnapshotStructure(snap RecoverySnapshot) RecoverySnapshot {
+	clone := snap
+	clone.Tabs = make([]TabSnapshot, len(snap.Tabs))
+	copy(clone.Tabs, snap.Tabs)
+	for tabIdx := range clone.Tabs {
+		clone.Tabs[tabIdx].Panes = make([]PaneSnapshot, len(snap.Tabs[tabIdx].Panes))
+		copy(clone.Tabs[tabIdx].Panes, snap.Tabs[tabIdx].Panes)
+	}
+	return clone
+}
+
+func markLiveLocalRecoveryPanes(host *relayHost, snap *RecoverySnapshot) {
+	if host == nil {
+		return
+	}
+	for tabIdx := range snap.Tabs {
+		for paneIdx := range snap.Tabs[tabIdx].Panes {
+			pane := &snap.Tabs[tabIdx].Panes[paneIdx]
+			if pane.Remote || pane.SessionID == "" {
+				continue
+			}
+			id, err := uuid.Parse(pane.SessionID)
+			if err != nil {
+				continue
+			}
+			_, pane.Reattach = host.server.Registry().Get(id)
+		}
+	}
 }
 
 // summarizeRecoverySnapshot renders a one-line view of what's being persisted

@@ -684,3 +684,30 @@ gh run list --repo attson/atterm --limit 10
 ### 设备本地设置
 
 默认 shell（`default_shell`）仅在本机持久化，不参与 relay 或 Peer 配置同步，也不在同步清空时重置。旧 relay 中保留的该字段应忽略；服务端继续接受旧客户端的字段以保持兼容。本机路径与环境相关的设置不能仅因已持久化就加入同步白名单。
+
+### 桌面 AI 提示词历史建议
+
+提示词历史是 Wails 桌面端的设备本地能力。Claude 的唯一持久化来源是
+localhost hook 在确认 `session_id` 属于当前 host 后收到的
+`UserPromptSubmit`；Codex 复用已绑定当前 PTY / AI SID 的 rollout JSONL 增量流，
+只记录 `item_completed.UserMessage`。恢复会话从 EOF 开始，新会话允许回放
+解析 SID 前已写入的当前 turn；未提交草稿、注入的 context、普通 shell 输入和
+其他 agent 不得写入历史。
+Codex 的用户级配置必须使用 `~/.codex/hooks.json` 的顶层 `hooks` 对象；旧版
+atterm 写出的扁平事件对象由 installer 原位迁移。Codex 首次发现或内容变更后，
+仍按自身安全模型要求用户在 `/hooks` 审阅并信任，atterm 不得绕过或伪造该信任。
+历史保存到配置目录的 `prompt-history.json`，以 `0600` 权限原子替换，最多
+200 条、保留 180 天、单条不超过 4 KiB。它不进入 prefs sync、relay、诊断导出
+或日志；日志不得包含 prompt、查询前缀或候选正文。
+
+共享 `TerminalView.vue` 只能在 Wails、本地 session、focused driver、attached、
+`type=ai` 且当前命令确认为 Codex / Claude 时启用建议。输入观察器是 PTY 发送路径
+的旁路：只解释已知文本和编辑序列；中文等 IME commit 即使没有前置 `keydown` 也要
+作为用户输入参与匹配，但终端自动回复的控制序列不得混入草稿。退格、删词、清行和
+左右/Home/End/Delete 编辑必须同步 Unicode 光标；光标处于行中时隐藏候选，回到行尾后
+用编辑后的完整前缀重新查询。未知控制序列会把草稿标为不可信直到 Enter；
+查询、解析或渲染失败不得阻止或改写原输入。完整前缀至少 2 个 Unicode 字符才查询，
+ASCII 比较不区分大小写，按频次再按最近使用排序，最多显示 3 条。上下键只在候选
+可见时循环选择，Tab / 点击只发送未输入的后缀，Enter 保持原提交行为，Esc 关闭候选。
+session、当前命令、driver、focused、attached 或 preview 状态变化时必须立即清空草稿
+和候选，避免把一个 pane 的输入状态带到另一个 pane。

@@ -66,6 +66,8 @@ import ServicePreviewSwitcher from "./ServicePreviewSwitcher.vue";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
 import { Cloud } from "lucide-vue-next";
+import { createPromptDraftTracker, isCodexOrClaudeCommand, isPromptDraftInputData } from "../lib/promptDraft";
+import { createPromptSuggestionController, promptSuggestionBottomOffset, type PromptSuggestionState } from "../lib/promptSuggestions";
 
 const props = withDefaults(
   defineProps<{
@@ -77,6 +79,8 @@ const props = withDefaults(
     focused?: boolean;
     avoidTopRightBadge?: boolean;
     sessionLabel?: string;
+    sessionType?: string;
+    currentCommand?: string;
     // The PTY's known size at the time of attach (from SessionInfo).
     // When this matches the local xterm's fit dimensions, we skip the
     // initial RESIZE so cross-attached remote shells don't see a
@@ -351,6 +355,88 @@ let isAlive = true;
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
 const replayInputGuard = createReplayInputGuard();
+const promptDraftTracker = createPromptDraftTracker();
+const promptSuggestionState = ref<PromptSuggestionState>({ candidates: [], selectedIndex: 0 });
+const promptHistoryEnabled = ref(false);
+const promptSuggestionCursorOffset = ref(48);
+const promptSuggestionActive = computed(() => Boolean(
+  platform.caps.wailsBindings
+  && platform.promptHistory
+  && promptHistoryEnabled.value
+  && props.focused
+  && props.isLocalSession
+  && isDriver.value
+  && status.value === "attached"
+  && props.sessionType === "ai"
+  && isCodexOrClaudeCommand(props.currentCommand ?? "")
+  && !previewViewActive.value
+));
+const promptSuggestionBottom = computed(() => `calc(${terminalBottom.value} + ${promptSuggestionCursorOffset.value}px)`);
+const promptSuggestionController = createPromptSuggestionController({
+  query: async (prefix, limit) => platform.promptHistory?.query(prefix, limit) ?? [],
+  onChange: (next) => { promptSuggestionState.value = next; },
+});
+
+function refreshPromptSuggestions(): void {
+  try {
+    const draft = promptDraftTracker.snapshot();
+    if (term && term.rows > 0) {
+      const { height } = readXtermCellSize(term);
+      // Codex keeps status rows below its editor. Anchor above the actual
+      // cursor row so the popup clears the whole bottom input area without
+      // changing the terminal or PTY dimensions.
+      promptSuggestionCursorOffset.value = promptSuggestionBottomOffset(
+        term.rows,
+        term.buffer.active.cursorY,
+        height,
+      );
+    }
+    promptSuggestionController.update(draft, promptSuggestionActive.value);
+  } catch (err) {
+    logWarn("prompt-suggest", "refresh failed", { error: errText(err) });
+    promptSuggestionController.dismiss();
+  }
+}
+
+function sendPromptSuggestionSuffix(suffix: string): void {
+  if (!suffix || !conn || !promptSuggestionActive.value) return;
+  conn?.sendInput(suffix);
+  try {
+    promptDraftTracker.feed(suffix);
+    refreshPromptSuggestions();
+  } catch {
+    promptSuggestionController.dismiss();
+  }
+}
+
+function acceptPromptSuggestion(index: number): void {
+  const action = promptSuggestionController.accept(index);
+  if (action.suffix) sendPromptSuggestionSuffix(action.suffix);
+  focusTerminalIfDriver();
+}
+
+async function loadPromptHistoryState(): Promise<void> {
+  if (!platform.promptHistory || !platform.caps.wailsBindings) return;
+  try {
+    const historyStatus = await platform.promptHistory.status();
+    promptHistoryEnabled.value = historyStatus.enabled;
+  } catch (err) {
+    logWarn("prompt-suggest", "history state load failed", { error: errText(err) });
+    promptHistoryEnabled.value = false;
+  }
+  refreshPromptSuggestions();
+}
+
+watch(promptSuggestionActive, (next, previous) => {
+  if (next && !previous) promptDraftTracker.reset();
+  if (!next) promptDraftTracker.reset();
+  refreshPromptSuggestions();
+});
+
+watch([() => props.sessionId, () => props.currentCommand], () => {
+  promptDraftTracker.reset();
+  promptSuggestionController.dismiss();
+});
 
 async function loadPeerRouteStatus(): Promise<PeerSessionRouteStatus> {
   const getStatus = platform.peer?.getSessionRouteStatus;
@@ -2167,11 +2253,19 @@ async function ensureTerm() {
   // emitted, which is the ordering this depends on.
   let keyOriginated = false;
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === "keydown") keyOriginated = true;
+    if (e.type === "keydown") {
+      const action = promptSuggestionController.handleKey(e.key);
+      if (action.handled) {
+        if (action.suffix) sendPromptSuggestionSuffix(action.suffix);
+        return false;
+      }
+      keyOriginated = true;
+    }
     return true;
   });
   term.onData((data) => {
-    const fromUser = keyOriginated;
+    const classifiedInput = isPromptDraftInputData(data);
+    const fromUser = keyOriginated || classifiedInput;
     keyOriginated = false;
     if (!replayInputGuard.shouldForward(fromUser)) return;
     const { cleaned, dropped } = stripC1Controls(data);
@@ -2183,6 +2277,15 @@ async function ensureTerm() {
         originalLength: data.length,
         cleanedLength: cleaned.length,
       });
+    }
+    if (cleaned && fromUser && promptSuggestionActive.value) {
+      try {
+        promptDraftTracker.feed(cleaned);
+        refreshPromptSuggestions();
+      } catch (err) {
+        logWarn("prompt-suggest", "draft tracking failed", { error: errText(err) });
+        promptSuggestionController.dismiss();
+      }
     }
     if (cleaned) focusCoalescer?.handle(cleaned);
   });
@@ -2572,6 +2675,7 @@ async function reloadShortcutBars() {
 let templatesOff: (() => void) | null = null;
 let shortcutsOff: (() => void) | null = null;
 let prefsChangedOff: (() => void) | null = null;
+let promptHistoryChangedOff: (() => void) | null = null;
 
 function onServicePreviewRequest(event: Event): void {
   const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
@@ -2606,6 +2710,8 @@ onMounted(async () => {
   // template bar keeps rendering DEFAULT_TEMPLATES / the pre-sync list
   // until a manual edit or a full remount.
   prefsChangedOff = platform.events.on("prefs:changed", reloadShortcutBars);
+  promptHistoryChangedOff = platform.events.on("promptHistory:changed", () => { void loadPromptHistoryState(); });
+  void loadPromptHistoryState();
   // Self-heal a remote preview whose data pipe dropped: the Go gateway keeps
   // the URL alive and emits this so we re-run the control handshake. Gated on
   // the rebind bridge (Wails only) so web/mobile never subscribe.
@@ -2656,6 +2762,9 @@ onBeforeUnmount(() => {
   shortcutsOff = null;
   prefsChangedOff?.();
   prefsChangedOff = null;
+  promptHistoryChangedOff?.();
+  promptHistoryChangedOff = null;
+  promptSuggestionController.dispose();
   previewPipeDeadOff?.();
   previewPipeDeadOff = null;
   setServicePreviewActive(props.sessionId, false);
@@ -2949,6 +3058,27 @@ watch(
       @find="onSearchFind"
       @close="onSearchClose"
     />
+    <ol
+      v-if="promptSuggestionState.candidates.length > 0"
+      class="prompt-suggestions"
+      data-testid="prompt-suggestions"
+      :style="{ bottom: promptSuggestionBottom }"
+      role="listbox"
+    >
+      <li v-for="(candidate, index) in promptSuggestionState.candidates" :key="candidate">
+        <button
+          type="button"
+          class="prompt-suggestion"
+          :class="{ selected: index === promptSuggestionState.selectedIndex }"
+          :title="candidate"
+          :aria-label="candidate"
+          :aria-selected="index === promptSuggestionState.selectedIndex"
+          role="option"
+          @mousedown.prevent
+          @click="acceptPromptSuggestion(index)"
+        >{{ candidate }}</button>
+      </li>
+    </ol>
     <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
       <div class="viewer-overlay-card">
         <div class="viewer-overlay-title">{{ t("terminal.remoteHasTakenControl") }}</div>
@@ -3545,6 +3675,45 @@ watch(
 }
 .term :deep(.xterm-helper-textarea) {
   caret-color: transparent;
+}
+.prompt-suggestions {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--terminal-overlay);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
+}
+.prompt-suggestions li { min-width: 0; }
+.prompt-suggestion {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 27px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: 12px var(--font-mono);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.prompt-suggestion:hover,
+.prompt-suggestion.selected {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  color: var(--fg);
 }
 .overlay {
   position: absolute;

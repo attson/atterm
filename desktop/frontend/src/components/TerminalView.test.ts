@@ -62,6 +62,57 @@ describe("TerminalView direct transport plumbing", () => {
   });
 });
 
+describe("TerminalView desktop prompt history suggestions", () => {
+  test("receives AI metadata from PaneGrid and gates the desktop-only sidecar", () => {
+    expect(paneSource).toContain(':session-type="sessionInfoFor(pane)?.type"');
+    expect(paneSource).toContain(':current-command="sessionInfoFor(pane)?.current_command"');
+    expect(source).toMatch(/sessionType\?:\s*string/);
+    expect(source).toMatch(/currentCommand\?:\s*string/);
+    expect(source).toMatch(/platform\.caps\.wailsBindings/);
+    expect(source).toMatch(/platform\.promptHistory/);
+    expect(source).toMatch(/props\.focused/);
+    expect(source).toMatch(/props\.isLocalSession/);
+    expect(source).toMatch(/isDriver\.value/);
+    expect(source).toMatch(/status\.value\s*===\s*"attached"/);
+    expect(source).toMatch(/props\.sessionType\s*===\s*"ai"/);
+    expect(source).toMatch(/isCodexOrClaudeCommand\(props\.currentCommand/);
+    expect(source).toMatch(/!previewViewActive\.value/);
+    expect(source).toMatch(/watch\(\[\(\) => props\.sessionId, \(\) => props\.currentCommand\]/);
+  });
+
+  test("intercepts suggestion navigation before xterm and sends only accepted suffix", () => {
+    expect(source).toContain("createPromptDraftTracker");
+    expect(source).toContain("createPromptSuggestionController");
+    expect(source).toMatch(/promptSuggestionController\.handleKey\(e\.key\)/);
+    expect(source).toMatch(/if \(action\.handled\)[\s\S]*?return false/);
+    expect(source).toMatch(/sendPromptSuggestionSuffix\(action\.suffix\)/);
+    expect(source).toMatch(/conn\?\.sendInput\(suffix\)/);
+    expect(source).not.toMatch(/sendPromptSuggestionSuffix[\s\S]{0,300}sendInput\([^)]*\\r/);
+  });
+
+  test("observes input as a failure-isolated sidecar and disposes it on unmount", () => {
+    expect(source).toContain("isPromptDraftInputData(data)");
+    expect(source).toMatch(/const classifiedInput = isPromptDraftInputData\(data\)/);
+    expect(source).toMatch(/const fromUser = keyOriginated \|\| classifiedInput/);
+    expect(source).toMatch(/if \(cleaned && fromUser && promptSuggestionActive\.value\)/);
+    expect(source).toMatch(/try\s*\{[\s\S]*?promptDraftTracker\.feed\(cleaned\)[\s\S]*?catch/);
+    expect(source).toMatch(/if \(cleaned\) focusCoalescer\?\.handle\(cleaned\)/);
+    expect(source).toMatch(/promptSuggestionController\.dispose\(\)/);
+  });
+
+  test("renders an absolute overlay that does not participate in terminal sizing", () => {
+    expect(source).toContain('data-testid="prompt-suggestions"');
+    expect(source).toContain("promptSuggestionBottomOffset");
+    expect(source).toMatch(/term\.buffer\.active\.cursorY/);
+    expect(styleBlockFor('.prompt-suggestions')).toMatch(/position:\s*absolute/);
+    expect(styleBlockFor('.prompt-suggestions')).toMatch(/z-index:/);
+    expect(styleBlockFor('.prompt-suggestions')).toMatch(/left:\s*10px/);
+    expect(styleBlockFor('.prompt-suggestions')).toMatch(/right:\s*10px/);
+    const suggestionBlock = source.match(/data-testid="prompt-suggestions"[\s\S]*?<\/ol>/)?.[0] ?? "";
+    expect(suggestionBlock).not.toMatch(/resize|safeFit/);
+  });
+});
+
 describe("TerminalView async mount lifecycle", () => {
   test("does not attach after an async mount resumes on an unmounted view", () => {
     expect(source).toContain("let isAlive = true;");
@@ -686,11 +737,11 @@ describe("TerminalView web auxiliary keys", () => {
     // term.onData(" ") → sendInput(" ") path, but the browser also mirrors
     // the char into the hidden textarea and fires `input`, which
     // (pre-gate) ran onImeInput → sendInput(" ") a second time. The gate
-    // MUST run BEFORE the inputType check so no branch in this handler can
-    // fire on desktop.
-    expect(source).toMatch(
-      /function\s+onImeInput[^}]*?if\s*\(\s*platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty\s*\)\s*return/,
-    );
+    // MUST run BEFORE the inputType check so no input-handling branch in this
+    // handler can fire on desktop. Diagnostic logging may precede the gate.
+    const handler = source.slice(source.indexOf("function onImeInput"), source.indexOf("function onImeFocus"));
+    expect(handler).toContain("if (platform.caps.wailsBindings || platform.caps.localPty) return");
+    expect(handler.indexOf("platform.caps.wailsBindings")).toBeLessThan(handler.indexOf('event.inputType !== "insertText"'));
   });
 
   test("supports mobile long-press selection with copy/send/cancel and scroll/outside exit", () => {

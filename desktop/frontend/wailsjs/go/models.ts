@@ -890,6 +890,7 @@ export namespace main {
 	export class PaneSnapshot {
 	    slot: number;
 	    remote?: boolean;
+	    reattach?: boolean;
 	    host_id?: string;
 	    session_id?: string;
 	    shell: string;
@@ -908,6 +909,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.slot = source["slot"];
 	        this.remote = source["remote"];
+	        this.reattach = source["reattach"];
 	        this.host_id = source["host_id"];
 	        this.session_id = source["session_id"];
 	        this.shell = source["shell"];
@@ -1405,6 +1407,20 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class PromptHistoryStatus {
+	    enabled: boolean;
+	    count: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PromptHistoryStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.count = source["count"];
+	    }
 	}
 	export class QuickTemplate {
 	    id: string;

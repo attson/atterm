@@ -26,6 +26,11 @@ export interface StartupError {
   log_path: string;
 }
 
+export interface PromptHistoryStatus {
+  enabled: boolean;
+  count: number;
+}
+
 export type LocalePreference = "system" | "en" | "zh-CN";
 
 export interface NewSessionReq {
@@ -307,6 +312,10 @@ export interface RecoveryPaneSnapshot {
   // being replaced by a freshly forked local shell. host_id is informational
   // (lets the recovery dialog show which host a pane came from).
   remote?: boolean;
+  // Ephemeral backend hint: this exact local session still exists in the
+  // current desktop process and can be reattached after a renderer reload.
+  // It is never persisted to recovery.json.
+  reattach?: boolean;
   host_id?: string;
   session_id?: string;
   shell: string;
@@ -877,6 +886,10 @@ export interface AppBindings {
   SetHookInstallEnabled(on: boolean): Promise<void>;
   GetQuickTemplates(): Promise<import('../templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('../templates').QuickTemplate[]): Promise<void>;
+  GetPromptHistoryStatus(): Promise<PromptHistoryStatus>;
+  QueryPromptHistory(prefix: string, limit: number): Promise<string[]>;
+  SetPromptHistoryEnabled(enabled: boolean): Promise<void>;
+  ClearPromptHistory(): Promise<void>;
   // RunSnippetOnHosts starts a batch run of snippetText (labelled
   // snippetLabel for anything that needs a human-readable name) across
   // several saved hosts and returns immediately with a run id; results only

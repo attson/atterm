@@ -46,6 +46,10 @@ export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
 }
 
+export function ClearPromptHistory() {
+  return window['go']['main']['App']['ClearPromptHistory']();
+}
+
 export function ClearRelayConfig() {
   return window['go']['main']['App']['ClearRelayConfig']();
 }
@@ -116,6 +120,10 @@ export function ExportPeerTrustBackup(arg1) {
 
 export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
+}
+
+export function FetchRelayVersion(arg1, arg2) {
+  return window['go']['main']['App']['FetchRelayVersion'](arg1, arg2);
 }
 
 export function ForceRedownload(arg1) {
@@ -256,6 +264,10 @@ export function GetPluginConfig() {
 
 export function GetProfiles() {
   return window['go']['main']['App']['GetProfiles']();
+}
+
+export function GetPromptHistoryStatus() {
+  return window['go']['main']['App']['GetPromptHistoryStatus']();
 }
 
 export function GetPtyInputDebugEnabled() {
@@ -486,6 +498,10 @@ export function PushWidgetState(arg1) {
   return window['go']['main']['App']['PushWidgetState'](arg1);
 }
 
+export function QueryPromptHistory(arg1, arg2) {
+  return window['go']['main']['App']['QueryPromptHistory'](arg1, arg2);
+}
+
 export function RebindServicePreview(arg1) {
   return window['go']['main']['App']['RebindServicePreview'](arg1);
 }
@@ -678,6 +694,10 @@ export function SetProfiles(arg1) {
   return window['go']['main']['App']['SetProfiles'](arg1);
 }
 
+export function SetPromptHistoryEnabled(arg1) {
+  return window['go']['main']['App']['SetPromptHistoryEnabled'](arg1);
+}
+
 export function SetPtyInputDebugEnabled(arg1) {
   return window['go']['main']['App']['SetPtyInputDebugEnabled'](arg1);
 }
@@ -840,8 +860,4 @@ export function UpdateSSHHost(arg1, arg2) {
 
 export function UpdateSSHKey(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['UpdateSSHKey'](arg1, arg2, arg3, arg4);
-}
-
-export function FetchRelayVersion(arg1, arg2) {
-  return window['go']['main']['App']['FetchRelayVersion'](arg1, arg2);
 }

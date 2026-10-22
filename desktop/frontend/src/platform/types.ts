@@ -461,6 +461,13 @@ export interface ServicePreviewBridge {
   rebind?(req: ServicePreviewRebindRequest): Promise<void>
 }
 
+export interface PromptHistoryBridge {
+  status(): Promise<{ enabled: boolean; count: number }>
+  query(prefix: string, limit: number): Promise<string[]>
+  setEnabled(enabled: boolean): Promise<void>
+  clear(): Promise<void>
+}
+
 export interface Platform {
   caps: Capabilities
   relay: RelayBridge
@@ -475,4 +482,6 @@ export interface Platform {
   pluginHost?: PluginHostBridge
   deskWidget?: WidgetBridge
   servicePreview?: ServicePreviewBridge
+  /** Desktop-only local AI prompt history. Absent on Web and Capacitor. */
+  promptHistory?: PromptHistoryBridge
 }

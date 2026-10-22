@@ -1011,6 +1011,13 @@ export const zhCN = {
       delete: "删除",
       reset: "恢复默认",
       resetConfirm: "用默认列表覆盖当前模板？",
+      history: {
+        title: "AI 提示词历史建议",
+        enabled: "启用本机建议",
+        count: "已保存 {count} 条提示词",
+        clear: "清空历史",
+        clearConfirm: "清空本机保存的全部 AI 提示词？",
+      },
     },
     profiles: {
       tab: "会话配置档",

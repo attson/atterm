@@ -530,8 +530,22 @@ const BOOT_UPDATE_CHECK_TIMEOUT_MS = 3000;
 // either immediately (no update) or after the user dismisses the update dialog.
 function resumeBoot() {
   const snap = bootRecoverySnap.value;
+  const hasLiveReattach = !!snap?.tabs?.some((tab) =>
+    tab.panes.some((pane) => !pane.remote && pane.reattach && !!pane.session_id),
+  );
   const hasRecovery = bootRecoveryEnabled.value && (snap?.tabs?.length ?? 0) > 0;
-  if (hasRecovery && snap) {
+  // A live reattach marker means only the renderer restarted; the PTY process
+  // never went away. Restore that exact layout immediately so a dev reload (or
+  // webview refresh) cannot create a second session for the same conversation.
+  if (hasLiveReattach && snap) {
+    recoveryDialogState.value = { open: false, snapshot: snap };
+    void onRecoveryRestore(snap.tabs).catch((e) => {
+      const message = errText(e);
+      logError("recovery", "live session reattach failed", { error: message });
+      status.value = "error";
+      errorMsg.value = `recoveryReattach: ${message}`;
+    });
+  } else if (hasRecovery && snap) {
     recoveryDialogState.value = { open: true, snapshot: snap };
   } else if (caps.localPty) {
     startNewTab();

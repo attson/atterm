@@ -192,6 +192,25 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
       if (!snap) {
         return { pickIdx, slot: i, pane: { sessionId: null, remote: false } };
       }
+      // A full-page reload replaces only the renderer; the desktop process
+      // and its PTYs stay alive. LoadRecoverySnapshot marks an exact live SID
+      // so we can rebuild the pane around that session without forking a
+      // duplicate or running AI resume a second time.
+      if (!snap.remote && snap.reattach && snap.session_id && hasLocalPty) {
+        const dims = predictCellDims(tab.layout);
+        return {
+          pickIdx,
+          slot: i,
+          pane: { sessionId: snap.session_id, remote: false },
+          seed: {
+            ...synthSessionInfoFromSnapshot(snap),
+            id: snap.session_id,
+            cols: dims.cols,
+            rows: dims.rows,
+            host_id: localHostID.value,
+          },
+        };
+      }
       // Remote panes: do NOT fork a new local shell. The session is still
       // alive on the remote host (or will be when the relay reconnects);
       // re-bind the pane to the same session_id and let the remote list

@@ -86,6 +86,11 @@ describe("useRecoveryRestore", () => {
     await restore.onRecoveryRestore(picks);
 
     expect(pauseRecoverySnapshot).toHaveBeenCalledTimes(1);
+    expect(api.newSession).not.toHaveBeenCalled();
+    expect(tabs.value[0].panes[0]).toMatchObject({
+      sessionId: "remote-1",
+      remote: true,
+    });
     expect(marks).toEqual([
       "pause",
       "pins.ready",
@@ -168,5 +173,72 @@ describe("useRecoveryRestore", () => {
     expect([...pendingLocalIds].sort()).toEqual(["new-1", "new-2"]);
     expect(gotoTab).toHaveBeenCalledWith("tab-2");
     expect(pins.flushNow).toHaveBeenCalledOnce();
+  });
+
+  it("reattaches an exact live local sid without spawning or migrating its pin", async () => {
+    const tabs = ref<Tab[]>([]);
+    const localList = ref<SessionInfo[]>([]);
+    const pendingLocalIds = new Set<string>();
+    const pins = makePins({
+      isPinned: vi.fn(() => true),
+      rename: vi.fn(),
+    });
+    const restore = useRecoveryRestore({
+      tabs,
+      localList,
+      localHostID: ref("local-host"),
+      pendingLocalIds,
+      pins,
+      hasLocalPty: true,
+      newId: () => "restored-tab",
+      gotoTab: vi.fn(),
+      startNewTab: vi.fn(),
+      predictCellDims: () => ({ cols: 100, rows: 30 }),
+    });
+    restore.recoveryDialogState.value = {
+      open: false,
+      snapshot: {
+        version: 1,
+        host_id: "local-host",
+        clean_shutdown: false,
+        saved_at_unix: 0,
+        active_tab_id: "saved",
+        tabs: [],
+      },
+    };
+    const picks: RecoveryTabSnapshot[] = [{
+      id: "saved",
+      layout: "single",
+      active_pane_idx: 0,
+      col_ratio: 0.5,
+      row_ratio: 0.5,
+      panes: [{
+        slot: 0,
+        remote: false,
+        reattach: true,
+        session_id: "live-local",
+        shell: "/bin/zsh",
+        last_cwd: "/work/repo",
+        title: "codex",
+        session_type: "ai",
+      }],
+    }];
+
+    await restore.onRecoveryRestore(picks);
+
+    expect(api.newSession).not.toHaveBeenCalled();
+    expect(tabs.value[0].panes[0]).toMatchObject({
+      sessionId: "live-local",
+      remote: false,
+    });
+    expect(localList.value[0]).toMatchObject({
+      id: "live-local",
+      cwd: "/work/repo",
+      host_id: "local-host",
+      cols: 100,
+      rows: 30,
+    });
+    expect(pendingLocalIds).toEqual(new Set(["live-local"]));
+    expect(pins.rename).not.toHaveBeenCalled();
   });
 });

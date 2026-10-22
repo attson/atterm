@@ -762,6 +762,29 @@ func TestShouldNotifySession(t *testing.T) {
 	}
 }
 
+func TestRelayHostCodexTranscriptRecordsPromptWithoutFeishu(t *testing.T) {
+	store, _ := tempPromptHistoryStore(t)
+	h := &relayHost{}
+	h.SetPromptHistoryStore(store)
+
+	h.handleCodexTranscriptTurn(uuid.New(), "codex-session", codexTranscriptTurn{
+		Role: codexTurnRoleUser,
+		Text: "fix this issue",
+	})
+	h.handleCodexTranscriptTurn(uuid.New(), "codex-session", codexTranscriptTurn{
+		Role: codexTurnRoleAssistant,
+		Text: "done",
+	})
+
+	got := store.Query("fix", 3)
+	if len(got) != 1 || got[0] != "fix this issue" {
+		t.Fatalf("Codex rollout suggestions = %q, want one user prompt", got)
+	}
+	if status := store.Status(); status.Count != 1 {
+		t.Fatalf("history count = %d, want only the user turn", status.Count)
+	}
+}
+
 type repaintRecordingPTY struct {
 	mu      sync.Mutex
 	resizes [][2]uint16

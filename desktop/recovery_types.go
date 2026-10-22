@@ -48,8 +48,13 @@ type TabSnapshot struct {
 // old id -> new id in useSessionPins) — see
 // 2026-07-23-pinned-session-recovery-design.md §4.3.
 type PaneSnapshot struct {
-	Slot            int      `json:"slot"`
-	Remote          bool     `json:"remote,omitempty"`
+	Slot   int  `json:"slot"`
+	Remote bool `json:"remote,omitempty"`
+	// Reattach is an ephemeral LoadRecoverySnapshot hint. It is true only when
+	// SessionID still exists in this desktop process, so a renderer reload can
+	// attach to the exact PTY instead of spawning a duplicate. Save paths strip
+	// it; a real process restart therefore keeps the normal respawn semantics.
+	Reattach        bool     `json:"reattach,omitempty"`
 	HostID          string   `json:"host_id,omitempty"`
 	SessionID       string   `json:"session_id,omitempty"`
 	Shell           string   `json:"shell"`

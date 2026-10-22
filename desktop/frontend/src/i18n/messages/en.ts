@@ -1044,6 +1044,13 @@ export const en = {
       delete: "Delete",
       reset: "Reset to defaults",
       resetConfirm: "Replace your list with the defaults?",
+      history: {
+        title: "AI prompt history suggestions",
+        enabled: "Enable local suggestions",
+        count: "{count} saved prompts",
+        clear: "Clear history",
+        clearConfirm: "Clear all locally saved AI prompts?",
+      },
     },
     profiles: {
       tab: "Session profiles",

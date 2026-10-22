@@ -85,6 +85,11 @@ type relayHost struct {
 	// nil → no-op.
 	feishuDispatcher atomic.Pointer[feishu.Dispatcher]
 
+	// promptHistory is independent of Feishu and receives verified Codex user
+	// turns from the rollout bound to this PTY. Atomic publication keeps session
+	// goroutines race-free while app startup wires the device-local store.
+	promptHistory atomic.Pointer[PromptHistoryStore]
+
 	// feishuRemoteTermState reports the remote-terminal gate state for the live
 	// Feishu mode. Injected by app.go so the guard does not bind to a concrete
 	// store. ok=false means "no binding / not ready" → skip auto-attach.
@@ -316,6 +321,46 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		feishuCards:    internalfeishu.NewCardIndex(),
 		feishuSessions: make(map[string]*feishuSession),
 	}, nil
+}
+
+func (h *relayHost) SetPromptHistoryStore(store *PromptHistoryStore) {
+	h.promptHistory.Store(store)
+}
+
+func (h *relayHost) handleCodexTranscriptTurn(id uuid.UUID, aiSID string, turn codexTranscriptTurn) {
+	if turn.Role == codexTurnRoleUser {
+		if history := h.promptHistory.Load(); history != nil {
+			if err := history.RecordPrompt(turn.Text); err != nil {
+				logWarn("prompt-history", "record codex rollout prompt: %v", err)
+			}
+		}
+	}
+
+	disp := h.feishuDispatcher.Load()
+	if disp == nil {
+		return
+	}
+	event := feishu.TurnEvent{Kind: feishu.TurnAssistantFinal, Text: turn.Text}
+	if turn.Role == codexTurnRoleUser {
+		event.Kind = feishu.TurnUserPrompt
+		// AIChunker uses transcript identity to reset when a second Codex
+		// conversation starts in the same terminal pane.
+		event.TranscriptPath = "codex:" + aiSID
+	} else if turn.Role == codexTurnRoleQuestion {
+		event.FormQuestions = make([]feishu.AskUserQuestionEntry, 0, len(turn.Questions))
+		for _, q := range turn.Questions {
+			opts := make([]feishu.QuestionOption, 0, len(q.Options))
+			for _, opt := range q.Options {
+				opts = append(opts, feishu.QuestionOption{Label: opt.Label, Description: opt.Description})
+			}
+			event.FormQuestions = append(event.FormQuestions, feishu.AskUserQuestionEntry{
+				Question:  q.Question,
+				Options:   opts,
+				InputMode: internalfeishu.AskFormInputCodex,
+			})
+		}
+	}
+	disp.DispatchTurn(id.String(), event)
 }
 
 // localUserStorePath returns the absolute path to the desktop's local
@@ -791,31 +836,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			}
 			codexStreamOnce.Do(func() {
 				go startCodexTurnStream(generationCtx, resolveCwd, aiSID, replayExisting, func(turn codexTranscriptTurn) {
-					disp := h.feishuDispatcher.Load()
-					if disp == nil {
-						return
-					}
-					event := feishu.TurnEvent{Kind: feishu.TurnAssistantFinal, Text: turn.Text}
-					if turn.Role == codexTurnRoleUser {
-						event.Kind = feishu.TurnUserPrompt
-						// AIChunker uses transcript identity to reset when a second
-						// Codex conversation starts in the same terminal pane.
-						event.TranscriptPath = "codex:" + aiSID
-					} else if turn.Role == codexTurnRoleQuestion {
-						event.FormQuestions = make([]feishu.AskUserQuestionEntry, 0, len(turn.Questions))
-						for _, q := range turn.Questions {
-							opts := make([]feishu.QuestionOption, 0, len(q.Options))
-							for _, opt := range q.Options {
-								opts = append(opts, feishu.QuestionOption{Label: opt.Label, Description: opt.Description})
-							}
-							event.FormQuestions = append(event.FormQuestions, feishu.AskUserQuestionEntry{
-								Question:  q.Question,
-								Options:   opts,
-								InputMode: internalfeishu.AskFormInputCodex,
-							})
-						}
-					}
-					disp.DispatchTurn(id.String(), event)
+					h.handleCodexTranscriptTurn(id, aiSID, turn)
 				})
 			})
 		}

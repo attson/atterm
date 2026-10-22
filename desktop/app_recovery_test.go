@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
 )
 
@@ -72,6 +74,66 @@ func TestApp_SaveLoadRecoverySnapshot_RoundTrip(t *testing.T) {
 	}
 	if !got.CleanShutdown {
 		t.Fatalf("Load should surface original clean_shutdown=true to caller")
+	}
+}
+
+func TestApp_LoadRecoverySnapshot_MarksOnlyExactLiveLocalSession(t *testing.T) {
+	app := newRecoveryTestApp(t)
+	liveID := uuid.New()
+	model := session.New(liveID, proto.SessionInfo{ID: liveID.String()})
+	if _, err := app.host.server.Registry().Add(model); err != nil {
+		t.Fatalf("add live session: %v", err)
+	}
+	t.Cleanup(func() { app.host.server.Registry().Remove(liveID) })
+
+	deadID := uuid.New().String()
+	snap := RecoverySnapshot{
+		Tabs: []TabSnapshot{{
+			ID: "t-1",
+			Panes: []PaneSnapshot{
+				{Slot: 0, SessionID: liveID.String(), Shell: "/bin/zsh"},
+				{Slot: 1, SessionID: deadID, Shell: "/bin/zsh"},
+				{Slot: 2, Remote: true, SessionID: liveID.String(), Shell: "/bin/zsh"},
+			},
+		}},
+	}
+	blob, _ := json.Marshal(snap)
+	if err := app.SaveRecoverySnapshot(string(blob)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := app.LoadRecoverySnapshot()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	panes := got.Tabs[0].Panes
+	if !panes[0].Reattach {
+		t.Fatal("exact live local session should be marked reattach")
+	}
+	if panes[1].Reattach {
+		t.Fatal("missing local session must not be marked reattach")
+	}
+	if panes[2].Reattach {
+		t.Fatal("remote pane must not be marked reattach")
+	}
+	if app.lastSnapshot.Tabs[0].Panes[0].Reattach {
+		t.Fatal("runtime reattach hint must not enter lastSnapshot")
+	}
+}
+
+func TestApp_SaveRecoverySnapshot_StripsRuntimeReattachHint(t *testing.T) {
+	app := newRecoveryTestApp(t)
+	payload := `{"tabs":[{"id":"t","panes":[{"slot":0,"session_id":"sid","shell":"/bin/zsh","reattach":true}]}]}`
+	if err := app.SaveRecoverySnapshot(payload); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	persisted, err := app.recoveryStore.Load()
+	if err != nil {
+		t.Fatalf("load persisted snapshot: %v", err)
+	}
+	if persisted.Tabs[0].Panes[0].Reattach {
+		t.Fatal("reattach hint was persisted to recovery.json")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -251,6 +252,99 @@ func mustJSONBytes(t *testing.T, v any) []byte {
 type taskSinkFake struct {
 	mu    sync.Mutex
 	calls []string
+}
+
+type promptSinkFake struct {
+	mu      sync.Mutex
+	prompts []string
+}
+
+func (f *promptSinkFake) RecordPrompt(prompt string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.prompts = append(f.prompts, prompt)
+	return nil
+}
+
+func TestHookServer_RecordsVerifiedClaudePrompts(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-0000000000cc")
+	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+	sink := &promptSinkFake{}
+	h := NewHookServer(nil, sessions)
+	h.SetPromptSink(sink)
+
+	for _, tc := range []struct {
+		agent string
+		body  string
+	}{
+		{agent: "claude-code", body: `{"hook_event_name":"UserPromptSubmit","prompt":"review this diff"}`},
+		// Codex prompt history comes from its PTY-bound rollout stream. Ignoring
+		// the hook copy prevents one submitted prompt from counting twice.
+		{agent: "codex", body: `{"hook_event_name":"UserPromptSubmit","prompt":"push and create mr"}`},
+	} {
+		body := mustJSONBytes(t, hookNotifyRequest{
+			SessionID: sid.String(), AgentKind: tc.agent, HookInput: json.RawMessage(tc.body),
+		})
+		req := httptest.NewRequest(http.MethodPost, "/atterm-hook/notify", bytes.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:5555"
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", tc.agent, rr.Code, rr.Body.String())
+		}
+	}
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	want := []string{"review this diff"}
+	if !reflect.DeepEqual(sink.prompts, want) {
+		t.Fatalf("recorded prompts = %q, want %q", sink.prompts, want)
+	}
+}
+
+func TestHookServer_DoesNotRecordUnverifiedPromptSources(t *testing.T) {
+	knownSID := uuid.MustParse("00000000-0000-0000-0000-0000000000dd")
+	sessions := &sessionsFake{known: map[string]bool{knownSID.String(): true}}
+	sink := &promptSinkFake{}
+	h := NewHookServer(nil, sessions)
+	h.SetPromptSink(sink)
+
+	cases := []hookNotifyRequest{
+		{SessionID: uuid.NewString(), AgentKind: "claude-code", HookInput: json.RawMessage(`{"hook_event_name":"UserPromptSubmit","prompt":"unknown session"}`)},
+		{SessionID: knownSID.String(), AgentKind: "made-up", HookInput: json.RawMessage(`{"hook_event_name":"UserPromptSubmit","prompt":"unknown agent"}`)},
+		{SessionID: knownSID.String(), AgentKind: "codex", HookInput: json.RawMessage(`{"hook_event_name":"Stop","prompt":"wrong event"}`)},
+		{SessionID: knownSID.String(), AgentKind: "claude-code", HookInput: json.RawMessage(`{"hook_event_name":"UserPromptSubmit","prompt":""}`)},
+	}
+	for _, payload := range cases {
+		body := mustJSONBytes(t, payload)
+		req := httptest.NewRequest(http.MethodPost, "/atterm-hook/notify", bytes.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:5555"
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.prompts) != 0 {
+		t.Fatalf("unverified sources recorded prompts: %q", sink.prompts)
+	}
+}
+
+func TestHookHasPromptField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "text", raw: `{"prompt":"private text"}`, want: true},
+		{name: "null", raw: `{"prompt":null}`, want: true},
+		{name: "absent", raw: `{"hook_event_name":"Stop"}`, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hookHasPromptField(json.RawMessage(tc.raw)); got != tc.want {
+				t.Fatalf("hookHasPromptField() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func (f *taskSinkFake) ApplyHookTaskState(_ uuid.UUID, state string) {

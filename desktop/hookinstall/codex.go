@@ -29,8 +29,8 @@ var codexHookEvents = []string{
 
 // codexHooksPath is the user-level hooks file for a given home.
 //
-// Repo-local .codex/config.toml is not an option: hooks configured there do not
-// fire in interactive sessions (openai/codex#17532).
+// Keeping the hook at user scope makes it available in every terminal session
+// without coupling collection to the trust state of an individual repository.
 func codexHooksPath(home string) string {
 	return filepath.Join(home, ".codex", "hooks.json")
 }
@@ -45,6 +45,66 @@ type codexHookEntry struct {
 	Hooks   []codexHookHandler `json:"hooks"`
 }
 
+// codexHooksDocument matches the current Codex hooks.json schema. Older
+// atterm builds accidentally wrote the event map at the document root; reads
+// accept that legacy shape so the next install can repair it in place.
+type codexHooksDocument struct {
+	Description string                      `json:"description,omitempty"`
+	Hooks       map[string][]codexHookEntry `json:"hooks"`
+	Extra       map[string]json.RawMessage  `json:"-"`
+}
+
+func (d codexHooksDocument) MarshalJSON() ([]byte, error) {
+	out := make(map[string]any, len(d.Extra)+2)
+	for key, value := range d.Extra {
+		out[key] = value
+	}
+	if d.Description != "" {
+		out["description"] = d.Description
+	}
+	out["hooks"] = d.Hooks
+	return json.Marshal(out)
+}
+
+func readCodexHooksDocument(raw []byte) (codexHooksDocument, bool) {
+	doc := codexHooksDocument{}
+	root := map[string]json.RawMessage{}
+	if json.Unmarshal(raw, &root) != nil {
+		return codexHooksDocument{Hooks: map[string][]codexHookEntry{}}, false
+	}
+	if description, ok := root["description"]; ok {
+		_ = json.Unmarshal(description, &doc.Description)
+		delete(root, "description")
+	}
+	if hooks, ok := root["hooks"]; ok {
+		if json.Unmarshal(hooks, &doc.Hooks) != nil {
+			doc.Hooks = nil
+		}
+		if doc.Hooks == nil {
+			doc.Hooks = map[string][]codexHookEntry{}
+		}
+		delete(root, "hooks")
+		doc.Extra = root
+		return doc, false
+	}
+
+	// Migrate the flat shape emitted by atterm before Codex required the
+	// top-level "hooks" wrapper. Only array-valued keys are hook events.
+	doc.Hooks = map[string][]codexHookEntry{}
+	for event, value := range root {
+		var entries []codexHookEntry
+		if json.Unmarshal(value, &entries) == nil {
+			doc.Hooks[event] = entries
+			continue
+		}
+		if doc.Extra == nil {
+			doc.Extra = map[string]json.RawMessage{}
+		}
+		doc.Extra[event] = value
+	}
+	return doc, len(root) > 0
+}
+
 // installCodexAt makes ~/.codex/hooks.json name our binary for every event we
 // read, merging rather than replacing: the file belongs to the user and codex
 // loads every entry in it.
@@ -55,19 +115,20 @@ type codexHookEntry struct {
 func installCodexAt(home, link string) error {
 	path := codexHooksPath(home)
 
-	doc := map[string][]codexHookEntry{}
+	doc := codexHooksDocument{Hooks: map[string][]codexHookEntry{}}
+	migrated := false
 	if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
 		// A hand-broken file is not a reason to refuse to install; start from
 		// empty rather than propagating a parse error to the caller.
-		_ = json.Unmarshal(raw, &doc)
+		doc, migrated = readCodexHooksDocument(raw)
 	}
 
 	want := codexHookEntry{
 		Hooks: []codexHookHandler{{Type: "command", Command: attermHookCommand(link, "codex")}},
 	}
-	changed := false
+	changed := migrated
 	for _, event := range codexHookEvents {
-		cur := doc[event]
+		cur := doc.Hooks[event]
 		merged := make([]codexHookEntry, 0, len(cur)+1)
 		for _, entry := range cur {
 			// Drop our own entry from a previous run — including one written by
@@ -82,7 +143,7 @@ func installCodexAt(home, link string) error {
 		if !codexEntriesEqual(cur, merged) {
 			changed = true
 		}
-		doc[event] = merged
+		doc.Hooks[event] = merged
 	}
 	if !changed {
 		return nil
@@ -110,12 +171,12 @@ func uninstallCodexAt(home string) error {
 		}
 		return err
 	}
-	doc := map[string][]codexHookEntry{}
-	if err := json.Unmarshal(raw, &doc); err != nil {
+	doc, _ := readCodexHooksDocument(raw)
+	if doc.Hooks == nil {
 		return nil // not ours to repair
 	}
 	changed := false
-	for event, entries := range doc {
+	for event, entries := range doc.Hooks {
 		kept := make([]codexHookEntry, 0, len(entries))
 		for _, entry := range entries {
 			if isAttermCodexEntry(entry) {
@@ -125,10 +186,10 @@ func uninstallCodexAt(home string) error {
 			kept = append(kept, entry)
 		}
 		if len(kept) == 0 {
-			delete(doc, event)
+			delete(doc.Hooks, event)
 			continue
 		}
-		doc[event] = kept
+		doc.Hooks[event] = kept
 	}
 	if !changed {
 		return nil

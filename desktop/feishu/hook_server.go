@@ -31,6 +31,12 @@ type TaskStateSink interface {
 	ApplyHookTaskState(sid uuid.UUID, state string)
 }
 
+// PromptSink receives already-validated user prompt submissions. Keeping it
+// separate from WaitingDispatcher lets local history work with Feishu off.
+type PromptSink interface {
+	RecordPrompt(prompt string) error
+}
+
 // WaitingDispatcher is the subset of *Dispatcher the hook server uses.
 type WaitingDispatcher interface {
 	DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent)
@@ -45,11 +51,12 @@ type WaitingDispatcher interface {
 // otherwise the ATTERM_HOOK_ENDPOINT baked into already-spawned PTYs would go
 // stale. Only the dispatcher it forwards to is replaced via SetDispatcher.
 type HookServer struct {
-	mu        sync.RWMutex
-	disp      WaitingDispatcher
-	sessions  SessionLookup
-	taskSink  TaskStateSink
-	onSuspect func()
+	mu         sync.RWMutex
+	disp       WaitingDispatcher
+	sessions   SessionLookup
+	taskSink   TaskStateSink
+	promptSink PromptSink
+	onSuspect  func()
 }
 
 type hookNotifyRequest struct {
@@ -76,6 +83,19 @@ func (h *HookServer) taskStateSink() TaskStateSink {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.taskSink
+}
+
+// SetPromptSink registers the desktop-local prompt history consumer.
+func (h *HookServer) SetPromptSink(sink PromptSink) {
+	h.mu.Lock()
+	h.promptSink = sink
+	h.mu.Unlock()
+}
+
+func (h *HookServer) promptHistorySink() PromptSink {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.promptSink
 }
 
 // SetSuspectCallback registers a callback invoked when a POST is well-
@@ -174,8 +194,25 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	promptRecognized := false
+	promptFieldPresent := hookHasPromptField(req.HookInput)
+	if prompt, ok := promptForHook(req.AgentKind, req.HookInput); ok {
+		promptRecognized = true
+		if sink := h.promptHistorySink(); sink != nil {
+			if err := sink.RecordPrompt(prompt); err != nil {
+				logging.Warn("prompt-history", "record hook prompt: %v", err)
+			}
+		}
+	}
+
 	adapter, ok := LookupHookAdapter(req.AgentKind)
 	if !ok {
+		// Codex participates in task state but has no Feishu hook adapter; its
+		// turn stream and prompt history come from the PTY-bound rollout reader.
+		if req.AgentKind == "codex" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		logging.Warn("feishu-hook", "drop reason=unknown-agent agent=%q sid=%s", req.AgentKind, sid)
 		if h.onSuspect != nil {
 			h.onSuspect()
@@ -215,7 +252,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// recover a body. Surface the raw payload (truncated) once per
 			// occurrence so we can see whether claude omitted transcript_path
 			// or it points somewhere we couldn't read.
-			if turn.Kind == TurnAssistantFinal && len(turn.Text) == 0 {
+			if turn.Kind == TurnAssistantFinal && len(turn.Text) == 0 && !promptFieldPresent {
 				preview := string(req.HookInput)
 				if len(preview) > 400 {
 					preview = preview[:400] + "…"
@@ -228,7 +265,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !emit && !dispatchedTurn {
+	if !emit && !dispatchedTurn && !promptRecognized && !promptFieldPresent {
 		// Body for diagnosing why claude payload yielded neither path. Truncate
 		// so a 100KB notification body doesn't blow up the log line.
 		preview := string(req.HookInput)
@@ -240,4 +277,27 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	_ = errors.New
 	w.WriteHeader(http.StatusOK)
+}
+
+func promptForHook(agentKind string, raw json.RawMessage) (string, bool) {
+	if agentKind != "claude-code" {
+		return "", false
+	}
+	var payload struct {
+		HookEventName string `json:"hook_event_name"`
+		Prompt        string `json:"prompt"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || payload.HookEventName != "UserPromptSubmit" || payload.Prompt == "" {
+		return "", false
+	}
+	return payload.Prompt, true
+}
+
+func hookHasPromptField(raw json.RawMessage) bool {
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return false
+	}
+	_, ok := payload["prompt"]
+	return ok
 }

@@ -260,11 +260,12 @@ type quickTunnelLifecycle interface {
 
 // App is the Wails-bound application surface.
 type App struct {
-	ctx         context.Context
-	host        *relayHost
-	remoteProxy *remoteProxy
-	cfgStore    *configStore
-	logger      *loggingManager
+	ctx           context.Context
+	host          *relayHost
+	remoteProxy   *remoteProxy
+	cfgStore      *configStore
+	logger        *loggingManager
+	promptHistory *PromptHistoryStore
 
 	mu               sync.Mutex
 	uplink           *uplink
@@ -554,6 +555,12 @@ func (a *App) startup(ctx context.Context) {
 		a.recoveryStore = rs
 	} else {
 		logWarn("recovery", "store unavailable: %v", err)
+	}
+	if history, err := NewPromptHistoryStore(); err != nil {
+		logWarn("prompt-history", "store unavailable: %v", err)
+	} else {
+		a.promptHistory = history
+		a.host.SetPromptHistoryStore(history)
 	}
 	a.host.aiSidCallback = func(localSessionID uuid.UUID, kind, aiSid string) {
 		a.eventsEmitter(a.ctx, "recovery:ai-sid", map[string]string{

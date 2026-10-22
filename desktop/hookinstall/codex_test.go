@@ -10,15 +10,15 @@ import (
 
 const testLink = "/Users/x/.atterm/bin/atterm-hook"
 
-func readCodexDoc(t *testing.T, home string) map[string][]codexHookEntry {
+func readCodexDoc(t *testing.T, home string) codexHooksDocument {
 	t.Helper()
 	raw, err := os.ReadFile(codexHooksPath(home))
 	if err != nil {
 		t.Fatalf("read hooks.json: %v", err)
 	}
-	doc := map[string][]codexHookEntry{}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("hooks.json is not valid JSON: %v\n%s", err, raw)
+	doc, _ := readCodexHooksDocument(raw)
+	if doc.Hooks == nil {
+		t.Fatalf("hooks.json has no top-level hooks object:\n%s", raw)
 	}
 	return doc
 }
@@ -30,7 +30,7 @@ func TestInstallCodex_CoversEveryStateEvent(t *testing.T) {
 	}
 	doc := readCodexDoc(t, home)
 	for _, event := range codexHookEvents {
-		entries, ok := doc[event]
+		entries, ok := doc.Hooks[event]
 		if !ok || len(entries) != 1 {
 			t.Fatalf("event %s: entries = %v, want exactly one", event, entries)
 		}
@@ -74,7 +74,7 @@ func TestInstallCodex_ReplacesOurOlderEntry(t *testing.T) {
 	if err := installCodexAt(home, testLink); err != nil {
 		t.Fatal(err)
 	}
-	for event, entries := range readCodexDoc(t, home) {
+	for event, entries := range readCodexDoc(t, home).Hooks {
 		if len(entries) != 1 {
 			t.Fatalf("event %s: %d entries, want 1", event, len(entries))
 		}
@@ -91,8 +91,8 @@ func TestInstallCodex_PreservesForeignEntries(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	existing := `{"Stop":[{"hooks":[{"type":"command","command":"/usr/bin/true"}]}],` +
-		`"SessionStart":[{"hooks":[{"type":"command","command":"/usr/bin/false"}]}]}`
+	existing := `{"description":"user hooks","schema_version":2,"custom":{"enabled":true},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/usr/bin/true"}]}],` +
+		`"SessionStart":[{"hooks":[{"type":"command","command":"/usr/bin/false"}]}]}}`
 	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -101,15 +101,50 @@ func TestInstallCodex_PreservesForeignEntries(t *testing.T) {
 		t.Fatalf("installCodexAt: %v", err)
 	}
 	doc := readCodexDoc(t, home)
-	if len(doc["Stop"]) != 2 {
-		t.Fatalf("Stop entries = %v, want the user's plus ours", doc["Stop"])
+	if doc.Description != "user hooks" {
+		t.Fatalf("description = %q, want preserved metadata", doc.Description)
 	}
-	if doc["Stop"][0].Hooks[0].Command != "/usr/bin/true" {
-		t.Fatalf("clobbered the user's Stop hook: %v", doc["Stop"])
+	var custom struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(doc.Extra["custom"], &custom); err != nil {
+		t.Fatalf("decode preserved custom metadata: %v", err)
+	}
+	if string(doc.Extra["schema_version"]) != "2" || !custom.Enabled {
+		t.Fatalf("unknown top-level metadata was not preserved: %v", doc.Extra)
+	}
+	if len(doc.Hooks["Stop"]) != 2 {
+		t.Fatalf("Stop entries = %v, want the user's plus ours", doc.Hooks["Stop"])
+	}
+	if doc.Hooks["Stop"][0].Hooks[0].Command != "/usr/bin/true" {
+		t.Fatalf("clobbered the user's Stop hook: %v", doc.Hooks["Stop"])
 	}
 	// An event we do not own must survive untouched.
-	if len(doc["SessionStart"]) != 1 || doc["SessionStart"][0].Hooks[0].Command != "/usr/bin/false" {
-		t.Fatalf("touched an event we do not own: %v", doc["SessionStart"])
+	if len(doc.Hooks["SessionStart"]) != 1 || doc.Hooks["SessionStart"][0].Hooks[0].Command != "/usr/bin/false" {
+		t.Fatalf("touched an event we do not own: %v", doc.Hooks["SessionStart"])
+	}
+}
+
+func TestInstallCodex_MigratesLegacyFlatDocument(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"note":"keep me","Stop":[{"hooks":[{"type":"command","command":"/usr/bin/true"}]}]}`
+	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installCodexAt(home, testLink); err != nil {
+		t.Fatalf("installCodexAt: %v", err)
+	}
+	doc := readCodexDoc(t, home)
+	if len(doc.Hooks["Stop"]) != 2 || doc.Hooks["Stop"][0].Hooks[0].Command != "/usr/bin/true" {
+		t.Fatalf("legacy Stop hook was not migrated: %v", doc.Hooks["Stop"])
+	}
+	if string(doc.Extra["note"]) != `"keep me"` {
+		t.Fatalf("legacy metadata was not preserved: %v", doc.Extra)
 	}
 }
 
@@ -127,7 +162,7 @@ func TestInstallCodex_SurvivesUnparseableFile(t *testing.T) {
 	if err := installCodexAt(home, testLink); err != nil {
 		t.Fatalf("installCodexAt: %v", err)
 	}
-	if len(readCodexDoc(t, home)) != len(codexHookEvents) {
+	if len(readCodexDoc(t, home).Hooks) != len(codexHookEvents) {
 		t.Fatal("install did not rebuild the file")
 	}
 }
@@ -138,7 +173,7 @@ func TestUninstallCodex_LeavesOnlyForeignEntries(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	existing := `{"Stop":[{"hooks":[{"type":"command","command":"/usr/bin/true"}]}]}`
+	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/usr/bin/true"}]}]}}`
 	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +184,7 @@ func TestUninstallCodex_LeavesOnlyForeignEntries(t *testing.T) {
 		t.Fatalf("uninstallCodexAt: %v", err)
 	}
 	doc := readCodexDoc(t, home)
-	if len(doc) != 1 || len(doc["Stop"]) != 1 || doc["Stop"][0].Hooks[0].Command != "/usr/bin/true" {
+	if len(doc.Hooks) != 1 || len(doc.Hooks["Stop"]) != 1 || doc.Hooks["Stop"][0].Hooks[0].Command != "/usr/bin/true" {
 		t.Fatalf("uninstall should leave exactly the user's own hook, got %v", doc)
 	}
 }

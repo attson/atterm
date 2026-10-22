@@ -11,6 +11,12 @@ const { fake } = vi.hoisted(() => {
         loadHidden: vi.fn().mockResolvedValue(false),
         saveHidden: vi.fn().mockResolvedValue(undefined),
       },
+      promptHistory: {
+        status: vi.fn().mockResolvedValue({ enabled: true, count: 4 }),
+        query: vi.fn().mockResolvedValue([]),
+        setEnabled: vi.fn().mockResolvedValue(undefined),
+        clear: vi.fn().mockResolvedValue(undefined),
+      },
       events: {
         emit: vi.fn(),
         on: vi.fn().mockReturnValue(() => {}),
@@ -24,7 +30,7 @@ const { fake } = vi.hoisted(() => {
 })
 
 vi.mock('../../i18n/useI18n', () => ({
-  useI18n: () => ({ t: (k: string) => k }),
+  useI18n: () => ({ t: (k: string, params?: Record<string, unknown>) => params?.count === undefined ? k : `${k}:${params.count}` }),
 }))
 
 vi.mock('../../platform', () => ({
@@ -188,5 +194,38 @@ describe('SettingsTemplates', () => {
     // The rest of the tab still works everywhere — the gate is on the button,
     // not the tab.
     expect(web.find('[data-testid="template-row-a"]').exists()).toBe(true)
+  })
+
+  it('loads and toggles desktop AI prompt history suggestions', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.caps = { wailsBindings: true }
+    __fake.promptHistory.status = vi.fn().mockResolvedValue({ enabled: true, count: 4 })
+    __fake.promptHistory.setEnabled = vi.fn().mockResolvedValue(undefined)
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    expect(w.find('[data-testid="prompt-history-count"]').text()).toContain('4')
+    await w.find('[data-testid="prompt-history-toggle"]').setValue(false)
+    await flushPromises()
+    expect(__fake.promptHistory.setEnabled).toHaveBeenCalledWith(false)
+    expect(__fake.events.emit).toHaveBeenCalledWith('promptHistory:changed', null)
+  })
+
+  it('requires confirmation before clearing prompt history', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.caps = { wailsBindings: true }
+    __fake.promptHistory.status = vi.fn()
+      .mockResolvedValueOnce({ enabled: true, count: 4 })
+      .mockResolvedValueOnce({ enabled: true, count: 0 })
+    __fake.promptHistory.clear = vi.fn().mockResolvedValue(undefined)
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="prompt-history-clear"]').trigger('click')
+    expect(__fake.promptHistory.clear).not.toHaveBeenCalled()
+    await w.find('[data-testid="prompt-history-clear-confirm"]').trigger('click')
+    await flushPromises()
+    expect(__fake.promptHistory.clear).toHaveBeenCalledOnce()
+    expect(w.find('[data-testid="prompt-history-count"]').text()).toContain('0')
   })
 })

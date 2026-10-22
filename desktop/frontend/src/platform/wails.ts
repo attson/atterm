@@ -321,6 +321,12 @@ export function createWailsPlatform(): Platform {
         else localStorage.removeItem('atterm.templates.hidden')
       },
     },
+    promptHistory: {
+      status: () => api.getPromptHistoryStatus(),
+      query: (prefix, limit) => api.queryPromptHistory(prefix, limit),
+      setEnabled: (enabled) => api.setPromptHistoryEnabled(enabled),
+      clear: () => api.clearPromptHistory(),
+    },
     // Desktop has a real keyboard and never renders the mobile aux-key bar,
     // so there is nothing to persist — a no-op bridge satisfies the Platform
     // type without a Go binding.

@@ -27,6 +27,8 @@ export function CancelSnippetRun(arg1:string):Promise<void>;
 
 export function CheckUpdate():Promise<void>;
 
+export function ClearPromptHistory():Promise<void>;
+
 export function ClearRelayConfig():Promise<void>;
 
 export function CloseSession(arg1:string):Promise<void>;
@@ -62,6 +64,8 @@ export function ExportDiagnostics(arg1:string):Promise<string>;
 export function ExportPeerTrustBackup(arg1:string):Promise<string>;
 
 export function FetchRelayMe():Promise<main.RelayMe>;
+
+export function FetchRelayVersion(arg1:string,arg2:boolean):Promise<string>;
 
 export function ForceRedownload(arg1:string):Promise<void>;
 
@@ -132,6 +136,8 @@ export function GetPinnedSessionIds():Promise<Array<string>>;
 export function GetPluginConfig():Promise<main.PluginConfig>;
 
 export function GetProfiles():Promise<Array<main.SessionProfile>>;
+
+export function GetPromptHistoryStatus():Promise<main.PromptHistoryStatus>;
 
 export function GetPtyInputDebugEnabled():Promise<boolean>;
 
@@ -247,6 +253,8 @@ export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
 export function PushWidgetState(arg1:string):Promise<void>;
 
+export function QueryPromptHistory(arg1:string,arg2:number):Promise<Array<string>>;
+
 export function RebindServicePreview(arg1:main.ServicePreviewRebindRequest):Promise<void>;
 
 export function ReceivedFilesClearAll():Promise<void>;
@@ -343,6 +351,8 @@ export function SetPluginConfig(arg1:main.PluginConfig):Promise<void>;
 
 export function SetProfiles(arg1:Array<main.SessionProfile>):Promise<void>;
 
+export function SetPromptHistoryEnabled(arg1:boolean):Promise<void>;
+
 export function SetPtyInputDebugEnabled(arg1:boolean):Promise<void>;
 
 export function SetQuickTemplates(arg1:Array<main.QuickTemplate>):Promise<void>;
@@ -424,5 +434,3 @@ export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main
 export function UpdateSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<void>;
 
 export function UpdateSSHKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
-
-export function FetchRelayVersion(arg1:string,arg2:boolean):Promise<string>;

@@ -23,6 +23,10 @@ vi.mock('../../lib/api', () => ({
   listRelaySessions: vi.fn().mockResolvedValue([{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, is_current: true }]),
   revokeRelaySession: vi.fn().mockResolvedValue(undefined),
   signOutOtherRelaySessions: vi.fn().mockResolvedValue({ deleted: 1 }),
+  getPromptHistoryStatus: vi.fn().mockResolvedValue({ enabled: true, count: 2 }),
+  queryPromptHistory: vi.fn().mockResolvedValue(['push and create mr']),
+  setPromptHistoryEnabled: vi.fn().mockResolvedValue(undefined),
+  clearPromptHistory: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../../wailsjs/runtime/runtime', () => ({
@@ -210,6 +214,18 @@ describe('createWailsPlatform', () => {
     const result = await p.sessions.signOutOtherRelaySessions!()
     expect(signOutOtherRelaySessions).toHaveBeenCalledOnce()
     expect(result).toEqual({ deleted: 1 })
+  })
+
+  it('promptHistory delegates to the desktop-local bindings', async () => {
+    const api = await import('../../lib/api')
+    const p = createWailsPlatform()
+    expect(await p.promptHistory!.status()).toEqual({ enabled: true, count: 2 })
+    expect(await p.promptHistory!.query('push', 3)).toEqual(['push and create mr'])
+    await p.promptHistory!.setEnabled(false)
+    await p.promptHistory!.clear()
+    expect(api.queryPromptHistory).toHaveBeenCalledWith('push', 3)
+    expect(api.setPromptHistoryEnabled).toHaveBeenCalledWith(false)
+    expect(api.clearPromptHistory).toHaveBeenCalledOnce()
   })
 
   it('system.showNotification delegates', async () => {

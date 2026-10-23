@@ -506,6 +506,30 @@ template bar 同属终端工具面，不是 Settings 表单控件：
 - 文件 picker 不接受目录；图片 picker `accept="image/*"`。选择后 input value 要清空，
   这样同一文件可连续选择两次触发 change。
 
+## 终端图片占位符 hover 预览
+
+共享 `TerminalView.vue` 对当前客户端发起的图片粘贴保留进程内预览，并在终端里的
+`[Image #N]` 占位符上提供 hover 缩略图。该映射是 client-local、session-scoped 的
+短期 UI 状态：不进协议、不上传 relay、不持久化，刷新、重新 attach 或换设备后不恢复。
+
+- 不能按占位符文本或编号做全局匹配；编号可在后续输入行从 1 重新开始。每张图片必须
+  绑定到粘贴发生时的 xterm logical-line marker，以及该逻辑行内的 occurrence。
+- 一行连续粘贴多张图片时按粘贴顺序对应多个 occurrence；发送返回 `false` 或抛错时必须
+  取消预留，不能让失败图片误绑到后续占位符。
+- resize/reflow 后按 marker 当前行重新计算物理 row/cell range，不能缓存旧坐标。
+- tooltip 命中必须在 terminal `mousemove` capture 路径上复用 xterm renderer 的 mouse
+  service 计算实时 cell 坐标（DOM 几何只作兼容回退）；xterm link provider 可以继续提供
+  下划线，但不能作为显示预览的唯一触发源，因为移动端滚动层会覆盖 screen 接收事件。
+- Codex/Claude 等全屏 TUI 在处理粘贴、提交输入或渲染回复时都可能清屏重绘并 dispose
+  marker，或保留 marker 但清空并复用它指向的物理行。未绑定图片按当前输入逻辑行重新
+  锚定；已绑定图片在占位符从原行消失时保留旧签名，用从首个图片占位符开始的完整输入
+  内容在原行与当前 viewport 附近选择最近匹配行。两者重锚窗口均为 5 秒，不能只按
+  `[Image #N]` 文本/编号全局搜索，也不能无限保留已离开 scrollback 的绑定。
+- hover 时才创建 object URL，leave、link dispose、marker 滚出 scrollback、cache eviction
+  和组件卸载都必须释放 URL/marker。缓存上限为 32 张或 64 MiB（任一先到即淘汰最旧项）。
+- 原有 `pasteImageBus` 的即时 5 秒 toast 保持独立；hover 预览使用单独的事务型 bus，避免
+  transport 失败改变 toast 时序或留下 stale binding。
+
 ## 移动端设置页
 
 Capacitor 不再维护 `src/mobile/MobileSettings.vue` / `MobileSetup.vue` 第二套 UI。

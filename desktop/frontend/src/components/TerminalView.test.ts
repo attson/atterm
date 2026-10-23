@@ -680,7 +680,7 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toMatch(/function\s+openImagePicker\s*\(\s*\)/);
     expect(source).toMatch(/async function\s+onImagePicked\s*\(/);
     expect(source).toMatch(/conn\?\.sendPasteImage\(file,\s*name\)/);
-    expect(source).toMatch(/pasteImageBus\.emit\(file,\s*name\)/);
+    expect(source).toContain("sendWithTerminalImagePreview");
   });
 
   test("allows full-permission Peer drivers to use image and file paste", () => {
@@ -882,6 +882,8 @@ describe("TerminalView link provider wiring", () => {
   test("disposes link provider in onBeforeUnmount", () => {
     expect(source).toMatch(/linkProviderDisposer\?\.dispose\(\)/);
     expect(source).toMatch(/linkProviderDisposer\s*=\s*null/);
+    expect(source).toMatch(/useTerminalImagePreview\(\{[\s\S]*?sessionId:\s*\(\)\s*=>\s*props\.sessionId/);
+    expect(source).toMatch(/imagePreviewDisposer\?\.dispose\(\)/);
   });
 });
 

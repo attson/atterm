@@ -147,13 +147,16 @@ describe("pasteFromClipboard", () => {
 
   it("emits pasteImageBus before sending the image", async () => {
     const { pasteImageBus } = await import("./pasteImageBus");
+    const { terminalImagePreviewBus } = await import("./terminalImagePreviewBus");
     const emitSpy = vi.spyOn(pasteImageBus, "emit");
+    const previewSpy = vi.spyOn(terminalImagePreviewBus, "queue");
     const term = { paste: vi.fn() };
     const conn = { sendPasteImage: vi.fn(async () => true) };
 
     await pasteFromClipboard({
       term,
       conn,
+      sessionId: "session-1",
       status: "attached",
       remotePermission: "full",
       getPayload: async () => ({
@@ -169,8 +172,57 @@ describe("pasteFromClipboard", () => {
     expect(blob).toBeInstanceOf(Blob);
     expect((blob as Blob).type).toBe("image/png");
     expect(name).toBe("clipboard-image.png");
+    expect(previewSpy).toHaveBeenCalledWith(blob, "clipboard-image.png", "session-1");
     expect(conn.sendPasteImage).toHaveBeenCalledTimes(1);
     emitSpy.mockRestore();
+    previewSpy.mockRestore();
+  });
+
+  it("cancels the terminal hover preview when image sending fails", async () => {
+    const { terminalImagePreviewBus } = await import("./terminalImagePreviewBus");
+    const previewSpy = vi.spyOn(terminalImagePreviewBus, "queue");
+    const cancelSpy = vi.spyOn(terminalImagePreviewBus, "cancel");
+
+    await pasteFromClipboard({
+      term: { paste: vi.fn() },
+      conn: { sendPasteImage: vi.fn(async () => false) },
+      sessionId: "session-1",
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({
+        kind: "image",
+        filename: "clipboard-image.png",
+        content_type: "image/png",
+        data_base64: "iVBORw0K",
+      }),
+    });
+
+    expect(previewSpy).toHaveBeenCalledOnce();
+    expect(cancelSpy).toHaveBeenCalledOnce();
+    previewSpy.mockRestore();
+    cancelSpy.mockRestore();
+  });
+
+  it("cancels the terminal hover preview when image sending throws", async () => {
+    const { terminalImagePreviewBus } = await import("./terminalImagePreviewBus");
+    const cancelSpy = vi.spyOn(terminalImagePreviewBus, "cancel");
+
+    await expect(pasteFromClipboard({
+      term: { paste: vi.fn() },
+      conn: { sendPasteImage: vi.fn(async () => { throw new Error("send failed"); }) },
+      sessionId: "session-1",
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({
+        kind: "image",
+        filename: "clipboard-image.png",
+        content_type: "image/png",
+        data_base64: "iVBORw0K",
+      }),
+    })).rejects.toThrow("send failed");
+
+    expect(cancelSpy).toHaveBeenCalledOnce();
+    cancelSpy.mockRestore();
   });
 
   it("does not emit pasteImageBus on text paste", async () => {

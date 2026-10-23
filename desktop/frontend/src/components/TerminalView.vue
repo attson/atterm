@@ -30,6 +30,7 @@ import {
 } from "../lib/terminalContextMenu";
 import { isCtrlVKeydownPaste, pasteFromClipboard } from "../lib/terminalPaste";
 import { pasteImageBus } from "../lib/pasteImageBus";
+import { sendWithTerminalImagePreview } from "../lib/terminalImagePreviewBus";
 import { pasteFileBus } from "../lib/pasteFileBus";
 import { dispatchPastedFile } from "../lib/pasteFileDispatch";
 import { GetPasteboardFileURLs } from "../../wailsjs/go/main/App";
@@ -39,6 +40,7 @@ import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/fo
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
+import { useTerminalImagePreview } from "../composables/useTerminalImagePreview";
 import { linkSegmentsAtBufferRow, shouldActivateLink, normalizeForOpen, type BufferLike, type LinkMatch } from "../lib/terminalLinks";
 import { cellCoordsAt, readXtermCellSize } from "../lib/terminalCellCoords";
 import { wordBoundaryAt } from "../lib/wordBoundary";
@@ -502,6 +504,7 @@ const menuLinkHit = ref<LinkMatch | null>(null);
 
 let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
+let imagePreviewDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
 // Press origin of the most recent left mousedown on the terminal grid, used to
 // distinguish a plain link click from the end of a drag-select in mouseup.
@@ -1226,6 +1229,7 @@ async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
     const result = await pasteFromClipboard({
       term,
       conn,
+      sessionId: props.sessionId,
       status: status.value,
       remotePermission: props.remotePermission,
     });
@@ -1260,9 +1264,14 @@ async function handleImagePaste(e: ClipboardEvent) {
       items,
       isLocalSession: props.isLocalSession ?? true,
       conn: {
-        sendPasteImage: (blob, filename) => {
+        sendPasteImage: async (blob, filename) => {
           pasteImageBus.emit(blob, filename);
-          return activeConn.sendPasteImage(blob, filename);
+          return sendWithTerminalImagePreview(
+            blob,
+            filename,
+            props.sessionId,
+            () => activeConn.sendPasteImage(blob, filename),
+          );
         },
         sendPasteFile: (blob, filename) => activeConn.sendPasteFile(blob, filename),
       },
@@ -1866,6 +1875,7 @@ async function onMenuPaste() {
     const result = await pasteFromClipboard({
       term,
       conn,
+      sessionId: props.sessionId,
       status: status.value,
       remotePermission: props.remotePermission,
     });
@@ -2355,6 +2365,10 @@ async function ensureTerm() {
     openLink: (m) => openLinkMatch(m),
     onError: (key) => emit("toast", t(key)),
   });
+  imagePreviewDisposer = useTerminalImagePreview({
+    term,
+    sessionId: () => props.sessionId,
+  });
 
   resizeObserver = new ResizeObserver(() => {
     safeFit();
@@ -2629,7 +2643,12 @@ async function openNativeImagePicker() {
     const ext = photo.format || "jpeg";
     const file = base64ToFile(photo.base64String, `image/${ext}`, `mobile-image.${ext}`);
     pasteImageBus.emit(file, file.name);
-    await conn?.sendPasteImage(file, file.name);
+    await sendWithTerminalImagePreview(
+      file,
+      file.name,
+      props.sessionId,
+      () => conn?.sendPasteImage(file, file.name) ?? Promise.resolve(false),
+    );
   } catch (err) {
     const message = String((err as { message?: string })?.message ?? err);
     if (!/cancel/i.test(message)) logWarn("term", "image picker failed", { message });
@@ -2644,7 +2663,12 @@ async function onImagePicked(event: Event) {
   const name = file.name || "picked-image";
   try {
     pasteImageBus.emit(file, name);
-    await conn?.sendPasteImage(file, name);
+    await sendWithTerminalImagePreview(
+      file,
+      name,
+      props.sessionId,
+      () => conn?.sendPasteImage(file, name) ?? Promise.resolve(false),
+    );
   } catch (err: any) {
     logWarn("term", "failed to send picked image", { error: errText(err) });
     emit("toast", err?.message ?? t("terminal.pasteFailed"));
@@ -2802,6 +2826,8 @@ onBeforeUnmount(() => {
   exitSelection();
   linkProviderDisposer?.dispose();
   linkProviderDisposer = null;
+  imagePreviewDisposer?.dispose();
+  imagePreviewDisposer = null;
   conn?.detach();
   conn = null;
   // term.dispose() can throw from inside xterm: RenderService schedules a

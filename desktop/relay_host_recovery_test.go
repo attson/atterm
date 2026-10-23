@@ -85,6 +85,47 @@ func TestRelayHost_NewSession_RestoredInitialAISessionIDCapturedImmediately(t *t
 	t.Fatalf("captured (%q,%q,%q), want (%s,codex,019fae95-43eb-7491-9341-05c156228664)", gotLocal, gotKind, gotAISid, id)
 }
 
+func TestRelayHost_NewSession_RestoredCodexSIDCannotBeOverwrittenByHeuristic(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := newTestRelayHost(t)
+
+	resolverStarted := make(chan struct{}, 1)
+	h.startSniffFn = func(_ context.Context, _ *session.Session, _, _ string, _ int, capture func(string)) {
+		resolverStarted <- struct{}{}
+		// This represents an unrelated Codex rollout advancing in another
+		// terminal with the same cwd.
+		capture("019fae95-43eb-7491-9341-05c156228665")
+	}
+	type event struct{ kind, sid string }
+	events := make(chan event, 4)
+	h.aiSidCallback = func(_ uuid.UUID, kind, sid string) {
+		events <- event{kind: kind, sid: sid}
+	}
+
+	_, err := h.NewSession(context.Background(), NewSessionReq{
+		Command:            "/bin/sh",
+		Cwd:                t.TempDir(),
+		Cols:               80,
+		Rows:               24,
+		AIKind:             "codex",
+		InitialAISessionID: "019fae95-43eb-7491-9341-05c156228664",
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: "019fae95-43eb-7491-9341-05c156228664"}) {
+		t.Fatalf("initial recovery event = %+v", got)
+	}
+	select {
+	case <-resolverStarted:
+		t.Fatal("restored Codex SID started heuristic resolver")
+	case got := <-events:
+		t.Fatalf("restored Codex SID was overwritten by %+v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestRelayHost_NewSession_NoAIKind_NoSniff(t *testing.T) {
 	h := newTestRelayHost(t)
 	var mu sync.Mutex

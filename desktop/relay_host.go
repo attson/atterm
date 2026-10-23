@@ -859,6 +859,16 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if h.startSniffFn == nil {
 				return
 			}
+			// A restored Codex SID came from the previous pane generation and is
+			// already the authoritative resume credential. Recent Codex versions
+			// let a global app-server daemon write rollout files, so the cwd/mtime
+			// fallback cannot prove that an advanced same-cwd rollout belongs to
+			// this PTY. Running it here could replace the known SID with a VS Code
+			// or another terminal's conversation. Keep tracking the known rollout's
+			// title below, but never guess a replacement SID for this generation.
+			if kind == "codex" && initialSID != "" {
+				return
+			}
 			logDebug("ai-sid", "classified session=%s kind=%s generation=%d — start resolve", id, kind, generation)
 			h.startSniffFn(generationCtx, sess, resolveCwd, kind, pty.Pid(), func(aiSid string) {
 				resolveMu.Lock()

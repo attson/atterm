@@ -2,6 +2,7 @@ import { getClipboardPastePayload, type ClipboardPastePayload } from "./api";
 import type { SessionConnection, Status } from "./connection";
 import type { MessageKey } from "../i18n";
 import { pasteImageBus } from "./pasteImageBus";
+import { sendWithTerminalImagePreview } from "./terminalImagePreviewBus";
 import { effectiveRemotePermission, isPasteAllowed } from "./terminalContextMenu";
 
 export type PastePlatform = "mac" | "linux" | "other";
@@ -44,6 +45,7 @@ interface TerminalLike {
 export interface PasteFromClipboardOptions {
   term: TerminalLike;
   conn: Pick<SessionConnection, "sendPasteImage">;
+  sessionId?: string;
   status: Status;
   remotePermission?: string;
   getPayload?: () => Promise<ClipboardPastePayload>;
@@ -86,7 +88,12 @@ export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promi
     const blob = base64ToBlob(payload.data_base64, payload.content_type);
     const name = payload.filename || "clipboard-image";
     pasteImageBus.emit(blob, name);
-    await opts.conn.sendPasteImage(blob, name);
+    await sendWithTerminalImagePreview(
+      blob,
+      name,
+      opts.sessionId,
+      () => opts.conn.sendPasteImage(blob, name),
+    );
     return { ok: true, kind: "image" };
   }
 

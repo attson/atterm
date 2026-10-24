@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -224,5 +225,114 @@ func TestPromptHistoryStore_LoadsPersistedDataAndToleratesCorruption(t *testing.
 	corrupt := newPromptHistoryStore(store.path, func() time.Time { return *now })
 	if status := corrupt.Status(); !status.Enabled || status.Count != 0 {
 		t.Fatalf("corrupt file status = %+v, want enabled empty", status)
+	}
+}
+
+func TestPromptHistoryStore_PageReturnsDeduplicatedRecentHistoryAcrossCursors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prompt-history.json")
+	enabled := true
+	doc := promptHistoryDocument{
+		Version: promptHistoryVersion,
+		Enabled: &enabled,
+		Entries: []promptHistoryEntry{
+			{Text: "publish release", Count: 1, LastUsedAt: 100},
+			{Text: "publish release", Count: 2, LastUsedAt: 400},
+			{Text: "review changes", Count: 1, LastUsedAt: 300},
+			{Text: "run tests", Count: 1, LastUsedAt: 200},
+			{Text: "inspect logs", Count: 1, LastUsedAt: 100},
+		},
+	}
+	blob, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newPromptHistoryStore(path, func() time.Time { return time.Unix(500, 0) })
+
+	first, err := store.Page("", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFirst := []PromptHistoryItem{
+		{Text: "publish release", LastUsedAt: 400},
+		{Text: "review changes", LastUsedAt: 300},
+	}
+	if !reflect.DeepEqual(first.Items, wantFirst) || first.Total != 4 || first.NextCursor == "" {
+		t.Fatalf("first page = %+v, want items=%+v total=4 and cursor", first, wantFirst)
+	}
+
+	second, err := store.Page("", first.NextCursor, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSecond := []PromptHistoryItem{
+		{Text: "run tests", LastUsedAt: 200},
+		{Text: "inspect logs", LastUsedAt: 100},
+	}
+	if !reflect.DeepEqual(second.Items, wantSecond) || second.Total != 4 || second.NextCursor != "" {
+		t.Fatalf("second page = %+v, want items=%+v total=4 and no cursor", second, wantSecond)
+	}
+
+	page, err := store.Page("pu", "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(page.Items, []PromptHistoryItem{{Text: "publish release", LastUsedAt: 400}}) {
+		t.Fatalf("prefix page = %+v", page)
+	}
+	exact, err := store.Page("publish release", "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exact.Items) != 0 || exact.Total != 0 {
+		t.Fatalf("exact prefix page = %+v, want empty", exact)
+	}
+}
+
+func TestPromptHistoryStore_PageIsSafeWhileHooksRecord(t *testing.T) {
+	store, _ := tempPromptHistoryStore(t)
+	const writers = 20
+	const readers = 8
+	start := make(chan struct{})
+	errs := make(chan error, writers+readers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			errs <- store.Record(fmt.Sprintf("concurrent prompt %02d", index))
+		}(i)
+	}
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for attempt := 0; attempt < writers; attempt++ {
+				if _, err := store.Page("", "", 5); err != nil {
+					errs <- err
+					return
+				}
+			}
+			errs <- nil
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := store.Page("", "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != writers {
+		t.Fatalf("page total after concurrent reads/writes = %d, want %d", page.Total, writers)
 	}
 }

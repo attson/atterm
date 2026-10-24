@@ -21,6 +21,8 @@ export interface ShortcutHandlers {
   onToggleTaskSidebar?: () => void;
   onFocusSidebarSearch?: () => void;
   onTerminalSearch?: () => void;
+  /** Returns true only when a focused terminal opened local prompt history. */
+  onPromptHistory?: () => boolean;
   /** Selects a tab by its one-based visible position. */
   onSwitchTabTo?: (index: number) => void;
 }
@@ -52,6 +54,7 @@ function dispatch(actionId: string, h: ShortcutHandlers): boolean {
     case "toggleTaskSidebar":          h.onToggleTaskSidebar?.(); return true;
     case "sidebar.focus-search":       h.onFocusSidebarSearch?.(); return true;
     case "terminal.search":            h.onTerminalSearch?.(); return true;
+    case "terminal.prompt-history":    return h.onPromptHistory?.() === true;
   }
   return false;
 }

@@ -31,6 +31,7 @@ import type {
   NewSessionResp,
   NotificationRouteData,
   PromptHistoryStatus,
+  PromptHistoryPage,
   SessionProfile,
   StartupError,
 } from "./api/_bindings";
@@ -55,6 +56,7 @@ export type {
   NewSessionResp,
   NotificationRouteData,
   PromptHistoryStatus,
+  PromptHistoryPage,
   PairingToken,
   RecoveryAIInfo,
   RecoveryPaneSnapshot,

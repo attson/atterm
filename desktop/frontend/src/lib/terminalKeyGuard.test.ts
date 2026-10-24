@@ -104,11 +104,15 @@ describe("installTerminalKeyHandler (real xterm)", () => {
       onKeydown: (event) => event.key !== "Tab",
       onAcceptedKeydown: (event) => accepted.push(event.key),
     });
+    term.focus();
+    const textarea = (term as unknown as { textarea: HTMLTextAreaElement }).textarea;
+    expect(document.activeElement).toBe(textarea);
     const handled = fireKeydown(term, 9, "Tab");
     fireKeydown(term, 229, "c");
     fireKeydown(term, 68, "d");
     expect(accepted).toEqual(["d"]);
     expect(handled.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(textarea);
   });
 });
 

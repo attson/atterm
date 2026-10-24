@@ -27,6 +27,7 @@ export const ACTIONS: readonly ShortcutAction[] = [
   { id: "pane.focus-up",              group: "pane", labelKey: "settings.shortcuts.focusPaneUp",                         defaultBinding: "Mod+Alt+ArrowUp" },
   { id: "pane.focus-down",            group: "pane", labelKey: "settings.shortcuts.focusPaneDown",                       defaultBinding: "Mod+Alt+ArrowDown" },
   { id: "terminal.search",            group: "pane", labelKey: "settings.shortcuts.terminalSearch",                      defaultBinding: "Mod+KeyF" },
+  { id: "terminal.prompt-history",    group: "pane", labelKey: "settings.shortcuts.promptHistory",                       defaultBinding: "Mod+Shift+KeyH" },
   { id: "tab.new",                    group: "tab",  labelKey: "settings.shortcuts.newTab",                               defaultBinding: "Mod+KeyT" },
   { id: "tab.prev",                   group: "tab",  labelKey: "settings.shortcuts.previousTab",                          defaultBinding: "Mod+Shift+BracketLeft" },
   { id: "tab.next",                   group: "tab",  labelKey: "settings.shortcuts.nextTab",                              defaultBinding: "Mod+Shift+BracketRight" },
@@ -82,7 +83,7 @@ export function serialize(e: KeyboardEvent, mod: Mod): string | null {
 }
 
 // resolvedBindings merges the user overrides with the registry defaults and
-// returns the resulting action -> binding map (containing all 13 actions).
+// returns the resulting action -> binding map (containing every registered action).
 export function resolvedBindings(
   overrides: Record<string, string>,
 ): Record<string, string> {

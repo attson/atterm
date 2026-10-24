@@ -909,6 +909,7 @@ export const zhCN = {
       nextTab: "下一个标签页",
       focusSidebarSearch: "聚焦侧栏搜索",
       terminalSearch: "搜索终端",
+      promptHistory: "最近输入历史",
     },
     diagnostics: {
       tab: "诊断",

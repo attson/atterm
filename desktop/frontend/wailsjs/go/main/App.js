@@ -502,6 +502,10 @@ export function QueryPromptHistory(arg1, arg2) {
   return window['go']['main']['App']['QueryPromptHistory'](arg1, arg2);
 }
 
+export function QueryPromptHistoryPage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['QueryPromptHistoryPage'](arg1, arg2, arg3);
+}
+
 export function RebindServicePreview(arg1) {
   return window['go']['main']['App']['RebindServicePreview'](arg1);
 }

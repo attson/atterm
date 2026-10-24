@@ -324,6 +324,7 @@ export function createWailsPlatform(): Platform {
     promptHistory: {
       status: () => api.getPromptHistoryStatus(),
       query: (prefix, limit) => api.queryPromptHistory(prefix, limit),
+      page: (prefix, cursor, limit) => api.queryPromptHistoryPage(prefix, cursor, limit),
       setEnabled: (enabled) => api.setPromptHistoryEnabled(enabled),
       clear: () => api.clearPromptHistory(),
     },

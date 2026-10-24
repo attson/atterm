@@ -18,6 +18,13 @@ func TestAppPromptHistoryBridge_RoundTripsSettingsAndQueries(t *testing.T) {
 	if got := a.QueryPromptHistory("push", 3); !reflect.DeepEqual(got, []string{"push and create mr"}) {
 		t.Fatalf("QueryPromptHistory = %q", got)
 	}
+	page, err := a.QueryPromptHistoryPage("", "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || !reflect.DeepEqual(page.Items, []PromptHistoryItem{{Text: "push and create mr", LastUsedAt: store.entries[0].LastUsedAt}}) {
+		t.Fatalf("QueryPromptHistoryPage = %+v", page)
+	}
 	if err := a.SetPromptHistoryEnabled(false); err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +46,10 @@ func TestAppPromptHistoryBridge_IsUnavailableWithoutStore(t *testing.T) {
 	}
 	if got := a.QueryPromptHistory("push", 3); len(got) != 0 {
 		t.Fatalf("nil store query = %q", got)
+	}
+	page, err := a.QueryPromptHistoryPage("", "", 5)
+	if err != nil || page.Total != 0 || len(page.Items) != 0 {
+		t.Fatalf("nil store page = %+v, err=%v", page, err)
 	}
 	if err := a.SetPromptHistoryEnabled(true); err == nil {
 		t.Fatal("nil store enable should report unavailable")

@@ -27,6 +27,34 @@ func prepareZsh(sessionID string) Plan {
 		return Plan{}
 	}
 
+	// zsh resolves every user startup file through ZDOTDIR. Without matching
+	// shims, pointing it at our per-session directory skips the user's zshenv
+	// and zprofile (commonly including Homebrew's shellenv on macOS). Each shim
+	// temporarily restores the user's directory, sources that stage, remembers
+	// any ZDOTDIR change the user made, then routes the next stage back here.
+	for _, name := range []string{".zshenv", ".zprofile"} {
+		chain := fmt.Sprintf(`# atterm zsh shim — chain-load the user's %[1]s.
+_atterm_shim_dir=%[2]q
+if [[ -n "${ATTERM_ORIG_ZDOTDIR}" ]]; then
+  ZDOTDIR="${ATTERM_ORIG_ZDOTDIR}"
+else
+  unset ZDOTDIR
+fi
+_atterm_user_file="${ZDOTDIR:-$HOME}/%[1]s"
+if [[ -f "$_atterm_user_file" ]]; then
+  source "$_atterm_user_file" || true
+fi
+export ATTERM_ORIG_ZDOTDIR="${ZDOTDIR:-}"
+ZDOTDIR="$_atterm_shim_dir"
+unset _atterm_user_file _atterm_shim_dir
+`, name, dir)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(chain), 0o600); err != nil {
+			logging.Warn("shell-integration", "zsh write %s: %v", name, err)
+			_ = os.RemoveAll(dir)
+			return Plan{}
+		}
+	}
+
 	wrapper := fmt.Sprintf(`# atterm zsh wrapper — sources user rc then injects OSC 133 hooks.
 _atterm_shim_dir=%q
 _atterm_orig="${ATTERM_ORIG_ZDOTDIR}"

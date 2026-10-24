@@ -21,6 +21,8 @@ export interface ShortcutHandlers {
   onToggleTaskSidebar?: () => void;
   onFocusSidebarSearch?: () => void;
   onTerminalSearch?: () => void;
+  /** Selects a tab by its one-based visible position. */
+  onSwitchTabTo?: (index: number) => void;
 }
 
 export interface ShortcutOptions {
@@ -69,8 +71,19 @@ export function useTerminalShortcuts(
     const key = serialize(e, mod);
     if (key === null) return;
     const actionId = route.value[key];
-    if (!actionId) return;
-    if (!dispatch(actionId, handlers)) return;
+    if (actionId) {
+      if (!dispatch(actionId, handlers)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    // Keep Mod+1..9 as a compact built-in fallback instead of adding nine
+    // rows to Settings. Routing-table bindings win, so users can still assign
+    // any of these chords to a configurable action.
+    const tabMatch = key.match(/^Mod\+Digit([1-9])$/);
+    if (!tabMatch || !handlers.onSwitchTabTo) return;
+    handlers.onSwitchTabTo(Number(tabMatch[1]));
     e.preventDefault();
     e.stopPropagation();
   }

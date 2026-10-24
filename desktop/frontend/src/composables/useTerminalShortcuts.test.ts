@@ -18,6 +18,7 @@ describe("useTerminalShortcuts (default bindings)", () => {
     onFocusPane: vi.fn(),
     onNewTab: vi.fn(),
     onSwitchTab: vi.fn(),
+    onSwitchTabTo: vi.fn(),
     onFocusSidebarSearch: vi.fn(),
   };
 
@@ -88,6 +89,21 @@ describe("useTerminalShortcuts (default bindings)", () => {
     expect(ev.defaultPrevented).toBe(true);
   });
 
+  it("Ctrl+1 and Ctrl+9 select tabs by one-based position", () => {
+    const first = fireKey({ key: "1", code: "Digit1", ctrlKey: true });
+    fireKey({ key: "9", code: "Digit9", ctrlKey: true });
+    expect(handlers.onSwitchTabTo).toHaveBeenNthCalledWith(1, 1);
+    expect(handlers.onSwitchTabTo).toHaveBeenNthCalledWith(2, 9);
+    expect(first.defaultPrevented).toBe(true);
+  });
+
+  it("does not treat Ctrl+0, shifted digits, or plain digits as tab selection", () => {
+    fireKey({ key: "0", code: "Digit0", ctrlKey: true });
+    fireKey({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
+    fireKey({ key: "1", code: "Digit1" });
+    expect(handlers.onSwitchTabTo).not.toHaveBeenCalled();
+  });
+
   it("scope.stop unbinds the listener", () => {
     scope.stop();
     fireKey({ key: "n", code: "KeyN", ctrlKey: true });
@@ -141,6 +157,16 @@ describe("useTerminalShortcuts (user overrides)", () => {
     scope.run(() => useTerminalShortcuts(handlers, { mod: "Control", bindings }));
     fireKey({ key: "w", code: "KeyW", ctrlKey: true });
     expect(handlers.onClosePane).not.toHaveBeenCalled();
+  });
+
+  it("lets an explicit user binding win over the built-in digit fallback", () => {
+    bindings = ref({ "pane.split-vertical-new": "Mod+Digit1" });
+    const onSwitchTabTo = vi.fn();
+    scope = effectScope();
+    scope.run(() => useTerminalShortcuts({ ...handlers, onSwitchTabTo }, { mod: "Control", bindings }));
+    fireKey({ key: "1", code: "Digit1", ctrlKey: true });
+    expect(handlers.onSplitVertical).toHaveBeenCalledTimes(1);
+    expect(onSwitchTabTo).not.toHaveBeenCalled();
   });
 
   it("updating bindings.value live changes routing without re-mounting", () => {

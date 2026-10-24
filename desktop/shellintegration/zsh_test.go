@@ -124,6 +124,48 @@ func TestPrepareZshWritesWrapperAndReturnsPlan(t *testing.T) {
 	}
 }
 
+func TestPrepareZshChainsUserZshenvAndZprofile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("ZDOTDIR", "")
+
+	p := prepareZsh("sess-chain")
+	if p.Cleanup == nil {
+		t.Fatal("Plan.Cleanup is nil")
+	}
+	defer p.Cleanup()
+
+	var zdir string
+	for _, env := range p.ExtraEnv {
+		if strings.HasPrefix(env, "ZDOTDIR=") {
+			zdir = strings.TrimPrefix(env, "ZDOTDIR=")
+		}
+	}
+	if zdir == "" {
+		t.Fatalf("Plan.ExtraEnv missing ZDOTDIR; got %v", p.ExtraEnv)
+	}
+
+	for _, name := range []string{".zshenv", ".zprofile"} {
+		body, err := os.ReadFile(filepath.Join(zdir, name))
+		if err != nil {
+			t.Fatalf("read %s shim: %v", name, err)
+		}
+		got := string(body)
+		userPath := "${ZDOTDIR:-$HOME}/" + name
+		if !strings.Contains(got, userPath) {
+			t.Fatalf("%s shim does not source the user file; got %q", name, got)
+		}
+		sourceAt := strings.Index(got, `source "$_atterm_user_file"`)
+		reshimAt := strings.Index(got, `ZDOTDIR="$_atterm_shim_dir"`)
+		if sourceAt < 0 || reshimAt < 0 || sourceAt > reshimAt {
+			t.Fatalf("%s shim must source the user file before restoring the shim dir; got %q", name, got)
+		}
+		if !strings.Contains(got, `export ATTERM_ORIG_ZDOTDIR="${ZDOTDIR:-}"`) {
+			t.Fatalf("%s shim does not carry user ZDOTDIR changes forward; got %q", name, got)
+		}
+	}
+}
+
 func TestPrepareZshReturnsZeroPlanWhenCacheDirFails(t *testing.T) {
 	// Force os.UserCacheDir to fail by clearing both HOME and XDG_CACHE_HOME
 	// and (on darwin) HOME-derived candidates.

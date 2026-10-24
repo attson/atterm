@@ -15,12 +15,20 @@ export function isBareModifierKeydown(e: KeyboardEvent): boolean {
   );
 }
 
+export interface TerminalKeyHandlerOptions {
+  ime229Takeover: boolean;
+  /** Return false when the caller consumed the keydown itself. */
+  onKeydown?: (event: KeyboardEvent) => boolean | void;
+  /** Runs only for keydowns that will continue into xterm. */
+  onAcceptedKeydown?: (event: KeyboardEvent) => void;
+}
+
 /**
- * Stop xterm from yanking the viewport to the bottom when the user merely
- * presses a modifier key (e.g. holding Ctrl/⌘ to mod-click a link sitting in
- * the scrollback).
+ * Installs xterm's one custom-key handler. xterm replaces the previous handler
+ * on every attachCustomKeyEventHandler call, so all keydown interception must
+ * be composed here.
  *
- * Why this is needed: xterm 5.3's `_keyDown` runs `scrollOnUserInput &&
+ * The bare-modifier guard stops xterm 5.3 from running `scrollOnUserInput &&
  * scrollToBottom()` whenever its IME-composition path reports the key as
  * "unhandled", and that path treats *every* keydown carrying `keyCode === 229`
  * as composition. CJK input methods (Pinyin, etc.) deliver keydowns — including
@@ -30,14 +38,52 @@ export function isBareModifierKeydown(e: KeyboardEvent): boolean {
  * the real keyCode 17/91/…, never hit this path, which is why it only bites
  * IME users.)
  *
- * Bare modifier keydowns carry no terminal payload, so swallowing them via the
- * custom key handler suppresses the unwanted scroll while leaving real
- * keystrokes — and IME composition of actual characters — untouched. Returning
- * `false` skips xterm's handling without `preventDefault`, so the modifier
- * stays held for the subsequent mouse click.
+ * With desktop IME takeover enabled, all remaining keyCode-229 keydowns are
+ * also stopped. xterm otherwise recovers their text by asynchronously diffing
+ * its hidden textarea, which races keyup clearing and can merge, duplicate, or
+ * drop fast keystrokes. The caller delivers those keys from capture-phase
+ * `input` events instead.
  */
-export function installModifierScrollGuard(
+export function installTerminalKeyHandler(
   term: Pick<Terminal, "attachCustomKeyEventHandler">,
+  options: TerminalKeyHandlerOptions,
 ): void {
-  term.attachCustomKeyEventHandler((e) => !isBareModifierKeydown(e));
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.type !== "keydown") return true;
+    if (options.onKeydown?.(event) === false) {
+      // xterm does not cancel the DOM event when a custom handler returns
+      // false. Cancel it here so a caller-owned key (for example accepting a
+      // prompt suggestion with Enter) cannot produce a later textarea input
+      // event and leak through the desktop IME sender.
+      event.preventDefault();
+      event.stopPropagation();
+      return false;
+    }
+    if (isBareModifierKeydown(event)) return false;
+    if (options.ime229Takeover && event.keyCode === 229) return false;
+    options.onAcceptedKeydown?.(event);
+    return true;
+  });
+}
+
+/**
+ * Maps a desktop IME-owned input event to the exact bytes sent to the PTY.
+ * Composition events stay with xterm; taking those over would double-send
+ * pinyin-to-Hanzi commits.
+ */
+export function desktopImeInputPayload(
+  event: Pick<InputEvent, "inputType" | "data" | "isComposing">,
+): string | null {
+  if (event.isComposing) return null;
+  switch (event.inputType) {
+    case "insertText":
+      return event.data || null;
+    case "deleteContentBackward":
+      return "\x7f";
+    case "insertLineBreak":
+    case "insertParagraph":
+      return "\r";
+    default:
+      return null;
+  }
 }

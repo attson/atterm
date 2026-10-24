@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { errText, logDebug, logError, logWarn } from "../lib/log";
+import { errText, logDebug, logError, logInfo, logWarn } from "../lib/log";
 import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
@@ -37,7 +37,7 @@ import { GetPasteboardFileURLs } from "../../wailsjs/go/main/App";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { isMac } from "../lib/modKey";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
-import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
+import { desktopImeInputPayload, installTerminalKeyHandler } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
 import { useTerminalImagePreview } from "../composables/useTerminalImagePreview";
@@ -1296,13 +1296,42 @@ async function handleImagePaste(e: ClipboardEvent) {
 // xterm forwarding it. Take over only the non-composition insertText case so
 // pinyin -> Hanzi composition remains xterm-owned.
 //
-// Desktop (Wails / local-PTY web) MUST skip this path: xterm already handles
-// the physical-keyboard keydown and calls term.onData(" "); the browser then
-// also inserts the char into the hidden textarea and fires `input`, which
-// without this gate would run onImeInput and sendInput a second time —
-// pressing space once produces two spaces, breaking TUI checkbox toggling.
+function isDesktopImeTakeover(): boolean {
+  return platform.caps.wailsBindings || platform.caps.localPty;
+}
+
+// xterm 5.3 reconstructs keyCode-229 input by diffing its hidden textarea in
+// timers that race keyup clearing. Desktop IMEs can therefore merge, duplicate,
+// or drop fast keystrokes. installTerminalKeyHandler blocks that path; this
+// capture-phase handler is the sole sender for the corresponding input event.
+// It lives on the pane ancestor so it always runs before xterm's textarea
+// listener, including WebKit's input-before-keydown ordering.
+function onDesktopImeInput(event: InputEvent) {
+  if (!isDesktopImeTakeover()) return;
+  if (!imeInputTarget || event.target !== imeInputTarget) return;
+  const payload = desktopImeInputPayload(event);
+  if (payload === null || !auxKeysCanSend.value) return;
+  event.stopPropagation();
+  conn?.sendInput(payload);
+  term?.scrollToBottom();
+  imeInputTarget.value = "";
+  if (promptSuggestionActive.value) {
+    try {
+      promptDraftTracker.feed(payload);
+      refreshPromptSuggestions();
+    } catch (err) {
+      logWarn("prompt-suggest", "desktop IME draft tracking failed", { error: errText(err) });
+      promptSuggestionController.dismiss();
+    }
+  }
+  focusCoalescer?.handle(payload);
+}
+
+// Desktop uses the ancestor-level takeover above. Plain physical-keyboard
+// input still belongs to xterm's keydown path, so the mobile textarea handler
+// must remain disabled there or one space would be sent twice.
 function onImeInput(event: InputEvent) {
-  if (platform.caps.wailsBindings || platform.caps.localPty) return;
+  if (isDesktopImeTakeover()) return;
   if (event.inputType !== "insertText") return;
   if (event.isComposing) return;
   const data = event.data;
@@ -2111,10 +2140,24 @@ async function ensureTerm() {
     searchResultCount.value = resultCount;
   });
   term.open(termContainer.value!);
-  // Keep a bare Ctrl/⌘ press (e.g. to mod-click a link in the scrollback) from
-  // scrolling the viewport to the prompt. CJK IMEs deliver such keydowns as
-  // keyCode 229, which xterm 5.3 otherwise answers with scrollToBottom().
-  installModifierScrollGuard(term);
+  let keyOriginated = false;
+  // xterm stores only one custom key handler. Compose prompt suggestions, the
+  // bare-modifier scroll guard, replay-origin marking, and desktop IME takeover
+  // here so a later concern cannot silently disable an earlier one.
+  installTerminalKeyHandler(term, {
+    ime229Takeover: isDesktopImeTakeover(),
+    onKeydown: (e) => {
+      const action = promptSuggestionController.handleKey(e.key);
+      if (action.handled) {
+        if (action.suffix) sendPromptSuggestionSuffix(action.suffix);
+        return false;
+      }
+      return true;
+    },
+    onAcceptedKeydown: () => {
+      keyOriginated = true;
+    },
+  });
   // GPU-rasterized renderer eliminates the cell-ghosting the DOM renderer
   // shows on light terminal themes (most visible when remote TUIs like
   // Claude Code repaint dense RGB diff blocks). Load after open() so the
@@ -2136,19 +2179,26 @@ async function ensureTerm() {
     webglEnabled = false;
   }
   if (!isLiveTerminal()) return;
+  let activeRenderer = "dom";
   if (webglEnabled) {
     try {
       const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
+      webgl.onContextLoss(() => {
+        logWarn("term", "WebGL context lost, falling back to DOM");
+        webgl.dispose();
+      });
       term.loadAddon(webgl);
+      activeRenderer = "webgl";
     } catch (err) {
       logWarn("term", "WebGL renderer unavailable, falling back to DOM", { error: errText(err) });
     }
   }
+  logInfo("term", "renderer active", { renderer: activeRenderer, configuredWebgl: webglEnabled });
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
   keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
+  keyTarget.addEventListener("input", onDesktopImeInput as EventListener, { capture: true });
   // handleViewerKeydown is attached to document (not keyTarget) so it fires
   // regardless of where focus currently sits. The autofocused take-control
   // button covers the initial transition, but focus drifts as soon as the
@@ -2255,24 +2305,9 @@ async function ensureTerm() {
   imeInputTarget?.addEventListener("blur", onImeBlur);
   safeFit();
   focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
-  // xterm emits onData for two very different things: what the user typed, and
-  // the replies it generates itself while parsing escape sequences. Only the
-  // latter needs suppressing during replay, and the two are indistinguishable
-  // by their payload — so mark the keyboard-originated ones as they arrive.
-  // attachCustomKeyEventHandler runs for every key event before the data is
-  // emitted, which is the ordering this depends on.
-  let keyOriginated = false;
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.type === "keydown") {
-      const action = promptSuggestionController.handleKey(e.key);
-      if (action.handled) {
-        if (action.suffix) sendPromptSuggestionSuffix(action.suffix);
-        return false;
-      }
-      keyOriginated = true;
-    }
-    return true;
-  });
+  // xterm emits both user input and replies generated while parsing escape
+  // sequences. The unified custom key handler above marks only keydowns xterm
+  // actually accepts; editable IME commits are recognized from their payload.
   term.onData((data) => {
     const classifiedInput = isPromptDraftInputData(data);
     const fromUser = keyOriginated || classifiedInput;
@@ -2799,6 +2834,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("atterm:open-service-preview", onServicePreviewRequest);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("input", onDesktopImeInput as EventListener, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);

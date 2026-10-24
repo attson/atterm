@@ -137,6 +137,12 @@ describe("TerminalView async mount lifecycle", () => {
     expect(source).toMatch(/await getWebglRendererEnabled\(\);[\s\S]*?if \(!isLiveTerminal\(\)\) return;[\s\S]*?keyTarget\.addEventListener/);
     expect(source).toMatch(/await getUserHomeDir\(\);[\s\S]*?if \(!isLiveTerminal\(\)\) return;[\s\S]*?useTerminalLinkProvider[\s\S]*?resizeObserver\.observe/);
   });
+
+  test("logs the renderer that attached and reports runtime WebGL loss", () => {
+    expect(source).toContain('activeRenderer = "webgl"');
+    expect(source).toContain('logInfo("term", "renderer active"');
+    expect(source).toMatch(/webgl\.onContextLoss\(\(\) => \{[\s\S]*?logWarn\("term", "WebGL context lost, falling back to DOM"\)[\s\S]*?webgl\.dispose\(\)/);
+  });
 });
 
 describe("TerminalView overlay placement", () => {
@@ -731,17 +737,13 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toContain('removeEventListener("input", onImeInput');
   });
 
-  test("onImeInput skips desktop runtimes so xterm.onData is not double-fired", () => {
-    // Root cause of the "one space → two spaces" regression: on Wails /
-    // local-PTY the physical keyboard already goes through xterm's keydown →
-    // term.onData(" ") → sendInput(" ") path, but the browser also mirrors
-    // the char into the hidden textarea and fires `input`, which
-    // (pre-gate) ran onImeInput → sendInput(" ") a second time. The gate
-    // MUST run BEFORE the inputType check so no input-handling branch in this
-    // handler can fire on desktop. Diagnostic logging may precede the gate.
+  test("desktop IME takeover runs before xterm while mobile input stays separate", () => {
     const handler = source.slice(source.indexOf("function onImeInput"), source.indexOf("function onImeFocus"));
-    expect(handler).toContain("if (platform.caps.wailsBindings || platform.caps.localPty) return");
-    expect(handler.indexOf("platform.caps.wailsBindings")).toBeLessThan(handler.indexOf('event.inputType !== "insertText"'));
+    expect(handler).toContain("if (isDesktopImeTakeover()) return");
+    expect(handler.indexOf("isDesktopImeTakeover()")).toBeLessThan(handler.indexOf('event.inputType !== "insertText"'));
+    expect(source).toMatch(/function\s+onDesktopImeInput[\s\S]*?event\.target\s*!==\s*imeInputTarget[\s\S]*?desktopImeInputPayload\(event\)[\s\S]*?event\.stopPropagation\(\)[\s\S]*?conn\?\.sendInput\(payload\)/);
+    expect(source).toContain('keyTarget.addEventListener("input", onDesktopImeInput as EventListener, { capture: true })');
+    expect(source).toContain('removeEventListener("input", onDesktopImeInput as EventListener');
   });
 
   test("supports mobile long-press selection with copy/send/cancel and scroll/outside exit", () => {

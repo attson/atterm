@@ -25,6 +25,11 @@ vi.mock('../../lib/api', () => ({
   signOutOtherRelaySessions: vi.fn().mockResolvedValue({ deleted: 1 }),
   getPromptHistoryStatus: vi.fn().mockResolvedValue({ enabled: true, count: 2 }),
   queryPromptHistory: vi.fn().mockResolvedValue(['push and create mr']),
+  queryPromptHistoryPage: vi.fn().mockResolvedValue({
+    items: [{ text: 'push and create mr', last_used_at: 123 }],
+    next_cursor: 'next',
+    total: 2,
+  }),
   setPromptHistoryEnabled: vi.fn().mockResolvedValue(undefined),
   clearPromptHistory: vi.fn().mockResolvedValue(undefined),
 }))
@@ -221,9 +226,15 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     expect(await p.promptHistory!.status()).toEqual({ enabled: true, count: 2 })
     expect(await p.promptHistory!.query('push', 3)).toEqual(['push and create mr'])
+    expect(await p.promptHistory!.page('push', 'cursor', 5)).toEqual({
+      items: [{ text: 'push and create mr', last_used_at: 123 }],
+      next_cursor: 'next',
+      total: 2,
+    })
     await p.promptHistory!.setEnabled(false)
     await p.promptHistory!.clear()
     expect(api.queryPromptHistory).toHaveBeenCalledWith('push', 3)
+    expect(api.queryPromptHistoryPage).toHaveBeenCalledWith('push', 'cursor', 5)
     expect(api.setPromptHistoryEnabled).toHaveBeenCalledWith(false)
     expect(api.clearPromptHistory).toHaveBeenCalledOnce()
   })

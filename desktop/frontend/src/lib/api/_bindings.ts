@@ -31,6 +31,17 @@ export interface PromptHistoryStatus {
   count: number;
 }
 
+export interface PromptHistoryPageItem {
+  text: string;
+  last_used_at: number;
+}
+
+export interface PromptHistoryPage {
+  items: PromptHistoryPageItem[];
+  next_cursor: string;
+  total: number;
+}
+
 export type LocalePreference = "system" | "en" | "zh-CN";
 
 export interface NewSessionReq {
@@ -888,6 +899,7 @@ export interface AppBindings {
   SetQuickTemplates(list: import('../templates').QuickTemplate[]): Promise<void>;
   GetPromptHistoryStatus(): Promise<PromptHistoryStatus>;
   QueryPromptHistory(prefix: string, limit: number): Promise<string[]>;
+  QueryPromptHistoryPage(prefix: string, cursor: string, limit: number): Promise<PromptHistoryPage>;
   SetPromptHistoryEnabled(enabled: boolean): Promise<void>;
   ClearPromptHistory(): Promise<void>;
   // RunSnippetOnHosts starts a batch run of snippetText (labelled

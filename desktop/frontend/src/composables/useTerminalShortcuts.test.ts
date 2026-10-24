@@ -242,3 +242,40 @@ describe("useTerminalShortcuts (terminal search handler omitted)", () => {
     scope.stop();
   });
 });
+
+describe("useTerminalShortcuts (prompt history)", () => {
+  const baseHandlers = {
+    onSplitVertical: vi.fn(),
+    onSplitHorizontal: vi.fn(),
+    onClosePane: vi.fn(),
+    onFocusPane: vi.fn(),
+    onNewTab: vi.fn(),
+    onSwitchTab: vi.fn(),
+  };
+
+  it("only consumes Ctrl+Shift+H when the focused terminal accepts the request", () => {
+    const scope = effectScope();
+    const onPromptHistory = vi.fn(() => false);
+    scope.run(() => useTerminalShortcuts(
+      { ...baseHandlers, onPromptHistory },
+      { mod: "Control" },
+    ));
+
+    const rejected = fireKey({ key: "H", code: "KeyH", ctrlKey: true, shiftKey: true });
+    expect(onPromptHistory).toHaveBeenCalledTimes(1);
+    expect(rejected.defaultPrevented).toBe(false);
+
+    onPromptHistory.mockReturnValue(true);
+    const accepted = fireKey({ key: "H", code: "KeyH", ctrlKey: true, shiftKey: true });
+    expect(accepted.defaultPrevented).toBe(true);
+    scope.stop();
+  });
+
+  it("does not consume Ctrl+Shift+H when no prompt-history handler is installed", () => {
+    const scope = effectScope();
+    scope.run(() => useTerminalShortcuts(baseHandlers, { mod: "Control" }));
+    const event = fireKey({ key: "H", code: "KeyH", ctrlKey: true, shiftKey: true });
+    expect(event.defaultPrevented).toBe(false);
+    scope.stop();
+  });
+});

@@ -22,6 +22,7 @@ export type { main as PluginModels } from '../../wailsjs/go/models'
 // source of truth — the Go side regenerates wailsjs/* on changes.
 import type { main as _Models } from '../../wailsjs/go/models'
 import type { SessionSummary } from '../lib/connection'
+import type { PromptHistoryPage } from '../lib/api'
 export type { SessionSummary } from '../lib/connection'
 export type DirEntry = _Models.DirEntry
 export type FileContent = _Models.FileContent
@@ -464,6 +465,7 @@ export interface ServicePreviewBridge {
 export interface PromptHistoryBridge {
   status(): Promise<{ enabled: boolean; count: number }>
   query(prefix: string, limit: number): Promise<string[]>
+  page(prefix: string, cursor: string, limit: number): Promise<PromptHistoryPage>
   setEnabled(enabled: boolean): Promise<void>
   clear(): Promise<void>
 }

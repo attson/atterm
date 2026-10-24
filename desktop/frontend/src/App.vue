@@ -1640,6 +1640,11 @@ useTerminalShortcuts(
     onTerminalSearch: () => {
       terminalSearchSeq.value++;
     },
+    onPromptHistory: () => {
+      const request = new Event("atterm:open-prompt-history", { cancelable: true });
+      document.dispatchEvent(request);
+      return request.defaultPrevented;
+    },
   },
   { bindings: shortcutBindings },
 );

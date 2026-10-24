@@ -255,6 +255,8 @@ export function PushWidgetState(arg1:string):Promise<void>;
 
 export function QueryPromptHistory(arg1:string,arg2:number):Promise<Array<string>>;
 
+export function QueryPromptHistoryPage(arg1:string,arg2:string,arg3:number):Promise<main.PromptHistoryPage>;
+
 export function RebindServicePreview(arg1:main.ServicePreviewRebindRequest):Promise<void>;
 
 export function ReceivedFilesClearAll():Promise<void>;

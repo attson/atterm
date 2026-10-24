@@ -69,7 +69,12 @@ import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
 import { Cloud } from "lucide-vue-next";
 import { createPromptDraftTracker, isCodexOrClaudeCommand, isPromptDraftInputData } from "../lib/promptDraft";
-import { createPromptSuggestionController, promptSuggestionBottomOffset, type PromptSuggestionState } from "../lib/promptSuggestions";
+import { promptSuggestionBottomOffset } from "../lib/promptSuggestions";
+import {
+  createPromptHistoryBrowser,
+  formatPromptHistoryTime,
+  type PromptHistoryBrowserState,
+} from "../lib/promptHistoryBrowser";
 
 const props = withDefaults(
   defineProps<{
@@ -138,7 +143,7 @@ const emit = defineEmits<{
   /** Context-menu request to pull this pane out into a tab of its own. */
   (e: "detach"): void;
 }>();
-const { t } = useI18n();
+const { t, resolvedLocale } = useI18n();
 
 const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
@@ -358,7 +363,12 @@ let isAlive = true;
 let focusCoalescer: FocusReportCoalescer | null = null;
 const replayInputGuard = createReplayInputGuard();
 const promptDraftTracker = createPromptDraftTracker();
-const promptSuggestionState = ref<PromptSuggestionState>({ candidates: [], selectedIndex: 0 });
+const promptSuggestionState = ref<PromptHistoryBrowserState>({
+  candidates: [],
+  selectedIndex: 0,
+  rangeStart: 0,
+  total: 0,
+});
 const promptHistoryEnabled = ref(false);
 const promptSuggestionCursorOffset = ref(48);
 const promptSuggestionActive = computed(() => Boolean(
@@ -374,10 +384,29 @@ const promptSuggestionActive = computed(() => Boolean(
   && !previewViewActive.value
 ));
 const promptSuggestionBottom = computed(() => `calc(${terminalBottom.value} + ${promptSuggestionCursorOffset.value}px)`);
-const promptSuggestionController = createPromptSuggestionController({
-  query: async (prefix, limit) => platform.promptHistory?.query(prefix, limit) ?? [],
+const promptSuggestionController = createPromptHistoryBrowser({
+  queryPage: async (prefix, cursor, limit) => platform.promptHistory?.page(prefix, cursor, limit) ?? {
+    items: [],
+    next_cursor: "",
+    total: 0,
+  },
   onChange: (next) => { promptSuggestionState.value = next; },
 });
+
+function promptHistoryTime(lastUsedAt: number): string {
+  return formatPromptHistoryTime(lastUsedAt, Date.now(), resolvedLocale.value);
+}
+
+function onPromptHistoryRequest(event: Event): void {
+  if (!promptSuggestionActive.value) return;
+  try {
+    if (!promptSuggestionController.open(promptDraftTracker.snapshot(), true)) return;
+    event.preventDefault();
+  } catch (err) {
+    logWarn("prompt-suggest", "history open failed", { error: errText(err) });
+    promptSuggestionController.dismiss();
+  }
+}
 
 function refreshPromptSuggestions(): void {
   try {
@@ -2747,6 +2776,7 @@ watch([previewPortText, previewTargetHost, previewExtraMappings], savePreviewDra
 onMounted(async () => {
   loadPreviewDraft();
   window.addEventListener("atterm:open-service-preview", onServicePreviewRequest);
+  document.addEventListener("atterm:open-prompt-history", onPromptHistoryRequest);
   await ensureTerm();
   if (!isAlive) return;
   // Resolve the local hostname before opening the WS so the very first ATTACH
@@ -2832,6 +2862,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
   window.removeEventListener("atterm:open-service-preview", onServicePreviewRequest);
+  document.removeEventListener("atterm:open-prompt-history", onPromptHistoryRequest);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("input", onDesktopImeInput as EventListener, { capture: true } as EventListenerOptions);
@@ -3127,18 +3158,25 @@ watch(
       :style="{ bottom: promptSuggestionBottom }"
       role="listbox"
     >
-      <li v-for="(candidate, index) in promptSuggestionState.candidates" :key="candidate">
+      <li v-for="(candidate, index) in promptSuggestionState.candidates" :key="candidate.text">
         <button
           type="button"
           class="prompt-suggestion"
           :class="{ selected: index === promptSuggestionState.selectedIndex }"
-          :title="candidate"
-          :aria-label="candidate"
+          :title="candidate.text"
+          :aria-label="candidate.text"
           :aria-selected="index === promptSuggestionState.selectedIndex"
           role="option"
           @mousedown.prevent
           @click="acceptPromptSuggestion(index)"
-        >{{ candidate }}</button>
+        >
+          <span class="prompt-suggestion-text">{{ candidate.text }}</span>
+          <time class="prompt-suggestion-time">{{ promptHistoryTime(candidate.lastUsedAt) }}</time>
+        </button>
+      </li>
+      <li class="prompt-suggestion-footer" aria-live="polite">
+        <span>{{ promptSuggestionState.rangeStart + 1 }}–{{ promptSuggestionState.rangeStart + promptSuggestionState.candidates.length }} / {{ promptSuggestionState.total }}</span>
+        <span>↑ ↓ · Tab · Esc</span>
       </li>
     </ol>
     <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
@@ -3756,7 +3794,9 @@ watch(
 }
 .prompt-suggestions li { min-width: 0; }
 .prompt-suggestion {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   width: 100%;
   min-width: 0;
   height: 27px;
@@ -3771,6 +3811,25 @@ watch(
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+.prompt-suggestion-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prompt-suggestion-time {
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.prompt-suggestion-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 8px 1px;
+  color: var(--fg-dim);
+  font: 11px var(--font-mono);
 }
 .prompt-suggestion:hover,
 .prompt-suggestion.selected {

@@ -1,9 +1,9 @@
 import type { PresetId } from "../taskState";
 import type { QuickTemplate } from "../templates";
 import { bindings } from "./_bindings";
-import type { MarkSessionsSeenOpts, PromptHistoryStatus, TaskGroupBy } from "./_bindings";
+import type { MarkSessionsSeenOpts, PromptHistoryPage, PromptHistoryStatus, TaskGroupBy } from "./_bindings";
 
-export type { MarkSessionsSeenOpts, TaskGroupBy } from "./_bindings";
+export type { MarkSessionsSeenOpts, PromptHistoryPage, TaskGroupBy } from "./_bindings";
 
 export function getQuickTemplates(): Promise<QuickTemplate[]> {
   return bindings().GetQuickTemplates();
@@ -19,6 +19,10 @@ export function getPromptHistoryStatus(): Promise<PromptHistoryStatus> {
 
 export function queryPromptHistory(prefix: string, limit: number): Promise<string[]> {
   return bindings().QueryPromptHistory(prefix, limit);
+}
+
+export function queryPromptHistoryPage(prefix: string, cursor: string, limit: number): Promise<PromptHistoryPage> {
+  return bindings().QueryPromptHistoryPage(prefix, cursor, limit);
 }
 
 export function setPromptHistoryEnabled(enabled: boolean): Promise<void> {

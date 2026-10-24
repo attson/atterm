@@ -82,12 +82,29 @@ describe("TerminalView desktop prompt history suggestions", () => {
 
   test("intercepts suggestion navigation before xterm and sends only accepted suffix", () => {
     expect(source).toContain("createPromptDraftTracker");
-    expect(source).toContain("createPromptSuggestionController");
+    expect(source).toContain("createPromptHistoryBrowser");
     expect(source).toMatch(/promptSuggestionController\.handleKey\(e\.key\)/);
     expect(source).toMatch(/if \(action\.handled\)[\s\S]*?return false/);
     expect(source).toMatch(/sendPromptSuggestionSuffix\(action\.suffix\)/);
     expect(source).toMatch(/conn\?\.sendInput\(suffix\)/);
     expect(source).not.toMatch(/sendPromptSuggestionSuffix[\s\S]{0,300}sendInput\([^)]*\\r/);
+  });
+
+  test("renders the unified five-row history UI with timestamps and range", () => {
+    expect(source).toContain("formatPromptHistoryTime");
+    expect(source).toContain('class="prompt-suggestion-time"');
+    expect(source).toContain('class="prompt-suggestion-footer"');
+    expect(source).toContain("promptSuggestionState.rangeStart + 1");
+    expect(source).toContain("promptSuggestionState.total");
+    expect(source).toMatch(/platform\.promptHistory\?\.page\(prefix, cursor, limit\)/);
+  });
+
+  test("acknowledges the global history shortcut only when this focused terminal can open it", () => {
+    expect(source).toContain('document.addEventListener("atterm:open-prompt-history", onPromptHistoryRequest)');
+    expect(source).toContain('document.removeEventListener("atterm:open-prompt-history", onPromptHistoryRequest)');
+    expect(source).toMatch(/function onPromptHistoryRequest[\s\S]*?promptSuggestionActive\.value[\s\S]*?promptSuggestionController\.open[\s\S]*?event\.preventDefault\(\)/);
+    expect(appSource).toContain('new Event("atterm:open-prompt-history", { cancelable: true })');
+    expect(appSource).toContain("return request.defaultPrevented");
   });
 
   test("observes input as a failure-isolated sidecar and disposes it on unmount", () => {

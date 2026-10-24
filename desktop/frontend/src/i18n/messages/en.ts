@@ -942,6 +942,7 @@ export const en = {
       nextTab: "Next tab",
       focusSidebarSearch: "Focus sidebar search",
       terminalSearch: "Search terminal",
+      promptHistory: "Recent input history",
     },
     diagnostics: {
       tab: "Diagnostics",

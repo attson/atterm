@@ -1408,6 +1408,54 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class PromptHistoryItem {
+	    text: string;
+	    last_used_at: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PromptHistoryItem(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.last_used_at = source["last_used_at"];
+	    }
+	}
+	export class PromptHistoryPage {
+	    items: PromptHistoryItem[];
+	    next_cursor: string;
+	    total: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PromptHistoryPage(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.items = this.convertValues(source["items"], PromptHistoryItem);
+	        this.next_cursor = source["next_cursor"];
+	        this.total = source["total"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class PromptHistoryStatus {
 	    enabled: boolean;
 	    count: number;

@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from 
 import TabBar from "./components/TabBar.vue";
 import TitleBar from "./components/TitleBar.vue";
 import TaskSidebar from "./components/TaskSidebar.vue";
-import { useWindowMaximized } from "./composables/useWindowMaximized";
+import { setMaximized, useWindowMaximized } from "./composables/useWindowMaximized";
 import PaneGrid from "./components/PaneGrid.vue";
 import AdminPanel from "./components/AdminPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
@@ -1637,6 +1637,12 @@ useTerminalShortcuts(
     onFocusSidebarSearch: () => {
       void taskSidebarRef.value?.focusSearch();
     },
+    onToggleWindowMaximize: caps.windowControls
+      ? () => {
+          void $platform.system.windowToggleMaximize?.();
+          setMaximized(!isMaximized.value);
+        }
+      : undefined,
     onTerminalSearch: () => {
       terminalSearchSeq.value++;
     },

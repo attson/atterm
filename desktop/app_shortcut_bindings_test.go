@@ -8,15 +8,16 @@ func TestSetShortcutBindings_ValidRoundTrips(t *testing.T) {
 	a := newRelayTestApp(t)
 
 	valid := map[string]string{
-		"tab.new":    "Mod+KeyT",
-		"pane.close": "",
+		"tab.new":                     "Mod+KeyT",
+		"pane.close":                  "",
+		"application.toggle-maximize": "Mod+Enter",
 	}
 	if err := a.SetShortcutBindings(valid); err != nil {
 		t.Fatalf("SetShortcutBindings(valid): %v", err)
 	}
 
 	got := a.GetShortcutBindings()
-	if len(got) != len(valid) || got["tab.new"] != "Mod+KeyT" || got["pane.close"] != "" {
+	if len(got) != len(valid) || got["tab.new"] != "Mod+KeyT" || got["pane.close"] != "" || got["application.toggle-maximize"] != "Mod+Enter" {
 		t.Fatalf("GetShortcutBindings() = %v; want %v", got, valid)
 	}
 }

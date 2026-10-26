@@ -132,10 +132,11 @@ func TestValidatePluginConfig_ShortcutsAcceptsValid(t *testing.T) {
 	c := PluginConfig{}
 	c.applyDefaults()
 	c.Shortcuts.Bindings = map[string]string{
-		"pane.split-vertical-new":   "Mod+KeyN",
-		"pane.focus-left":           "Mod+Alt+ArrowLeft",
-		"pane.split-horizontal-new": "Mod+Alt+Shift+KeyJ",
-		"pane.close":                "", // disabled is valid
+		"pane.split-vertical-new":     "Mod+KeyN",
+		"pane.focus-left":             "Mod+Alt+ArrowLeft",
+		"pane.split-horizontal-new":   "Mod+Alt+Shift+KeyJ",
+		"application.toggle-maximize": "Mod+Enter",
+		"pane.close":                  "", // disabled is valid
 	}
 	if err := ValidatePluginConfig(c); err != nil {
 		t.Fatalf("valid bindings should validate, got %v", err)

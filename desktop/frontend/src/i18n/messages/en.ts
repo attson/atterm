@@ -926,6 +926,7 @@ export const en = {
       pane: "Pane",
       tab: "Tab",
       sidebar: "Sidebar",
+      application: "Application Window",
       pressKey: "Press a key...",
       resetTo: "Reset to {binding}",
       conflictsWith: "Conflicts with: {labels}",
@@ -943,6 +944,7 @@ export const en = {
       focusSidebarSearch: "Focus sidebar search",
       terminalSearch: "Search terminal",
       promptHistory: "Recent input history",
+      toggleMaximize: "Maximize / restore window",
     },
     diagnostics: {
       tab: "Diagnostics",

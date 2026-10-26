@@ -45,6 +45,21 @@ describe("HotkeyCaptureCell", () => {
     wrapper.unmount();
   });
 
+  it("captures modified Enter while leaving bare Enter as a dialog key", async () => {
+    const wrapper = mount(HotkeyCaptureCell, {
+      props: { value: "Mod+KeyN", mod: "Control" },
+      attachTo: document.body,
+    });
+    await wrapper.find(".hotkey-cell").trigger("click");
+    document.dispatchEvent(makeKey({ key: "Enter", code: "Enter" }));
+    await flushPromises();
+    expect(wrapper.emitted("update")).toBeFalsy();
+    document.dispatchEvent(makeKey({ key: "Enter", code: "Enter", ctrlKey: true }));
+    await flushPromises();
+    expect(wrapper.emitted("update")![0]).toEqual(["Mod+Enter"]);
+    wrapper.unmount();
+  });
+
   it("Esc cancels capture without emitting update", async () => {
     const wrapper = mount(HotkeyCaptureCell, {
       props: { value: "Mod+KeyN", mod: "Control" },

@@ -3,8 +3,8 @@ import { ACTIONS, ACTION_BY_ID, DEFAULT_BINDINGS } from "./shortcutBindings";
 import { serialize, parse, type Mod } from "./shortcutBindings";
 
 describe("shortcutBindings registry", () => {
-  it("declares 14 actions", () => {
-    expect(ACTIONS).toHaveLength(14);
+  it("declares 15 actions", () => {
+    expect(ACTIONS).toHaveLength(15);
   });
 
   it("has unique action IDs", () => {
@@ -12,9 +12,9 @@ describe("shortcutBindings registry", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("groups actions under pane, tab, or sidebar", () => {
+  it("groups actions under pane, tab, sidebar, or application", () => {
     for (const a of ACTIONS) {
-      expect(["pane", "tab", "sidebar"]).toContain(a.group);
+      expect(["pane", "tab", "sidebar", "application"]).toContain(a.group);
     }
   });
 
@@ -27,7 +27,7 @@ describe("shortcutBindings registry", () => {
     for (const a of ACTIONS) {
       expect(DEFAULT_BINDINGS[a.defaultBinding]).toBe(a.id);
     }
-    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(14);
+    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(15);
   });
 });
 
@@ -82,6 +82,11 @@ describe("serialize", () => {
   it("code outside the whitelist returns null", () => {
     const e = ev({ key: "Tab", code: "Tab", ctrlKey: true });
     expect(serialize(e, "Control")).toBeNull();
+  });
+
+  it("Ctrl+Enter -> 'Mod+Enter'", () => {
+    const e = ev({ key: "Enter", code: "Enter", ctrlKey: true });
+    expect(serialize(e, "Control")).toBe("Mod+Enter");
   });
 });
 
@@ -170,11 +175,11 @@ import { buildRoutingTable } from "./shortcutBindings";
 import { formatChord } from "./shortcutBindings";
 
 describe("buildRoutingTable", () => {
-  it("with empty overrides returns the default 14-entry table", () => {
+  it("with empty overrides returns the default 15-entry table", () => {
     const t = buildRoutingTable({});
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
     expect(t["Mod+KeyT"]).toBe("tab.new");
-    expect(Object.keys(t)).toHaveLength(14);
+    expect(Object.keys(t)).toHaveLength(15);
   });
 
   it("override removes the action's previous binding entry from the table", () => {
@@ -186,7 +191,7 @@ describe("buildRoutingTable", () => {
   it("empty override removes the action from the table entirely", () => {
     const t = buildRoutingTable({ "pane.close": "" });
     expect(t["Mod+KeyW"]).toBeUndefined();
-    expect(Object.keys(t)).toHaveLength(13);
+    expect(Object.keys(t)).toHaveLength(14);
   });
 
   it("two actions colliding on the same binding: last one written wins", () => {
@@ -205,7 +210,7 @@ describe("buildRoutingTable", () => {
     const t = buildRoutingTable({ "ghost.action": "Mod+KeyN" });
     // Defaults intact, override ignored
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
-    expect(Object.keys(t)).toHaveLength(14);
+    expect(Object.keys(t)).toHaveLength(15);
   });
 });
 
@@ -221,6 +226,9 @@ describe("formatChord (Meta / mac)", () => {
   });
   it("Mod+Alt+ArrowLeft -> ⌘⌥←", () => {
     expect(formatChord("Mod+Alt+ArrowLeft", "Meta")).toBe("⌘⌥←");
+  });
+  it("Mod+Enter -> ⌘Enter", () => {
+    expect(formatChord("Mod+Enter", "Meta")).toBe("⌘Enter");
   });
   it("empty string -> empty string", () => {
     expect(formatChord("", "Meta")).toBe("");
@@ -285,5 +293,16 @@ describe("prompt history binding", () => {
     expect(action!.group).toBe("pane");
     expect(action!.labelKey).toBe("settings.shortcuts.promptHistory");
     expect(DEFAULT_BINDINGS["Mod+Shift+KeyH"]).toBe("terminal.prompt-history");
+  });
+});
+
+describe("application window binding", () => {
+  it("registers maximize/restore on Mod+Enter", () => {
+    const action = ACTION_BY_ID["application.toggle-maximize"];
+    expect(action).toBeDefined();
+    expect(action!.defaultBinding).toBe("Mod+Enter");
+    expect(action!.group).toBe("application");
+    expect(action!.labelKey).toBe("settings.shortcuts.toggleMaximize");
+    expect(DEFAULT_BINDINGS["Mod+Enter"]).toBe("application.toggle-maximize");
   });
 });

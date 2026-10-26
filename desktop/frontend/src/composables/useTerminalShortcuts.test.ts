@@ -20,6 +20,7 @@ describe("useTerminalShortcuts (default bindings)", () => {
     onSwitchTab: vi.fn(),
     onSwitchTabTo: vi.fn(),
     onFocusSidebarSearch: vi.fn(),
+    onToggleWindowMaximize: vi.fn(),
   };
 
   beforeEach(() => {
@@ -76,6 +77,12 @@ describe("useTerminalShortcuts (default bindings)", () => {
   it("Ctrl+Shift+F -> onFocusSidebarSearch, preventDefault", () => {
     const ev = fireKey({ key: "F", code: "KeyF", ctrlKey: true, shiftKey: true });
     expect(handlers.onFocusSidebarSearch).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("Ctrl+Enter -> onToggleWindowMaximize, preventDefault", () => {
+    const ev = fireKey({ key: "Enter", code: "Enter", ctrlKey: true });
+    expect(handlers.onToggleWindowMaximize).toHaveBeenCalledTimes(1);
     expect(ev.defaultPrevented).toBe(true);
   });
 
@@ -239,6 +246,28 @@ describe("useTerminalShortcuts (terminal search handler omitted)", () => {
       ),
     );
     expect(() => fireKey({ key: "f", code: "KeyF", ctrlKey: true })).not.toThrow();
+    scope.stop();
+  });
+});
+
+describe("useTerminalShortcuts (window handler omitted)", () => {
+  it("does not consume Ctrl+Enter outside the desktop window shell", () => {
+    const scope = effectScope();
+    scope.run(() =>
+      useTerminalShortcuts(
+        {
+          onSplitVertical: vi.fn(),
+          onSplitHorizontal: vi.fn(),
+          onClosePane: vi.fn(),
+          onFocusPane: vi.fn(),
+          onNewTab: vi.fn(),
+          onSwitchTab: vi.fn(),
+        },
+        { mod: "Control" },
+      ),
+    );
+    const event = fireKey({ key: "Enter", code: "Enter", ctrlKey: true });
+    expect(event.defaultPrevented).toBe(false);
     scope.stop();
   });
 });

@@ -125,6 +125,7 @@ function discard() {
 const paneActions = ACTIONS.filter((a) => a.group === "pane");
 const tabActions = ACTIONS.filter((a) => a.group === "tab");
 const sidebarActions = ACTIONS.filter((a) => a.group === "sidebar");
+const applicationActions = ACTIONS.filter((a) => a.group === "application");
 
 defineExpose({ dirty });
 </script>
@@ -166,6 +167,22 @@ defineExpose({ dirty });
     <section class="shortcut-group" v-if="sidebarActions.length > 0">
       <h3>{{ t("settings.shortcuts.sidebar") }}</h3>
       <div v-for="action in sidebarActions" :key="action.id" class="shortcut-row">
+        <div class="label">{{ t(action.labelKey) }}</div>
+        <HotkeyCaptureCell
+          :value="bindingFor(action)"
+          :mod="mod"
+          @update="(v) => onCellUpdate(action, v)"
+        />
+        <button class="reset-row" :title="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
+        <div class="conflict" v-if="conflictsFor(action).length">
+          {{ t("settings.shortcuts.conflictsWith", { labels: conflictsFor(action).map((id) => ACTION_BY_ID[id] ? t(ACTION_BY_ID[id]!.labelKey) : id).join(", ") }) }}
+        </div>
+      </div>
+    </section>
+
+    <section class="shortcut-group" v-if="applicationActions.length > 0">
+      <h3>{{ t("settings.shortcuts.application") }}</h3>
+      <div v-for="action in applicationActions" :key="action.id" class="shortcut-row">
         <div class="label">{{ t(action.labelKey) }}</div>
         <HotkeyCaptureCell
           :value="bindingFor(action)"

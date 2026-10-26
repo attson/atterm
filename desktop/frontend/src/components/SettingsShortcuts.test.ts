@@ -35,13 +35,15 @@ async function mountShortcuts(initial: Record<string, string> = {}) {
 }
 
 describe("SettingsShortcuts", () => {
-  it("renders 14 rows grouped under 'pane', 'tab', and 'sidebar'", async () => {
+  it("renders 15 rows including the application window group", async () => {
     const wrapper = await mountShortcuts();
     const rows = wrapper.findAll(".shortcut-row");
-    expect(rows).toHaveLength(14);
+    expect(rows).toHaveLength(15);
     expect(wrapper.text()).toContain("Pane");
     expect(wrapper.text()).toContain("Tab");
     expect(wrapper.text()).toContain("Sidebar");
+    expect(wrapper.text()).toContain("Application Window");
+    expect(wrapper.text()).toContain("Maximize / restore window");
   });
 
   it("each row's hotkey cell shows the current binding (default when not overridden)", async () => {

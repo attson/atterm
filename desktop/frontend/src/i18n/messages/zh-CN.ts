@@ -893,6 +893,7 @@ export const zhCN = {
       pane: "面板",
       tab: "标签页",
       sidebar: "侧栏",
+      application: "应用窗口",
       pressKey: "按一个键...",
       resetTo: "重置为 {binding}",
       conflictsWith: "冲突：{labels}",
@@ -910,6 +911,7 @@ export const zhCN = {
       focusSidebarSearch: "聚焦侧栏搜索",
       terminalSearch: "搜索终端",
       promptHistory: "最近输入历史",
+      toggleMaximize: "最大化 / 还原窗口",
     },
     diagnostics: {
       tab: "诊断",

@@ -77,7 +77,7 @@ type ShortcutsConfig struct {
 // string is also a valid binding (means "disabled") and is handled by the
 // caller before applying this regex.
 var shortcutBindingRe = regexp.MustCompile(
-	`^(?:Mod\+)?(?:Alt\+)?(?:Shift\+)?(?:KeyA|KeyB|KeyC|KeyD|KeyE|KeyF|KeyG|KeyH|KeyI|KeyJ|KeyK|KeyL|KeyM|KeyN|KeyO|KeyP|KeyQ|KeyR|KeyS|KeyT|KeyU|KeyV|KeyW|KeyX|KeyY|KeyZ|Digit0|Digit1|Digit2|Digit3|Digit4|Digit5|Digit6|Digit7|Digit8|Digit9|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|BracketLeft|BracketRight|Minus|Equal|Backquote|Comma|Period|Slash|Semicolon|Quote|Backslash)$`,
+	`^(?:Mod\+)?(?:Alt\+)?(?:Shift\+)?(?:KeyA|KeyB|KeyC|KeyD|KeyE|KeyF|KeyG|KeyH|KeyI|KeyJ|KeyK|KeyL|KeyM|KeyN|KeyO|KeyP|KeyQ|KeyR|KeyS|KeyT|KeyU|KeyV|KeyW|KeyX|KeyY|KeyZ|Digit0|Digit1|Digit2|Digit3|Digit4|Digit5|Digit6|Digit7|Digit8|Digit9|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|BracketLeft|BracketRight|Enter|Minus|Equal|Backquote|Comma|Period|Slash|Semicolon|Quote|Backslash)$`,
 )
 
 func isValidShortcutBinding(s string) bool {

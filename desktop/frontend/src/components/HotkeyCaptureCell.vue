@@ -37,7 +37,9 @@ function startCapture() {
       emit("update", "");
       return;
     }
-    if (e.key === "Tab" || e.key === "Enter") {
+    // Bare Enter confirms dialogs, but a modified Enter is a valid shortcut
+    // (the default application maximize/restore chord uses Mod+Enter).
+    if (e.key === "Tab" || (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey)) {
       e.preventDefault();
       e.stopPropagation();
       return;

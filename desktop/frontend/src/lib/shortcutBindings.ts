@@ -9,7 +9,7 @@
 
 import type { MessageKey } from "../i18n";
 
-export type ShortcutGroup = "pane" | "tab" | "sidebar";
+export type ShortcutGroup = "pane" | "tab" | "sidebar" | "application";
 
 export interface ShortcutAction {
   id: string;
@@ -33,6 +33,7 @@ export const ACTIONS: readonly ShortcutAction[] = [
   { id: "tab.next",                   group: "tab",  labelKey: "settings.shortcuts.nextTab",                              defaultBinding: "Mod+Shift+BracketRight" },
   { id: "toggleTaskSidebar",          group: "sidebar", labelKey: "tasks.sidebar.collapse",                               defaultBinding: "Mod+KeyB" },
   { id: "sidebar.focus-search",       group: "sidebar", labelKey: "settings.shortcuts.focusSidebarSearch",                defaultBinding: "Mod+Shift+KeyF" },
+  { id: "application.toggle-maximize", group: "application", labelKey: "settings.shortcuts.toggleMaximize",              defaultBinding: "Mod+Enter" },
 ] as const;
 
 export const ACTION_BY_ID: Record<string, ShortcutAction | undefined> = Object.fromEntries(
@@ -53,6 +54,7 @@ const CODE_WHITELIST: ReadonlySet<string> = new Set([
   "Digit0","Digit1","Digit2","Digit3","Digit4","Digit5","Digit6","Digit7","Digit8","Digit9",
   "ArrowLeft","ArrowRight","ArrowUp","ArrowDown",
   "BracketLeft","BracketRight",
+  "Enter",
   "Minus","Equal","Backquote","Comma","Period","Slash","Semicolon","Quote","Backslash",
 ]);
 
@@ -150,6 +152,7 @@ const CODE_DISPLAY: Record<string, string> = {
   Digit5: "5", Digit6: "6", Digit7: "7", Digit8: "8", Digit9: "9",
   ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓",
   BracketLeft: "[", BracketRight: "]",
+  Enter: "Enter",
   Minus: "-", Equal: "=", Backquote: "`",
   Comma: ",", Period: ".", Slash: "/",
   Semicolon: ";", Quote: "'", Backslash: "\\",

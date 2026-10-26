@@ -20,6 +20,7 @@ export interface ShortcutHandlers {
   onSwitchTab: (delta: number) => void;
   onToggleTaskSidebar?: () => void;
   onFocusSidebarSearch?: () => void;
+  onToggleWindowMaximize?: () => void;
   onTerminalSearch?: () => void;
   /** Returns true only when a focused terminal opened local prompt history. */
   onPromptHistory?: () => boolean;
@@ -53,6 +54,10 @@ function dispatch(actionId: string, h: ShortcutHandlers): boolean {
     case "tab.next":                   h.onSwitchTab(1); return true;
     case "toggleTaskSidebar":          h.onToggleTaskSidebar?.(); return true;
     case "sidebar.focus-search":       h.onFocusSidebarSearch?.(); return true;
+    case "application.toggle-maximize":
+      if (!h.onToggleWindowMaximize) return false;
+      h.onToggleWindowMaximize();
+      return true;
     case "terminal.search":            h.onTerminalSearch?.(); return true;
     case "terminal.prompt-history":    return h.onPromptHistory?.() === true;
   }

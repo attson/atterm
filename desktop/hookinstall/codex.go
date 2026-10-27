@@ -14,12 +14,12 @@ func attermHookCommand(link, agentKind string) string {
 	return link + " --agent " + agentKind
 }
 
-// codexHookEvents are the events whose payloads carry a task-state meaning.
-// Everything else codex offers (SessionStart, SessionEnd, subagent and
-// compaction events) is deliberately left alone: the turn-scoped events already
-// describe the state machine, and reading more would only add ways for the two
-// sources to disagree.
+// codexHookEvents are the events atterm consumes. SessionStart carries the
+// authoritative Codex session_id used by crash recovery; the remaining events
+// describe task state. SessionEnd, subagent, and compaction events are left
+// alone because they add no recovery identity or turn-state information.
 var codexHookEvents = []string{
+	"SessionStart",
 	"UserPromptSubmit",
 	"PreToolUse",
 	"PostToolUse",

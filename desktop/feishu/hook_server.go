@@ -31,6 +31,14 @@ type TaskStateSink interface {
 	ApplyHookTaskState(sid uuid.UUID, state string)
 }
 
+// AISessionIdentitySink receives an agent-native conversation id already
+// bound to the local atterm session whose environment launched the hook. This
+// direct binding is stronger than filesystem mtime/process-tree heuristics and
+// is therefore suitable as a recovery credential.
+type AISessionIdentitySink interface {
+	ApplyHookAISessionIdentity(sid uuid.UUID, kind, aiSessionID string)
+}
+
 // PromptSink receives already-validated user prompt submissions. Keeping it
 // separate from WaitingDispatcher lets local history work with Feishu off.
 type PromptSink interface {
@@ -55,6 +63,7 @@ type HookServer struct {
 	disp       WaitingDispatcher
 	sessions   SessionLookup
 	taskSink   TaskStateSink
+	aiSink     AISessionIdentitySink
 	promptSink PromptSink
 	onSuspect  func()
 }
@@ -83,6 +92,21 @@ func (h *HookServer) taskStateSink() TaskStateSink {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.taskSink
+}
+
+// SetAISessionIdentitySink registers where authoritative agent conversation
+// ids go. The listener outlives service rebuilds, so this is swappable just
+// like the task-state sink.
+func (h *HookServer) SetAISessionIdentitySink(sink AISessionIdentitySink) {
+	h.mu.Lock()
+	h.aiSink = sink
+	h.mu.Unlock()
+}
+
+func (h *HookServer) aiSessionIdentitySink() AISessionIdentitySink {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.aiSink
 }
 
 // SetPromptSink registers the desktop-local prompt history consumer.
@@ -181,6 +205,16 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Codex SessionStart is emitted by the exact CLI instance that inherited
+	// ATTERM_SESSION_ID, and its inner session_id is the resume credential for
+	// that conversation. Consume only SessionStart: tool/subagent hooks may be
+	// delayed or nested and must never replace the pane's root conversation.
+	if kind, aiSessionID, ok := aiSessionIdentityForHook(req.AgentKind, req.HookInput); ok {
+		if sink := h.aiSessionIdentitySink(); sink != nil {
+			sink.ApplyHookAISessionIdentity(sid, kind, aiSessionID)
+		}
+	}
+
 	// Task-state path. Runs BEFORE the adapter lookup and independently of the
 	// two Feishu paths below: state routing knows both agents on its own, while
 	// the adapter registry only holds the ones that can render a card. Leaving
@@ -277,6 +311,24 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	_ = errors.New
 	w.WriteHeader(http.StatusOK)
+}
+
+func aiSessionIdentityForHook(agentKind string, raw json.RawMessage) (kind, sessionID string, ok bool) {
+	if agentKind != "codex" {
+		return "", "", false
+	}
+	var payload struct {
+		HookEventName string `json:"hook_event_name"`
+		SessionID     string `json:"session_id"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || payload.HookEventName != "SessionStart" {
+		return "", "", false
+	}
+	id, err := uuid.Parse(strings.TrimSpace(payload.SessionID))
+	if err != nil || id == uuid.Nil {
+		return "", "", false
+	}
+	return "codex", id.String(), true
 }
 
 func promptForHook(agentKind string, raw json.RawMessage) (string, bool) {

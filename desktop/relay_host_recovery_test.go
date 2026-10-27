@@ -192,6 +192,71 @@ func TestRelayHost_NewSession_OnAIClassified_StartsSniff(t *testing.T) {
 	}
 }
 
+func TestRelayHost_CodexHookIdentitySupersedesHeuristic(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := newTestRelayHost(t)
+
+	type resolverProbe struct {
+		ctx     context.Context
+		capture func(string)
+	}
+	started := make(chan resolverProbe, 1)
+	h.startSniffFn = func(ctx context.Context, _ *session.Session, _ string, kind string, _ int, capture func(string)) {
+		if kind != "codex" {
+			t.Errorf("resolver kind = %q, want codex", kind)
+		}
+		started <- resolverProbe{ctx: ctx, capture: capture}
+		<-ctx.Done()
+	}
+	type event struct{ kind, sid string }
+	events := make(chan event, 4)
+	h.aiSidCallback = func(_ uuid.UUID, kind, sid string) { events <- event{kind: kind, sid: sid} }
+
+	id, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh", Cwd: t.TempDir(), Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatalf("session %s not found", id)
+	}
+	sess.PushOut(1, []byte("\x1b]133;C;codex\x07"))
+	probe := receiveAIEvent(t, started)
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: ""}) {
+		t.Fatalf("initial event = %+v, want codex clear", got)
+	}
+
+	wantSID := "01a17b28-7aff-72c1-b292-a4510d537d46"
+	h.ApplyHookAISessionIdentity(id, "codex", wantSID)
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: wantSID}) {
+		t.Fatalf("hook identity event = %+v", got)
+	}
+	select {
+	case <-probe.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("heuristic resolver was not cancelled by authoritative hook identity")
+	}
+
+	// A callback already racing out of the cancelled resolver cannot overwrite
+	// the hook-bound credential with another same-cwd conversation.
+	probe.capture("01a17b28-7aff-72c1-b292-a4510d537d47")
+	select {
+	case got := <-events:
+		t.Fatalf("stale heuristic overwrote hook identity: %+v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// SessionStart may be retried; the same identity is idempotent.
+	h.ApplyHookAISessionIdentity(id, "codex", wantSID)
+	select {
+	case got := <-events:
+		t.Fatalf("duplicate hook identity republished: %+v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestRelayHost_NewSession_LatestAICommandOwnsRecoveryGeneration(t *testing.T) {
 	h := newTestRelayHost(t)
 

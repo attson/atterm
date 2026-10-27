@@ -223,6 +223,7 @@ type activeSession struct {
 	host                sessionPTY
 	cleanup             func()
 	restored            bool // true when NewSession was invoked with AIKind set (recovery path)
+	applyHookAIIdentity func(kind, aiSessionID string)
 	feishuUserActivated atomic.Bool
 }
 
@@ -812,6 +813,8 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	var resolveMu sync.Mutex
 	var resolveGeneration uint64
 	var currentResolveCancel context.CancelFunc
+	var currentResolveKind string
+	var currentAISessionID string
 	var restoredStartKind string
 
 	startResolveGeneration := func(sess *session.Session, kind, resolveCwd, initialSID string, awaitRestoredStart bool) {
@@ -823,6 +826,8 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		generation := resolveGeneration
 		generationCtx, generationCancel := context.WithCancel(resolveCtx)
 		currentResolveCancel = generationCancel
+		currentResolveKind = kind
+		currentAISessionID = initialSID
 		if awaitRestoredStart {
 			restoredStartKind = kind
 		} else {
@@ -876,6 +881,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 					// Keep validation + publication in one critical section. Otherwise
 					// a new generation could publish its clearing event after this
 					// check, then this stale callback could overwrite it with an old SID.
+					currentAISessionID = aiSid
 					h.onAISidCaptured(id, kind, aiSid)
 					startCodexStream(aiSid, initialSID == "")
 				}
@@ -905,6 +911,38 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		})
 	}
 	active := &activeSession{host: pty, cleanup: combinedCleanup, restored: req.AIKind != ""}
+	active.applyHookAIIdentity = func(kind, aiSessionID string) {
+		resolveMu.Lock()
+		if kind == "" || aiSessionID == "" || currentResolveKind != kind || currentAISessionID == aiSessionID {
+			resolveMu.Unlock()
+			return
+		}
+		// The hook is directly bound by ATTERM_SESSION_ID, so it supersedes the
+		// filesystem/process heuristic for this generation. Bump the generation
+		// before publishing so any callback already racing out of the cancelled
+		// resolver is rejected by its generation check.
+		if currentResolveCancel != nil {
+			currentResolveCancel()
+		}
+		resolveGeneration++
+		generationCtx, generationCancel := context.WithCancel(resolveCtx)
+		currentResolveCancel = generationCancel
+		currentAISessionID = aiSessionID
+		h.onAISidCaptured(id, kind, aiSessionID)
+		resolveMu.Unlock()
+
+		if kind == "codex" {
+			sess, ok := h.server.Registry().Get(id)
+			if !ok {
+				return
+			}
+			info := sess.Info()
+			go startCodexTurnStream(generationCtx, info.Cwd, aiSessionID, false, func(turn codexTranscriptTurn) {
+				h.handleCodexTranscriptTurn(id, aiSessionID, turn)
+			})
+			go startCodexKnownTitleResolve(generationCtx, sess, info.Cwd, aiSessionID)
+		}
+	}
 	active.feishuUserActivated.Store(!req.Recovered)
 
 	// Every top-level AI OSC 133 C starts a new resolver generation. The only

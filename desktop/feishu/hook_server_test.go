@@ -254,6 +254,27 @@ type taskSinkFake struct {
 	calls []string
 }
 
+type aiIdentityCall struct {
+	sid, kind, aiSessionID string
+}
+
+type aiIdentitySinkFake struct {
+	mu    sync.Mutex
+	calls []aiIdentityCall
+}
+
+func (f *aiIdentitySinkFake) ApplyHookAISessionIdentity(sid uuid.UUID, kind, aiSessionID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, aiIdentityCall{sid: sid.String(), kind: kind, aiSessionID: aiSessionID})
+}
+
+func (f *aiIdentitySinkFake) identities() []aiIdentityCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]aiIdentityCall(nil), f.calls...)
+}
+
 type promptSinkFake struct {
 	mu      sync.Mutex
 	prompts []string
@@ -431,5 +452,44 @@ func TestHookServer_ForwardsCodexTaskState(t *testing.T) {
 	got := sink.states()
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("sink states = %v, want %v", got, want)
+	}
+}
+
+func TestHookServer_ForwardsCodexSessionStartIdentity(t *testing.T) {
+	localSID := uuid.MustParse("00000000-0000-0000-0000-0000000000dd")
+	aiSID := "01a17b28-7aff-72c1-b292-a4510d537d46"
+	sessions := &sessionsFake{known: map[string]bool{localSID.String(): true}}
+	h := NewHookServer(&recordingDispatcher{}, sessions)
+	sink := &aiIdentitySinkFake{}
+	h.SetAISessionIdentitySink(sink)
+
+	postHook(t, h, localSID, "codex", `{"hook_event_name":"SessionStart","session_id":"`+aiSID+`"}`)
+
+	want := []aiIdentityCall{{sid: localSID.String(), kind: "codex", aiSessionID: aiSID}}
+	if got := sink.identities(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("identity calls = %+v, want %+v", got, want)
+	}
+}
+
+func TestHookServer_RejectsNonAuthoritativeAIIdentityEvents(t *testing.T) {
+	localSID := uuid.MustParse("00000000-0000-0000-0000-0000000000ee")
+	sessions := &sessionsFake{known: map[string]bool{localSID.String(): true}}
+	h := NewHookServer(&recordingDispatcher{}, sessions)
+	sink := &aiIdentitySinkFake{}
+	h.SetAISessionIdentitySink(sink)
+
+	for _, tc := range []struct {
+		agent string
+		body  string
+	}{
+		{agent: "codex", body: `{"hook_event_name":"PreToolUse","session_id":"01a17b28-7aff-72c1-b292-a4510d537d46"}`},
+		{agent: "codex", body: `{"hook_event_name":"SessionStart","session_id":"not-a-uuid"}`},
+		{agent: "claude-code", body: `{"hook_event_name":"SessionStart","session_id":"01a17b28-7aff-72c1-b292-a4510d537d46"}`},
+	} {
+		postHook(t, h, localSID, tc.agent, tc.body)
+	}
+
+	if got := sink.identities(); len(got) != 0 {
+		t.Fatalf("non-authoritative events reached identity sink: %+v", got)
 	}
 }

@@ -23,7 +23,7 @@ func readCodexDoc(t *testing.T, home string) codexHooksDocument {
 	return doc
 }
 
-func TestInstallCodex_CoversEveryStateEvent(t *testing.T) {
+func TestInstallCodex_CoversIdentityAndStateEvents(t *testing.T) {
 	home := t.TempDir()
 	if err := installCodexAt(home, testLink); err != nil {
 		t.Fatalf("installCodexAt: %v", err)
@@ -119,9 +119,10 @@ func TestInstallCodex_PreservesForeignEntries(t *testing.T) {
 	if doc.Hooks["Stop"][0].Hooks[0].Command != "/usr/bin/true" {
 		t.Fatalf("clobbered the user's Stop hook: %v", doc.Hooks["Stop"])
 	}
-	// An event we do not own must survive untouched.
-	if len(doc.Hooks["SessionStart"]) != 1 || doc.Hooks["SessionStart"][0].Hooks[0].Command != "/usr/bin/false" {
-		t.Fatalf("touched an event we do not own: %v", doc.Hooks["SessionStart"])
+	// SessionStart is now also ours for authoritative recovery identity, but
+	// the user's existing handler must remain first and untouched.
+	if len(doc.Hooks["SessionStart"]) != 2 || doc.Hooks["SessionStart"][0].Hooks[0].Command != "/usr/bin/false" {
+		t.Fatalf("did not preserve the user's SessionStart hook: %v", doc.Hooks["SessionStart"])
 	}
 }
 

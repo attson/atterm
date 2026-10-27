@@ -303,6 +303,7 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	// optional), which is what lets task state ride the same ingress whether or
 	// not the user has a Feishu binding at all.
 	svc.HookServer().SetTaskStateSink(a.host)
+	svc.HookServer().SetAISessionIdentitySink(a.host)
 	svc.HookServer().SetPromptSink(a.promptHistory)
 
 	svc.HookServer().SetSuspectCallback(func() {

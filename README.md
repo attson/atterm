@@ -45,3 +45,17 @@ cd desktop && wails dev -tags webkit2_41                          # 终端 2(mac
 [FAQ](https://attson.github.io/atterm/guide/faq)
 
 贡献者从 [AGENTS.md](./AGENTS.md) 开始;架构 / 协议 / 鉴权规范在 [docs/spec/](./docs/spec/)。
+
+## 发布
+
+发布统一走预检脚本，不要手工创建并推送版本 tag：
+
+```bash
+git config core.hooksPath .githooks   # 每个 clone 启用一次
+./scripts/ship-release.sh              # 当前 HEAD 可达的最高版本线递增 patch
+./scripts/ship-release.sh --line v0.2 # 明确维护旧版本线
+```
+
+脚本会确认 `main` 与远端同步、工作区干净、嵌入的
+`internal/relay/web-dist/` 与 Node 20 / Go 固定版本构建完全一致，然后才创建并推送 tag。
+`web/` 或 `desktop/frontend/src/` 有改动时，先运行 `./scripts/build-web.sh` 并把生成结果提交。

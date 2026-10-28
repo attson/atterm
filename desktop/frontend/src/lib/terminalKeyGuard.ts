@@ -87,3 +87,23 @@ export function desktopImeInputPayload(
       return null;
   }
 }
+
+/**
+ * Returns true when an input event is the browser-side echo of a physical
+ * keydown. WebKit can dispatch that input before or after keydown, so the
+ * terminal keeps the event briefly pending and uses this predicate to decide
+ * whether xterm already sent the byte through its keydown path.
+ */
+export function desktopImeInputMatchesKeydown(
+  payload: string,
+  inputType: string,
+  key: string,
+): boolean {
+  if (inputType === "deleteContentBackward") return key === "Backspace";
+  if (inputType === "insertLineBreak" || inputType === "insertParagraph") {
+    return key === "Enter" || key === "Return";
+  }
+  if (inputType !== "insertText") return false;
+  if (key === "Spacebar") return payload === " ";
+  return key.length === 1 && payload === key;
+}

@@ -758,7 +758,9 @@ describe("TerminalView web auxiliary keys", () => {
     const handler = source.slice(source.indexOf("function onImeInput"), source.indexOf("function onImeFocus"));
     expect(handler).toContain("if (isDesktopImeTakeover()) return");
     expect(handler.indexOf("isDesktopImeTakeover()")).toBeLessThan(handler.indexOf('event.inputType !== "insertText"'));
-    expect(source).toMatch(/function\s+onDesktopImeInput[\s\S]*?event\.target\s*!==\s*imeInputTarget[\s\S]*?desktopImeInputPayload\(event\)[\s\S]*?event\.stopPropagation\(\)[\s\S]*?conn\?\.sendInput\(payload\)/);
+    expect(source).toMatch(/function\s+onDesktopImeInput[\s\S]*?event\.target\s*!==\s*imeInputTarget[\s\S]*?desktopImeInputPayload\(event\)[\s\S]*?event\.stopPropagation\(\)[\s\S]*?pendingDesktopImeInputs\.push/);
+    expect(source).toContain("desktopImeInputMatchesKeydown");
+    expect(source).toContain("sendDesktopImePayload(item.payload)");
     expect(source).toContain('keyTarget.addEventListener("input", onDesktopImeInput as EventListener, { capture: true })');
     expect(source).toContain('removeEventListener("input", onDesktopImeInput as EventListener');
   });

@@ -37,7 +37,11 @@ import { GetPasteboardFileURLs } from "../../wailsjs/go/main/App";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { isMac } from "../lib/modKey";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
-import { desktopImeInputPayload, installTerminalKeyHandler } from "../lib/terminalKeyGuard";
+import {
+  desktopImeInputMatchesKeydown,
+  desktopImeInputPayload,
+  installTerminalKeyHandler,
+} from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
 import { useTerminalImagePreview } from "../composables/useTerminalImagePreview";
@@ -540,6 +544,9 @@ let cachedHomeDir = "";
 let linkClickDownPos: { x: number; y: number } | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
 let imeInputTarget: HTMLTextAreaElement | null = null;
+let desktopImeInputFlushTimer: number | null = null;
+let pendingDesktopImeInputs: Array<{ payload: string; inputType: string }> = [];
+let lastDesktopAcceptedKeydown: { key: string; at: number } | null = null;
 let terminalTouchViewport: HTMLElement | null = null;
 let selectionPressTimer: ReturnType<typeof setTimeout> | null = null;
 let selectionPressAnchor: { x: number; y: number } | null = null;
@@ -1332,18 +1339,52 @@ function isDesktopImeTakeover(): boolean {
 // xterm 5.3 reconstructs keyCode-229 input by diffing its hidden textarea in
 // timers that race keyup clearing. Desktop IMEs can therefore merge, duplicate,
 // or drop fast keystrokes. installTerminalKeyHandler blocks that path; this
-// capture-phase handler is the sole sender for the corresponding input event.
+// capture-phase handler is the sender for the corresponding input event.
 // It lives on the pane ancestor so it always runs before xterm's textarea
 // listener, including WebKit's input-before-keydown ordering.
-function onDesktopImeInput(event: InputEvent) {
+//
+// WebKit also emits an `insertText` input for an ordinary physical key. In
+// that case xterm has already sent the byte from keydown, so forwarding the
+// input would duplicate it (most visibly, one Space becomes two). The input
+// is held for one task so a following keydown can claim it; keydowns that
+// arrive first are matched immediately.
+function flushPendingDesktopImeInputs(): void {
+  desktopImeInputFlushTimer = null;
+  const pending = pendingDesktopImeInputs;
+  pendingDesktopImeInputs = [];
+  const now = performance.now();
+  const keydown = lastDesktopAcceptedKeydown;
+  for (const item of pending) {
+    if (
+      keydown &&
+      now - keydown.at < 100 &&
+      desktopImeInputMatchesKeydown(item.payload, item.inputType, keydown.key)
+    ) {
+      continue;
+    }
+    sendDesktopImePayload(item.payload);
+  }
+}
+
+function scheduleDesktopImeInputFlush(): void {
+  if (desktopImeInputFlushTimer !== null) return;
+  desktopImeInputFlushTimer = window.setTimeout(flushPendingDesktopImeInputs, 0);
+}
+
+function noteDesktopAcceptedKeydown(event: KeyboardEvent): void {
   if (!isDesktopImeTakeover()) return;
-  if (!imeInputTarget || event.target !== imeInputTarget) return;
-  const payload = desktopImeInputPayload(event);
-  if (payload === null || !auxKeysCanSend.value) return;
-  event.stopPropagation();
+  const now = performance.now();
+  lastDesktopAcceptedKeydown = { key: event.key, at: now };
+  const index = pendingDesktopImeInputs.findIndex((item) =>
+    desktopImeInputMatchesKeydown(item.payload, item.inputType, event.key),
+  );
+  if (index >= 0) pendingDesktopImeInputs.splice(index, 1);
+}
+
+function sendDesktopImePayload(payload: string): void {
+  if (!auxKeysCanSend.value) return;
   conn?.sendInput(payload);
   term?.scrollToBottom();
-  imeInputTarget.value = "";
   if (promptSuggestionActive.value) {
     try {
       promptDraftTracker.feed(payload);
@@ -1354,6 +1395,26 @@ function onDesktopImeInput(event: InputEvent) {
     }
   }
   focusCoalescer?.handle(payload);
+}
+
+function onDesktopImeInput(event: InputEvent) {
+  if (!isDesktopImeTakeover()) return;
+  if (!imeInputTarget || event.target !== imeInputTarget) return;
+  const payload = desktopImeInputPayload(event);
+  if (payload === null || !auxKeysCanSend.value) return;
+  event.stopPropagation();
+  imeInputTarget.value = "";
+  const keydown = lastDesktopAcceptedKeydown;
+  const now = performance.now();
+  if (
+    keydown &&
+    now - keydown.at < 100 &&
+    desktopImeInputMatchesKeydown(payload, event.inputType, keydown.key)
+  ) {
+    return;
+  }
+  pendingDesktopImeInputs.push({ payload, inputType: event.inputType });
+  scheduleDesktopImeInputFlush();
 }
 
 // Desktop uses the ancestor-level takeover above. Plain physical-keyboard
@@ -2183,8 +2244,9 @@ async function ensureTerm() {
       }
       return true;
     },
-    onAcceptedKeydown: () => {
+    onAcceptedKeydown: (event) => {
       keyOriginated = true;
+      noteDesktopAcceptedKeydown(event);
     },
   });
   // GPU-rasterized renderer eliminates the cell-ghosting the DOM renderer
@@ -2834,6 +2896,12 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   isAlive = false;
   void stopAllPreviews();
+  if (desktopImeInputFlushTimer !== null) {
+    window.clearTimeout(desktopImeInputFlushTimer);
+    desktopImeInputFlushTimer = null;
+  }
+  pendingDesktopImeInputs = [];
+  lastDesktopAcceptedKeydown = null;
   // Drop every external callback that could re-enter the term BEFORE we
   // touch conn / term. A queued ResizeObserver entry or a stray document
   // listener firing in the same tick used to call safeFit() → fit.fit() on

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { Terminal } from "xterm";
 import {
+  desktopImeInputMatchesKeydown,
   desktopImeInputPayload,
   isBareModifierKeydown,
   installTerminalKeyHandler,
@@ -137,5 +138,20 @@ describe("desktopImeInputPayload", () => {
     expect(desktopImeInputPayload(input({ inputType: "insertFromComposition" }))).toBeNull();
     expect(desktopImeInputPayload(input({ inputType: "insertFromPaste" }))).toBeNull();
     expect(desktopImeInputPayload(input({ data: "" }))).toBeNull();
+  });
+});
+
+describe("desktopImeInputMatchesKeydown", () => {
+  it("matches the physical-keyboard echo for text and space", () => {
+    expect(desktopImeInputMatchesKeydown("c", "insertText", "c")).toBe(true);
+    expect(desktopImeInputMatchesKeydown(" ", "insertText", " ")).toBe(true);
+    expect(desktopImeInputMatchesKeydown(" ", "insertText", "Spacebar")).toBe(true);
+    expect(desktopImeInputMatchesKeydown("你", "insertText", "229")).toBe(false);
+  });
+
+  it("matches editing input types with their physical keys", () => {
+    expect(desktopImeInputMatchesKeydown("\x7f", "deleteContentBackward", "Backspace")).toBe(true);
+    expect(desktopImeInputMatchesKeydown("\r", "insertLineBreak", "Enter")).toBe(true);
+    expect(desktopImeInputMatchesKeydown("x", "insertFromPaste", "x")).toBe(false);
   });
 });

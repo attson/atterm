@@ -944,6 +944,7 @@ export const en = {
       focusSidebarSearch: "Focus sidebar search",
       terminalSearch: "Search terminal",
       promptHistory: "Recent input history",
+      decreaseFontSize: "Decrease terminal font size",
       toggleMaximize: "Maximize / restore window",
     },
     diagnostics: {

@@ -49,6 +49,7 @@ import {
   getTerminalThemePreference,
   getTerminalFontHead,
   getTerminalFontSize,
+  setTerminalFontSize,
   getTerminalLineHeight,
   getTerminalCursorStyle,
   getTerminalCursorBlink,
@@ -1097,6 +1098,21 @@ function onAppearanceChanged(appearance: TerminalAppearance) {
   terminalAppearance.value = appearance;
 }
 
+// Keep the keyboard shortcut in the same range as SettingsTerminalAppearance.
+// Update the reactive appearance first so every mounted pane follows the
+// shortcut immediately; persist on desktop builds, while web/mobile wrappers
+// without the Wails preference API still get the local visual change.
+function onDecreaseFontSize() {
+  const previous = terminalAppearance.value.fontSize;
+  const next = Math.max(8, Math.min(32, previous - 1));
+  if (next === previous) return;
+  terminalAppearance.value = { ...terminalAppearance.value, fontSize: next };
+  if (!caps.wailsBindings) return;
+  void setTerminalFontSize(next).catch(() => {
+    terminalAppearance.value = { ...terminalAppearance.value, fontSize: previous };
+  });
+}
+
 function onDirectConnectionChanged(enabled: boolean) {
   preferDirectConnection.value = enabled;
 }
@@ -1651,6 +1667,7 @@ useTerminalShortcuts(
       document.dispatchEvent(request);
       return request.defaultPrevented;
     },
+    onDecreaseFontSize,
   },
   { bindings: shortcutBindings },
 );

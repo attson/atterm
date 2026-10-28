@@ -3,8 +3,8 @@ import { ACTIONS, ACTION_BY_ID, DEFAULT_BINDINGS } from "./shortcutBindings";
 import { serialize, parse, type Mod } from "./shortcutBindings";
 
 describe("shortcutBindings registry", () => {
-  it("declares 15 actions", () => {
-    expect(ACTIONS).toHaveLength(15);
+  it("declares 16 actions", () => {
+    expect(ACTIONS).toHaveLength(16);
   });
 
   it("has unique action IDs", () => {
@@ -27,7 +27,7 @@ describe("shortcutBindings registry", () => {
     for (const a of ACTIONS) {
       expect(DEFAULT_BINDINGS[a.defaultBinding]).toBe(a.id);
     }
-    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(15);
+    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(16);
   });
 });
 
@@ -175,11 +175,11 @@ import { buildRoutingTable } from "./shortcutBindings";
 import { formatChord } from "./shortcutBindings";
 
 describe("buildRoutingTable", () => {
-  it("with empty overrides returns the default 15-entry table", () => {
+  it("with empty overrides returns the default 16-entry table", () => {
     const t = buildRoutingTable({});
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
     expect(t["Mod+KeyT"]).toBe("tab.new");
-    expect(Object.keys(t)).toHaveLength(15);
+    expect(Object.keys(t)).toHaveLength(16);
   });
 
   it("override removes the action's previous binding entry from the table", () => {
@@ -191,7 +191,7 @@ describe("buildRoutingTable", () => {
   it("empty override removes the action from the table entirely", () => {
     const t = buildRoutingTable({ "pane.close": "" });
     expect(t["Mod+KeyW"]).toBeUndefined();
-    expect(Object.keys(t)).toHaveLength(14);
+    expect(Object.keys(t)).toHaveLength(15);
   });
 
   it("two actions colliding on the same binding: last one written wins", () => {
@@ -210,7 +210,7 @@ describe("buildRoutingTable", () => {
     const t = buildRoutingTable({ "ghost.action": "Mod+KeyN" });
     // Defaults intact, override ignored
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
-    expect(Object.keys(t)).toHaveLength(15);
+    expect(Object.keys(t)).toHaveLength(16);
   });
 });
 
@@ -293,6 +293,17 @@ describe("prompt history binding", () => {
     expect(action!.group).toBe("pane");
     expect(action!.labelKey).toBe("settings.shortcuts.promptHistory");
     expect(DEFAULT_BINDINGS["Mod+Shift+KeyH"]).toBe("terminal.prompt-history");
+  });
+});
+
+describe("terminal font size binding", () => {
+  it("registers decrease on Mod+Minus", () => {
+    const action = ACTION_BY_ID["terminal.font-size-decrease"];
+    expect(action).toBeDefined();
+    expect(action!.defaultBinding).toBe("Mod+Minus");
+    expect(action!.group).toBe("pane");
+    expect(action!.labelKey).toBe("settings.shortcuts.decreaseFontSize");
+    expect(DEFAULT_BINDINGS["Mod+Minus"]).toBe("terminal.font-size-decrease");
   });
 });
 

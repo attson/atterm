@@ -911,6 +911,7 @@ export const zhCN = {
       focusSidebarSearch: "聚焦侧栏搜索",
       terminalSearch: "搜索终端",
       promptHistory: "最近输入历史",
+      decreaseFontSize: "减小终端字号",
       toggleMaximize: "最大化 / 还原窗口",
     },
     diagnostics: {

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Tag pushes are release operations. Refuse a tag unless it points at the
+# current clean HEAD and its committed browser embed passes the same check CI
+# will run. This catches release mistakes before the tag reaches GitHub.
+
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+  case "$local_ref" in
+    refs/tags/v*)
+      tag_commit=$(git rev-parse "${local_ref}^{commit}")
+      head_commit=$(git rev-parse HEAD)
+      if [ "$tag_commit" != "$head_commit" ]; then
+        echo "[pre-push] release tag ${local_ref#refs/tags/} must point at HEAD." >&2
+        exit 1
+      fi
+      if [ -n "$(git status --porcelain)" ]; then
+        echo "[pre-push] refuse release tag push from a dirty worktree." >&2
+        exit 1
+      fi
+      ./scripts/check-web-dist.sh
+      ;;
+  esac
+done

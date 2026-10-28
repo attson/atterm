@@ -13,11 +13,13 @@ set -euo pipefail
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
-# Anything in web/ that contributes to the built bundle is in scope.
-# This intentionally excludes web/tests/ (test-only) and web/dist/ (build
-# output, not committed).
+# Anything contributing to the shared browser bundle is in scope. The web
+# entrypoint mounts desktop/frontend/src/main.web.ts, so changes under the
+# shared desktop components are just as capable of making web-dist stale as
+# changes under web/. This intentionally excludes web/tests/ (test-only) and
+# web/dist/ (build output, not committed).
 staged=$(git diff --cached --name-only --diff-filter=ACMR | \
-  grep -E '^web/(src/|index\.html|package(-lock)?\.json|vite\.config\.|tsconfig)' \
+  grep -E '^(web/(src/|index\.html|package(-lock)?\.json|vite\.config\.|tsconfig)|desktop/frontend/src/)' \
   || true)
 
 if [ -z "$staged" ]; then
@@ -48,27 +50,23 @@ fi
 
 # Rebuild the embedded dist into a temp dir; compare against the current
 # committed dist. We rebuild rather than only checking "was internal/relay
-# /web-dist/ also staged?" because trivial web/ edits (comment-only) won't
-# always change the hashed bundles, and CI compares the *built* output.
+# /web-dist/ also staged?" because trivial source edits won't always change
+# the hashed bundles, and CI compares the *built* output.
 tmpdir=$(mktemp -d -t atterm-webdist-XXXX)
 trap 'rm -rf "$tmpdir"' EXIT
 
-# build-web.sh writes to internal/relay/web-dist directly. To check
-# without disturbing the working tree, copy the current dist, run the
-# build, then diff.
+# Build into a temporary destination so a failed check never rewrites the
+# worktree.
 current_dist="$tmpdir/current"
 fresh_dist="$tmpdir/fresh"
 cp -R internal/relay/web-dist "$current_dist"
+mkdir -p "$fresh_dist"
+touch "$fresh_dist/.gitkeep"
 
-if ! ./scripts/build-web.sh >/dev/null 2>&1; then
+if ! ATTERM_WEB_DIST_DIR="$fresh_dist" ./scripts/build-web.sh >/dev/null 2>&1; then
   echo "[pre-commit] ./scripts/build-web.sh failed; cannot verify drift." >&2
-  # Restore so the failed build doesn't leave the tree in a half state.
-  rm -rf internal/relay/web-dist
-  cp -R "$current_dist" internal/relay/web-dist
   exit 1
 fi
-
-cp -R internal/relay/web-dist "$fresh_dist"
 
 # Compare current (committed) with fresh (just built). If they differ, the
 # committed dist is stale relative to the web/ source.

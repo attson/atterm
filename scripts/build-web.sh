@@ -29,7 +29,10 @@ if [ "$expected_node_major" != "$actual_node_major" ]; then
   exit 1
 fi
 
-dist=internal/relay/web-dist
+# Callers that only want to compare a fresh build can point this at a temporary
+# directory. The default remains the committed embed tree used by CI and
+# developers running the sync command directly.
+dist="${ATTERM_WEB_DIST_DIR:-internal/relay/web-dist}"
 
 # Wipe the embed dir without removing the .gitkeep anchor.
 mkdir -p "$dist"

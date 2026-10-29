@@ -18,6 +18,10 @@ export interface PluginContextInputs {
 export function createPluginContext(inputs: PluginContextInputs): PluginContext {
   const activeSessionId = computed(() => inputs.activePane.value?.sessionId ?? null);
   const activeIsRemote = computed(() => !!inputs.activePane.value?.remote);
+  const activeRemotePermission = computed(() => {
+    const p = inputs.activePane.value;
+    return p ? inputs.sessionInfoForPane(p)?.remote_permission ?? "full" : "full";
+  });
 
   const activeSessionConnection = computed<SessionFSConnection | null>(() => {
     const p = inputs.activePane.value;
@@ -56,6 +60,7 @@ export function createPluginContext(inputs: PluginContextInputs): PluginContext 
     activePane: inputs.activePane,
     activeSessionId,
     activeIsRemote,
+    activeRemotePermission,
     activeSessionConnection,
     activeEndpoint,
     activeCwd,

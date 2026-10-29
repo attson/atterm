@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../../lib/log";
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
-import { Pin, PinOff, Upload } from "lucide-vue-next";
+import { ChevronsDownUp, Pin, PinOff, RefreshCw, Upload } from "lucide-vue-next";
 import { usePlatform } from "../../platform";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
@@ -14,8 +14,6 @@ import { openPath, closeTab, setViewMode, setDirty, type TabsState } from "./tab
 import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
 import { useFileRevealStore } from "./fileReveal";
 import { createRemoteSessionFS } from "./remoteSessionFS";
-import { createSSHHostFS, SSH_HOST_ROOT } from "./sshHostFS";
-import { listSFTPHosts, type SSHHost } from "../../lib/api";
 import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 // theme.css is loaded once from App.vue so its --ed-* vars are available
@@ -25,6 +23,9 @@ const props = defineProps<{ context: PluginContext }>();
 const platform = usePlatform();
 const store = usePluginConfigStore();
 const { t } = useI18n();
+const readOnlySession = computed(() =>
+  props.context.activeIsRemote.value && (props.context.activeRemotePermission?.value ?? "full") !== "full",
+);
 
 // In-memory pinned root. Resets to "follow active pane" on app restart per spec.
 const pinned = ref<string | null>(null);
@@ -56,61 +57,22 @@ const { onMouseDown: onDividerDown } = useResizer({
   },
 });
 
-// --- data sources -----------------------------------------------------------
-//
-// Two of the three follow the active pane: this machine, and the host a remote
-// session runs on. The third does not — a saved SSH host is browsable because
-// it is saved, not because a terminal happens to be open on it — so it is a
-// deliberate selection that overrides the follow-the-pane default until the
-// user picks the default back.
-
-const sshHosts = ref<SSHHost[]>([]);
-const selectedSSHHostID = ref<string>("");
-
-// The source list is asked for rather than derived from the saved hosts: the
-// Go side hides the hosts atterm will not dial (a ProxyCommand host cannot be
-// connected at all), and it derives that from the same gate the browse path
-// runs, so the list and the refusal cannot drift apart.
-async function loadSSHSources() {
-  // The SSH source exists only where the Wails bindings do. Asking on a web or
-  // mobile build would throw on every panel mount and log a warning about a
-  // feature that build never had.
-  if (!platform.pluginHost) return;
-  try {
-    sshHosts.value = (await listSFTPHosts()) ?? [];
-  } catch (err) {
-    logWarn("file-explorer", "ssh sources unavailable", { error: errText(err) });
-    sshHosts.value = [];
-  }
-}
-void loadSSHSources();
-
-function sshHostLabel(h: SSHHost): string {
-  return h.alias || `${h.user}@${h.host}`;
-}
-
 const bridgeOwner = computed(() => {
-  if (selectedSSHHostID.value) {
-    return { identity: `ssh:${selectedSSHHostID.value}`, connection: null, sshHostID: selectedSSHHostID.value };
-  }
   if (!props.context.activeIsRemote.value) {
-    return { identity: platform.pluginHost ? "local" : null, connection: null, sshHostID: "" };
+    return { identity: platform.pluginHost ? "local" : null, connection: null };
   }
   const sessionID = props.context.activeSessionId.value;
   const connection = props.context.activeSessionConnection.value;
-  return { identity: sessionID && connection ? `remote:${sessionID}` : null, connection, sshHostID: "" };
+  return { identity: sessionID && connection ? `remote:${sessionID}` : null, connection };
 });
 
 // Preserve an optimistic cwd only for the filesystem that reported it. A
 // stale/null update from one bridge must never become another bridge's root.
 const lastCwds = ref<Record<string, string>>({});
 watch(
-  () => [props.context.activeCwd.value, bridgeOwner.value.identity, bridgeOwner.value.sshHostID] as const,
-  ([cwd, identity, sshHostID]) => {
-    // An SSH source has no cwd of its own, and the active pane's belongs to a
-    // different machine entirely. Recording it here would make a local path
-    // the root of a remote tree the moment the user switched sources.
-    if (cwd && identity && !sshHostID) {
+  () => [props.context.activeCwd.value, bridgeOwner.value.identity] as const,
+  ([cwd, identity]) => {
+    if (cwd && identity) {
       lastCwds.value = { ...lastCwds.value, [identity]: cwd };
     }
   },
@@ -118,31 +80,34 @@ watch(
 );
 
 const root = computed<string | null>(() => {
-  if (bridgeOwner.value.sshHostID) return SSH_HOST_ROOT;
   if (pinned.value) return pinned.value;
   const cur = props.context.activeCwd.value;
   if (cur) return cur;
   const identity = bridgeOwner.value.identity;
   return identity ? lastCwds.value[identity] ?? null : null;
 });
+const pathDraft = ref("");
+watch(root, (value) => { if (value) pathDraft.value = value; }, { immediate: true });
 
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
 const fs = shallowRef<FileSystemBridge | null>(null);
 const fsGeneration = ref(0);
 const fileNameSearch = ref("");
+const fileSearchMode = ref<"name" | "content">("name");
+const searchCaseSensitive = ref(false);
+const searchRegex = ref(false);
+const sortMode = ref<"name" | "modified" | "size">("name");
 
 watch(
-  () => [bridgeOwner.value.identity, bridgeOwner.value.connection, bridgeOwner.value.sshHostID] as const,
-  async ([identity, connection, sshHostID]) => {
-    const next = sshHostID
-      ? createSSHHostFS(sshHostID)
-      : identity === "local"
-        ? platform.pluginHost
-          ? createLocalFSBridge(platform.pluginHost, platform.events)
-          : null
-        : identity && connection
-          ? createRemoteSessionFS(connection, identity)
-          : null;
+  () => [bridgeOwner.value.identity, bridgeOwner.value.connection] as const,
+  async ([identity, connection]) => {
+    const next = identity === "local"
+      ? platform.pluginHost
+        ? createLocalFSBridge(platform.pluginHost, platform.events)
+        : null
+      : identity && connection
+        ? createRemoteSessionFS(connection, identity)
+        : null;
     const previous = fs.value;
     const identityChanged = previous?.identity !== next?.identity;
 
@@ -152,6 +117,10 @@ watch(
       pinned.value = null;
       tabsState.value = { tabs: [], activeIdx: -1 };
       fileNameSearch.value = "";
+      fileSearchMode.value = "name";
+      searchCaseSensitive.value = false;
+      searchRegex.value = false;
+      sortMode.value = "name";
     }
     await nextTick();
     previous?.dispose?.();
@@ -169,59 +138,43 @@ const fileTreeRef = ref<{
   revealPath: (p: string) => Promise<boolean>;
   refresh: () => void;
   refreshDir: (dir: string) => Promise<void>;
-  /** The tree's currently selected directory — see FileTree.selectedDir. */
   selectedDir: string;
+  collapseAll: () => void;
 } | null>(null);
 
-// --- upload (SSH source only) -----------------------------------------------
-//
-// The panel's other write paths edit a file that is already there. This one
-// puts a new file on a machine that has no trash and no versioning, which is
-// why the executor refuses an upload onto an occupied path rather than
-// overwriting: the cost of the refusal is one more click, the cost of the
-// overwrite is unrecoverable. Everything this handler does with the refusal is
-// show the sentence the bridge produced for it.
 const uploadInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
+const uploadTargetDir = computed(() => fileTreeRef.value?.selectedDir ?? root.value);
 
-// Where an upload lands: the directory selected in the tree, falling back to
-// the root before anything has been selected.
-//
-// It is not the root unconditionally, which is what this used to be. An SSH
-// source opens at "/" because that is the one path that is never a lie about
-// the far side — but for any non-root login "/" is precisely the directory the
-// user cannot write to, so the single write this feature offers would have
-// been guaranteed to fail. The button's tooltip names this same path, so the
-// label and the behaviour cannot drift apart.
-const uploadTargetDir = computed<string | null>(() => fileTreeRef.value?.selectedDir ?? root.value);
-
-function pickUpload() {
-  uploadInput.value?.click();
+async function jumpToPath() {
+  const path = pathDraft.value.trim();
+  if (!path || !fs.value) return;
+  try {
+    const meta = await fs.value.fileMeta(path) as { isDir?: boolean };
+    pinned.value = meta.isDir ? path : path.slice(0, Math.max(1, path.lastIndexOf("/")));
+  } catch (err) {
+    props.context.showToast(errText(err));
+  }
 }
+
+function pickUpload() { uploadInput.value?.click(); }
 
 async function onUploadPicked(ev: Event) {
   const input = ev.target as HTMLInputElement;
   const file = input.files?.[0] ?? null;
-  input.value = ""; // so picking the same file twice fires again
+  input.value = "";
   const bridge = fs.value;
   const dir = uploadTargetDir.value;
   if (!file || !bridge || !dir) return;
   uploading.value = true;
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
     const target = dir.endsWith("/") ? dir + file.name : `${dir}/${file.name}`;
-    await bridge.writeFile(target, bytes, null);
-    props.context.showToast(t("plugins.fileExplorer.sshUploadDone", { name: file.name, dir }));
-    // Re-list the directory that was written to, not the whole tree: this
-    // source has no change notification, and a full rebuild would collapse the
-    // user back to the root right after they uploaded somewhere below it.
-    void fileTreeRef.value?.refreshDir?.(dir);
+    await bridge.writeFile(target, new Uint8Array(await file.arrayBuffer()), null);
+    props.context.showToast(t("plugins.fileExplorer.uploadDone", { name: file.name, dir }));
+    await fileTreeRef.value?.refreshDir?.(dir);
   } catch (err) {
-    // errText carries the bridge's actionable sentence for the default
-    // refusal ("... already exists ... rename it or delete it first"), not the
-    // raw already_exists token.
     props.context.showToast(errText(err));
-    logWarn("file-explorer", "ssh upload failed", { error: errText(err) });
+    logWarn("file-explorer", "file upload failed", { error: errText(err) });
   } finally {
     uploading.value = false;
   }
@@ -236,7 +189,7 @@ watch(
     await nextTick(); // let the tree mount if the panel just opened
     const isFile = (await fileTreeRef.value?.revealPath(p)) ?? false;
     if (isFile) {
-      tabsState.value = openPath(tabsState.value, p, "preview");
+      tabsState.value = openPath(tabsState.value, p, "persistent");
     }
     fileRevealStore.consume();
   },
@@ -244,7 +197,7 @@ watch(
 );
 
 function onFileClick(path: string) {
-  tabsState.value = openPath(tabsState.value, path, "preview");
+  tabsState.value = openPath(tabsState.value, path, "persistent");
 }
 
 function onFileDoubleClick(path: string) {
@@ -255,8 +208,43 @@ function selectTab(idx: number) {
   tabsState.value = { ...tabsState.value, activeIdx: idx };
 }
 
+function onExplorerKeydown(event: KeyboardEvent) {
+  const mod = event.metaKey || event.ctrlKey;
+  if (!mod) return;
+  if (event.key.toLowerCase() === "w" && tabsState.value.activeIdx >= 0) {
+    event.preventDefault();
+    void onCloseRequest(tabsState.value.activeIdx);
+    return;
+  }
+  if (event.key === "Tab" && tabsState.value.tabs.length > 1) {
+    event.preventDefault();
+    const step = event.shiftKey ? -1 : 1;
+    const count = tabsState.value.tabs.length;
+    tabsState.value = { ...tabsState.value, activeIdx: (tabsState.value.activeIdx + step + count) % count };
+  }
+}
+
 function closeTabAt(idx: number) {
   tabsState.value = closeTab(tabsState.value, idx);
+}
+
+function bulkCloseTabs(action: "close-others" | "close-all" | "close-left" | "close-right", idx: number) {
+  const target = action === "close-all"
+    ? tabsState.value.tabs.map((_, i) => i)
+    : action === "close-others"
+      ? tabsState.value.tabs.map((_, i) => i).filter((i) => i !== idx)
+      : action === "close-left"
+        ? tabsState.value.tabs.map((_, i) => i).filter((i) => i < idx)
+        : tabsState.value.tabs.map((_, i) => i).filter((i) => i > idx);
+  const dirty = target.filter((i) => tabsState.value.tabs[i]?.dirty);
+  if (dirty.length > 0) {
+    props.context.showToast(t("plugins.fileExplorer.bulkCloseDirty"));
+  }
+  const keep = tabsState.value.tabs.filter((tab, i) => !target.includes(i) || tab.dirty);
+  if (keep.length === tabsState.value.tabs.length) return;
+  const activePath = tabsState.value.tabs[tabsState.value.activeIdx]?.path;
+  const nextIdx = Math.max(0, keep.findIndex((tab) => tab.path === activePath));
+  tabsState.value = { tabs: keep, activeIdx: keep.length ? nextIdx : -1 };
 }
 
 interface CloseConfirmSpec {
@@ -341,23 +329,45 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 </script>
 
 <template>
-  <div class="file-explorer">
+  <div class="file-explorer" tabindex="0" @keydown="onExplorerKeydown">
     <div class="fe-body" ref="bodyRef">
       <div class="tree-pane" :style="{ width: (innerRatio * 100) + '%' }">
         <header class="fe-header">
           <span class="root-path" :title="root ?? ''">{{ root ?? t("plugins.fileExplorer.noActivePaneShort") }}</span>
+          <input
+            v-if="root"
+            v-model="pathDraft"
+            class="path-jump"
+            :placeholder="t('plugins.fileExplorer.pathPlaceholder')"
+            :aria-label="t('plugins.fileExplorer.pathLabel')"
+            @keydown.enter.prevent="jumpToPath"
+          />
+          <span v-if="readOnlySession" class="readonly-badge">{{ t("plugins.fileExplorer.readOnly") }}</span>
           <button
-            v-if="bridgeOwner.sshHostID"
-            class="pin"
-            data-test="ssh-upload"
-            :disabled="uploading || !uploadTargetDir"
-            :title="t('plugins.fileExplorer.sshUpload', { dir: uploadTargetDir ?? '' })"
+            v-if="fs && uploadTargetDir && !readOnlySession"
+            class="upload-btn"
+            data-test="file-upload"
+            :disabled="uploading"
+            :title="t('plugins.fileExplorer.uploadFile', { dir: uploadTargetDir })"
             @click="pickUpload"
           >
             <Upload :size="14" :stroke-width="1.5" />
           </button>
           <button
-            v-else
+            v-if="fs"
+            class="toolbar-btn"
+            data-test="refresh-tree"
+            :title="t('plugins.fileExplorer.refresh')"
+            @click="fileTreeRef?.refresh()"
+          ><RefreshCw :size="14" :stroke-width="1.5" /></button>
+          <button
+            v-if="fs"
+            class="toolbar-btn"
+            data-test="collapse-tree"
+            :title="t('plugins.fileExplorer.collapseAll')"
+            @click="fileTreeRef?.collapseAll()"
+          ><ChevronsDownUp :size="14" :stroke-width="1.5" /></button>
+          <button
             class="pin"
             :class="{ pinned: pinned !== null }"
             :title="pinned !== null ? t('plugins.fileExplorer.unpinFollow') : t('plugins.fileExplorer.pinCurrentCwd')"
@@ -366,33 +376,50 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             <component :is="pinned !== null ? Pin : PinOff" :size="14" :stroke-width="1.5" />
           </button>
         </header>
-        <div v-if="sshHosts.length > 0" class="source-picker">
-          <select
-            v-model="selectedSSHHostID"
-            data-test="fs-source"
-            :aria-label="t('plugins.fileExplorer.sourceLabel')"
-          >
-            <option value="">{{ t("plugins.fileExplorer.sourceActivePane") }}</option>
-            <option v-for="h in sshHosts" :key="h.id" :value="h.id">
-              {{ sshHostLabel(h) }}
-            </option>
-          </select>
-        </div>
-        <input
-          ref="uploadInput"
-          class="upload-input"
-          data-test="ssh-upload-input"
-          type="file"
-          @change="onUploadPicked"
-        >
+        <input ref="uploadInput" class="upload-input" data-test="file-upload-input" type="file" @change="onUploadPicked">
+        <div v-if="uploading" class="upload-status">{{ t("plugins.fileExplorer.uploading") }}</div>
         <div class="tree-search">
-          <input
-            v-model="fileNameSearch"
-            data-test="file-name-search"
-            type="search"
-            :placeholder="t('plugins.fileExplorer.searchFiles')"
-            :aria-label="t('plugins.fileExplorer.searchFiles')"
-          />
+          <div class="search-row">
+            <input
+              v-model="fileNameSearch"
+              :data-test="fileSearchMode === 'name' ? 'file-name-search' : 'file-content-search'"
+              type="search"
+              :placeholder="fileSearchMode === 'name'
+                ? t('plugins.fileExplorer.searchFiles')
+                : t('plugins.fileExplorer.searchContent')"
+              :aria-label="fileSearchMode === 'name'
+                ? t('plugins.fileExplorer.searchFiles')
+                : t('plugins.fileExplorer.searchContent')"
+            />
+            <select v-model="fileSearchMode" class="search-mode" data-test="file-search-mode">
+              <option value="name">{{ t('plugins.fileExplorer.searchByName') }}</option>
+              <option value="content">{{ t('plugins.fileExplorer.searchByContent') }}</option>
+            </select>
+            <template v-if="fileSearchMode === 'content'">
+              <button
+                type="button"
+                class="search-option"
+                :class="{ active: searchCaseSensitive }"
+                :title="t('plugins.fileExplorer.searchCaseSensitive')"
+                @click="searchCaseSensitive = !searchCaseSensitive"
+              >Aa</button>
+              <button
+                type="button"
+                class="search-option"
+                :class="{ active: searchRegex }"
+                :title="t('plugins.fileExplorer.searchRegex')"
+                @click="searchRegex = !searchRegex"
+              >.*</button>
+            </template>
+          </div>
+        </div>
+        <div class="tree-toolbar">
+          <span>{{ t("plugins.fileExplorer.sortBy") }}</span>
+          <select v-model="sortMode" data-test="file-sort-mode">
+            <option value="name">{{ t("plugins.fileExplorer.sortName") }}</option>
+            <option value="modified">{{ t("plugins.fileExplorer.sortModified") }}</option>
+            <option value="size">{{ t("plugins.fileExplorer.sortSize") }}</option>
+          </select>
         </div>
         <div class="tree-scroll">
           <FileTree
@@ -403,7 +430,12 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :root="root"
             :show-hidden="showHidden"
             :show-line-numbers="showLineNumbers"
+            :read-only="readOnlySession"
             :search-query="fileNameSearch"
+            :search-mode="fileSearchMode"
+            :search-case-sensitive="searchCaseSensitive"
+            :search-regex="searchRegex"
+            :sort-mode="sortMode"
             :context="context"
             @file-clicked="onFileClick"
             @file-double-clicked="onFileDoubleClick"
@@ -422,6 +454,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
           @select="selectTab"
           @close-request="onCloseRequest"
           @toggle-view-mode="onToggleViewMode"
+          @tab-action="bulkCloseTabs"
         />
         <div class="editor-area">
           <FileEditor
@@ -431,6 +464,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :fs="fs"
             :path="activePath"
             :show-line-numbers="showLineNumbers"
+            :read-only="readOnlySession"
             :theme="explorerTheme"
             :view-mode="activeViewMode"
             @dirty-change="onDirtyChange"
@@ -469,6 +503,17 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   letter-spacing: 0.4px;
 }
 .root-path { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path-jump { width: 86px; min-width: 0; height: 20px; border: 1px solid var(--ed-border, #444c56); border-radius: 3px; background: var(--ed-editor-bg, #22272e); color: var(--ed-row-fg, #adbac7); font: inherit; font-size: 10px; padding: 0 4px; }
+.readonly-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 3px;
+  color: var(--ed-muted, rgba(173, 186, 199, 0.7));
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
 .pin {
   background: none;
   border: none;
@@ -479,29 +524,31 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   display: inline-flex;
   align-items: center;
 }
+.upload-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.55;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+}
+.upload-btn:hover { opacity: 1; }
+.upload-btn:disabled { opacity: 0.35; cursor: default; }
 .pin:hover { opacity: 1; }
 .pin.pinned { opacity: 1; color: var(--ed-tab-active-bar, #539bf5); }
-
-.source-picker {
-  padding: 6px 8px 0;
-  background: var(--ed-tree-bg, #2d333b);
+.toolbar-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 0 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.65;
 }
-.source-picker select {
-  width: 100%;
-  min-width: 0;
-  height: 24px;
-  box-sizing: border-box;
-  border: 1px solid var(--ed-border, #444c56);
-  border-radius: 4px;
-  background: var(--ed-editor-bg, #22272e);
-  color: var(--ed-row-fg, #adbac7);
-  padding: 0 6px;
-  font: inherit;
-  font-size: 12px;
-  outline: none;
-}
-/* The file picker is opened by the toolbar button; a visible file input would
-   take more room in this narrow panel than the tree it sits above. */
+.toolbar-btn:hover { opacity: 1; }
 .upload-input {
   position: absolute;
   width: 1px;
@@ -515,6 +562,31 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   border-bottom: 1px solid var(--ed-border, #444c56);
   background: var(--ed-tree-bg, #2d333b);
 }
+.upload-status { padding: 4px 8px; color: var(--ed-muted, rgba(173, 186, 199, 0.75)); font-size: 11px; border-bottom: 1px solid var(--ed-border, #444c56); }
+.search-row { display: flex; gap: 6px; }
+.search-row input { flex: 1 1 auto; min-width: 0; }
+.search-mode {
+  flex: 0 0 auto;
+  width: 68px;
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 4px;
+  background: var(--ed-editor-bg, #22272e);
+  color: var(--ed-row-fg, #adbac7);
+  font: inherit;
+  font-size: 11px;
+}
+.search-option {
+  flex: 0 0 auto;
+  width: 28px;
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 4px;
+  background: var(--ed-editor-bg, #22272e);
+  color: var(--ed-muted, rgba(173, 186, 199, 0.7));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.search-option.active { color: var(--ed-tab-active-fg, #cdd9e5); border-color: var(--ed-tab-active-bar, #539bf5); background: var(--ed-row-selected, #37373d); }
 .tree-search input {
   width: 100%;
   min-width: 0;
@@ -532,6 +604,17 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 .tree-search input:focus {
   border-color: var(--ed-tab-active-bar, #539bf5);
 }
+.tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--ed-border, #444c56);
+  color: var(--ed-muted, rgba(173, 186, 199, 0.65));
+  font-size: 10px;
+}
+.tree-toolbar span { flex: 1 1 auto; }
+.tree-toolbar select { max-width: 100px; border: 1px solid var(--ed-border, #444c56); border-radius: 3px; background: var(--ed-editor-bg, #22272e); color: var(--ed-row-fg, #adbac7); font: inherit; }
 
 .fe-body { flex: 1 1 auto; display: flex; min-height: 0; }
 .tree-pane {

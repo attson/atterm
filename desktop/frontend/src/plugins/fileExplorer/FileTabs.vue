@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { X } from "lucide-vue-next";
 import type { Tab } from "./tabsModel";
 import { useI18n } from "../../i18n/useI18n";
@@ -14,9 +14,33 @@ const emit = defineEmits<{
   (e: "select", idx: number): void;
   (e: "close-request", idx: number): void;
   (e: "toggle-view-mode"): void;
+  (e: "tab-action", action: "close-others" | "close-all" | "close-left" | "close-right", idx: number): void;
 }>();
 
 const { t } = useI18n();
+const menu = ref<{ x: number; y: number; idx: number } | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+function openMenu(event: MouseEvent, idx: number) {
+  event.preventDefault();
+  menu.value = { x: event.clientX, y: event.clientY, idx };
+  void nextTick(() => {
+    const el = menuEl.value;
+    if (!el || !menu.value) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    const x = Math.max(pad, Math.min(menu.value.x, window.innerWidth - rect.width - pad));
+    const y = Math.max(pad, Math.min(menu.value.y, window.innerHeight - rect.height - pad));
+    menu.value = { ...menu.value, x, y };
+  });
+}
+function closeMenu() { menu.value = null; }
+function action(action: "close-others" | "close-all" | "close-left" | "close-right") {
+  const idx = menu.value?.idx;
+  menu.value = null;
+  if (idx !== undefined) emit("tab-action", action, idx);
+}
+onMounted(() => document.addEventListener("mousedown", closeMenu));
+onBeforeUnmount(() => document.removeEventListener("mousedown", closeMenu));
 
 function basename(p: string): string {
   const i = p.lastIndexOf("/");
@@ -39,6 +63,7 @@ const activeHasDualMode = computed(() => {
       :class="{ active: i === props.activeIdx, preview: !t.persistent }"
       :title="t.path"
       @click="emit('select', i)"
+      @contextmenu="openMenu($event, i)"
     >
       <span class="name">
         {{ basename(t.path) }}<span v-if="t.dirty" class="dot" data-test="dirty-dot">•</span>
@@ -59,6 +84,12 @@ const activeHasDualMode = computed(() => {
         ? t('plugins.fileExplorer.showAsRender')
         : t('plugins.fileExplorer.showAsCode') }}
     </button>
+    <div v-if="menu" ref="menuEl" class="tab-menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }" @mousedown.stop>
+      <button @click="action('close-others')">{{ t("plugins.fileExplorer.closeOthers") }}</button>
+      <button @click="action('close-left')">{{ t("plugins.fileExplorer.closeLeft") }}</button>
+      <button @click="action('close-right')">{{ t("plugins.fileExplorer.closeRight") }}</button>
+      <button @click="action('close-all')">{{ t("plugins.fileExplorer.closeAll") }}</button>
+    </div>
   </div>
 </template>
 
@@ -124,4 +155,7 @@ const activeHasDualMode = computed(() => {
   cursor: pointer;
 }
 .view-toggle:hover { background: var(--ed-row-hover, rgba(173, 186, 199, 0.1)); }
+.tab-menu { position: fixed; z-index: 70; display: flex; flex-direction: column; min-width: 130px; padding: 4px 0; border: 1px solid var(--ed-border, #444c56); border-radius: 4px; background: var(--ed-shell-bg, #22272e); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+.tab-menu button { border: 0; background: none; color: var(--ed-row-fg, #adbac7); text-align: left; padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.tab-menu button:hover { background: var(--ed-row-hover, rgba(255,255,255,.08)); }
 </style>

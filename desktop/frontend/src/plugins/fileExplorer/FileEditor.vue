@@ -10,16 +10,17 @@ import BinaryBanner from "./BinaryBanner.vue";
 import type { FileSystemBridge } from "./fsBridge";
 import { useI18n } from "../../i18n/useI18n";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   fs: FileSystemBridge;
   path: string;
   showLineNumbers: boolean;
+  readOnly?: boolean;
   theme: "dimmed" | "light";
   /** Dual-mode toggle for kinds with both source and rendered views
    *  (SVG: code↔image; markdown: code↔rendered HTML). Ignored for
    *  single-view kinds. */
   viewMode: "code" | "render";
-}>();
+}>(), { readOnly: false });
 
 const emit = defineEmits<{
   (e: "dirty-change", dirty: boolean): void;
@@ -71,6 +72,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="file-editor-host">
+    <div v-if="readOnly" class="banner muted readonly-note">{{ t("plugins.fileExplorer.readOnlyHint") }}</div>
     <div v-if="error" class="banner err">
       {{ t("plugins.fileExplorer.errorPrefix", { message: error }) }}
     </div>
@@ -80,6 +82,7 @@ onBeforeUnmount(() => {
         :fs="fs"
         :path="path"
         :show-line-numbers="showLineNumbers"
+        :read-only="readOnly"
         :theme="theme"
         @dirty-change="(v: boolean) => emit('dirty-change', v)"
       />
@@ -116,4 +119,5 @@ onBeforeUnmount(() => {
 .banner { padding: 18px 20px; font-size: 13px; }
 .err { color: var(--ed-error, #f47067); }
 .muted { color: var(--ed-muted, rgba(173, 186, 199, 0.55)); }
+.readonly-note { padding: 4px 10px; border-bottom: 1px solid var(--ed-border, #444c56); font-size: 11px; }
 </style>

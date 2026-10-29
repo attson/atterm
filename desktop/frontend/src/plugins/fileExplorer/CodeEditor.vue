@@ -13,12 +13,13 @@ const { t } = useI18n();
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   fs: FileSystemBridge;
   path: string;
   showLineNumbers: boolean;
+  readOnly?: boolean;
   theme: "dimmed" | "light";
-}>();
+}>(), { readOnly: false });
 
 const emit = defineEmits<{
   (e: "dirty-change", dirty: boolean): void;
@@ -32,6 +33,8 @@ const loadedAt = ref<number | null>(null);
 const dirty = ref(false);
 const conflict = ref<{ currentModTime: number } | null>(null);
 const saveError = ref<string>("");
+const cursor = ref({ line: 1, column: 1 });
+const saveState = ref<"idle" | "saving" | "saved">("idle");
 
 let view: EditorView | null = null;
 let off: (() => void) | null = null;
@@ -43,6 +46,7 @@ function isCurrent(
   fs: FileSystemBridge,
   path: string,
   showLineNumbers: boolean,
+  readOnly: boolean,
   theme: "dimmed" | "light",
   request: number,
 ): boolean {
@@ -51,6 +55,7 @@ function isCurrent(
     && props.fs === fs
     && props.path === path
     && props.showLineNumbers === showLineNumbers
+    && props.readOnly === readOnly
     && props.theme === theme;
 }
 
@@ -107,10 +112,17 @@ function setDirty(next: boolean) {
   emit("dirty-change", next);
 }
 
+function updateCursor(next: EditorView) {
+  const pos = next.state.selection.main.head;
+  const line = next.state.doc.lineAt(pos);
+  cursor.value = { line: line.number, column: pos - line.from + 1 };
+}
+
 async function load() {
   const fs = props.fs;
   const path = props.path;
   const showLineNumbers = props.showLineNumbers;
+  const readOnly = props.readOnly;
   const theme = props.theme;
   const request = ++loadGeneration;
   if (disposed) return;
@@ -119,13 +131,13 @@ async function load() {
   view = null;
   try {
     const meta = (await fs.fileMeta(path)) as { size: number; modTime: number; isBinary: boolean };
-    if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
+    if (!isCurrent(fs, path, showLineNumbers, readOnly, theme, request)) return;
     loadedAt.value = meta.modTime;
     reloadPending.value = false;
     if (meta.isBinary) { state.value = "binary"; setDirty(false); return; }
     if (meta.size > MAX_BYTES_FRONTEND) { state.value = "tooLarge"; setDirty(false); return; }
     const result = (await fs.readFile(path, MAX_BYTES_FRONTEND)) as { data: unknown };
-    if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
+    if (!isCurrent(fs, path, showLineNumbers, readOnly, theme, request)) return;
     const text = decodeFileBytes(result.data);
 
     originalText = text;
@@ -136,6 +148,10 @@ async function load() {
     const dirtyListener = EditorView.updateListener.of((v) => {
       if (!v.docChanged) return;
       setDirty(v.state.doc.toString() !== originalText);
+      updateCursor(v.view);
+    });
+    const selectionListener = EditorView.updateListener.of((v) => {
+      if (v.selectionSet || v.docChanged) updateCursor(v.view);
     });
 
     const saveKey = keymap.of([
@@ -155,36 +171,41 @@ async function load() {
       history(),
       search({ top: true }),
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
-      saveKey,
       dirtyListener,
+      selectionListener,
     ];
+    if (!props.readOnly) exts.push(saveKey);
+    if (props.readOnly) exts.push(EditorState.readOnly.of(true));
     if (showLineNumbers) exts.push(lineNumbers());
     const langExt = await languageForPath(path);
     if (langExt) exts.push(langExt);
 
-    if (!isCurrent(fs, path, showLineNumbers, theme, request) || !host.value) return;
+    if (!isCurrent(fs, path, showLineNumbers, readOnly, theme, request) || !host.value) return;
     const nextView = new EditorView({
       state: EditorState.create({ doc: text, extensions: exts }),
       parent: host.value,
     });
-    if (!isCurrent(fs, path, showLineNumbers, theme, request)) {
+    if (!isCurrent(fs, path, showLineNumbers, readOnly, theme, request)) {
       nextView.destroy();
       return;
     }
     view = nextView;
+    updateCursor(nextView);
+    saveState.value = "idle";
     state.value = "ok";
   } catch (err) {
-    if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
+    if (!isCurrent(fs, path, showLineNumbers, readOnly, theme, request)) return;
     state.value = "error";
     errorMsg.value = (err as Error).message;
   }
 }
 
 async function save(): Promise<boolean> {
-  if (!view || state.value !== "ok") return false;
+  if (props.readOnly || !view || state.value !== "ok") return false;
   const text = view.state.doc.toString();
   const bytes = new TextEncoder().encode(text);
   saveError.value = "";
+  saveState.value = "saving";
   try {
     const meta = await props.fs.writeFile(props.path, bytes, loadedAt.value);
     originalText = text;
@@ -192,6 +213,7 @@ async function save(): Promise<boolean> {
     reloadPending.value = false;
     conflict.value = null;
     setDirty(false);
+    saveState.value = "saved";
     return true;
   } catch (err) {
     const msg = (err as Error).message ?? "";
@@ -201,6 +223,7 @@ async function save(): Promise<boolean> {
     } else {
       saveError.value = msg;
     }
+    saveState.value = "idle";
     return false;
   }
 }
@@ -242,7 +265,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [props.path, props.fs, props.showLineNumbers, props.theme],
+  () => [props.path, props.fs, props.showLineNumbers, props.readOnly, props.theme],
   () => { void load(); },
 );
 
@@ -295,6 +318,13 @@ defineExpose({
     <div v-else-if="state === 'error'" class="banner err">{{ t("plugins.fileExplorer.errorPrefix", { message: errorMsg }) }}</div>
     <div v-else-if="state === 'loading'" class="banner muted">{{ t("common.loading") }}</div>
     <div v-show="state === 'ok'" ref="host" class="cm-host" />
+    <div v-if="state === 'ok'" class="editor-status" data-test="editor-status">
+      <span>Ln {{ cursor.line }}, Col {{ cursor.column }}</span>
+      <span>{{ path.split('/').pop() }}</span>
+      <span v-if="readOnly">{{ t("plugins.fileExplorer.readOnly") }}</span>
+      <span v-else-if="saveState === 'saving'">{{ t("plugins.fileExplorer.saving") }}</span>
+      <span v-else-if="saveState === 'saved'">{{ t("plugins.fileExplorer.saved") }}</span>
+    </div>
   </div>
 </template>
 
@@ -306,6 +336,17 @@ defineExpose({
   background: var(--ed-editor-bg, #22272e);
 }
 .cm-host { flex: 1 1 auto; overflow: auto; }
+.editor-status {
+  display: flex;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border-top: 1px solid var(--ed-border, #444c56);
+  background: var(--ed-gutter-bg, #22272e);
+  color: var(--ed-muted, rgba(173, 186, 199, 0.65));
+  font-size: 10px;
+}
+.editor-status span:nth-child(2) { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-host::-webkit-scrollbar,
 .cm-host :deep(.cm-scroller)::-webkit-scrollbar {
   width: 12px;

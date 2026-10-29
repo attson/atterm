@@ -31,6 +31,8 @@ export interface PluginContext {
   activePane: Ref<Pane | null>;
   activeSessionId: ComputedRef<string | null>;
   activeIsRemote: ComputedRef<boolean>;
+  /** Permission of the active remote session. Missing means full for legacy/local sessions. */
+  activeRemotePermission?: ComputedRef<string>;
   activeSessionConnection: ComputedRef<SessionFSConnection | null>;
   activeEndpoint: ComputedRef<Endpoint | null>;
   activeCwd: ComputedRef<string | null>;

@@ -5,6 +5,7 @@ import FileTreeNode from "./FileTreeNode.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import type { FileSystemBridge } from "./fsBridge";
 import { searchFileNames, type FileNameSearchResult } from "./fileNameSearch";
+import { searchFileContents, type FileContentSearchResult } from "./contentSearch";
 import { fallbackCopyText } from "../../lib/terminalCopy";
 import { quoteForShell } from "./shellQuote";
 import type { PluginContext } from "../types";
@@ -25,6 +26,8 @@ interface TreeNode {
   isDir: boolean;
   expanded: boolean;
   children: TreeNode[] | null;
+  size?: number;
+  modTime?: number;
 }
 
 const props = defineProps<{
@@ -34,7 +37,12 @@ const props = defineProps<{
   /** Editor-side view option, surfaced here because the context menu is
    *  where both view toggles live. The tree itself doesn't read it. */
   showLineNumbers?: boolean;
+  readOnly?: boolean;
   searchQuery?: string;
+  searchMode?: "name" | "content";
+  searchCaseSensitive?: boolean;
+  searchRegex?: boolean;
+  sortMode?: "name" | "modified" | "size";
   context?: PluginContext;
 }>();
 
@@ -48,6 +56,10 @@ const emit = defineEmits<{
 
 type ContextMenuAnchor = { x: number; y: number; node: TreeNode; level: number; shift: boolean };
 const menu = ref<ContextMenuAnchor | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+const copyBuffer = ref<{ path: string; isDir: boolean; fsIdentity: string } | null>(null);
+const canPaste = computed(() => !!copyBuffer.value && copyBuffer.value.fsIdentity === props.fs.identity);
+const pasteState = ref<{ current: string; cancelled: boolean } | null>(null);
 
 type InlineIntent =
   | { kind: "newFile"; parentPath: string; parentLevel: number }
@@ -71,9 +83,21 @@ function baseName(p: string): string {
 function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
   ev.preventDefault();
   menu.value = { x: ev.clientX, y: ev.clientY, node, level, shift: ev.shiftKey };
+  void nextTick(() => {
+    const el = menuEl.value;
+    if (!el || !menu.value) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    const x = Math.max(pad, Math.min(menu.value.x, window.innerWidth - rect.width - pad));
+    const y = Math.max(pad, Math.min(menu.value.y, window.innerHeight - rect.height - pad));
+    menu.value = { ...menu.value, x, y };
+  });
 }
 
 function closeMenu() { menu.value = null; }
+function cancelPaste() {
+  if (pasteState.value) pasteState.value = { ...pasteState.value, cancelled: true };
+}
 
 // The two view toggles are panel-wide, not node-specific, but the context
 // menu is the only always-reachable surface inside the panel. The config
@@ -102,6 +126,66 @@ async function copyPathToClipboard(path: string) {
   }
 }
 
+function decodeBytes(data: unknown): Uint8Array {
+  if (data instanceof Uint8Array) return data;
+  if (Array.isArray(data)) return new Uint8Array(data as number[]);
+  if (typeof data === "string") {
+    const raw = atob(data);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  }
+  throw new Error(t("plugins.fileExplorer.unexpectedContentType"));
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try { await props.fs.fileMeta(path); return true; } catch { return false; }
+}
+
+async function uniquePastePath(parent: string, name: string): Promise<string> {
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  for (let i = 0; i < 1000; i++) {
+    const suffix = i === 0 ? " copy" : ` copy ${i + 1}`;
+    const candidate = joinPath(parent, `${stem}${suffix}${ext}`);
+    if (!(await pathExists(candidate))) return candidate;
+  }
+  throw new Error(t("plugins.fileExplorer.pasteNameExhausted"));
+}
+
+async function copyEntry(source: string, destination: string, isDir: boolean): Promise<void> {
+  if (pasteState.value?.cancelled) throw new Error(t("plugins.fileExplorer.operationCancelled"));
+  pasteState.value = { current: source, cancelled: pasteState.value?.cancelled ?? false };
+  if (isDir) {
+    await props.fs.mkdir(destination);
+    const entries = await props.fs.listDir(source);
+    for (const entry of entries as Array<{ name: string; isDir: boolean }>) {
+      await copyEntry(joinPath(source, entry.name), joinPath(destination, entry.name), entry.isDir);
+    }
+    return;
+  }
+  const content = await props.fs.readFile(source, 50 * 1024 * 1024) as { data: unknown };
+  await props.fs.writeFile(destination, decodeBytes(content.data), null);
+}
+
+async function pasteEntry(anchor: ContextMenuAnchor): Promise<void> {
+  const clip = copyBuffer.value;
+  if (!clip || clip.fsIdentity !== props.fs.identity) return;
+  const destinationDir = anchor.node.isDir ? anchor.node.path : parentDir(anchor.node.path);
+  if (clip.isDir && (destinationDir === clip.path || destinationDir.startsWith(`${clip.path}/`))) {
+    throw new Error(t("plugins.fileExplorer.pasteIntoSelf"));
+  }
+  const destination = await uniquePastePath(destinationDir, baseName(clip.path));
+  pasteState.value = { current: clip.path, cancelled: false };
+  try {
+    await copyEntry(clip.path, destination, clip.isDir);
+  } finally {
+    pasteState.value = null;
+  }
+  props.context?.showToast?.(t("plugins.fileExplorer.pasted", { path: destination }));
+}
+
 function onTreeKeydown(e: KeyboardEvent) {
   const isCopyKey = e.key === "c" || e.key === "C";
   if (!isCopyKey || e.altKey || e.shiftKey) return;
@@ -113,7 +197,7 @@ function onTreeKeydown(e: KeyboardEvent) {
 }
 
 async function onMenuAction(
-  action: "newFile" | "newFolder" | "rename" | "delete" | "copyPath" | "sendToTerminal",
+  action: "newFile" | "newFolder" | "rename" | "delete" | "copyPath" | "copy" | "paste" | "sendToTerminal",
 ) {
   const anchor = menu.value;
   menu.value = null;
@@ -121,6 +205,16 @@ async function onMenuAction(
   const node = anchor.node;
   if (action === "copyPath") {
     await copyPathToClipboard(node.path);
+    return;
+  }
+  if (action === "copy") {
+    copyBuffer.value = { path: node.path, isDir: node.isDir, fsIdentity: props.fs.identity };
+    props.context?.showToast?.(t("plugins.fileExplorer.copied", { name: node.name }));
+    return;
+  }
+  if (action === "paste") {
+    try { await pasteEntry(anchor); }
+    catch (err) { props.context?.showToast?.(errText(err)); }
     return;
   }
   if (action === "sendToTerminal") {
@@ -209,7 +303,7 @@ function deleteButtons(mode: "trash" | "hard") {
 
 const rootNodes = ref<TreeNode[]>([]);
 const selectedPath = ref<string>("");
-const searchResults = ref<FileNameSearchResult[]>([]);
+const searchResults = ref<Array<FileNameSearchResult | FileContentSearchResult>>([]);
 const searchLoading = ref(false);
 const searchTruncated = ref(false);
 const watchHandles = new Map<string, { fs: FileSystemBridge; id: number | string }>();
@@ -287,10 +381,17 @@ async function loadDir(fs: FileSystemBridge, path: string, showHidden: boolean):
       path: joinPath(path, e.name),
       name: e.name,
       isDir: e.isDir,
+      size: e.size,
+      modTime: e.modTime,
       expanded: false,
       children: null,
     }))
-    .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+    .sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      if (props.sortMode === "modified") return (b.modTime ?? 0) - (a.modTime ?? 0) || a.name.localeCompare(b.name);
+      if (props.sortMode === "size") return (b.size ?? 0) - (a.size ?? 0) || a.name.localeCompare(b.name);
+      return a.name.localeCompare(b.name);
+    });
 }
 
 function joinPath(parent: string, name: string): string {
@@ -333,6 +434,23 @@ function collapseDescendants(node: TreeNode) {
   for (const child of node.children ?? []) {
     child.expanded = false;
     collapseDescendants(child);
+  }
+}
+
+function collapseAll() {
+  for (const node of rootNodes.value) {
+    node.expanded = false;
+    collapseDescendants(node);
+    releaseDescendantState(node.path);
+    pendingExpands.delete(node.path);
+    advanceWatchGeneration(node.path);
+    advanceRefreshGeneration(node.path);
+    clearTruncationsUnder(node.path, true);
+    const handle = watchHandles.get(node.path);
+    if (handle) {
+      watchHandles.delete(node.path);
+      void unwatch(handle.fs, handle.id);
+    }
   }
 }
 
@@ -428,11 +546,11 @@ function startGeneration() {
   void refreshRoot(fs, root, showHidden, request).catch(() => {});
 }
 
-watch(() => [props.root, props.fs, props.showHidden], startGeneration);
+watch(() => [props.root, props.fs, props.showHidden, props.sortMode], startGeneration);
 
 watch(
-  () => [props.root, props.fs, props.showHidden, normalizedSearchQuery.value] as const,
-  async ([root, fs, showHidden, query]) => {
+  () => [props.root, props.fs, props.showHidden, normalizedSearchQuery.value, props.searchMode, props.searchCaseSensitive, props.searchRegex] as const,
+  async ([root, fs, showHidden, query, mode, caseSensitive, useRegex]) => {
     const request = ++searchGeneration;
     searchResults.value = [];
     searchTruncated.value = false;
@@ -447,17 +565,25 @@ watch(
       // a superseded search that keeps going is traffic nobody asked for.
       // maxDirs comes from the source for the same reason — see
       // FileSystemBridge.searchMaxDirs.
-      const result = await searchFileNames(fs, root, query, {
-        showHidden,
-        maxDirs: fs.searchMaxDirs,
-        isCancelled: () => disposed || searchGeneration !== request,
-      });
+      const result = mode === "content"
+        ? await searchFileContents(fs, root, query, {
+          showHidden,
+          caseSensitive,
+          useRegex,
+          maxDirs: fs.searchMaxDirs,
+          isCancelled: () => disposed || searchGeneration !== request,
+        })
+        : await searchFileNames(fs, root, query, {
+          showHidden,
+          maxDirs: fs.searchMaxDirs,
+          isCancelled: () => disposed || searchGeneration !== request,
+        });
       if (disposed || searchGeneration !== request) return;
       searchResults.value = result.results;
       searchTruncated.value = result.truncated;
     } catch (err) {
       if (disposed || searchGeneration !== request) return;
-      logWarn("file-explorer", "filename search failed", { error: errText(err) });
+      logWarn("file-explorer", "file content search failed", { error: errText(err) });
       searchResults.value = [];
       searchTruncated.value = false;
     } finally {
@@ -598,12 +724,12 @@ function dblClickFile(n: TreeNode) {
   emit("file-double-clicked", n.path);
 }
 
-function clickSearchResult(result: FileNameSearchResult) {
+function clickSearchResult(result: FileNameSearchResult | FileContentSearchResult) {
   selectedPath.value = result.path;
   emit("file-clicked", result.path);
 }
 
-function dblClickSearchResult(result: FileNameSearchResult) {
+function dblClickSearchResult(result: FileNameSearchResult | FileContentSearchResult) {
   selectedPath.value = result.path;
   emit("file-double-clicked", result.path);
 }
@@ -653,24 +779,6 @@ async function revealPath(path: string): Promise<boolean> {
 }
 
 /**
- * selectedDir is the directory the user is currently working in: the selected
- * node when it is a directory, the selected file's parent when it is a file,
- * and the root when nothing is selected.
- *
- * It exists because the panel's upload lands somewhere, and "somewhere" has to
- * be the place the user is looking at. Deriving it here rather than tracking a
- * second selection in the host keeps one source of truth — the same
- * selectedPath the context menu and Ctrl-C already act on.
- */
-const selectedDir = computed<string>(() => {
-  const path = selectedPath.value;
-  if (!path) return props.root;
-  const node = findNode(rootNodes.value, path);
-  if (!node) return props.root;
-  return node.isDir ? path : parentDir(path);
-});
-
-/**
  * refreshDir re-lists one directory in place, keeping the rest of the tree
  * expanded. startGeneration would also show a newly written file, but only by
  * throwing the whole tree away — which, now that a write can land anywhere in
@@ -685,11 +793,38 @@ async function refreshDir(dir: string) {
   }
 }
 
-defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
+async function onDrop(event: DragEvent) {
+  if (props.readOnly) return;
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  if (files.length === 0) return;
+  const dir = selectedDir.value;
+  try {
+    for (const file of files) {
+      await props.fs.writeFile(joinPath(dir, file.name), new Uint8Array(await file.arrayBuffer()), null);
+    }
+    props.context?.showToast?.(t("plugins.fileExplorer.dropUploaded", { count: files.length, dir }));
+    await refreshDir(dir);
+  } catch (err) {
+    props.context?.showToast?.(errText(err));
+  }
+}
+
+const selectedDir = computed<string>(() => {
+  if (!selectedPath.value) return props.root;
+  const node = findNode(rootNodes.value, selectedPath.value);
+  if (!node) return props.root;
+  return node.isDir ? node.path : parentDir(node.path);
+});
+
+defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir, collapseAll });
 </script>
 
 <template>
-  <div class="tree-wrap" tabindex="0" @click="closeMenu" @keydown="onTreeKeydown">
+  <div class="tree-wrap" tabindex="0" @click="closeMenu" @keydown="onTreeKeydown" @dragover.prevent @drop.prevent="onDrop">
+    <div v-if="pasteState" class="operation-bar" data-test="paste-progress">
+      <span>{{ t("plugins.fileExplorer.pasting", { path: pasteState.current }) }}</span>
+      <button type="button" @click.stop="cancelPaste">{{ t("plugins.fileExplorer.cancel") }}</button>
+    </div>
     <div v-if="rootError" class="tree-error" data-test="tree-error">
       <span class="tree-error-text">{{ rootError }}</span>
       <button class="tree-error-retry" data-test="tree-error-retry" @click.stop="startGeneration">
@@ -711,7 +846,10 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
         @dblclick.stop="dblClickSearchResult(result)"
       >
         <span class="search-name">{{ result.name }}</span>
-        <span class="search-path">{{ result.path }}</span>
+        <span class="search-path">
+          {{ result.path }}<template v-if="'line' in result">:{{ result.line }}</template>
+        </span>
+        <span v-if="'preview' in result" class="search-preview">{{ result.preview }}</span>
       </button>
       <div v-if="searchTruncated" class="search-status">
         {{ t("plugins.fileExplorer.searchTruncated") }}
@@ -748,17 +886,25 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
     </template>
     <div
       v-if="menu"
+      ref="menuEl"
       class="ctx-menu"
       data-test="file-tree-menu"
       :style="{ top: menu.y + 'px', left: menu.x + 'px' }"
       @click.stop
     >
-      <button data-test="menu-new-file" @click="onMenuAction('newFile')">{{ t("plugins.fileExplorer.newFile") }}</button>
-      <button data-test="menu-new-folder" @click="onMenuAction('newFolder')">{{ t("plugins.fileExplorer.newFolder") }}</button>
-      <button data-test="menu-rename" @click="onMenuAction('rename')">{{ t("plugins.fileExplorer.rename") }}</button>
+      <button v-if="!readOnly" data-test="menu-new-file" @click="onMenuAction('newFile')">{{ t("plugins.fileExplorer.newFile") }}</button>
+      <button v-if="!readOnly" data-test="menu-new-folder" @click="onMenuAction('newFolder')">{{ t("plugins.fileExplorer.newFolder") }}</button>
+      <button v-if="!readOnly" data-test="menu-rename" @click="onMenuAction('rename')">{{ t("plugins.fileExplorer.rename") }}</button>
+      <button v-if="!readOnly" data-test="menu-copy" @click="onMenuAction('copy')">{{ t("plugins.fileExplorer.copy") }}</button>
+      <button
+        v-if="!readOnly"
+        data-test="menu-paste"
+        :disabled="!canPaste"
+        @click="onMenuAction('paste')"
+      >{{ t("plugins.fileExplorer.paste") }}</button>
       <button data-test="menu-copy-path" @click="onMenuAction('copyPath')">{{ t("plugins.fileExplorer.copyPath") }}</button>
       <button data-test="menu-send-to-terminal" @click="onMenuAction('sendToTerminal')">{{ t("plugins.fileExplorer.sendToTerminal") }}</button>
-      <button data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
+      <button v-if="!readOnly" data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
       <hr class="ctx-sep" />
       <button
         class="ctx-toggle"
@@ -795,6 +941,18 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
 <style scoped>
 .tree-wrap { position: relative; height: 100%; }
 .tree-wrap:focus { outline: none; }
+.operation-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--ed-border, #444c56);
+  background: var(--ed-tab-bg, #2d333b);
+  color: var(--ed-muted, rgba(173, 186, 199, 0.8));
+  font-size: 11px;
+}
+.operation-bar span { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operation-bar button { border: 1px solid var(--ed-border, #444c56); border-radius: 3px; background: none; color: inherit; cursor: pointer; font: inherit; padding: 1px 6px; }
 .search-results {
   display: flex;
   flex-direction: column;
@@ -826,6 +984,15 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ed-muted, rgba(173, 186, 199, 0.55));
+  font-size: 11px;
+}
+.search-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ed-row-fg, #adbac7);
+  opacity: 0.75;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
 }
 .search-status {
@@ -872,6 +1039,8 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
   border-radius: 4px;
   padding: 4px 0;
   min-width: 140px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
   display: flex;
   flex-direction: column;
@@ -887,6 +1056,7 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir });
   cursor: pointer;
 }
 .ctx-menu button:hover { background: var(--ed-row-hover, rgba(255,255,255,0.06)); }
+.ctx-menu button:disabled { opacity: 0.45; cursor: default; }
 .ctx-sep {
   margin: 4px 0;
   border: none;

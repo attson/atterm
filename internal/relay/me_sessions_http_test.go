@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -15,7 +16,7 @@ func TestListSessions_ReturnsRowsWithIsCurrent(t *testing.T) {
 	store := srv.cfg.Store.(*userstore.DBStore)
 
 	// Create a second session for the same user (simulates another device).
-	_, _, _ = store.CreateSession(context.Background(), userID, "other-device", "1.2.3.0/24", userstore.DefaultSessionTTL)
+	_, other, _ := store.CreateSession(context.Background(), userID, "other-device", "1.2.3.0/24", userstore.DefaultSessionTTL)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me/sessions", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -33,13 +34,30 @@ func TestListSessions_ReturnsRowsWithIsCurrent(t *testing.T) {
 
 	currentHash := userstore.SessionHash(tok)
 	var foundCurrent bool
+	var foundOtherActivity bool
 	for _, r := range rows {
-		if r["id_hash"] == currentHash && r["is_current"] == true {
+		if r["id_hash"] == currentHash && r["is_current"] == true && r["is_online"] == true {
 			foundCurrent = true
+		}
+		if r["id_hash"] == other.IDHash && r["last_seen_at"].(float64) > 0 {
+			foundOtherActivity = true
 		}
 	}
 	if !foundCurrent {
-		t.Error("current session not marked is_current=true")
+		t.Error("current session not marked current + online")
+	}
+	if !foundOtherActivity {
+		t.Error("other session missing last_seen_at")
+	}
+}
+
+func TestSessionIsOnlineWindow(t *testing.T) {
+	now := time.Now()
+	if !sessionIsOnline(now.Add(-sessionOnlineWindow), now) {
+		t.Fatal("activity on the online-window boundary should be online")
+	}
+	if sessionIsOnline(now.Add(-sessionOnlineWindow-time.Millisecond), now) {
+		t.Fatal("stale activity should be offline")
 	}
 }
 

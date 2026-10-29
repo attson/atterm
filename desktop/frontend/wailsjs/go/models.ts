@@ -1709,6 +1709,8 @@ export namespace main {
 	    ip_prefix: string;
 	    created_at: number;
 	    expires_at: number;
+	    last_seen_at: number;
+	    is_online: boolean;
 	    is_current: boolean;
 
 	    static createFrom(source: any = {}) {
@@ -1722,6 +1724,8 @@ export namespace main {
 	        this.ip_prefix = source["ip_prefix"];
 	        this.created_at = source["created_at"];
 	        this.expires_at = source["expires_at"];
+	        this.last_seen_at = source["last_seen_at"];
+	        this.is_online = source["is_online"];
 	        this.is_current = source["is_current"];
 	    }
 	}

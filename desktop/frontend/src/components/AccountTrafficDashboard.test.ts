@@ -31,8 +31,8 @@ beforeEach(() => {
     to: '2026-09-23',
     relay: [{ day: '2026-09-23', bytes_in: 1024, bytes_out: 2048, frames_in: 2, frames_out: 3 }],
     relay_detail: [
-      { day: '2026-09-23', frame_type: 3, frame_type_name: 'OUT', category: 'terminal', direction: 1, bytes: 2048, frames: 3 },
-      { day: '2026-09-23', frame_type: 5, frame_type_name: 'META', category: 'state', direction: 0, bytes: 1024, frames: 2 },
+      { day: '2026-09-23', client_id: 'desktop123456', client_name: 'AT Term Desktop · macOS', client_kind: 'desktop', frame_type: 3, frame_type_name: 'OUT', category: 'terminal', direction: 1, bytes: 2048, frames: 3 },
+      { day: '2026-09-23', client_id: 'phone123456', client_name: 'iPhone · Safari', client_kind: 'mobile', frame_type: 5, frame_type_name: 'META', category: 'state', direction: 0, bytes: 1024, frames: 2 },
     ],
     direct: [{ day: '2026-09-23', attempts: 4, successes: 3, fallbacks: 1, bytes_sent: 4096, bytes_received: 512 }],
   })
@@ -53,13 +53,17 @@ describe('AccountTrafficDashboard', () => {
     expect(wrapper.get('[data-testid="relay-kpi-frames"]').text()).toContain('5')
     expect(wrapper.get('[data-testid="direct-traffic-total"]').text()).toContain('4.50 KB')
     expect(wrapper.get('[data-testid="direct-success-rate"]').text()).toContain('75.0%')
+    expect(wrapper.get('[data-testid="traffic-client-desktop1"]').text()).toContain('AT Term Desktop · macOS')
+    expect(wrapper.get('[data-testid="traffic-client-desktop1"]').text()).toContain('2.00 KB')
+    expect(wrapper.get('[data-testid="traffic-client-phone123"]').text()).toContain('iPhone · Safari')
+    expect(wrapper.get('[data-testid="traffic-client-phone123"]').text()).toContain('1.00 KB')
   })
 
   it('requests minute data and retains successful results after a refresh failure', async () => {
     const wrapper = mount(AccountTrafficDashboard)
     await flushPromises()
     getMeTrafficMock.mockResolvedValueOnce({ bucket: 'minute', server_time: '2026-09-23T12:02:30Z', updated_at: '2026-09-23T12:02:20Z', relay: [], direct: [], relay_detail: [
-      { day: '2026-09-23T12:01:00Z', frame_type: 3, frame_type_name: 'OUT', category: 'terminal', direction: 1, bytes: 6000, frames: 2 },
+      { day: '2026-09-23T12:01:00Z', client_id: 'desktop123456', client_name: 'AT Term Desktop · macOS', client_kind: 'desktop', frame_type: 3, frame_type_name: 'OUT', category: 'terminal', direction: 1, bytes: 6000, frames: 2 },
     ] })
     vi.setSystemTime(new Date('2026-09-23T12:02:30Z'))
     await wrapper.get('[data-testid="traffic-mode-realtime"]').trigger('click')

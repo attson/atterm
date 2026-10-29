@@ -8,11 +8,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/attson/atterm/internal/e2eeclient"
 )
+
+func desktopRelayUserAgent() string {
+	return fmt.Sprintf("AT-Term-Desktop/%s (%s/%s)", Version, runtime.GOOS, runtime.GOARCH)
+}
 
 // LoginRemoteRelay calls POST /api/auth/login on the given relay URL with the
 // supplied credentials, parses the returned {session_token, expires_at, user}
@@ -46,7 +51,11 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c := &e2eeclient.Client{BaseURL: httpURL, HTTPClient: relayHTTPClient(allowInsecure, 0)}
+	c := &e2eeclient.Client{
+		BaseURL:    httpURL,
+		HTTPClient: relayHTTPClient(allowInsecure, 0),
+		UserAgent:  desktopRelayUserAgent(),
+	}
 	res, err := c.Login(ctx, email, password)
 	if err != nil {
 		return fmt.Errorf("relay OPAQUE login: %w", err)
@@ -130,7 +139,11 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c := &e2eeclient.Client{BaseURL: httpURL, HTTPClient: relayHTTPClient(allowInsecure, 0)}
+	c := &e2eeclient.Client{
+		BaseURL:    httpURL,
+		HTTPClient: relayHTTPClient(allowInsecure, 0),
+		UserAgent:  desktopRelayUserAgent(),
+	}
 	res, err := c.Register(ctx, email, password, claimToken)
 	if err != nil {
 		return fmt.Errorf("relay OPAQUE register: %w", err)

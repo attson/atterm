@@ -69,7 +69,7 @@ func TestTrafficBucketsReadsDoNotFlushAndAcceptToday(t *testing.T) {
 	srv, _, userID, token := newAdminTestServer(t)
 	now := time.Now().UTC()
 	start := now.Truncate(24 * time.Hour)
-	srv.recordTraffic(userID, proto.TypeOut, trafficOut, 73)
+	srv.recordTraffic(userID, trafficClient{}, proto.TypeOut, trafficOut, 73)
 	path := trafficBucketURL("/api/me/traffic", "minute", start, start.Add(24*time.Hour))
 	rec := adminGetBearer(srv, path, token)
 	if rec.Code != http.StatusOK {

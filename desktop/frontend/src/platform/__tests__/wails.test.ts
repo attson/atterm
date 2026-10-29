@@ -20,7 +20,7 @@ vi.mock('../../lib/api', () => ({
   markSessionsSeen: vi.fn().mockResolvedValue(undefined),
   getPinnedSessionIds: vi.fn().mockResolvedValue(['s1', 's2']),
   setPinnedSessionIds: vi.fn().mockResolvedValue(undefined),
-  listRelaySessions: vi.fn().mockResolvedValue([{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, is_current: true }]),
+  listRelaySessions: vi.fn().mockResolvedValue([{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, last_seen_at: 1, is_online: true, is_current: true }]),
   revokeRelaySession: vi.fn().mockResolvedValue(undefined),
   signOutOtherRelaySessions: vi.fn().mockResolvedValue({ deleted: 1 }),
   getPromptHistoryStatus: vi.fn().mockResolvedValue({ enabled: true, count: 2 }),
@@ -205,7 +205,7 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     const rows = await p.sessions.listRelaySessions!()
     expect(listRelaySessions).toHaveBeenCalledOnce()
-    expect(rows).toEqual([{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, is_current: true }])
+    expect(rows).toEqual([{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, last_seen_at: 1, is_online: true, is_current: true }])
   })
 
   it('sessions.revokeRelaySession delegates to api.revokeRelaySession', async () => {

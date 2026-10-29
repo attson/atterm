@@ -3,18 +3,30 @@ package relay
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
 
+// A connected client heartbeats every 30 seconds. Three missed heartbeats
+// avoids flicker from short scheduler/DB stalls while keeping the UI useful
+// as a presence indicator rather than a historical login list.
+const sessionOnlineWindow = 90 * time.Second
+
+func sessionIsOnline(lastSeen, now time.Time) bool {
+	return !lastSeen.IsZero() && now.Sub(lastSeen) <= sessionOnlineWindow
+}
+
 // sessionRow is the JSON view sent to the client.
 type sessionRow struct {
-	IDHash    string `json:"id_hash"`
-	UserAgent string `json:"user_agent"`
-	IPPrefix  string `json:"ip_prefix"`
-	CreatedAt int64  `json:"created_at"` // unix milliseconds
-	ExpiresAt int64  `json:"expires_at"` // unix milliseconds
-	IsCurrent bool   `json:"is_current"`
+	IDHash     string `json:"id_hash"`
+	UserAgent  string `json:"user_agent"`
+	IPPrefix   string `json:"ip_prefix"`
+	CreatedAt  int64  `json:"created_at"`   // unix milliseconds
+	ExpiresAt  int64  `json:"expires_at"`   // unix milliseconds
+	LastSeenAt int64  `json:"last_seen_at"` // unix milliseconds
+	IsOnline   bool   `json:"is_online"`
+	IsCurrent  bool   `json:"is_current"`
 }
 
 // handleListSessions implements GET /api/me/sessions. Returns the
@@ -38,15 +50,18 @@ func (a *AuthServer) handleListSessions(w http.ResponseWriter, r *http.Request) 
 		currentHash = userstore.SessionHash(tok)
 	}
 
+	now := time.Now()
 	out := make([]sessionRow, 0, len(rows))
 	for _, s := range rows {
 		out = append(out, sessionRow{
-			IDHash:    s.IDHash,
-			UserAgent: s.UserAgent,
-			IPPrefix:  s.IPPrefix,
-			CreatedAt: s.CreatedAt.UnixMilli(),
-			ExpiresAt: s.ExpiresAt.UnixMilli(),
-			IsCurrent: s.IDHash == currentHash,
+			IDHash:     s.IDHash,
+			UserAgent:  s.UserAgent,
+			IPPrefix:   s.IPPrefix,
+			CreatedAt:  s.CreatedAt.UnixMilli(),
+			ExpiresAt:  s.ExpiresAt.UnixMilli(),
+			LastSeenAt: s.LastSeenAt.UnixMilli(),
+			IsOnline:   sessionIsOnline(s.LastSeenAt, now),
+			IsCurrent:  s.IDHash == currentHash,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -40,6 +40,44 @@ func TestLookupSession_HitReturnsUser(t *testing.T) {
 	if gotUser.ID != u.ID {
 		t.Fatalf("user mismatch: got %q want %q", gotUser.ID, u.ID)
 	}
+	if got.LastSeenAt.IsZero() {
+		t.Fatal("new session should have an initial last_seen_at")
+	}
+}
+
+func TestTouchSession_UpdatesActivityAndReportsRevocation(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	u, err := createTestUser(t, st, "presence@example.com", "")
+	if err != nil {
+		t.Fatalf("createTestUser: %v", err)
+	}
+	tok, sess, err := st.CreateSession(ctx, u.ID, "test-device", "127.0.0.1", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	want := time.Now().Add(time.Minute).Truncate(time.Millisecond)
+	active, err := st.TouchSession(ctx, sess.IDHash, want)
+	if err != nil || !active {
+		t.Fatalf("TouchSession: active=%v err=%v", active, err)
+	}
+	got, _, err := st.LookupSession(ctx, tok)
+	if err != nil {
+		t.Fatalf("LookupSession: %v", err)
+	}
+	if !got.LastSeenAt.Equal(want) {
+		t.Fatalf("last_seen_at=%v want %v", got.LastSeenAt, want)
+	}
+	if err := st.DeleteSession(ctx, tok); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	active, err = st.TouchSession(ctx, sess.IDHash, time.Now())
+	if err != nil {
+		t.Fatalf("TouchSession revoked: %v", err)
+	}
+	if active {
+		t.Fatal("revoked session reported active")
+	}
 }
 
 func TestLookupSession_MissReturnsNotFound(t *testing.T) {

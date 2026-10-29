@@ -2,6 +2,9 @@ package relay
 
 import (
 	"context"
+	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,22 +20,116 @@ const (
 	trafficOut = 1
 )
 
-// trafficDelta is one accumulated (user, frame type, direction) bucket
+// trafficDelta is one accumulated (user, login client, frame type, direction) bucket
 // drained from a trafficMeter snapshot.
 type trafficDelta struct {
-	Minute    int64
-	UserID    string
-	FrameType int
-	Direction int
-	Bytes     int64
-	Frames    int64
+	Minute     int64
+	UserID     string
+	ClientID   string
+	ClientName string
+	ClientKind string
+	FrameType  int
+	Direction  int
+	Bytes      int64
+	Frames     int64
 }
 
 type trafficKey struct {
-	minute int64
-	userID string
-	ft     int
-	dir    int
+	minute     int64
+	userID     string
+	clientID   string
+	clientName string
+	clientKind string
+	ft         int
+	dir        int
+}
+
+// trafficClient identifies one authenticated login session. ID is the
+// existing sha256 session hash, never the plaintext bearer token.
+type trafficClient struct {
+	ID   string
+	Name string
+	Kind string
+}
+
+var desktopTrafficUserAgent = regexp.MustCompile(`^AT-Term-Desktop/([^\s]+) \(([^/]+)/([^)]+)\)$`)
+
+func trafficClientFromContext(ctx context.Context) trafficClient {
+	sess, ok := SessionFromContext(ctx)
+	if !ok {
+		return trafficClient{}
+	}
+	name, kind := describeTrafficClient(sess.UserAgent)
+	return trafficClient{ID: sess.IDHash, Name: name, Kind: kind}
+}
+
+func describeTrafficClient(userAgent string) (string, string) {
+	ua := strings.TrimSpace(userAgent)
+	if match := desktopTrafficUserAgent.FindStringSubmatch(ua); match != nil {
+		platform := map[string]string{"darwin": "macOS", "windows": "Windows", "linux": "Linux"}[strings.ToLower(match[2])]
+		if platform == "" {
+			platform = match[2]
+		}
+		if match[1] == "dev" {
+			return fmt.Sprintf("AT Term Desktop · %s", platform), "desktop"
+		}
+		return fmt.Sprintf("AT Term Desktop · %s · %s", platform, match[1]), "desktop"
+	}
+	if ua == "Go-http-client/1.1" {
+		return "AT Term Desktop (legacy)", "legacy"
+	}
+	lower := strings.ToLower(ua)
+	device := ""
+	kind := "web"
+	switch {
+	case strings.Contains(lower, "ipad"):
+		device, kind = "iPad", "mobile"
+	case strings.Contains(lower, "iphone"):
+		device, kind = "iPhone", "mobile"
+	case strings.Contains(lower, "android"):
+		device, kind = "Android", "mobile"
+	case strings.Contains(lower, "windows"):
+		device = "Windows"
+	case strings.Contains(lower, "macintosh") || strings.Contains(lower, "mac os x"):
+		device = "macOS"
+	case strings.Contains(lower, "linux"):
+		device = "Linux"
+	}
+	browser := ""
+	switch {
+	case strings.Contains(lower, "edg/"):
+		browser = "Edge"
+	case strings.Contains(lower, "firefox/"):
+		browser = "Firefox"
+	case strings.Contains(lower, "crios/") || strings.Contains(lower, "chrome/"):
+		browser = "Chrome"
+	case strings.Contains(lower, "safari/"):
+		browser = "Safari"
+	}
+	if device != "" || browser != "" {
+		return strings.Join(nonEmptyStrings(device, browser), " · "), kind
+	}
+	if ua == "" {
+		return "", "unknown"
+	}
+	// User-Agent is client-controlled. Keep it useful as a fallback label but
+	// bound row growth and remove control/spacing noise before persistence.
+	label := strings.Join(strings.Fields(ua), " ")
+	runes := []rune(label)
+	if len(runes) > 160 {
+		label = string(runes[:160]) + "…"
+	}
+	return label, "unknown"
+}
+
+func nonEmptyStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 type trafficCell struct {
@@ -40,7 +137,7 @@ type trafficCell struct {
 	frames int64
 }
 
-// trafficMeter accumulates per-(user, frame type, direction) byte and frame
+// trafficMeter accumulates per-(user, login client, frame type, direction) byte and frame
 // counts in memory. It is written on the hot send/receive paths (add) and
 // drained on a fixed interval (snapshot). A single mutex is sufficient:
 // snapshot runs at flush cadence (~10s), so lock contention on add is
@@ -56,15 +153,15 @@ func newTrafficMeter() *trafficMeter {
 
 // add records wireBytes for one frame. A zero-length userID (pre-auth /
 // anonymous frames) is dropped: traffic is only meaningful per account.
-func (m *trafficMeter) add(userID string, t proto.Type, dir int, wireBytes int) {
-	m.addAt(userID, t, dir, wireBytes, time.Now())
+func (m *trafficMeter) add(userID string, client trafficClient, t proto.Type, dir int, wireBytes int) {
+	m.addAt(userID, client, t, dir, wireBytes, time.Now())
 }
 
-func (m *trafficMeter) addAt(userID string, t proto.Type, dir int, wireBytes int, captured time.Time) {
+func (m *trafficMeter) addAt(userID string, client trafficClient, t proto.Type, dir int, wireBytes int, captured time.Time) {
 	if userID == "" {
 		return
 	}
-	k := trafficKey{minute: captured.Unix() / 60 * 60, userID: userID, ft: int(t), dir: dir}
+	k := trafficKey{minute: captured.Unix() / 60 * 60, userID: userID, clientID: client.ID, clientName: client.Name, clientKind: client.Kind, ft: int(t), dir: dir}
 	m.mu.Lock()
 	c := m.cells[k]
 	if c == nil {
@@ -85,12 +182,15 @@ func (m *trafficMeter) snapshot() []trafficDelta {
 	out := make([]trafficDelta, 0, len(m.cells))
 	for k, c := range m.cells {
 		out = append(out, trafficDelta{
-			Minute:    k.minute,
-			UserID:    k.userID,
-			FrameType: k.ft,
-			Direction: k.dir,
-			Bytes:     c.bytes,
-			Frames:    c.frames,
+			Minute:     k.minute,
+			UserID:     k.userID,
+			ClientID:   k.clientID,
+			ClientName: k.clientName,
+			ClientKind: k.clientKind,
+			FrameType:  k.ft,
+			Direction:  k.dir,
+			Bytes:      c.bytes,
+			Frames:     c.frames,
 		})
 	}
 	m.cells = make(map[trafficKey]*trafficCell)
@@ -146,12 +246,15 @@ func (s *Server) flushTraffic(store userstore.Store) {
 	conv := make([]userstore.TrafficDelta, len(deltas))
 	for i, d := range deltas {
 		conv[i] = userstore.TrafficDelta{
-			Minute:    d.Minute,
-			UserID:    d.UserID,
-			FrameType: d.FrameType,
-			Direction: d.Direction,
-			Bytes:     d.Bytes,
-			Frames:    d.Frames,
+			Minute:     d.Minute,
+			UserID:     d.UserID,
+			ClientID:   d.ClientID,
+			ClientName: d.ClientName,
+			ClientKind: d.ClientKind,
+			FrameType:  d.FrameType,
+			Direction:  d.Direction,
+			Bytes:      d.Bytes,
+			Frames:     d.Frames,
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -180,8 +283,8 @@ func (s *Server) Close() {
 
 // recordTraffic folds one frame's wire size into the meter. Never blocks the
 // caller beyond a mutex-guarded map write; a zero userID is dropped.
-func (s *Server) recordTraffic(userID string, t proto.Type, dir int, wireBytes int) {
-	s.traffic.add(userID, t, dir, wireBytes)
+func (s *Server) recordTraffic(userID string, client trafficClient, t proto.Type, dir int, wireBytes int) {
+	s.traffic.add(userID, client, t, dir, wireBytes)
 }
 
 // writeFrame marshals f, writes it as one binary WS message, and — on a
@@ -189,11 +292,11 @@ func (s *Server) recordTraffic(userID string, t proto.Type, dir int, wireBytes i
 // accounting. It centralizes the previously inlined
 // c.Write(ctx, MessageBinary, proto.Marshal(f)) calls for the simple client
 // write paths so every outbound frame is metered at one place.
-func (s *Server) writeFrame(ctx context.Context, userID string, c *websocket.Conn, f proto.Frame) error {
+func (s *Server) writeFrame(ctx context.Context, userID string, client trafficClient, c *websocket.Conn, f proto.Frame) error {
 	b := proto.Marshal(f)
 	if err := c.Write(ctx, websocket.MessageBinary, b); err != nil {
 		return err
 	}
-	s.recordTraffic(userID, f.Type, trafficOut, len(b))
+	s.recordTraffic(userID, client, f.Type, trafficOut, len(b))
 	return nil
 }

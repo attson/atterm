@@ -194,6 +194,29 @@ const frameRows = computed(() => {
   return [...groups.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 8);
 });
 
+const clientRows = computed(() => {
+  const groups = new Map<string, { id: string; name: string; kind: string; outbound: number; inbound: number; bytes: number }>();
+  for (const row of currentRows.value) {
+    const id = row.client_id ?? "";
+    const key = id || "__legacy__";
+    const cell = groups.get(key) ?? {
+      id,
+      name: row.client_name ?? "",
+      kind: row.client_kind ?? "",
+      outbound: 0,
+      inbound: 0,
+      bytes: 0,
+    };
+    cell.bytes += row.bytes;
+    if (row.direction === 1) cell.outbound += row.bytes;
+    if (row.direction === 0) cell.inbound += row.bytes;
+    groups.set(key, cell);
+  }
+  return [...groups.values()]
+    .map((client) => ({ ...client, share: relayTotal.value ? (client.bytes / relayTotal.value) * 100 : 0 }))
+    .sort((a, b) => b.bytes - a.bytes);
+});
+
 function humanBytes(value: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let result = value;
@@ -221,6 +244,10 @@ function categoryName(key: string): string {
 }
 function peerRouteName(route: PeerTrafficRow["route"]): string {
   return t(`settings.account.traffic.peerRoutes.${route}` as MessageKey);
+}
+function clientKindName(kind: string): string {
+  const key = kind || "unknown";
+  return t(`settings.account.traffic.clientKinds.${key}` as MessageKey);
 }
 function showDayLabel(index: number): boolean {
   const step = Math.max(1, Math.floor(range.value.days.length / 6));
@@ -283,6 +310,11 @@ watch(() => props.relayConnected, (connected) => {
       </section>
 
       <div v-if="relayConnected && traffic" class="detail-grid">
+        <section class="detail-panel client-panel" data-testid="traffic-client-breakdown">
+          <div class="panel-head"><div><h4>{{ t("settings.account.traffic.clientBreakdown") }}</h4><p>{{ t("settings.account.traffic.clientBreakdownHint") }}</p></div></div>
+          <div v-if="clientRows.length" class="frame-table-wrap"><table><thead><tr><th>{{ t("settings.account.traffic.colClient") }}</th><th>{{ t("settings.account.traffic.kpiOutbound") }}</th><th>{{ t("settings.account.traffic.kpiInbound") }}</th><th>{{ t("settings.account.traffic.kpiTotal") }}</th><th>{{ t("settings.account.traffic.share") }}</th></tr></thead><tbody><tr v-for="client in clientRows" :key="client.id || '__legacy__'" :data-testid="`traffic-client-${client.id ? client.id.slice(0, 8) : 'legacy'}`"><td><strong>{{ client.name || t("settings.account.traffic.legacyClient") }}</strong><small>{{ client.id ? `${clientKindName(client.kind)} · ${client.id.slice(0, 8)}` : t("settings.account.traffic.legacyClientHint") }}</small></td><td>{{ humanBytes(client.outbound) }}</td><td>{{ humanBytes(client.inbound) }}</td><td>{{ humanBytes(client.bytes) }}</td><td>{{ client.share.toFixed(1) }}%</td></tr></tbody></table></div>
+          <p v-else class="detail-empty">{{ t("settings.account.traffic.empty") }}</p>
+        </section>
         <section class="detail-panel"><div class="panel-head"><div><h4>{{ t("settings.account.traffic.categorySummary") }}</h4><p>{{ t("settings.account.traffic.totalComposition") }}</p></div></div><div v-if="categories.length" class="category-list"><div v-for="category in categories" :key="category.key"><span class="category-name"><i :style="{ background: category.color }"></i><strong>{{ categoryName(category.key) }}</strong><em>{{ category.share.toFixed(1) }}%</em></span><span class="meter"><i :style="{ width: `${category.share}%`, background: category.color }"></i></span><span class="category-value"><strong>{{ humanBytes(category.bytes) }}</strong><small>{{ t("settings.account.traffic.outIn", { out: humanBytes(category.outbound), incoming: humanBytes(category.inbound) }) }}</small></span></div></div><p v-else class="detail-empty">{{ t("settings.account.traffic.empty") }}</p></section>
         <section class="detail-panel"><div class="panel-head"><div><h4>{{ t("settings.account.traffic.frameBreakdown") }}</h4><p>{{ t("settings.account.traffic.topFrames") }}</p></div></div><div v-if="frameRows.length" class="frame-table-wrap"><table><thead><tr><th>{{ t("settings.account.traffic.colFrameType") }}</th><th>{{ t("settings.account.traffic.colBytes") }}</th><th>{{ t("settings.account.traffic.colFrames") }}</th></tr></thead><tbody><tr v-for="frame in frameRows" :key="`${frame.name}:${frame.category}`"><td><strong>{{ frame.name }}</strong><small>{{ categoryName(frame.category) }}</small></td><td>{{ humanBytes(frame.bytes) }}</td><td>{{ compactNumber(frame.frames) }}</td></tr></tbody></table></div><p v-else class="detail-empty">{{ t("settings.account.traffic.empty") }}</p></section>
       </div>
@@ -377,6 +409,7 @@ watch(() => props.relayConnected, (connected) => {
 .series-legend { margin-top: 6px; }
 .chart-empty, .detail-empty, .traffic-state { min-height: 96px; margin: 0; display: flex; align-items: center; justify-content: center; color: var(--fg-dim); font-size: 12px; }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.client-panel { grid-column: 1 / -1; }
 .detail-panel { min-width: 0; }
 .category-list { margin-top: 8px; }
 .category-list > div { display: grid; grid-template-columns: minmax(90px, 0.9fr) minmax(70px, 1fr) minmax(96px, auto); align-items: center; gap: 8px; min-height: 34px; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }

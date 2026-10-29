@@ -473,6 +473,32 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		}
 	})
 
+	t.Run("traffic client attribution", func(t *testing.T) {
+		st := open(t)
+		minute := time.Date(2026, 10, 20, 12, 34, 0, 0, time.UTC).Unix()
+		deltas := []TrafficDelta{
+			{UserID: "u1", ClientID: "desktop", ClientName: "AT Term Desktop · macOS", ClientKind: "desktop", Minute: minute, FrameType: 3, Direction: 1, Bytes: 100, Frames: 1},
+			{UserID: "u1", ClientID: "phone", ClientName: "iPhone · Safari", ClientKind: "mobile", Minute: minute, FrameType: 3, Direction: 1, Bytes: 40, Frames: 1},
+		}
+		if err := st.AddTrafficDeltas(ctx, "2026-10-20", deltas); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := st.QueryTrafficForUser(ctx, "u1", "2026-10-20", "2026-10-20")
+		if err != nil || len(rows) != 2 {
+			t.Fatalf("daily rows=%+v err=%v", rows, err)
+		}
+		if rows[0].ClientID != "desktop" || rows[0].ClientKind != "desktop" || rows[0].Bytes != 100 {
+			t.Fatalf("desktop row=%+v", rows[0])
+		}
+		if rows[1].ClientID != "phone" || rows[1].ClientName != "iPhone · Safari" || rows[1].Bytes != 40 {
+			t.Fatalf("phone row=%+v", rows[1])
+		}
+		buckets, err := st.QueryTrafficBuckets(ctx, "u1", "minute", minute, minute+60)
+		if err != nil || len(buckets) != 2 || buckets[0].ClientID != "desktop" || buckets[1].ClientID != "phone" {
+			t.Fatalf("bucket rows=%+v err=%v", buckets, err)
+		}
+	})
+
 	t.Run("direct traffic rollup", func(t *testing.T) {
 		st := open(t)
 		day := "2026-09-15"

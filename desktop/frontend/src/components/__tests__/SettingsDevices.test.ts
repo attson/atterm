@@ -18,8 +18,8 @@ import type { RelaySessionRow } from '../../lib/api'
 
 function baseRows(): RelaySessionRow[] {
   return [
-    { id_hash: 'h-me',    user_agent: 'UA-A', ip_prefix: '1.2.3', created_at: 1_700_000_000_000, expires_at: 1_710_000_000_000, is_current: true },
-    { id_hash: 'h-other', user_agent: 'UA-B', ip_prefix: '4.5.6', created_at: 1_700_100_000_000, expires_at: 1_710_100_000_000, is_current: false },
+    { id_hash: 'h-me', user_agent: 'AT-Term-Desktop/v0.6.10 (darwin/arm64)', ip_prefix: '1.2.3', created_at: 1_700_000_000_000, expires_at: 1_710_000_000_000, last_seen_at: Date.now(), is_online: true, is_current: true },
+    { id_hash: 'h-other', user_agent: 'UA-B', ip_prefix: '4.5.6', created_at: 1_700_100_000_000, expires_at: 1_710_100_000_000, last_seen_at: Date.now() - 3_600_000, is_online: false, is_current: false },
   ]
 }
 
@@ -58,6 +58,9 @@ describe('SettingsDevices', () => {
     // Row 1 is non-current: opposite.
     expect(rows[1].find('.current-tag').exists()).toBe(false)
     expect(rows[1].find('.danger-btn').exists()).toBe(true)
+    expect(rows[0].find('.activity.online').exists()).toBe(true)
+    expect(rows[0].text()).toContain('AT Term Desktop · macOS · v0.6.10')
+    expect(w.text()).toContain('settings.devices.onlineSummary[online=1,total=2]')
   })
 
   it('clicking refresh calls listRelaySessions again', async () => {
@@ -69,6 +72,25 @@ describe('SettingsDevices', () => {
     await w.find('.icon-btn').trigger('click')
     await flushPromises()
     expect(listSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes presence every 30 seconds and stops after unmount', async () => {
+    vi.useFakeTimers()
+    try {
+      const platform = usePlatform()
+      const listSpy = (platform.sessions as any).listRelaySessions as ReturnType<typeof vi.fn>
+      const w = mount(SettingsDevices)
+      await flushPromises()
+      expect(listSpy).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(30_000)
+      await flushPromises()
+      expect(listSpy).toHaveBeenCalledTimes(2)
+      w.unmount()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(listSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('revoke confirm=true calls revokeRelaySession then reloads', async () => {

@@ -13,12 +13,14 @@ import (
 // RelaySessionRow mirrors the relay's SessionRow shape used by
 // GET /api/me/sessions.
 type RelaySessionRow struct {
-	IDHash    string `json:"id_hash"`
-	UserAgent string `json:"user_agent"`
-	IPPrefix  string `json:"ip_prefix"`
-	CreatedAt int64  `json:"created_at"` // unix ms
-	ExpiresAt int64  `json:"expires_at"` // unix ms
-	IsCurrent bool   `json:"is_current"`
+	IDHash     string `json:"id_hash"`
+	UserAgent  string `json:"user_agent"`
+	IPPrefix   string `json:"ip_prefix"`
+	CreatedAt  int64  `json:"created_at"`   // unix ms
+	ExpiresAt  int64  `json:"expires_at"`   // unix ms
+	LastSeenAt int64  `json:"last_seen_at"` // unix ms
+	IsOnline   bool   `json:"is_online"`
+	IsCurrent  bool   `json:"is_current"`
 }
 
 // SignOutOthersResult mirrors the response of POST

@@ -58,9 +58,10 @@ func newMirrorSession(id uuid.UUID, info proto.SessionInfo, ownerUserID string) 
 // mirrors on defer at the end of handleUplink; the writer goroutine holds
 // no session state directly.
 type uplinkSession struct {
-	server      *Server
-	conn        *websocket.Conn
-	ownerUserID string
+	server        *Server
+	conn          *websocket.Conn
+	ownerUserID   string
+	trafficClient trafficClient
 	// hostID is ANNOUNCE's HostID, captured once at connect so cleanup() can
 	// unregister the same key registerHost used — see sessionCreateRouter in
 	// session_create_router.go.
@@ -86,7 +87,7 @@ type uplinkSession struct {
 // OUT/META/CLOSE frames flow uplink→relay; STREAM_REQUEST/STOP and
 // IN/RESIZE/PASTE_IMAGE flow relay→uplink.
 // ownerUserID is the authenticated user's ID (empty for legacy/dev-mode paths).
-func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserID string) {
+func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserID string, client trafficClient) {
 	c.SetReadLimit(uplinkReadLimit)
 
 	// Send AUTH_INFO so the desktop client knows which user this connection
@@ -106,7 +107,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			logging.Warn("relay-uplink", "send AUTH_INFO failed: %v", err)
 			return
 		}
-		s.recordTraffic(ownerUserID, proto.TypeAuthInfo, trafficOut, len(authBytes))
+		s.recordTraffic(ownerUserID, client, proto.TypeAuthInfo, trafficOut, len(authBytes))
 		s.debugf("uplink auth_info_sent user_id=%s", ownerUserID)
 	}
 
@@ -121,7 +122,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		return
 	}
 	s.debugFrame("uplink", "recv", first)
-	s.recordTraffic(ownerUserID, first.Type, trafficIn, 22+len(first.Payload))
+	s.recordTraffic(ownerUserID, client, first.Type, trafficIn, 22+len(first.Payload))
 	var ann proto.AnnouncePayload
 	if err := json.Unmarshal(first.Payload, &ann); err != nil {
 		_ = c.Close(websocket.StatusPolicyViolation, "bad ANNOUNCE payload")
@@ -132,14 +133,15 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 	defer cancelConn()
 
 	u := &uplinkSession{
-		server:      s,
-		conn:        c,
-		ownerUserID: ownerUserID,
-		hostID:      ann.HostID,
-		ctx:         connCtx,
-		cancel:      cancelConn,
-		out:         make(chan proto.Frame, uplinkOutBuffer),
-		mirrors:     make(map[uuid.UUID]*mirrorState),
+		server:        s,
+		conn:          c,
+		ownerUserID:   ownerUserID,
+		trafficClient: client,
+		hostID:        ann.HostID,
+		ctx:           connCtx,
+		cancel:        cancelConn,
+		out:           make(chan proto.Frame, uplinkOutBuffer),
+		mirrors:       make(map[uuid.UUID]*mirrorState),
 	}
 	defer u.cleanup()
 	// Register before reconcile/writeLoop/readLoop start: a TypeSessionCreate
@@ -471,7 +473,7 @@ func (u *uplinkSession) writeLoop() {
 				u.server.debugf("uplink write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 				return
 			}
-			u.server.recordTraffic(u.ownerUserID, f.Type, trafficOut, len(b))
+			u.server.recordTraffic(u.ownerUserID, u.trafficClient, f.Type, trafficOut, len(b))
 		}
 	}
 }
@@ -490,7 +492,7 @@ func (u *uplinkSession) readLoop() {
 			return
 		}
 		u.server.debugFrame("uplink", "recv", f)
-		u.server.recordTraffic(u.ownerUserID, f.Type, trafficIn, 22+len(f.Payload))
+		u.server.recordTraffic(u.ownerUserID, u.trafficClient, f.Type, trafficIn, 22+len(f.Payload))
 		switch f.Type {
 		case proto.TypeAnnounce:
 			var p proto.AnnouncePayload

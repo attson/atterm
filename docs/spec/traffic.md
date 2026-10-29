@@ -16,7 +16,9 @@
 SQLite / Postgres 使用相同的 additive UPSERT 语义；多实例查询共享 DB 聚合，不合并某一节点尚未落库的内存增量。
 单实例崩溃或刷盘失败可能丢失尚未落库的一批数据；刷新接口不触发刷盘。
 
-`relay_traffic_buckets` 主键为 `(user_id, bucket, started_at, frame_type, direction)`，`bucket` 为 minute / hour。
+Relay 流量同时按认证登录会话归因：`client_id` 是 `sessions.id_hash`（SHA-256 后的会话 ID，不是 bearer token），`client_name` / `client_kind` 由该会话登录时保存的 User-Agent 归一化。它表达的是“登录客户端”，不是不可复制的硬件身份；同一个 token 被复制后仍计入同一客户端。历史流量无法反推来源，迁移后使用空 `client_id`，前端显示为“升级前 / 未识别”。
+
+`relay_traffic_daily` 主键为 `(user_id, day, client_id, frame_type, direction)`；`relay_traffic_buckets` 主键为 `(user_id, bucket, started_at, client_id, frame_type, direction)`，`bucket` 为 minute / hour。
 按 UTC 日期边界清理：minute 删除早于 7 天前零点的数据，hour 删除早于 90 天前零点的数据。
 启动时及之后每小时清理，日汇总不受清理影响。旧日统计无法反推分时；升级之前的明细为空。
 
@@ -28,6 +30,7 @@ SQLite / Postgres 使用相同的 additive UPSERT 语义；多实例查询共享
 
 个人响应的 `relay_detail[].day`、管理响应的 `rows[].day` 在分时模式使用 UTC RFC3339 桶起点。
 个人响应不返回 user id/email，查询身份只取认证上下文，忽略调用方传入的 user_id。
+个人响应的 `relay_detail[]` 额外返回 `client_id`、`client_name`、`client_kind`，Settings 按客户端汇总出站、入站、总量与占比；既有 `relay[]` 日总量仍跨客户端求和，因此升级前后的总量口径不变。
 管理侧支持既有 detail / group / summary 维度（分时默认 detail），可用 user_id 限定账号。
 
 分时响应额外返回：

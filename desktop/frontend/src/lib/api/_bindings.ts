@@ -423,6 +423,8 @@ export interface RelaySessionRow {
   ip_prefix: string;
   created_at: number;   // unix ms
   expires_at: number;   // unix ms
+  last_seen_at?: number; // unix ms; omitted by older relays
+  is_online?: boolean;
   is_current: boolean;
 }
 

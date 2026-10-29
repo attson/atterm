@@ -103,7 +103,7 @@ CREATE INDEX sessions_expires_idx ON sessions(expires_at);
 ```
 
 - `id_hash` 是明文 `session_token` 的 sha256-hex；明文只在 `CreateSession` 返回值里出现一次，之后 DB 只留哈希
-- `last_seen_at` 当前未由 requireSession 主动更新（保留字段供未来 last-active UI 使用）
+- `last_seen_at` 是「设置 → 已登录设备」的 presence 时间戳：session 创建时初始化；认证 HTTP 活动最多每 15 秒写一次；认证 WebSocket 每 30 秒心跳写一次。设备页以 90 秒窗口显示在线，超过窗口显示最近活跃时间。心跳发现 session 已撤销或过期时会取消该长连接；多实例共享 Postgres 时 presence 也随该表全局可见
 - 列出 user 的活跃 session 用 `sessions_user_idx`；过期扫描 sweep 用 `sessions_expires_idx`
 
 ### 3.3 `pairing_tokens`

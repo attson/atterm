@@ -170,6 +170,10 @@ type Store interface {
 	// Sessions (single bearer token; cookie OR Authorization header).
 	CreateSession(ctx context.Context, userID, userAgent, ipPrefix string, ttl time.Duration) (plaintext string, sess *Session, err error)
 	LookupSession(ctx context.Context, plaintext string) (*Session, *User, error)
+	// TouchSession records authenticated activity for the session identified by
+	// its already-hashed id. The bool is false when the session was revoked or
+	// expired, allowing long-lived connections to stop after revocation.
+	TouchSession(ctx context.Context, idHash string, at time.Time) (active bool, err error)
 	DeleteSession(ctx context.Context, plaintext string) error
 	PurgeExpiredSessions(ctx context.Context) (int64, error)
 	// ListSessions returns all non-expired sessions for userID, ordered by

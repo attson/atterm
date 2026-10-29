@@ -45,6 +45,10 @@ type Client struct {
 	BaseURL string
 	// HTTPClient is the underlying transport. Nil means http.DefaultClient.
 	HTTPClient *http.Client
+	// UserAgent identifies the client session created by register/login. Empty
+	// leaves net/http's default in place for callers that do not care about the
+	// Signed-in devices label.
+	UserAgent string
 }
 
 func (c *Client) http() *http.Client {
@@ -226,6 +230,9 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, out a
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
 	resp, err := c.http().Do(req)
 	if err != nil {
 		return err
@@ -249,6 +256,9 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, body []byte,
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
 	}
 	req.Header.Set("Authorization", "Bearer "+sessionToken)
 	resp, err := c.http().Do(req)

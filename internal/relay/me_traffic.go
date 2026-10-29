@@ -29,6 +29,9 @@ type meDirectTrafficDay struct {
 
 type meRelayTrafficDetail struct {
 	Day           string `json:"day"`
+	ClientID      string `json:"client_id"`
+	ClientName    string `json:"client_name"`
+	ClientKind    string `json:"client_kind"`
 	FrameType     int    `json:"frame_type"`
 	FrameTypeName string `json:"frame_type_name"`
 	Category      string `json:"category"`
@@ -99,6 +102,9 @@ func (s *Server) handleMeTrafficHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, row := range relayRows {
 		relayDetail = append(relayDetail, meRelayTrafficDetail{
 			Day:           row.Day,
+			ClientID:      row.ClientID,
+			ClientName:    row.ClientName,
+			ClientKind:    row.ClientKind,
 			FrameType:     row.FrameType,
 			FrameTypeName: frameTypeName(proto.Type(row.FrameType)),
 			Category:      frameCategory(proto.Type(row.FrameType)),

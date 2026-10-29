@@ -20,8 +20,9 @@ func TestMeTraffic_OnlyReturnsAuthenticatedUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.AddTrafficDeltas(context.Background(), day, []userstore.TrafficDelta{
-		{UserID: userID, FrameType: int(proto.TypeOut), Direction: trafficOut, Bytes: 1200, Frames: 3},
-		{UserID: userID, FrameType: int(proto.TypeIn), Direction: trafficIn, Bytes: 300, Frames: 2},
+		{UserID: userID, ClientID: "desktop-hash", ClientName: "AT Term Desktop · macOS", ClientKind: "desktop", FrameType: int(proto.TypeOut), Direction: trafficOut, Bytes: 1200, Frames: 3},
+		{UserID: userID, ClientID: "desktop-hash", ClientName: "AT Term Desktop · macOS", ClientKind: "desktop", FrameType: int(proto.TypeIn), Direction: trafficIn, Bytes: 300, Frames: 2},
+		{UserID: userID, ClientID: "phone-hash", ClientName: "iPhone · Safari", ClientKind: "mobile", FrameType: int(proto.TypeOut), Direction: trafficOut, Bytes: 200, Frames: 1},
 		{UserID: other.ID, FrameType: int(proto.TypeOut), Direction: trafficOut, Bytes: 9999, Frames: 9},
 	}); err != nil {
 		t.Fatal(err)
@@ -41,10 +42,10 @@ func TestMeTraffic_OnlyReturnsAuthenticatedUser(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Relay) != 1 || got.Relay[0].BytesOut != 1200 || got.Relay[0].BytesIn != 300 {
+	if len(got.Relay) != 1 || got.Relay[0].BytesOut != 1400 || got.Relay[0].BytesIn != 300 {
 		t.Fatalf("relay = %#v", got.Relay)
 	}
-	if len(got.RelayDetail) != 2 || got.RelayDetail[0].FrameTypeName == "" || got.RelayDetail[0].Category == "" {
+	if len(got.RelayDetail) != 3 || got.RelayDetail[0].FrameTypeName == "" || got.RelayDetail[0].Category == "" || got.RelayDetail[0].ClientID == "" || got.RelayDetail[0].ClientName == "" {
 		t.Fatalf("relay detail = %#v", got.RelayDetail)
 	}
 	if len(got.Direct) != 1 || got.Direct[0].BytesSent != 800 || got.Direct[0].BytesReceived != 200 || got.Direct[0].Successes != 3 {
@@ -74,7 +75,7 @@ func TestMeTraffic_RequiresAuthenticationAndValidRange(t *testing.T) {
 func TestMeTraffic_ReadsIndependentlyFlushedMetrics(t *testing.T) {
 	srv, _, userID, token := newAdminTestServer(t)
 	day := time.Now().UTC().Format("2006-01-02")
-	srv.recordTraffic(userID, proto.TypeOut, trafficOut, 73)
+	srv.recordTraffic(userID, trafficClient{}, proto.TypeOut, trafficOut, 73)
 	srv.directStats.recordAttempt(userID)
 	srv.directStats.recordSuccess(userID)
 	srv.directStats.recordBytes(userID, 123, 45)

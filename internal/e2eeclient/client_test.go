@@ -27,8 +27,8 @@ func newRelay(t *testing.T) (*httptest.Server, *userstore.DBStore) {
 }
 
 func TestClient_RegisterAndLogin(t *testing.T) {
-	ts, _ := newRelay(t)
-	c := &Client{BaseURL: ts.URL}
+	ts, store := newRelay(t)
+	c := &Client{BaseURL: ts.URL, UserAgent: "AT-Term-Desktop/test (darwin/arm64)"}
 
 	reg, err := c.Register(context.Background(), "alice@example.com", "hunter2", "")
 	if err != nil {
@@ -42,6 +42,13 @@ func TestClient_RegisterAndLogin(t *testing.T) {
 	}
 	if reg.RealmID != "test-realm" {
 		t.Fatalf("Register: expected RealmID %q, got %q", "test-realm", reg.RealmID)
+	}
+	registeredSessions, err := store.ListSessions(context.Background(), reg.UserID)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(registeredSessions) != 1 || registeredSessions[0].UserAgent != c.UserAgent {
+		t.Fatalf("registered session user agent = %+v, want %q", registeredSessions, c.UserAgent)
 	}
 
 	// Different login session, same account_key

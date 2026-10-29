@@ -20,13 +20,13 @@ const (
 // is sent immediately; later snapshots are pushed only after registry/meta
 // changes, replacing the desktop frontend's old /api/sessions polling loop.
 // ownerUserID, when non-empty, filters sessions to only those owned by that user.
-func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ownerUserID string) {
+func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ownerUserID string, client trafficClient) {
 	sub := s.registry.SubscribeChanges()
 	defer sub.Close()
 	prefsSub := s.prefsNotify.Subscribe(ownerUserID)
 	defer prefsSub.Close()
 
-	if !s.writeSessionList(ctx, c, ownerUserID) {
+	if !s.writeSessionList(ctx, c, ownerUserID, client) {
 		return
 	}
 
@@ -45,11 +45,11 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 				return
 			}
 		case <-sub.C():
-			if !s.writeSessionList(ctx, c, ownerUserID) {
+			if !s.writeSessionList(ctx, c, ownerUserID, client) {
 				return
 			}
 		case <-prefsSub.C():
-			if !s.writePrefsChanged(ctx, c, ownerUserID) {
+			if !s.writePrefsChanged(ctx, c, ownerUserID, client) {
 				return
 			}
 		}
@@ -63,7 +63,7 @@ func (s *Server) notifyPreferencesChanged(userID string) {
 	s.prefsNotify.Notify(userID)
 }
 
-func (s *Server) writePrefsChanged(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {
+func (s *Server) writePrefsChanged(ctx context.Context, c *websocket.Conn, ownerUserID string, client trafficClient) bool {
 	frame := proto.Frame{Type: proto.TypePrefsChanged}
 	s.debugFrame("client-sessions", "send", frame)
 	wctx, cancel := context.WithTimeout(ctx, clientSessionsWriteWait)
@@ -74,11 +74,11 @@ func (s *Server) writePrefsChanged(ctx context.Context, c *websocket.Conn, owner
 		s.debugf("client-sessions prefs_changed_write_failed error=%q", err)
 		return false
 	}
-	s.recordTraffic(ownerUserID, frame.Type, trafficOut, len(b))
+	s.recordTraffic(ownerUserID, client, frame.Type, trafficOut, len(b))
 	return true
 }
 
-func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {
+func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string, client trafficClient) bool {
 	var infos []proto.SessionInfo
 	if ownerUserID != "" {
 		infos = s.sessionInfoListForOwner(ownerUserID, s.seenForOwner(ctx, ownerUserID))
@@ -100,7 +100,7 @@ func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerU
 		s.debugf("client-sessions write_failed error=%q", err)
 		return false
 	}
-	s.recordTraffic(ownerUserID, frame.Type, trafficOut, len(b))
+	s.recordTraffic(ownerUserID, client, frame.Type, trafficOut, len(b))
 	return true
 }
 

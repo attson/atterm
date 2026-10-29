@@ -85,7 +85,7 @@ describe('web platform', () => {
 
     it('sessions.listRelaySessions fetches /api/me/sessions with bearer auth', async () => {
       localStorage.setItem('atterm.relay', JSON.stringify({ baseURL: 'https://relay.example', sessionToken: 'tok' }))
-      const rows = [{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, is_current: true }]
+      const rows = [{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, last_seen_at: 1, is_online: true, is_current: true }]
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
         new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } }),
       )

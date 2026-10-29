@@ -10,24 +10,30 @@ import (
 // TrafficDelta is one increment to fold into the daily rollup.
 type TrafficDelta struct {
 	// Minute is the UTC capture time; zero denotes a legacy daily-only increment.
-	Minute    int64
-	UserID    string
-	FrameType int
-	Direction int
-	Bytes     int64
-	Frames    int64
+	Minute     int64
+	UserID     string
+	ClientID   string
+	ClientName string
+	ClientKind string
+	FrameType  int
+	Direction  int
+	Bytes      int64
+	Frames     int64
 }
 
 // TrafficRow is a persisted rollup. Day is a UTC date for daily queries,
 // or an RFC3339 bucket start for minute/hour queries.
 type TrafficRow struct {
-	UpdatedAt int64
-	UserID    string
-	Day       string
-	FrameType int
-	Direction int
-	Bytes     int64
-	Frames    int64
+	UpdatedAt  int64
+	UserID     string
+	ClientID   string
+	ClientName string
+	ClientKind string
+	Day        string
+	FrameType  int
+	Direction  int
+	Bytes      int64
+	Frames     int64
 }
 
 // DirectTrafficDelta is one user's aggregate P2P usage increment.
@@ -53,7 +59,7 @@ type DirectTrafficRow struct {
 
 // AddTrafficDeltas folds deltas into relay_traffic_daily for the given UTC
 // day (or the capture date when Minute is set), atomically with its minute
-// and hour totals. Each (user_id, day, frame_type, direction) row is upserted with
+// and hour totals. Each (user_id, day, client_id, frame_type, direction) row is upserted with
 // bytes/frames accumulated, so multiple relay instances writing the same
 // row converge to a global total.
 func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []TrafficDelta) error {
@@ -67,6 +73,9 @@ func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []Tra
 		a, b := deltas[i], deltas[j]
 		if a.UserID != b.UserID {
 			return a.UserID < b.UserID
+		}
+		if a.ClientID != b.ClientID {
+			return a.ClientID < b.ClientID
 		}
 		if a.FrameType != b.FrameType {
 			return a.FrameType < b.FrameType
@@ -83,15 +92,18 @@ func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []Tra
 	defer tx.Rollback()
 	now := time.Now().Unix()
 	stmt := s.dia.Rebind(`INSERT INTO relay_traffic_daily
-		(user_id, day, frame_type, direction, bytes, frames, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (user_id, day, frame_type, direction)
+		(user_id, day, client_id, client_name, client_kind, frame_type, direction, bytes, frames, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, day, client_id, frame_type, direction)
 		DO UPDATE SET bytes = relay_traffic_daily.bytes + excluded.bytes,
 		              frames = relay_traffic_daily.frames + excluded.frames,
+		              client_name = excluded.client_name,
+		              client_kind = excluded.client_kind,
 		              updated_at = excluded.updated_at`)
 	for _, d := range deltas {
 		if _, err := tx.ExecContext(ctx, stmt,
-			d.UserID, trafficDeltaDay(day, d), d.FrameType, d.Direction, d.Bytes, d.Frames, now); err != nil {
+			d.UserID, trafficDeltaDay(day, d), d.ClientID, d.ClientName, d.ClientKind,
+			d.FrameType, d.Direction, d.Bytes, d.Frames, now); err != nil {
 			return fmt.Errorf("upsert traffic: %w", err)
 		}
 		if d.Minute != 0 {
@@ -100,12 +112,15 @@ func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []Tra
 				seconds int64
 			}{{"minute", 60}, {"hour", 3600}} {
 				_, err := tx.ExecContext(ctx, s.dia.Rebind(`INSERT INTO relay_traffic_buckets
-				(user_id, bucket, started_at, frame_type, direction, bytes, frames, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT (user_id, bucket, started_at, frame_type, direction)
+				(user_id, bucket, started_at, client_id, client_name, client_kind, frame_type, direction, bytes, frames, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (user_id, bucket, started_at, client_id, frame_type, direction)
 				DO UPDATE SET bytes = relay_traffic_buckets.bytes + excluded.bytes,
-				frames = relay_traffic_buckets.frames + excluded.frames, updated_at = excluded.updated_at`),
-					d.UserID, bucket.name, d.Minute/bucket.seconds*bucket.seconds, d.FrameType, d.Direction, d.Bytes, d.Frames, now)
+				frames = relay_traffic_buckets.frames + excluded.frames,
+				client_name = excluded.client_name, client_kind = excluded.client_kind,
+				updated_at = excluded.updated_at`),
+					d.UserID, bucket.name, d.Minute/bucket.seconds*bucket.seconds,
+					d.ClientID, d.ClientName, d.ClientKind, d.FrameType, d.Direction, d.Bytes, d.Frames, now)
 				if err != nil {
 					return fmt.Errorf("upsert traffic bucket: %w", err)
 				}
@@ -120,10 +135,10 @@ func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []Tra
 // summary views is the caller's job.
 func (s *DBStore) QueryTraffic(ctx context.Context, from, to string) ([]TrafficRow, error) {
 	rows, err := s.db.QueryContext(ctx, s.dia.Rebind(
-		`SELECT user_id, day, frame_type, direction, bytes, frames
+		`SELECT user_id, day, client_id, client_name, client_kind, frame_type, direction, bytes, frames
 		 FROM relay_traffic_daily
 		 WHERE day >= ? AND day <= ?
-		 ORDER BY day, user_id, frame_type, direction`), from, to)
+		 ORDER BY day, user_id, client_id, frame_type, direction`), from, to)
 	if err != nil {
 		return nil, fmt.Errorf("query traffic: %w", err)
 	}
@@ -131,7 +146,7 @@ func (s *DBStore) QueryTraffic(ctx context.Context, from, to string) ([]TrafficR
 	var out []TrafficRow
 	for rows.Next() {
 		var r TrafficRow
-		if err := rows.Scan(&r.UserID, &r.Day, &r.FrameType, &r.Direction, &r.Bytes, &r.Frames); err != nil {
+		if err := rows.Scan(&r.UserID, &r.Day, &r.ClientID, &r.ClientName, &r.ClientKind, &r.FrameType, &r.Direction, &r.Bytes, &r.Frames); err != nil {
 			return nil, fmt.Errorf("scan traffic: %w", err)
 		}
 		out = append(out, r)
@@ -144,10 +159,10 @@ func (s *DBStore) QueryTraffic(ctx context.Context, from, to string) ([]TrafficR
 // loading another account's usage into memory.
 func (s *DBStore) QueryTrafficForUser(ctx context.Context, userID, from, to string) ([]TrafficRow, error) {
 	rows, err := s.db.QueryContext(ctx, s.dia.Rebind(
-		`SELECT user_id, day, frame_type, direction, bytes, frames
+		`SELECT user_id, day, client_id, client_name, client_kind, frame_type, direction, bytes, frames
 		 FROM relay_traffic_daily
 		 WHERE user_id = ? AND day >= ? AND day <= ?
-		 ORDER BY day, frame_type, direction`), userID, from, to)
+		 ORDER BY day, client_id, frame_type, direction`), userID, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("query user traffic: %w", err)
 	}
@@ -155,7 +170,7 @@ func (s *DBStore) QueryTrafficForUser(ctx context.Context, userID, from, to stri
 	var out []TrafficRow
 	for rows.Next() {
 		var r TrafficRow
-		if err := rows.Scan(&r.UserID, &r.Day, &r.FrameType, &r.Direction, &r.Bytes, &r.Frames); err != nil {
+		if err := rows.Scan(&r.UserID, &r.Day, &r.ClientID, &r.ClientName, &r.ClientKind, &r.FrameType, &r.Direction, &r.Bytes, &r.Frames); err != nil {
 			return nil, fmt.Errorf("scan user traffic: %w", err)
 		}
 		out = append(out, r)
@@ -228,14 +243,14 @@ func trafficDeltaDay(fallback string, d TrafficDelta) string {
 // QueryTrafficBuckets filters personal queries in SQL and reads shared rollups
 // so every relay instance exposes the same durable traffic history.
 func (s *DBStore) QueryTrafficBuckets(ctx context.Context, userID, bucket string, from, to int64) ([]TrafficRow, error) {
-	query := `SELECT user_id, started_at, frame_type, direction, bytes, frames, updated_at
+	query := `SELECT user_id, started_at, client_id, client_name, client_kind, frame_type, direction, bytes, frames, updated_at
 	FROM relay_traffic_buckets WHERE bucket = ? AND started_at >= ? AND started_at < ?`
 	args := []any{bucket, from, to}
 	if userID != "" {
 		query += " AND user_id = ?"
 		args = append(args, userID)
 	}
-	query += " ORDER BY started_at, user_id, frame_type, direction"
+	query += " ORDER BY started_at, user_id, client_id, frame_type, direction"
 	rows, err := s.db.QueryContext(ctx, s.dia.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("query traffic buckets: %w", err)
@@ -245,7 +260,7 @@ func (s *DBStore) QueryTrafficBuckets(ctx context.Context, userID, bucket string
 	for rows.Next() {
 		var row TrafficRow
 		var started int64
-		if err := rows.Scan(&row.UserID, &started, &row.FrameType, &row.Direction, &row.Bytes, &row.Frames, &row.UpdatedAt); err != nil {
+		if err := rows.Scan(&row.UserID, &started, &row.ClientID, &row.ClientName, &row.ClientKind, &row.FrameType, &row.Direction, &row.Bytes, &row.Frames, &row.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan traffic bucket: %w", err)
 		}
 		row.Day = time.Unix(started, 0).UTC().Format(time.RFC3339)

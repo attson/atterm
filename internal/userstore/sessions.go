@@ -66,23 +66,46 @@ func (s *DBStore) CreateSession(ctx context.Context, userID, userAgent, ipPrefix
 	expiresMs := nowMs + ttl.Milliseconds()
 
 	_, err := s.db.ExecContext(ctx,
-		s.dia.Rebind(`INSERT INTO sessions(id_hash, user_id, created_at, expires_at, user_agent, ip_prefix)
-		 VALUES(?, ?, ?, ?, ?, ?)`),
-		hash, userID, nowMs, expiresMs, userAgent, ipPrefix,
+		s.dia.Rebind(`INSERT INTO sessions(id_hash, user_id, created_at, expires_at, last_seen_at, user_agent, ip_prefix)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`),
+		hash, userID, nowMs, expiresMs, nowMs, userAgent, ipPrefix,
 	)
 	if err != nil {
 		return "", nil, fmt.Errorf("insert session: %w", err)
 	}
 
 	sess := &Session{
-		IDHash:    hash,
-		UserID:    userID,
-		UserAgent: userAgent,
-		IPPrefix:  ipPrefix,
-		CreatedAt: time.UnixMilli(nowMs),
-		ExpiresAt: time.UnixMilli(expiresMs),
+		IDHash:     hash,
+		UserID:     userID,
+		UserAgent:  userAgent,
+		IPPrefix:   ipPrefix,
+		CreatedAt:  time.UnixMilli(nowMs),
+		ExpiresAt:  time.UnixMilli(expiresMs),
+		LastSeenAt: time.UnixMilli(nowMs),
 	}
 	return plaintext, sess, nil
+}
+
+// TouchSession updates last_seen_at for a non-expired session. Callers pass
+// an id_hash rather than plaintext credential material because authenticated
+// middleware has already resolved the token. RowsAffected is also the
+// revocation signal used by long-lived WebSocket heartbeats.
+func (s *DBStore) TouchSession(ctx context.Context, idHash string, at time.Time) (bool, error) {
+	atMs := at.UnixMilli()
+	res, err := s.db.ExecContext(ctx,
+		s.dia.Rebind(`UPDATE sessions
+		 SET last_seen_at = CASE WHEN last_seen_at < ? THEN ? ELSE last_seen_at END
+		 WHERE id_hash = ? AND expires_at > ?`),
+		atMs, atMs, idHash, atMs,
+	)
+	if err != nil {
+		return false, fmt.Errorf("touch session: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("touch session rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // LookupSession hashes plaintext, looks up the row joined with the owning

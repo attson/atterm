@@ -29,7 +29,7 @@ var (
 // agent -> session -> sub.Out() -> client (writer goroutine), and client ->
 // IN/RESIZE -> session.SendInbound (reader loop).
 // ownerUserID, when non-empty, restricts ATTACH to sessions owned by that user.
-func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string) {
+func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string, client trafficClient) {
 	c.SetReadLimit(clientReadLimit)
 	targetedOut := make(chan proto.Frame, 16)
 
@@ -135,7 +135,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					_ = c.CloseNow()
 					return
 				}
-				s.recordTraffic(ownerUserID, f.Type, trafficOut, len(b))
+				s.recordTraffic(ownerUserID, client, f.Type, trafficOut, len(b))
 			case <-ticker.C:
 				ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
 				err := c.Ping(ctx)
@@ -166,7 +166,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					_ = c.CloseNow()
 					return
 				}
-				s.recordTraffic(ownerUserID, f.Type, trafficOut, len(b))
+				s.recordTraffic(ownerUserID, client, f.Type, trafficOut, len(b))
 				if pacer.observe(f) {
 					timer := time.NewTimer(2 * time.Millisecond)
 					select {
@@ -207,7 +207,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			return
 		}
 		s.debugFrame("client", "recv", f)
-		s.recordTraffic(ownerUserID, f.Type, trafficIn, 22+len(f.Payload))
+		s.recordTraffic(ownerUserID, client, f.Type, trafficIn, 22+len(f.Payload))
 		switch f.Type {
 		case proto.TypeList:
 			var infos []proto.SessionInfo
@@ -227,7 +227,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.debugf("client write_failed frame=LIST_RESP error=%q", err)
 				return
 			}
-			s.recordTraffic(ownerUserID, resp.Type, trafficOut, len(respBytes))
+			s.recordTraffic(ownerUserID, client, resp.Type, trafficOut, len(respBytes))
 
 		case proto.TypeAttach:
 			if sess != nil {
@@ -511,7 +511,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.debugf("client pong_write_failed error=%q", err)
 				return
 			}
-			s.recordTraffic(ownerUserID, pong.Type, trafficOut, len(pongBytes))
+			s.recordTraffic(ownerUserID, client, pong.Type, trafficOut, len(pongBytes))
 
 		case proto.TypePong:
 			// keepalive response

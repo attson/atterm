@@ -373,6 +373,7 @@ func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	if u, ok := UserFromContext(r.Context()); ok {
 		ownerUserID = u.ID
 	}
+	client := trafficClientFromContext(r.Context())
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
@@ -389,7 +390,7 @@ func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/agent remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleAgent(r.Context(), c, ownerUserID)
+	s.handleAgent(r.Context(), c, ownerUserID, client)
 }
 
 // UplinkCount returns the current number of in-progress uplink WebSocket
@@ -411,6 +412,7 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 	if u, ok := UserFromContext(r.Context()); ok {
 		ownerUserID = u.ID
 	}
+	client := trafficClientFromContext(r.Context())
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
@@ -429,7 +431,7 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 	atomic.AddInt64(&s.uplinkCount, 1)
 	defer atomic.AddInt64(&s.uplinkCount, -1)
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleUplink(r.Context(), c, ownerUserID)
+	s.handleUplink(r.Context(), c, ownerUserID, client)
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
@@ -442,6 +444,7 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	if u, ok := UserFromContext(r.Context()); ok {
 		ownerUserID = u.ID
 	}
+	client := trafficClientFromContext(r.Context())
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
@@ -460,7 +463,7 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/client remote=%s origin=%q subprotocol=%q", r.RemoteAddr, r.Header.Get("Origin"), c.Subprotocol())
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClient(r.Context(), c, scope, ownerUserID)
+	s.handleClient(r.Context(), c, scope, ownerUserID, client)
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {
@@ -470,6 +473,7 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 	if u, ok := UserFromContext(r.Context()); ok {
 		ownerUserID = u.ID
 	}
+	client := trafficClientFromContext(r.Context())
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
@@ -486,7 +490,7 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 	}
 	s.debugf("ws accept path=/client-sessions remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClientSessions(r.Context(), c, ownerUserID)
+	s.handleClientSessions(r.Context(), c, ownerUserID, client)
 }
 
 func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {

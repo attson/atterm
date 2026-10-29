@@ -58,7 +58,7 @@ func (s *Server) handleTrafficBucketsHTTP(w http.ResponseWriter, r *http.Request
 		}
 		ft := proto.Type(row.FrameType)
 		if userID != "" {
-			details = append(details, meRelayTrafficDetail{Day: row.Day, FrameType: row.FrameType, FrameTypeName: frameTypeName(ft), Category: frameCategory(ft), Direction: row.Direction, Bytes: row.Bytes, Frames: row.Frames})
+			details = append(details, meRelayTrafficDetail{Day: row.Day, ClientID: row.ClientID, ClientName: row.ClientName, ClientKind: row.ClientKind, FrameType: row.FrameType, FrameTypeName: frameTypeName(ft), Category: frameCategory(ft), Direction: row.Direction, Bytes: row.Bytes, Frames: row.Frames})
 		} else {
 			k := key{user: row.UserID, time: row.Day, direction: row.Direction}
 			if view == "detail" {

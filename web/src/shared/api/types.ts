@@ -24,6 +24,9 @@ export interface MeDirectTrafficDay {
 
 export interface MeRelayTrafficDetail {
   day: string
+  client_id?: string
+  client_name?: string
+  client_kind?: string
   frame_type: number
   frame_type_name: string
   category: string
@@ -197,6 +200,9 @@ export interface AdminTrafficRow {
   user_id: string
   email?: string
   day?: string
+  client_id?: string
+  client_name?: string
+  client_kind?: string
   frame_type?: number
   frame_type_name?: string
   category?: string

@@ -21,7 +21,7 @@ const (
 // handleAgent owns one agent's lifecycle: read the OPEN, register the session,
 // then pump frames in both directions until the connection drops or CLOSE arrives.
 // ownerUserID is the authenticated user's ID (empty for legacy/dev-mode paths).
-func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID string) {
+func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID string, client trafficClient) {
 	c.SetReadLimit(agentReadLimit)
 
 	// First frame must be OPEN.
@@ -36,7 +36,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 		return
 	}
 	s.debugFrame("agent", "recv", openFrame)
-	s.recordTraffic(ownerUserID, openFrame.Type, trafficIn, 22+len(openFrame.Payload))
+	s.recordTraffic(ownerUserID, client, openFrame.Type, trafficIn, 22+len(openFrame.Payload))
 	var op proto.OpenPayload
 	if err := json.Unmarshal(openFrame.Payload, &op); err != nil {
 		_ = c.Close(websocket.StatusPolicyViolation, "bad OPEN payload")
@@ -104,7 +104,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 					s.debugf("agent write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 					return
 				}
-				s.recordTraffic(ownerUserID, f.Type, trafficOut, len(b))
+				s.recordTraffic(ownerUserID, client, f.Type, trafficOut, len(b))
 			}
 		}
 	}()
@@ -120,7 +120,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 			return
 		}
 		s.debugFrame("agent", "recv", f)
-		s.recordTraffic(ownerUserID, f.Type, trafficIn, 22+len(f.Payload))
+		s.recordTraffic(ownerUserID, client, f.Type, trafficIn, 22+len(f.Payload))
 		switch f.Type {
 		case proto.TypeOut:
 			seq, data, err := proto.DecodeOut(f.Payload)

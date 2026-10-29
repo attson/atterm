@@ -12,11 +12,12 @@ import (
 
 func TestTrafficMeterAddAndSnapshot(t *testing.T) {
 	m := newTrafficMeter()
-	m.add("u1", proto.TypeOut, trafficOut, 100)
-	m.add("u1", proto.TypeOut, trafficOut, 50)  // same key accumulates
-	m.add("u1", proto.TypeIn, trafficIn, 10)    // different direction
-	m.add("u2", proto.TypeMeta, trafficOut, 30) // different user
-	m.add("", proto.TypeOut, trafficOut, 999)   // empty user is dropped
+	client := trafficClient{ID: "client-a", Name: "Mac · Safari", Kind: "web"}
+	m.add("u1", client, proto.TypeOut, trafficOut, 100)
+	m.add("u1", client, proto.TypeOut, trafficOut, 50)  // same key accumulates
+	m.add("u1", client, proto.TypeIn, trafficIn, 10)    // different direction
+	m.add("u2", client, proto.TypeMeta, trafficOut, 30) // different user
+	m.add("", client, proto.TypeOut, trafficOut, 999)   // empty user is dropped
 
 	got := m.snapshot()
 	type k struct {
@@ -48,10 +49,48 @@ func TestTrafficMeterAddAndSnapshot(t *testing.T) {
 
 func TestTrafficMeterSnapshotClearsIncrement(t *testing.T) {
 	m := newTrafficMeter()
-	m.add("u1", proto.TypeOut, trafficOut, 100)
+	m.add("u1", trafficClient{}, proto.TypeOut, trafficOut, 100)
 	_ = m.snapshot()
 	if got := m.snapshot(); len(got) != 0 {
 		t.Errorf("second snapshot len = %d, want 0", len(got))
+	}
+}
+
+func TestTrafficMeterSeparatesLoginClients(t *testing.T) {
+	m := newTrafficMeter()
+	m.add("u1", trafficClient{ID: "desktop", Name: "AT Term Desktop · macOS", Kind: "desktop"}, proto.TypeOut, trafficOut, 100)
+	m.add("u1", trafficClient{ID: "phone", Name: "iPhone · Safari", Kind: "mobile"}, proto.TypeOut, trafficOut, 40)
+
+	got := m.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("snapshot rows = %d, want 2: %+v", len(got), got)
+	}
+	byClient := make(map[string]trafficDelta, len(got))
+	for _, row := range got {
+		byClient[row.ClientID] = row
+	}
+	if byClient["desktop"].Bytes != 100 || byClient["desktop"].ClientKind != "desktop" {
+		t.Errorf("desktop row = %+v", byClient["desktop"])
+	}
+	if byClient["phone"].Bytes != 40 || byClient["phone"].ClientName != "iPhone · Safari" {
+		t.Errorf("phone row = %+v", byClient["phone"])
+	}
+}
+
+func TestDescribeTrafficClient(t *testing.T) {
+	tests := []struct {
+		ua, name, kind string
+	}{
+		{"AT-Term-Desktop/v0.6.10 (darwin/arm64)", "AT Term Desktop · macOS · v0.6.10", "desktop"},
+		{"AT-Term-Desktop/dev (linux/amd64)", "AT Term Desktop · Linux", "desktop"},
+		{"Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1", "iPhone · Safari", "mobile"},
+		{"Go-http-client/1.1", "AT Term Desktop (legacy)", "legacy"},
+	}
+	for _, tt := range tests {
+		name, kind := describeTrafficClient(tt.ua)
+		if name != tt.name || kind != tt.kind {
+			t.Errorf("describeTrafficClient(%q) = (%q, %q), want (%q, %q)", tt.ua, name, kind, tt.name, tt.kind)
+		}
 	}
 }
 
@@ -62,7 +101,7 @@ func TestTrafficMeterConcurrentAdd(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			m.add("u1", proto.TypeOut, trafficOut, 1)
+			m.add("u1", trafficClient{}, proto.TypeOut, trafficOut, 1)
 		}()
 	}
 	wg.Wait()
@@ -80,7 +119,7 @@ func TestServerFlushTrafficPersists(t *testing.T) {
 	srv := NewServer(Config{Store: store, Resolver: NewIdentityResolver(store)})
 	defer srv.Close()
 
-	srv.recordTraffic("u1", proto.TypeOut, trafficOut, 120)
+	srv.recordTraffic("u1", trafficClient{ID: "client-a", Name: "AT Term Desktop · macOS", Kind: "desktop"}, proto.TypeOut, trafficOut, 120)
 	srv.directStats.recordAttempt("u1")
 	srv.directStats.recordSuccess("u1")
 	srv.directStats.recordBytes("u1", 400, 25)
@@ -112,8 +151,8 @@ func TestServerFlushTrafficPersists(t *testing.T) {
 func TestTrafficMeterPreservesCaptureMinutesAcrossMidnight(t *testing.T) {
 	m := newTrafficMeter()
 	before := time.Date(2026, 10, 19, 23, 59, 59, 0, time.UTC)
-	m.addAt("u1", proto.TypeOut, trafficOut, 100, before)
-	m.addAt("u1", proto.TypeOut, trafficOut, 200, before.Add(time.Second))
+	m.addAt("u1", trafficClient{}, proto.TypeOut, trafficOut, 100, before)
+	m.addAt("u1", trafficClient{}, proto.TypeOut, trafficOut, 200, before.Add(time.Second))
 	totals := map[int64]int64{}
 	for _, row := range m.snapshot() {
 		totals[row.Minute] += row.Bytes

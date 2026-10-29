@@ -89,6 +89,22 @@ func mergeTaskInfo(meta *proto.SessionInfo, info proto.SessionInfo) bool {
 	return changed
 }
 
+// taskListFieldsChanged reports whether task metadata other than the volatile
+// activity clock changed. ANNOUNCE uses LastOutputAt as a heartbeat; keeping it
+// out of this predicate prevents a full session-list broadcast for every
+// heartbeat while preserving all state transitions that affect the UI.
+func taskListFieldsChanged(a, b proto.SessionInfo) bool {
+	return a.TaskState != b.TaskState ||
+		a.CurrentCommand != b.CurrentCommand ||
+		a.CommandStartedAt != b.CommandStartedAt ||
+		a.CommandEndedAt != b.CommandEndedAt ||
+		a.CommandDurationMS != b.CommandDurationMS ||
+		!sameOptionalInt(a.CommandExitCode, b.CommandExitCode) ||
+		a.Type != b.Type ||
+		!sameSummary(a.Summary, b.Summary) ||
+		a.AttentionAt != b.AttentionAt
+}
+
 func hasTaskInfo(info proto.SessionInfo) bool {
 	return info.TaskState != "" ||
 		info.CurrentCommand != "" ||

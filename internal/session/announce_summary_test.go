@@ -132,3 +132,38 @@ func TestUpdateAdvertisedInfo_OpaqueSessionStillTakesSummary(t *testing.T) {
 		t.Fatalf("Summary not adopted on opaque session: %+v", got)
 	}
 }
+
+func TestUpdateAdvertisedInfoActivityOnlyDoesNotRequestListRefresh(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{
+		TaskState:    proto.TaskStateRunning,
+		LastOutputAt: 100,
+	})
+
+	if got := s.UpdateAdvertisedInfo(proto.SessionInfo{LastOutputAt: 101}); got {
+		t.Fatal("activity-only ANNOUNCE requested a full session-list refresh")
+	}
+	if info := s.Info(); info.LastOutputAt != 101 {
+		t.Fatalf("LastOutputAt = %d, want 101", info.LastOutputAt)
+	}
+
+	if got := s.UpdateAdvertisedInfo(proto.SessionInfo{
+		TaskState:    proto.TaskStateCompleted,
+		LastOutputAt: 102,
+	}); !got {
+		t.Fatal("task-state ANNOUNCE did not request a session-list refresh")
+	}
+}
+
+func TestUpdateMetaActivityOnlyDoesNotRequestListRefresh(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{
+		TaskState:    proto.TaskStateRunning,
+		LastOutputAt: 100,
+	})
+
+	if got := s.UpdateMeta(proto.MetaPayload{LastOutputAt: 101}); got {
+		t.Fatal("activity-only META requested a full session-list refresh")
+	}
+	if got := s.UpdateMeta(proto.MetaPayload{TaskState: proto.TaskStateCompleted, LastOutputAt: 102}); !got {
+		t.Fatal("task-state META did not request a session-list refresh")
+	}
+}

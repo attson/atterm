@@ -407,20 +407,29 @@ func (s *Session) SubscriberCount() int {
 // driver_client_id="" and re-render as viewers, even when a driver is
 // active. Always go through this helper instead of constructing a META
 // frame manually at the caller.
-func (s *Session) UpdateMeta(m proto.MetaPayload) {
+//
+// The return value reports whether a session-list refresh is warranted. A
+// LastOutputAt-only update is retained and broadcast to attached terminals,
+// but does not fan out a full LIST_RESP snapshot to every list subscriber.
+func (s *Session) UpdateMeta(m proto.MetaPayload) bool {
 	s.mu.Lock()
 	changed := false
+	listChanged := false
 	prevTaskState := s.meta.TaskState
 	if m.Cwd != "" && s.meta.Cwd != m.Cwd {
 		s.meta.Cwd = m.Cwd
 		changed = true
+		listChanged = true
 	}
 	if m.Title != "" && s.meta.Title != m.Title {
 		s.meta.Title = m.Title
 		changed = true
+		listChanged = true
 	}
+	beforeTask := s.meta
 	if mergeTaskMeta(&s.meta, m) {
 		changed = true
+		listChanged = listChanged || taskListFieldsChanged(beforeTask, s.meta)
 	}
 	if prevTaskState != proto.TaskStateRunning && s.meta.TaskState == proto.TaskStateRunning {
 		s.markSilenceActivityLocked(time.Now())
@@ -447,6 +456,7 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	if changed {
 		s.broadcastDriverMeta(metaCopy, driverID, driverName)
 	}
+	return listChanged
 }
 
 // UpdateCwdTitle updates cwd/title and rebroadcasts with the session's CURRENT
@@ -500,17 +510,27 @@ func (s *Session) CompareAndSwapTitle(oldTitle, newTitle string) bool {
 // UpdateAdvertisedInfo reconciles metadata from an ANNOUNCE snapshot without
 // adopting driver state. ANNOUNCEs are owner-published session facts, not
 // subscriber-control facts.
-func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
+//
+// The return value reports whether a session-list refresh is warranted. The
+// activity clock (LastOutputAt) is intentionally excluded when it is the only
+// changed field: ANNOUNCE carries that heartbeat value, but fanning a full
+// LIST_RESP to every client for each heartbeat turns presence into a large
+// relay-wide broadcast. The mirror still stores the timestamp and attached
+// terminal subscribers still receive the normal META update.
+func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) bool {
 	s.mu.Lock()
 	changed := false
+	listChanged := false
 	prevTaskState := s.meta.TaskState
 	if info.Cwd != "" && s.meta.Cwd != info.Cwd {
 		s.meta.Cwd = info.Cwd
 		changed = true
+		listChanged = true
 	}
 	if info.Title != "" && s.meta.Title != info.Title {
 		s.meta.Title = info.Title
 		changed = true
+		listChanged = true
 	}
 	// Preserve the sealed envelope so /api/sessions serving a mirror
 	// session returns the same title/cwd/command payload the agent
@@ -523,13 +543,19 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	if len(info.Sealed) > 0 && !bytes.Equal(s.meta.Sealed, info.Sealed) {
 		s.meta.Sealed = append([]byte(nil), info.Sealed...)
 		changed = true
+		listChanged = true
 	}
 	if info.RemotePermission != s.meta.RemotePermission {
 		s.meta.RemotePermission = info.RemotePermission
 		changed = true
+		listChanged = true
 	}
+	beforeTask := s.meta
 	if mergeTaskInfo(&s.meta, info) {
 		changed = true
+		// LastOutputAt is a heartbeat/activity clock. Other task fields are
+		// semantic list state and must still wake list subscribers.
+		listChanged = listChanged || taskListFieldsChanged(beforeTask, s.meta)
 	}
 	if prevTaskState != proto.TaskStateRunning && s.meta.TaskState == proto.TaskStateRunning {
 		s.markSilenceActivityLocked(time.Now())
@@ -547,6 +573,7 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	if changed {
 		s.broadcastDriverMeta(metaCopy, driverID, driverName)
 	}
+	return listChanged
 }
 
 // UpdateRemotePermission records the owner-published remote permission for

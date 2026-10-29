@@ -357,8 +357,13 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 			// ANNOUNCE carries no driver_client_id; reconcile advertised
 			// facts without adopting an empty driver and clobbering the
 			// active driver (every client would flip to viewer).
-			existing.sess.UpdateAdvertisedInfo(info)
-			u.server.registry.NotifyChange()
+			if existing.sess.UpdateAdvertisedInfo(info) {
+				// Do not turn ANNOUNCE heartbeat-only updates (typically just
+				// LastOutputAt) into a full LIST_RESP broadcast for every
+				// /client-sessions subscriber. The mirror has already stored the
+				// activity timestamp and attached terminal clients receive META.
+				u.server.registry.NotifyChange()
+			}
 			u.handleTaskNotifications(id, existing)
 			u.server.debugf("uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
 			continue
@@ -530,8 +535,9 @@ func (u *uplinkSession) readLoop() {
 				// subscribers see the real PTY driver (the host desktop) and
 				// render the viewer overlay. UpdateMeta is the single broadcast
 				// point; the raw upstream frame is not re-broadcast separately.
-				ms.sess.UpdateMeta(m)
-				u.server.registry.NotifyChange()
+				if ms.sess.UpdateMeta(m) {
+					u.server.registry.NotifyChange()
+				}
 				u.handleTaskNotifications(f.SessionID, ms)
 			}
 		case proto.TypeClose:

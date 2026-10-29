@@ -132,8 +132,9 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 		case proto.TypeMeta:
 			var m proto.MetaPayload
 			if err := json.Unmarshal(f.Payload, &m); err == nil {
-				sess.UpdateMeta(m)
-				s.registry.NotifyChange()
+				if sess.UpdateMeta(m) {
+					s.registry.NotifyChange()
+				}
 				sess.Broadcast(f)
 			}
 		case proto.TypeClose:

@@ -547,6 +547,8 @@ let imeInputTarget: HTMLTextAreaElement | null = null;
 let desktopImeInputFlushTimer: number | null = null;
 let pendingDesktopImeInputs: Array<{ payload: string; inputType: string }> = [];
 let lastDesktopAcceptedKeydown: { key: string; at: number } | null = null;
+let imeCompositionActive = false;
+let lastDesktopImeCompositionEndAt: number | null = null;
 let terminalTouchViewport: HTMLElement | null = null;
 let selectionPressTimer: ReturnType<typeof setTimeout> | null = null;
 let selectionPressAnchor: { x: number; y: number } | null = null;
@@ -1397,10 +1399,26 @@ function sendDesktopImePayload(payload: string): void {
   focusCoalescer?.handle(payload);
 }
 
+function onDesktopImeCompositionStart(event: CompositionEvent): void {
+  if (!imeInputTarget || event.target !== imeInputTarget) return;
+  imeCompositionActive = true;
+  lastDesktopImeCompositionEndAt = null;
+}
+
+function onDesktopImeCompositionEnd(event: CompositionEvent): void {
+  if (!imeInputTarget || event.target !== imeInputTarget) return;
+  imeCompositionActive = false;
+  lastDesktopImeCompositionEndAt = performance.now();
+}
+
 function onDesktopImeInput(event: InputEvent) {
   if (!isDesktopImeTakeover()) return;
   if (!imeInputTarget || event.target !== imeInputTarget) return;
-  const payload = desktopImeInputPayload(event);
+  const payload = desktopImeInputPayload(event, {
+    compositionActive: imeCompositionActive,
+    compositionEndedAt: lastDesktopImeCompositionEndAt,
+    now: performance.now(),
+  });
   if (payload === null || !auxKeysCanSend.value) return;
   event.stopPropagation();
   imeInputTarget.value = "";
@@ -1423,7 +1441,7 @@ function onDesktopImeInput(event: InputEvent) {
 function onImeInput(event: InputEvent) {
   if (isDesktopImeTakeover()) return;
   if (event.inputType !== "insertText") return;
-  if (event.isComposing) return;
+  if (event.isComposing || imeCompositionActive) return;
   const data = event.data;
   if (!data) return;
   if (!auxKeysCanSend.value) return;
@@ -2289,6 +2307,8 @@ async function ensureTerm() {
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
   keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
+  keyTarget.addEventListener("compositionstart", onDesktopImeCompositionStart, { capture: true });
+  keyTarget.addEventListener("compositionend", onDesktopImeCompositionEnd, { capture: true });
   keyTarget.addEventListener("input", onDesktopImeInput as EventListener, { capture: true });
   // handleViewerKeydown is attached to document (not keyTarget) so it fires
   // regardless of where focus currently sits. The autofocused take-control
@@ -2902,6 +2922,8 @@ onBeforeUnmount(() => {
   }
   pendingDesktopImeInputs = [];
   lastDesktopAcceptedKeydown = null;
+  imeCompositionActive = false;
+  lastDesktopImeCompositionEndAt = null;
   // Drop every external callback that could re-enter the term BEFORE we
   // touch conn / term. A queued ResizeObserver entry or a stray document
   // listener firing in the same tick used to call safeFit() → fit.fit() on
@@ -2933,6 +2955,8 @@ onBeforeUnmount(() => {
   document.removeEventListener("atterm:open-prompt-history", onPromptHistoryRequest);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("compositionstart", onDesktopImeCompositionStart, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("compositionend", onDesktopImeCompositionEnd, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("input", onDesktopImeInput as EventListener, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);

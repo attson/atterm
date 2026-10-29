@@ -139,6 +139,14 @@ describe("desktopImeInputPayload", () => {
     expect(desktopImeInputPayload(input({ inputType: "insertFromPaste" }))).toBeNull();
     expect(desktopImeInputPayload(input({ data: "" }))).toBeNull();
   });
+
+  it("leaves WebKit's post-composition insertText with xterm", () => {
+    const event = input({ data: "你", isComposing: false });
+    expect(desktopImeInputPayload(event, { compositionActive: true, compositionEndedAt: null, now: 1050 })).toBeNull();
+    expect(desktopImeInputPayload(event, { compositionEndedAt: 1000, now: 1050 })).toBeNull();
+    expect(desktopImeInputPayload(event, { compositionEndedAt: 1000, now: 1101 })).toBe("你");
+    expect(desktopImeInputPayload(event, { compositionEndedAt: null, now: 1050 })).toBe("你");
+  });
 });
 
 describe("desktopImeInputMatchesKeydown", () => {

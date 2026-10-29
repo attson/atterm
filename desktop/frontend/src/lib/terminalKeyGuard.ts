@@ -23,6 +23,16 @@ export interface TerminalKeyHandlerOptions {
   onAcceptedKeydown?: (event: KeyboardEvent) => void;
 }
 
+export interface DesktopImeInputContext {
+  /** True while the browser is still inside a composition session. */
+  compositionActive?: boolean;
+  /** Monotonic timestamp recorded from the most recent compositionend. */
+  compositionEndedAt: number | null;
+  now: number;
+}
+
+const POST_COMPOSITION_INPUT_GRACE_MS = 100;
+
 /**
  * Installs xterm's one custom-key handler. xterm replaces the previous handler
  * on every attachCustomKeyEventHandler call, so all keydown interception must
@@ -73,8 +83,22 @@ export function installTerminalKeyHandler(
  */
 export function desktopImeInputPayload(
   event: Pick<InputEvent, "inputType" | "data" | "isComposing">,
+  context?: DesktopImeInputContext,
 ): string | null {
   if (event.isComposing) return null;
+  if (event.inputType === "insertText" && context?.compositionActive) return null;
+  // WebKit may label the final input after compositionend as a plain
+  // `insertText` with isComposing=false. xterm deliberately finishes that
+  // composition on a timer; taking over the trailing event here would send
+  // the committed Hanzi once from each path.
+  if (
+    event.inputType === "insertText" &&
+    context?.compositionEndedAt !== null &&
+    context?.compositionEndedAt !== undefined
+  ) {
+    const elapsed = context.now - context.compositionEndedAt;
+    if (elapsed >= 0 && elapsed <= POST_COMPOSITION_INPUT_GRACE_MS) return null;
+  }
   switch (event.inputType) {
     case "insertText":
       return event.data || null;

@@ -757,31 +757,32 @@ function stateLabel(state: string | undefined): string {
   .task-row :deep(.kind) { opacity: 1; }
 }
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
-.task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }
+/* Focus is a navigation affordance, so it gets the strongest treatment in
+   the row: a brighter border, a slightly wider accent rail, and a subtle
+   outer ring. This stays visible even when the same session is also unread. */
+.task-row.active { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
 .task-row.active:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .task-row.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-/* Unread carries the row, not just the 12px icon: a left bar, a wash of the
-   same colour, and a bolder title. --unread-c is the row's *state* colour, set
-   inline by unreadTint() — so waiting rows glow amber and finished ones green,
-   and the row never says two colours at once. The bar is an inset shadow
-   rather than a real border-left so it costs no layout. */
+/* Unread carries the row, not just the 12px icon: a wash of the same colour
+   and a bolder title. --unread-c is the row's *state* colour, set inline by
+   unreadTint() — so waiting rows glow amber and finished ones green. Do not
+   add another accent rail here: that rail is reserved for the focused row. */
 .task-row.unread {
   background: color-mix(in srgb, var(--unread-c) 7%, transparent);
   border-color: color-mix(in srgb, var(--unread-c) 24%, var(--border));
-  box-shadow: inset 2px 0 0 var(--unread-c);
 }
 .task-row.unread:hover { background: color-mix(in srgb, var(--unread-c) 12%, transparent); }
 .task-row.unread :deep(.cmd) { font-weight: 600; color: #fff; }
-/* Active *and* unread. The left bar goes to unread — .active already says
-   "you are here" with its background and border, while unread is the thing
-   you have not looked at yet, and it is the more perishable fact. */
+/* Active *and* unread. Keep the active rail so the focused session remains
+   unmistakable; the state-colour wash still communicates that it has unread
+   activity. */
 .task-row.active.unread {
   background: color-mix(in srgb, var(--unread-c) 14%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  box-shadow: inset 2px 0 0 var(--unread-c);
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .task-row.dim { opacity: 0.6; }
 .task-row.dim.active { opacity: 0.9; }

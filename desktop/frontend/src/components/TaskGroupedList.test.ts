@@ -1096,6 +1096,14 @@ describe("TaskGroupedList detach menu item", () => {
 // unread hue. One colour per row, so "what is it waiting on" and "have I seen
 // it" never fight for the same pixel.
 describe("TaskGroupedList unread row highlight", () => {
+  test("reserves the focus rail for the active row", () => {
+    const activeRule = source.match(/\.task-row\.active\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const unreadRule = source.match(/\.task-row\.unread\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(activeRule).toContain("inset 3px 0 0 var(--accent)");
+    expect(unreadRule).not.toContain("box-shadow");
+    expect(source).toContain(".task-row.active.unread");
+  });
+
   test("tints an unread row with its state colour and leaves read rows alone", () => {
     const byHost = {
       h: [

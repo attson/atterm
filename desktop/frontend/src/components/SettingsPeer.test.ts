@@ -179,7 +179,22 @@ async function mountReady() {
   return wrapper
 }
 
+async function chooseSetup(wrapper: ReturnType<typeof mount>, choice: 'restore' | 'create' | 'join'): Promise<void> {
+  await wrapper.get(`[data-testid="peer-setup-${choice}-choice"]`).trigger('click')
+  await flushPromises()
+}
+
 describe('SettingsPeer', () => {
+  it('shows the setup choices before revealing a selected flow', async () => {
+    const wrapper = await mountReady()
+
+    expect(wrapper.find('[data-testid="peer-bundle-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="peer-create-space"]').exists()).toBe(false)
+    await chooseSetup(wrapper, 'join')
+    expect(wrapper.find('[data-testid="peer-bundle-input"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="peer-setup-back"]').exists()).toBe(true)
+  })
+
   it('persists explicit Quick Tunnel fallback consent per device', async () => {
     fakePlatform.peer.status.mockResolvedValue(configuredStatus)
     const wrapper = await mountReady()
@@ -195,6 +210,7 @@ describe('SettingsPeer', () => {
 
   it('previews pasted deep links and shows the authenticated trust details', async () => {
     const wrapper = await mountReady()
+    await chooseSetup(wrapper, 'join')
     const deepLink = 'https://app.example/connect#atc1.bundle-token'
 
     await wrapper.get('[data-testid="peer-bundle-input"]').setValue(deepLink)
@@ -214,6 +230,7 @@ describe('SettingsPeer', () => {
 
   it('requires an explicit confirmation and binds it to the previewed fingerprint', async () => {
     const wrapper = await mountReady()
+    await chooseSetup(wrapper, 'join')
     await wrapper.get('[data-testid="peer-bundle-input"]').setValue('atc1.raw-token')
     await wrapper.get('[data-testid="peer-preview-button"]').trigger('click')
     await flushPromises()
@@ -234,6 +251,7 @@ describe('SettingsPeer', () => {
   it('shows all-session scope when the invitation does not restrict session ids', async () => {
     fakePlatform.peer.previewConnectionBundle.mockResolvedValue({ ...preview, allowed_session_ids: [] })
     const wrapper = await mountReady()
+    await chooseSetup(wrapper, 'join')
     await wrapper.get('[data-testid="peer-bundle-input"]').setValue('atc1.all-sessions')
     await wrapper.get('[data-testid="peer-preview-button"]').trigger('click')
     await flushPromises()
@@ -244,6 +262,7 @@ describe('SettingsPeer', () => {
   it('maps rejected and unavailable joins to safe messages without rendering the token', async () => {
     fakePlatform.peer.joinSpace.mockRejectedValue(new Error('Peer Space join rejected: dial tcp: connection refused atc1.secret'))
     const wrapper = await mountReady()
+    await chooseSetup(wrapper, 'join')
     await wrapper.get('[data-testid="peer-bundle-input"]').setValue('atc1.secret')
     await wrapper.get('[data-testid="peer-preview-button"]').trigger('click')
     await flushPromises()
@@ -261,6 +280,7 @@ describe('SettingsPeer', () => {
 
     fakePlatform.caps.capacitor = true
     const mobile = await mountReady()
+    await chooseSetup(mobile, 'join')
     await mobile.get('[data-testid="peer-scan-button"]').trigger('click')
     await flushPromises()
 
@@ -296,6 +316,7 @@ describe('SettingsPeer', () => {
 
   it('restores an encrypted trust package only on an unconfigured desktop', async () => {
     const wrapper = await mountReady()
+    await chooseSetup(wrapper, 'restore')
     const input = wrapper.get('[data-testid="peer-backup-file"]')
     const file = new File(['encrypted-peer-backup'], 'peer-backup.json', { type: 'application/json' })
     Object.defineProperty(file, 'text', { configurable: true, value: vi.fn().mockResolvedValue('encrypted-peer-backup') })
@@ -333,6 +354,7 @@ describe('SettingsPeer', () => {
   it('creates a new Peer Space and loads host controls', async () => {
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
     const wrapper = await mountReady()
+    await chooseSetup(wrapper, 'create')
 
     await wrapper.get('[data-testid="peer-create-space"]').trigger('click')
     await flushPromises()
@@ -510,6 +532,7 @@ describe('SettingsPeer', () => {
     expect(wrapper.findAll('[data-testid="peer-member-row"]')).toHaveLength(2)
     expect(wrapper.text()).toContain('peer_remote_789')
     expect(wrapper.text()).toContain('settings.peer.permission.control')
+    await wrapper.findAll('.member-summary')[1].trigger('click')
     expect(wrapper.text()).toContain('settings.peer.members.lastDirectExchange')
     expect(fakePlatform.peer.revokeMember).not.toHaveBeenCalled()
 

@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref } from 'vue'
-import { ShieldX, Trash2, X } from 'lucide-vue-next'
+import { ChevronDown, ShieldX, Trash2, UsersRound, X } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
 import type { PeerMember } from '../platform/types'
 
@@ -16,6 +16,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const pendingPeerID = ref('')
+const expandedPeerID = ref('')
 
 function formatTime(unixSeconds: number | undefined): string {
   if (!unixSeconds) return t('settings.peer.members.never')
@@ -46,13 +47,20 @@ function confirmRevocation(member: PeerMember): void {
   pendingPeerID.value = ''
   emit('revoke', member)
 }
+
+function toggleMember(peerID: string): void {
+  expandedPeerID.value = expandedPeerID.value === peerID ? '' : peerID
+}
 </script>
 
 <template>
   <section class="peer-members" data-testid="peer-members-section">
-    <div>
-      <h3>{{ t('settings.peer.members.title') }}</h3>
+    <div class="members-heading">
+      <UsersRound :size="17" aria-hidden="true" />
+      <div>
+        <h3>{{ t('settings.peer.members.title') }}</h3>
       <p class="hint">{{ t('settings.peer.members.hint') }}</p>
+      </div>
     </div>
 
     <p v-if="loading" class="hint">{{ t('common.loading') }}</p>
@@ -65,11 +73,20 @@ function confirmRevocation(member: PeerMember): void {
         data-testid="peer-member-row"
       >
         <div class="member-heading">
-          <code>{{ member.peer_id }}</code>
-          <span v-if="member.local" class="badge local-badge">{{ t('settings.peer.members.thisDevice') }}</span>
-          <span class="badge" :class="`status-${member.status}`">
-            {{ statusLabel(member.status) }}
-          </span>
+          <button
+            type="button"
+            class="member-summary"
+            :aria-expanded="expandedPeerID === member.peer_id"
+            @click="toggleMember(member.peer_id)"
+          >
+            <code>{{ member.peer_id }}</code>
+            <span v-if="member.local" class="badge local-badge">{{ t('settings.peer.members.thisDevice') }}</span>
+            <span class="badge" :class="`status-${member.status}`">
+              {{ statusLabel(member.status) }}
+            </span>
+            <span class="badge permission-badge">{{ permissionLabel(member.permission) }}</span>
+            <ChevronDown :size="15" class="member-chevron" :class="{ expanded: expandedPeerID === member.peer_id }" aria-hidden="true" />
+          </button>
           <button
             v-if="member.can_revoke && pendingPeerID !== member.peer_id"
             type="button"
@@ -84,7 +101,7 @@ function confirmRevocation(member: PeerMember): void {
           </button>
         </div>
 
-        <dl class="member-details">
+        <dl v-if="expandedPeerID === member.peer_id" class="member-details">
           <div>
             <dt>{{ t('settings.peer.permissionLabel') }}</dt>
             <dd>{{ permissionLabel(member.permission) }}</dd>
@@ -157,8 +174,20 @@ function confirmRevocation(member: PeerMember): void {
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.members-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--accent);
+}
+.members-heading > div {
+  min-width: 0;
 }
 h3,
 .hint,
@@ -192,10 +221,36 @@ h3 {
   gap: 7px;
   min-width: 0;
 }
-.member-heading > code {
-  overflow-wrap: anywhere;
+.member-summary {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: 7px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--fg);
+  text-align: left;
+}
+.member-summary:hover {
+  color: var(--accent);
+}
+.member-summary > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: inherit;
   font-size: 11px;
+}
+.member-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--fg-dim);
+  transition: transform 120ms ease;
+}
+.member-chevron.expanded {
+  transform: rotate(180deg);
 }
 .badge {
   flex: 0 0 auto;
@@ -237,7 +292,9 @@ h3 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px 12px;
-  margin: 10px 0 0;
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 .member-details div {
   min-width: 0;

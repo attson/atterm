@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Cable, Check, Copy, Database, Download, Play, Plus, QrCode, RadioTower, RefreshCw, Save, Search, ShieldCheck, Square, Trash2, X } from 'lucide-vue-next'
+import { ArrowLeft, Cable, Check, Copy, Database, Download, Link2, Play, Plus, QrCode, RadioTower, RefreshCw, Save, Search, ShieldCheck, Square, Trash2, Upload, UserPlus, X } from 'lucide-vue-next'
 import { useI18n } from '../i18n/useI18n'
 import { copyTextToClipboard } from '../lib/terminalCopy'
 import { usePlatform } from '../platform'
@@ -79,6 +79,18 @@ const invitePermission = ref<'view' | 'control' | 'full'>('control')
 const inviteCanInvite = ref(false)
 const inviteCanSyncSecrets = ref(false)
 const inviteSessionScope = ref('')
+const setupChoice = ref<'restore' | 'create' | 'join' | null>(null)
+const hasSyncActivity = computed(() => {
+  const current = configSyncStatus.value
+  if (!current) return false
+  return Boolean(
+    current.local_operations > 0
+    || current.replica_devices > 0
+    || current.active_remote_members > 0
+    || current.last_exchange_at
+    || current.pending_import_records > 0
+  )
+})
 
 const canPreview = computed(() => bundleInput.value.trim() !== '' && !previewing.value && !joining.value)
 const hasPublishedMemberRoute = computed(() => Boolean(
@@ -790,6 +802,16 @@ function permissionLabel(permission: string): string {
   if (permission === 'full') return t('settings.peer.permission.full')
   return t('common.unknown')
 }
+
+function chooseSetup(choice: 'restore' | 'create' | 'join'): void {
+  setupChoice.value = choice
+  error.value = ''
+}
+
+function resetSetupChoice(): void {
+  setupChoice.value = null
+  error.value = ''
+}
 </script>
 
 <template>
@@ -805,30 +827,41 @@ function permissionLabel(permission: string): string {
             <p class="hint">{{ t('settings.peer.connectedHint') }}</p>
           </div>
         </div>
-        <dl class="detail-list">
-          <div>
-            <dt>{{ t('settings.peer.peerId') }}</dt>
-            <dd class="mono">{{ status.peer_id }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('settings.peer.spaceId') }}</dt>
-            <dd class="mono">{{ status.space_id }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('settings.peer.fingerprint') }}</dt>
-            <dd class="mono">{{ fingerprint }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('settings.peer.createdAt') }}</dt>
-            <dd>{{ formatTime(status.created_at) }}</dd>
-          </div>
-        </dl>
+        <div class="joined-at">
+          <span>{{ t('settings.peer.createdAt') }}</span>
+          <strong>{{ formatTime(status.created_at) }}</strong>
+        </div>
+        <details class="identity-details">
+          <summary>{{ t('settings.peer.identityDetails') }}</summary>
+          <dl class="detail-list">
+            <div>
+              <dt>{{ t('settings.peer.peerId') }}</dt>
+              <dd class="mono">{{ status.peer_id }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('settings.peer.spaceId') }}</dt>
+              <dd class="mono">{{ status.space_id }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('settings.peer.fingerprint') }}</dt>
+              <dd class="mono">{{ fingerprint }}</dd>
+            </div>
+          </dl>
+        </details>
       </section>
 
-      <PeerTrustBackupSection
-        v-if="platform.caps.wailsBindings && platform.peer?.exportTrustBackup"
-        :configured="true"
-      />
+      <details class="peer-disclosure peer-group" data-testid="peer-security-group">
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.groups.security.title') }}</strong>
+            <small>{{ t('settings.peer.groups.security.hint') }}</small>
+          </span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <PeerTrustBackupSection
+          v-if="platform.caps.wailsBindings && platform.peer?.exportTrustBackup"
+          :configured="true"
+        />
 
       <section class="peer-section" data-testid="peer-fallback-consent-section">
         <div class="section-heading">
@@ -853,6 +886,16 @@ function permissionLabel(permission: string): string {
         </label>
       </section>
 
+      </details>
+
+      <details class="peer-disclosure" data-testid="peer-advanced-group">
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.advanced.title') }}</strong>
+            <small>{{ t('settings.peer.advanced.hint') }}</small>
+          </span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+        </summary>
       <section class="peer-section" data-testid="peer-rendezvous-section">
         <div class="section-heading">
           <RadioTower :size="17" aria-hidden="true" />
@@ -1134,38 +1177,43 @@ function permissionLabel(permission: string): string {
         </div>
       </section>
 
+      </details>
+
+      <details class="peer-disclosure peer-group peer-sync-group" data-testid="peer-sync-group">
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.sync.title') }}</strong>
+            <small>{{ t('settings.peer.sync.hint') }}</small>
+          </span>
+          <span class="sync-summary-actions">
+            <button
+              type="button"
+              class="icon-action sync-action"
+              data-testid="peer-sync-now"
+              :disabled="configSyncLoading || Boolean(configSyncAction)"
+              :aria-label="t('settings.peer.sync.syncNow')"
+              :title="t('settings.peer.sync.syncNow')"
+              @click.stop="syncConfigNow"
+            >
+              <Database :size="15" :class="{ spinning: configSyncAction === 'sync' }" aria-hidden="true" />
+              <span>{{ t('settings.peer.sync.syncNowShort') }}</span>
+            </button>
+            <button
+              type="button"
+              class="icon-action sync-action"
+              data-testid="peer-sync-refresh"
+              :disabled="configSyncLoading || Boolean(configSyncAction)"
+              :aria-label="t('settings.peer.sync.refresh')"
+              :title="t('settings.peer.sync.refresh')"
+              @click.stop="refreshConfigSyncStatus"
+            >
+              <RefreshCw :size="15" :class="{ spinning: configSyncLoading }" aria-hidden="true" />
+              <span>{{ t('settings.peer.sync.refreshShort') }}</span>
+            </button>
+            <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+          </span>
+        </summary>
       <section class="peer-section" data-testid="peer-config-sync">
-        <div class="sync-heading">
-          <div class="section-heading sync-title">
-            <Database :size="17" aria-hidden="true" />
-            <div>
-              <h3>{{ t('settings.peer.sync.title') }}</h3>
-              <p class="hint">{{ t('settings.peer.sync.hint') }}</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            class="icon-action"
-            data-testid="peer-sync-now"
-            :disabled="configSyncLoading || Boolean(configSyncAction)"
-            :aria-label="t('settings.peer.sync.syncNow')"
-            :title="t('settings.peer.sync.syncNow')"
-            @click="syncConfigNow"
-          >
-            <Database :size="15" :class="{ spinning: configSyncAction === 'sync' }" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="icon-action"
-            data-testid="peer-sync-refresh"
-            :disabled="configSyncLoading || Boolean(configSyncAction)"
-            :aria-label="t('settings.peer.sync.refresh')"
-            :title="t('settings.peer.sync.refresh')"
-            @click="refreshConfigSyncStatus"
-          >
-            <RefreshCw :size="15" :class="{ spinning: configSyncLoading }" aria-hidden="true" />
-          </button>
-        </div>
         <p v-if="configSyncLoading && !configSyncStatus" class="hint">{{ t('common.loading') }}</p>
         <template v-else-if="configSyncStatus">
           <div
@@ -1184,7 +1232,7 @@ function permissionLabel(permission: string): string {
             <span v-else-if="configSyncStatus.last_exchange_at">{{ t('settings.peer.sync.synced') }}</span>
             <span v-else>{{ t('settings.peer.sync.localOnly') }}</span>
           </div>
-          <div class="sync-metrics">
+          <div v-if="hasSyncActivity" class="sync-metrics">
             <div>
               <span>{{ t('settings.peer.sync.localChanges') }}</span>
               <strong>{{ configSyncStatus.local_operations }}</strong>
@@ -1202,7 +1250,7 @@ function permissionLabel(permission: string): string {
               <strong>{{ formatTime(configSyncStatus.last_exchange_at) }}</strong>
             </div>
           </div>
-          <p class="hint" data-testid="peer-sync-storage-note">
+          <p v-if="hasSyncActivity" class="hint" data-testid="peer-sync-storage-note">
             {{ configSyncStatus.pending_operations > 0
               ? t('settings.peer.sync.pendingHint')
               : t('settings.peer.sync.storageHint') }}
@@ -1268,7 +1316,16 @@ function permissionLabel(permission: string): string {
           </div>
         </template>
       </section>
+      </details>
 
+      <details class="peer-disclosure peer-group peer-members-group" data-testid="peer-members-group">
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.groups.members.title') }}</strong>
+            <small>{{ t('settings.peer.groups.members.hint') }}</small>
+          </span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+        </summary>
       <PeerMembersSection
         :members="members"
         :loading="membersLoading"
@@ -1276,6 +1333,25 @@ function permissionLabel(permission: string): string {
         @revoke="revokeMember"
       />
 
+      </details>
+
+      <details class="peer-disclosure peer-group" data-testid="peer-connection-group" open>
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.groups.connection.title') }}</strong>
+            <small>{{ t('settings.peer.groups.connection.hint') }}</small>
+          </span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+        </summary>
+      <div class="connection-subsections">
+      <details class="connection-subsection" data-testid="peer-connection-route">
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.connectionSections.route.title') }}</strong>
+            <small>{{ t('settings.peer.connectionSections.route.hint') }}</small>
+          </span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+        </summary>
       <section class="peer-section" data-testid="peer-route-import-section">
         <div class="section-heading">
           <Download :size="17" aria-hidden="true" />
@@ -1319,7 +1395,17 @@ function permissionLabel(permission: string): string {
         </p>
       </section>
 
-      <section v-if="hasQuickTunnelHost" class="peer-section" data-testid="peer-tunnel-section">
+      </details>
+
+      <details v-if="hasQuickTunnelHost" class="connection-subsection" data-testid="peer-connection-tunnel">
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.connectionSections.tunnel.title') }}</strong>
+            <small>{{ t('settings.peer.connectionSections.tunnel.hint') }}</small>
+          </span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+        </summary>
+      <section class="peer-section" data-testid="peer-tunnel-section">
         <div>
           <h3>{{ t('settings.peer.tunnel.title') }}</h3>
           <p class="hint">{{ t('settings.peer.tunnel.hint') }}</p>
@@ -1423,8 +1509,23 @@ function permissionLabel(permission: string): string {
         <p v-if="tunnelStatus?.running" class="hint">{{ t('settings.peer.tunnel.shareHint') }}</p>
       </section>
 
-      <section class="peer-section">
-        <h3>{{ t('settings.peer.invitationSummary') }}</h3>
+      </details>
+
+      <details class="connection-subsection" data-testid="peer-connection-invitations" open>
+        <summary>
+          <span>
+            <strong>{{ t('settings.peer.connectionSections.invitations.title') }}</strong>
+            <small>{{ t('settings.peer.connectionSections.invitations.hint') }}</small>
+          </span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+        </summary>
+      <section class="peer-section invitation-summary-section" data-testid="peer-invitation-summary-section">
+        <div class="section-heading">
+          <UserPlus :size="17" aria-hidden="true" />
+          <div>
+            <h3>{{ t('settings.peer.invitationSummary') }}</h3>
+          </div>
+        </div>
         <div class="metrics" data-testid="peer-invitation-summary">
           <div><strong>{{ status.open_invitations }}</strong><span>{{ t('settings.peer.invitationOpen') }}</span></div>
           <div><strong>{{ status.used_invitations }}</strong><span>{{ t('settings.peer.invitationUsed') }}</span></div>
@@ -1433,10 +1534,13 @@ function permissionLabel(permission: string): string {
         </div>
       </section>
 
-      <section class="peer-section" data-testid="peer-invitations-section">
-        <div>
-          <h3>{{ t('settings.peer.invitations.title') }}</h3>
-          <p class="hint">{{ t('settings.peer.invitations.hint') }}</p>
+      <section class="peer-section invitation-form-section" data-testid="peer-invitations-section">
+        <div class="section-heading">
+          <UserPlus :size="17" aria-hidden="true" />
+          <div>
+            <h3>{{ t('settings.peer.invitations.title') }}</h3>
+            <p class="hint">{{ t('settings.peer.invitations.hint') }}</p>
+          </div>
         </div>
         <div class="invitation-form-grid">
           <div class="form-field compact-field">
@@ -1575,67 +1679,136 @@ function permissionLabel(permission: string): string {
           </div>
         </div>
       </section>
+      </details>
+      </div>
+      </details>
     </template>
 
     <template v-else>
-      <PeerTrustBackupSection
-        v-if="platform.caps.wailsBindings && platform.peer?.importTrustBackup"
-        :configured="false"
-        @restored="onTrustBackupRestored"
-      />
+      <section class="peer-setup" data-testid="peer-setup">
+        <div class="setup-intro">
+          <span class="setup-kicker">Peer Space</span>
+          <h3>{{ t('settings.peer.setup.title') }}</h3>
+          <p class="hint">{{ t('settings.peer.setup.chooseHint') }}</p>
+        </div>
 
-      <section class="peer-section create-space-section">
-        <h3>{{ t('settings.peer.create.title') }}</h3>
-        <p class="hint">{{ t('settings.peer.create.hint') }}</p>
-        <button
-          type="button"
-          class="secondary-action create-space-action"
-          data-testid="peer-create-space"
-          :disabled="creatingSpace || joining"
-          @click="createPeerSpace"
-        >
-          <Plus :size="15" aria-hidden="true" />
-          {{ creatingSpace ? t('settings.peer.create.creating') : t('settings.peer.create.action') }}
-        </button>
-      </section>
+        <div v-if="!setupChoice" class="setup-choice-grid">
+          <button
+            v-if="platform.caps.wailsBindings && platform.peer?.importTrustBackup"
+            type="button"
+            class="setup-choice setup-choice-restore"
+            data-testid="peer-setup-restore-choice"
+            @click="chooseSetup('restore')"
+          >
+            <span class="setup-mark setup-mark-restore"><Upload :size="17" aria-hidden="true" /></span>
+            <span>
+              <strong>{{ t('settings.peer.setup.restoreTitle') }}</strong>
+              <small>{{ t('settings.peer.setup.restoreChoice') }}</small>
+            </span>
+          </button>
+          <button type="button" class="setup-choice setup-choice-create" data-testid="peer-setup-create-choice" @click="chooseSetup('create')">
+            <span class="setup-mark setup-mark-create"><Plus :size="17" aria-hidden="true" /></span>
+            <span>
+              <strong>{{ t('settings.peer.create.title') }}</strong>
+              <small>{{ t('settings.peer.setup.createChoice') }}</small>
+            </span>
+          </button>
+          <button type="button" class="setup-choice setup-choice-join" data-testid="peer-setup-join-choice" @click="chooseSetup('join')">
+            <span class="setup-mark setup-mark-join"><Link2 :size="17" aria-hidden="true" /></span>
+            <span>
+              <strong>{{ t('settings.peer.joinTitle') }}</strong>
+              <small>{{ t('settings.peer.setup.joinChoice') }}</small>
+            </span>
+          </button>
+        </div>
 
-      <section class="peer-section">
-        <h3>{{ t('settings.peer.joinTitle') }}</h3>
-        <p class="hint">{{ t('settings.peer.joinHint') }}</p>
-        <label class="field-label" for="peer-bundle-input">{{ t('settings.peer.bundleLabel') }}</label>
-        <textarea
-          id="peer-bundle-input"
-          v-model="bundleInput"
-          data-testid="peer-bundle-input"
-          rows="4"
-          :placeholder="t('settings.peer.bundlePlaceholder')"
-          :disabled="previewing || joining"
-          autocomplete="off"
-          spellcheck="false"
-          @input="onBundleInput"
-        />
-        <div class="actions">
-          <button
-            type="button"
-            class="primary-action"
-            data-testid="peer-preview-button"
-            :disabled="!canPreview"
-            @click="previewBundle()"
-          >
-            <Search :size="15" aria-hidden="true" />
-            {{ previewing ? t('settings.peer.previewing') : t('settings.peer.previewAction') }}
+        <div v-else class="setup-flow">
+          <button type="button" class="setup-back" data-testid="peer-setup-back" @click="resetSetupChoice">
+            <ArrowLeft :size="15" aria-hidden="true" />
+            {{ t('settings.peer.setup.back') }}
           </button>
-          <button
-            v-if="platform.caps.capacitor"
-            type="button"
-            class="secondary-action"
-            data-testid="peer-scan-button"
-            :disabled="scanning || previewing || joining"
-            @click="scanBundle"
-          >
-            <QrCode :size="15" aria-hidden="true" />
-            {{ scanning ? t('settings.peer.scanning') : t('settings.peer.scanAction') }}
-          </button>
+
+          <div class="setup-grid">
+          <section v-if="setupChoice === 'restore' && platform.caps.wailsBindings && platform.peer?.importTrustBackup" class="setup-card setup-card-restore">
+            <div class="setup-card-heading">
+              <span class="setup-mark setup-mark-restore"><Upload :size="17" aria-hidden="true" /></span>
+              <div>
+                <h4>{{ t('settings.peer.setup.restoreTitle') }}</h4>
+                <p class="hint">{{ t('settings.peer.setup.restoreHint') }}</p>
+              </div>
+            </div>
+            <PeerTrustBackupSection :configured="false" @restored="onTrustBackupRestored" />
+          </section>
+
+          <section v-if="setupChoice === 'create'" class="setup-card setup-card-create">
+            <div class="setup-card-heading">
+              <span class="setup-mark setup-mark-create"><Plus :size="17" aria-hidden="true" /></span>
+              <div>
+                <h4>{{ t('settings.peer.create.title') }}</h4>
+                <p class="hint">{{ t('settings.peer.create.hint') }}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="primary-action create-space-action"
+              data-testid="peer-create-space"
+              :disabled="creatingSpace || joining"
+              @click="createPeerSpace"
+            >
+              <Plus :size="15" aria-hidden="true" />
+              {{ creatingSpace ? t('settings.peer.create.creating') : t('settings.peer.create.action') }}
+            </button>
+          </section>
+
+          <section v-if="setupChoice === 'join'" class="setup-card setup-card-join">
+            <div class="setup-card-heading">
+              <span class="setup-mark setup-mark-join"><Link2 :size="17" aria-hidden="true" /></span>
+              <div>
+                <h4>{{ t('settings.peer.joinTitle') }}</h4>
+                <p class="hint">{{ t('settings.peer.joinHint') }}</p>
+              </div>
+            </div>
+            <div class="join-input-row">
+              <div class="form-field">
+                <label class="field-label" for="peer-bundle-input">{{ t('settings.peer.bundleLabel') }}</label>
+                <textarea
+                  id="peer-bundle-input"
+                  v-model="bundleInput"
+                  data-testid="peer-bundle-input"
+                  rows="3"
+                  :placeholder="t('settings.peer.bundlePlaceholder')"
+                  :disabled="previewing || joining"
+                  autocomplete="off"
+                  spellcheck="false"
+                  @input="onBundleInput"
+                />
+              </div>
+              <div class="join-actions">
+                <button
+                  type="button"
+                  class="primary-action"
+                  data-testid="peer-preview-button"
+                  :disabled="!canPreview"
+                  @click="previewBundle()"
+                >
+                  <Search :size="15" aria-hidden="true" />
+                  {{ previewing ? t('settings.peer.previewing') : t('settings.peer.previewAction') }}
+                </button>
+                <button
+                  v-if="platform.caps.capacitor"
+                  type="button"
+                  class="secondary-action"
+                  data-testid="peer-scan-button"
+                  :disabled="scanning || previewing || joining"
+                  @click="scanBundle"
+                >
+                  <QrCode :size="15" aria-hidden="true" />
+                  {{ scanning ? t('settings.peer.scanning') : t('settings.peer.scanAction') }}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
         </div>
       </section>
 
@@ -1720,6 +1893,438 @@ function permissionLabel(permission: string): string {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+}
+/* Keep the page ordered by the user's next decision: space status first,
+ * invitations second, then members and advanced transport/sync controls. */
+.tab-pane > * {
+  order: 50;
+}
+.tab-pane > [data-testid="peer-configured"] {
+  order: 10;
+}
+.tab-pane > [data-testid="peer-connection-group"] {
+  order: 20;
+}
+.connection-subsections {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "invitations"
+    "route"
+    "tunnel";
+}
+.tab-pane > [data-testid="peer-members-group"] {
+  order: 30;
+}
+.tab-pane > [data-testid="peer-fallback-consent-section"],
+:deep([data-testid="peer-trust-backup"]) {
+  order: 40;
+}
+:deep([data-testid="peer-invitation-summary-section"]),
+:deep([data-testid="peer-invitations-section"]) {
+  order: 20;
+}
+:deep([data-testid="peer-members-section"]) {
+  order: 30;
+}
+.tab-pane > [data-testid="peer-sync-group"] {
+  order: 60;
+}
+.tab-pane > [data-testid="peer-security-group"] {
+  order: 40;
+}
+.tab-pane > [data-testid="peer-advanced-group"] {
+  order: 50;
+}
+.tab-pane > [data-testid="peer-rendezvous-section"],
+.tab-pane > [data-testid="peer-lan-section"] {
+  order: 70;
+}
+.tab-pane > [data-testid="peer-error"] {
+  order: 100;
+}
+.connection-subsections > [data-testid="peer-connection-invitations"] {
+  grid-area: invitations;
+}
+.connection-subsections > [data-testid="peer-connection-route"] {
+  grid-area: route;
+}
+.connection-subsections > [data-testid="peer-connection-tunnel"] {
+  grid-area: tunnel;
+}
+.peer-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.setup-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 2px 2px 0;
+}
+.setup-intro h3 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.setup-kicker {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.setup-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.setup-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-width: 0;
+  min-height: 76px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 2.5%, transparent);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.setup-choice:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.setup-choice > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.setup-choice strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.setup-choice small {
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.setup-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.setup-back {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.setup-back:hover {
+  border-color: var(--border);
+  color: var(--fg);
+}
+.setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 2.5%, transparent);
+}
+.setup-card-join {
+  grid-column: 1 / -1;
+}
+.setup-card-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.setup-card-heading h4 {
+  margin: 0 0 3px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 650;
+}
+.setup-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  color: var(--fg-dim);
+}
+.setup-mark-restore {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.setup-mark-create,
+.setup-mark-join {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.setup-card-note {
+  min-height: 38px;
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.setup-card .trust-backup {
+  padding: 0;
+  border: 0;
+}
+.setup-card .trust-backup > .section-heading {
+  display: none;
+}
+.setup-card .backup-fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+.join-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.join-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 148px;
+}
+.join-actions button {
+  width: 100%;
+}
+.tab-pane > .peer-section {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.joined-at {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.joined-at strong {
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+.identity-details {
+  margin-top: 3px;
+}
+.identity-details > summary {
+  display: inline-flex;
+  padding: 2px 0;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 11px;
+  list-style: none;
+}
+.identity-details > summary::-webkit-details-marker {
+  display: none;
+}
+.identity-details > summary::before {
+  content: '›';
+  margin-right: 5px;
+  font-size: 15px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.identity-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.identity-details .detail-list {
+  margin-top: 10px;
+}
+.peer-disclosure {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 1.5%, transparent);
+  overflow: hidden;
+}
+.peer-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  color: var(--fg);
+  cursor: pointer;
+  list-style: none;
+}
+.peer-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.peer-disclosure > summary > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.peer-disclosure > summary strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.peer-disclosure > summary small {
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.disclosure-chevron {
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+.peer-disclosure[open] .disclosure-chevron {
+  transform: rotate(180deg);
+}
+.peer-disclosure > .peer-section {
+  margin: 0 12px 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 1.5%, transparent);
+}
+.peer-disclosure > [data-testid='peer-config-sync'] {
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.peer-secondary-disclosure {
+  margin: 10px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.peer-secondary-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  color: var(--fg);
+  cursor: pointer;
+  list-style: none;
+}
+.peer-secondary-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.peer-secondary-disclosure > summary > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.peer-secondary-disclosure > summary strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+.peer-secondary-disclosure > summary small {
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.peer-secondary-disclosure[open] > summary {
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.peer-sync-group .sync-title {
+  display: none;
+}
+.peer-sync-group .sync-heading {
+  justify-content: flex-end;
+  min-height: 0;
+}
+.sync-action {
+  width: auto;
+  min-width: 0;
+  padding-inline: 9px;
+  white-space: nowrap;
+}
+.peer-secondary-disclosure > .peer-section {
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.connection-subsection {
+  margin: 10px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.connection-subsection:last-child {
+  margin-bottom: 12px;
+}
+.connection-subsection > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  color: var(--fg);
+  cursor: pointer;
+  list-style: none;
+}
+.connection-subsection > summary::-webkit-details-marker {
+  display: none;
+}
+.connection-subsection > summary > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.connection-subsection > summary strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+.connection-subsection > summary small {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.connection-subsection[open] > summary {
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.connection-subsection > .peer-section {
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.connection-subsection > .peer-section > .section-heading,
+.connection-subsection > [data-testid='peer-tunnel-section'] > div:first-child {
+  display: none;
 }
 .peer-section {
   display: flex;
@@ -2067,6 +2672,57 @@ button:disabled {
   grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
+.invitation-summary-section {
+  gap: 7px;
+  padding-block: 10px;
+}
+.invitation-summary-section .section-heading {
+  align-items: center;
+}
+.invitation-summary-section .section-heading h3 {
+  font-size: 12px;
+}
+.invitation-summary-section .metrics {
+  gap: 6px;
+}
+.invitation-summary-section .metrics > div {
+  padding: 5px 8px;
+}
+.invitation-form-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, 1fr);
+  align-items: start;
+  gap: 8px 14px;
+  padding-block: 12px;
+}
+.invitation-form-section > .section-heading,
+.invitation-form-section > .invitation-form-grid,
+.invitation-form-section > .invitation-list,
+.invitation-form-section > p {
+  grid-column: 1 / -1;
+}
+.invitation-form-section > .section-heading {
+  align-items: center;
+}
+.invitation-form-section > .section-heading h3 {
+  font-size: 12px;
+}
+.invitation-form-section > .form-field {
+  grid-column: 1;
+}
+.invitation-form-section > .capability-options {
+  grid-column: 2;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding-top: 17px;
+}
+.invitation-form-section > .create-invitations {
+  grid-column: 1;
+  align-self: start;
+}
 .form-field {
   display: flex;
   flex-direction: column;
@@ -2174,6 +2830,21 @@ button:disabled {
   background: transparent;
   color: var(--fg-dim);
 }
+.sync-action {
+  width: auto;
+  min-width: 0;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+.sync-summary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.sync-summary-actions .disclosure-chevron {
+  margin-left: 2px;
+}
 .danger-action:hover:not(:disabled) {
   border-color: var(--bad);
   color: var(--bad);
@@ -2212,6 +2883,17 @@ button:disabled {
   line-height: 1.5;
 }
 @media (max-width: 640px) {
+  .setup-choice-grid,
+  .setup-grid,
+  .join-input-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .setup-card-join {
+    grid-column: auto;
+  }
+  .join-actions {
+    min-width: 0;
+  }
   .detail-list {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2220,6 +2902,17 @@ button:disabled {
   .lan-route-grid,
   .capability-options {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .invitation-form-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .invitation-form-section > .form-field,
+  .invitation-form-section > .capability-options,
+  .invitation-form-section > .create-invitations {
+    grid-column: 1;
+  }
+  .invitation-form-section > .capability-options {
+    padding-top: 0;
   }
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -238,6 +238,12 @@ describe("TabBar state icon + unread", () => {
     expect(el.attributes("style")).toContain("--unread-c: #f59e0b");
   });
 
+  test("keeps the focus underline exclusive to the active tab", () => {
+    const unreadRule = tabBarSource.match(/\.tab\.unread\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(unreadRule).not.toContain("box-shadow");
+    expect(tabBarSource).not.toContain(".tab.unread:not(.active)");
+  });
+
   test("uses only the main state icon for unread completed sessions", () => {
     const tab = {
       ...baseTab,

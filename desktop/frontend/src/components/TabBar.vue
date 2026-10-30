@@ -534,18 +534,12 @@ function onStripDrop(e: DragEvent) {
 .admin-btn:hover { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 .admin-btn.active { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 /* Unread tab. Same language as the sidebar row — a wash of the session's state
-   colour plus a bolder title — but the accent bar sits at the bottom edge to
-   match how .tab.active already marks itself, rather than on the left where a
-   tab has no room for it. */
+   colour plus a bolder title. Keep the active tab's bottom bar exclusive to
+   focus: an unread/running tab is a notification, not another selected tab. */
 .tab.unread {
   background: color-mix(in srgb, var(--unread-c) 10%, transparent);
 }
 .tab.unread .title { font-weight: 600; color: #fff; }
-/* Active wins the bottom bar (it is the tab you are looking at); unread keeps
-   the wash, which .active's own background sits on top of. */
-.tab.unread:not(.active) {
-  box-shadow: inset 0 -2px 0 var(--unread-c);
-}
 
 @media (max-width: 767px) {
   .tabbar {

@@ -756,8 +756,14 @@ describe("TerminalView web auxiliary keys", () => {
 
   test("desktop IME takeover runs before xterm while mobile input stays separate", () => {
     const handler = source.slice(source.indexOf("function onImeInput"), source.indexOf("function onImeFocus"));
+    const desktopSender = source.slice(
+      source.indexOf("function sendDesktopImePayload"),
+      source.indexOf("function onDesktopImeCompositionStart"),
+    );
     expect(handler).toContain("if (isDesktopImeTakeover()) return");
     expect(handler.indexOf("isDesktopImeTakeover()")).toBeLessThan(handler.indexOf('event.inputType !== "insertText"'));
+    expect(desktopSender.match(/conn\?\.sendInput\(payload\)/g)).toHaveLength(1);
+    expect(desktopSender).not.toContain("focusCoalescer?.handle(payload)");
     expect(source).toMatch(/function\s+onDesktopImeInput[\s\S]*?event\.target\s*!==\s*imeInputTarget[\s\S]*?desktopImeInputPayload\(event,\s*\{[\s\S]*?event\.stopPropagation\(\)[\s\S]*?pendingDesktopImeInputs\.push/);
     expect(source).toContain("desktopImeInputMatchesKeydown");
     expect(source).toContain("sendDesktopImePayload(item.payload)");

@@ -1396,7 +1396,6 @@ function sendDesktopImePayload(payload: string): void {
       promptSuggestionController.dismiss();
     }
   }
-  focusCoalescer?.handle(payload);
 }
 
 function onDesktopImeCompositionStart(event: CompositionEvent): void {

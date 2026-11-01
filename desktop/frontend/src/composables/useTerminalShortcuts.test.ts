@@ -235,6 +235,28 @@ describe("useTerminalShortcuts (terminal search)", () => {
     expect(ev.defaultPrevented).toBe(true);
   });
 
+  it("leaves Ctrl+F to CodeMirror when the file editor has focus", () => {
+    const editor = document.createElement("div");
+    editor.dataset.fileEditor = "";
+    const content = document.createElement("div");
+    content.className = "cm-content";
+    editor.appendChild(content);
+    document.body.appendChild(editor);
+
+    const ev = new KeyboardEvent("keydown", {
+      key: "f",
+      code: "KeyF",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    content.dispatchEvent(ev);
+
+    expect(handlers.onTerminalSearch).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
+    editor.remove();
+  });
+
   it("Ctrl+Shift+F -> onFocusSidebarSearch", () => {
     fireKey({ key: "F", code: "KeyF", ctrlKey: true, shiftKey: true });
     expect(handlers.onFocusSidebarSearch).toHaveBeenCalledTimes(1);

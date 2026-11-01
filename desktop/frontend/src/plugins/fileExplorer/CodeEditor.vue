@@ -291,7 +291,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="file-editor">
+  <div class="file-editor" data-file-editor>
     <div v-if="conflict" class="banner err conflict" data-test="conflict-banner">
       <span class="msg">{{ t("plugins.fileExplorer.staleModTime") }}</span>
       <button data-test="conflict-overwrite" @click="overwriteWithServerModTime">

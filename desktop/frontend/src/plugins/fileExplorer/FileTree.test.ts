@@ -329,6 +329,70 @@ describe("FileTree", () => {
 });
 
 describe("FileTree context menu + CRUD", () => {
+  it("opens the custom directory menu from blank space and suppresses the native menu", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    w.find(".tree-wrap").element.dispatchEvent(event);
+    await flushPromises();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(w.find('[data-test="file-tree-menu"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-new-file"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-new-folder"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-paste"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-refresh"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-rename"]').exists()).toBe(false);
+    expect(w.find('[data-test="menu-copy"]').exists()).toBe(false);
+    expect(w.find('[data-test="menu-delete"]').exists()).toBe(false);
+  });
+
+  it("creates a file at the root from the blank-space menu when nothing is selected", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find(".tree-wrap").trigger("contextmenu");
+    await w.find('[data-test="menu-new-file"]').trigger("click");
+    await flushPromises();
+    const input = w.find('[data-test="inline-edit-input"]');
+    await input.setValue("new.txt");
+    await input.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(platform.pluginHost!.fs.createFile).toHaveBeenCalledWith("/proj/new.txt");
+  });
+
+  it("uses the selected file's directory for blank-space actions", async () => {
+    (platform.pluginHost!.fs.watchDir as ReturnType<typeof vi.fn>).mockResolvedValueOnce(10);
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/proj") return [{ name: "src", isDir: true }];
+      if (path === "/proj/src") return [{ name: "app.ts", isDir: false }];
+      return [];
+    });
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/src"]').trigger("click");
+    await flushPromises();
+    await w.find('.node[title="/proj/src/app.ts"]').trigger("click");
+    await w.find(".tree-wrap").trigger("contextmenu");
+    await w.find('[data-test="menu-new-file"]').trigger("click");
+    await flushPromises();
+    const input = w.find('[data-test="inline-edit-input"]');
+    await input.setValue("new.txt");
+    await input.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(platform.pluginHost!.fs.createFile).toHaveBeenCalledWith("/proj/src/new.txt");
+  });
+
+  it("refreshes the selected directory from the blank-space menu", async () => {
+    const listDir = platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>;
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    listDir.mockClear();
+    await w.find(".tree-wrap").trigger("contextmenu");
+    await w.find('[data-test="menu-refresh"]').trigger("click");
+    await flushPromises();
+    expect(listDir).toHaveBeenCalledWith("/proj");
+  });
+
   it("right-click on a file opens the context menu with four items", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();

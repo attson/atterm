@@ -42,6 +42,12 @@ function detectMod(): Mod {
   return modKey();
 }
 
+function isInsideFileEditor(e: KeyboardEvent): boolean {
+  return e.composedPath().some((node) =>
+    node instanceof Element && (node.matches("[data-file-editor]") || node.matches(".cm-editor")),
+  );
+}
+
 function dispatch(actionId: string, h: ShortcutHandlers): boolean {
   switch (actionId) {
     case "pane.split-vertical-new":    h.onSplitVertical(); return true;
@@ -86,6 +92,10 @@ export function useTerminalShortcuts(
     if (key === null) return;
     const actionId = route.value[key];
     if (actionId) {
+      // CodeMirror owns Mod+F while its document has focus. The global router
+      // runs in capture phase, so it must yield before CodeMirror's keymap can
+      // open the file-local search panel.
+      if (actionId === "terminal.search" && isInsideFileEditor(e)) return;
       if (!dispatch(actionId, handlers)) return;
       e.preventDefault();
       e.stopPropagation();

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../../lib/log";
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
-import { ChevronsDownUp, Pin, PinOff, RefreshCw, Upload } from "lucide-vue-next";
+import { ChevronsDownUp, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Upload } from "lucide-vue-next";
 import { usePlatform } from "../../platform";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
@@ -9,6 +9,7 @@ import { isLightTerminalTheme } from "../../lib/terminalThemes";
 import FileTree from "./FileTree.vue";
 import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
+import FileSearchPalette from "./FileSearchPalette.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import { openPath, closeTab, setViewMode, setDirty, type TabsState } from "./tabsModel";
 import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
@@ -88,6 +89,10 @@ const root = computed<string | null>(() => {
 });
 const pathDraft = ref("");
 watch(root, (value) => { if (value) pathDraft.value = value; }, { immediate: true });
+const pathEditing = ref(false);
+const pathInputRef = ref<HTMLInputElement | null>(null);
+const headerMenuOpen = ref(false);
+const searchOpen = ref(false);
 
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
 const fs = shallowRef<FileSystemBridge | null>(null);
@@ -121,6 +126,9 @@ watch(
       searchCaseSensitive.value = false;
       searchRegex.value = false;
       sortMode.value = "name";
+      searchOpen.value = false;
+      headerMenuOpen.value = false;
+      pathEditing.value = false;
     }
     await nextTick();
     previous?.dispose?.();
@@ -154,6 +162,43 @@ async function jumpToPath() {
     pinned.value = meta.isDir ? path : path.slice(0, Math.max(1, path.lastIndexOf("/")));
   } catch (err) {
     props.context.showToast(errText(err));
+  }
+}
+
+function beginPathEdit() {
+  if (!root.value) return;
+  pathDraft.value = root.value;
+  pathEditing.value = true;
+  void nextTick(() => {
+    pathInputRef.value?.focus();
+    pathInputRef.value?.select();
+  });
+}
+
+async function commitPathEdit() {
+  if (!pathEditing.value) return;
+  await jumpToPath();
+  pathEditing.value = false;
+}
+
+function cancelPathEdit() {
+  if (root.value) pathDraft.value = root.value;
+  pathEditing.value = false;
+}
+
+function openSearch() {
+  searchOpen.value = true;
+  headerMenuOpen.value = false;
+}
+
+function closeSearch() {
+  searchOpen.value = false;
+}
+
+function onExplorerClick(event: MouseEvent) {
+  const target = event.target;
+  if (!(target instanceof Element) || !target.closest(".header-menu-shell")) {
+    headerMenuOpen.value = false;
   }
 }
 
@@ -206,6 +251,11 @@ function onFileDoubleClick(path: string) {
 
 function selectTab(idx: number) {
   tabsState.value = { ...tabsState.value, activeIdx: idx };
+}
+
+function onSearchResult(path: string) {
+  tabsState.value = openPath(tabsState.value, path, "persistent");
+  searchOpen.value = false;
 }
 
 function onExplorerKeydown(event: KeyboardEvent) {
@@ -329,30 +379,34 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 </script>
 
 <template>
-  <div class="file-explorer" tabindex="0" @keydown="onExplorerKeydown">
+  <div
+    class="file-explorer"
+    tabindex="0"
+    @keydown="onExplorerKeydown"
+    @click="onExplorerClick"
+  >
     <div class="fe-body" ref="bodyRef">
       <div class="tree-pane" :style="{ width: (innerRatio * 100) + '%' }">
         <header class="fe-header">
-          <span class="root-path" :title="root ?? ''">{{ root ?? t("plugins.fileExplorer.noActivePaneShort") }}</span>
+          <button
+            v-if="!pathEditing"
+            class="root-path"
+            type="button"
+            :title="root ? t('plugins.fileExplorer.pathLabel') : ''"
+            @click.stop="beginPathEdit"
+          >{{ root ?? t("plugins.fileExplorer.noActivePaneShort") }}</button>
           <input
-            v-if="root"
+            v-else
+            ref="pathInputRef"
             v-model="pathDraft"
             class="path-jump"
             :placeholder="t('plugins.fileExplorer.pathPlaceholder')"
             :aria-label="t('plugins.fileExplorer.pathLabel')"
-            @keydown.enter.prevent="jumpToPath"
+            @blur="commitPathEdit"
+            @keydown.enter.prevent="commitPathEdit"
+            @keydown.esc.prevent="cancelPathEdit"
           />
           <span v-if="readOnlySession" class="readonly-badge">{{ t("plugins.fileExplorer.readOnly") }}</span>
-          <button
-            v-if="fs && uploadTargetDir && !readOnlySession"
-            class="upload-btn"
-            data-test="file-upload"
-            :disabled="uploading"
-            :title="t('plugins.fileExplorer.uploadFile', { dir: uploadTargetDir })"
-            @click="pickUpload"
-          >
-            <Upload :size="14" :stroke-width="1.5" />
-          </button>
           <button
             v-if="fs"
             class="toolbar-btn"
@@ -367,51 +421,42 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :title="t('plugins.fileExplorer.collapseAll')"
             @click="fileTreeRef?.collapseAll()"
           ><ChevronsDownUp :size="14" :stroke-width="1.5" /></button>
-          <button
-            class="pin"
-            :class="{ pinned: pinned !== null }"
-            :title="pinned !== null ? t('plugins.fileExplorer.unpinFollow') : t('plugins.fileExplorer.pinCurrentCwd')"
-            @click="togglePin"
-          >
-            <component :is="pinned !== null ? Pin : PinOff" :size="14" :stroke-width="1.5" />
-          </button>
+          <div class="header-menu-shell">
+            <button
+              class="toolbar-btn"
+              type="button"
+              data-test="file-actions-menu"
+              :title="t('plugins.fileExplorer.moreActions')"
+              @click.stop="headerMenuOpen = !headerMenuOpen"
+            ><MoreHorizontal :size="15" :stroke-width="1.5" /></button>
+            <div v-if="headerMenuOpen" class="header-menu" @click.stop>
+              <button type="button" @click="beginPathEdit(); headerMenuOpen = false">
+                {{ t("plugins.fileExplorer.pathLabel") }}
+              </button>
+              <button
+                v-if="fs && uploadTargetDir && !readOnlySession"
+                type="button"
+                data-test="file-upload"
+                :disabled="uploading"
+                @click="pickUpload(); headerMenuOpen = false"
+              >
+                <Upload :size="14" :stroke-width="1.5" />
+                {{ t("plugins.fileExplorer.upload") }}
+              </button>
+              <button type="button" data-test="file-pin-action" @click="togglePin(); headerMenuOpen = false">
+                <component :is="pinned !== null ? PinOff : Pin" :size="14" :stroke-width="1.5" />
+                {{ pinned !== null ? t("plugins.fileExplorer.unpinFollow") : t("plugins.fileExplorer.pinCurrentCwd") }}
+              </button>
+            </div>
+          </div>
         </header>
         <input ref="uploadInput" class="upload-input" data-test="file-upload-input" type="file" @change="onUploadPicked">
         <div v-if="uploading" class="upload-status">{{ t("plugins.fileExplorer.uploading") }}</div>
         <div class="tree-search">
-          <div class="search-row">
-            <input
-              v-model="fileNameSearch"
-              :data-test="fileSearchMode === 'name' ? 'file-name-search' : 'file-content-search'"
-              type="search"
-              :placeholder="fileSearchMode === 'name'
-                ? t('plugins.fileExplorer.searchFiles')
-                : t('plugins.fileExplorer.searchContent')"
-              :aria-label="fileSearchMode === 'name'
-                ? t('plugins.fileExplorer.searchFiles')
-                : t('plugins.fileExplorer.searchContent')"
-            />
-            <select v-model="fileSearchMode" class="search-mode" data-test="file-search-mode">
-              <option value="name">{{ t('plugins.fileExplorer.searchByName') }}</option>
-              <option value="content">{{ t('plugins.fileExplorer.searchByContent') }}</option>
-            </select>
-            <template v-if="fileSearchMode === 'content'">
-              <button
-                type="button"
-                class="search-option"
-                :class="{ active: searchCaseSensitive }"
-                :title="t('plugins.fileExplorer.searchCaseSensitive')"
-                @click="searchCaseSensitive = !searchCaseSensitive"
-              >Aa</button>
-              <button
-                type="button"
-                class="search-option"
-                :class="{ active: searchRegex }"
-                :title="t('plugins.fileExplorer.searchRegex')"
-                @click="searchRegex = !searchRegex"
-              >.*</button>
-            </template>
-          </div>
+          <button class="search-trigger" type="button" data-test="file-search-trigger" @click="openSearch">
+            <Search :size="14" :stroke-width="1.5" />
+            <span>{{ fileNameSearch || t("plugins.fileExplorer.searchFiles") }}</span>
+          </button>
         </div>
         <div class="tree-toolbar">
           <span>{{ t("plugins.fileExplorer.sortBy") }}</span>
@@ -431,10 +476,6 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :show-hidden="showHidden"
             :show-line-numbers="showLineNumbers"
             :read-only="readOnlySession"
-            :search-query="fileNameSearch"
-            :search-mode="fileSearchMode"
-            :search-case-sensitive="searchCaseSensitive"
-            :search-regex="searchRegex"
             :sort-mode="sortMode"
             :context="context"
             @file-clicked="onFileClick"
@@ -479,11 +520,28 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
       :buttons="confirmClose.buttons"
       @resolve="resolveConfirmClose"
     />
+    <FileSearchPalette
+      v-if="searchOpen && root && fs"
+      :fs="fs"
+      :root="root"
+      :show-hidden="showHidden"
+      :query="fileNameSearch"
+      :mode="fileSearchMode"
+      :case-sensitive="searchCaseSensitive"
+      :use-regex="searchRegex"
+      @update:query="fileNameSearch = $event"
+      @update:mode="fileSearchMode = $event"
+      @update:case-sensitive="searchCaseSensitive = $event"
+      @update:use-regex="searchRegex = $event"
+      @open="onSearchResult"
+      @close="closeSearch"
+    />
   </div>
 </template>
 
 <style scoped>
 .file-explorer {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -502,8 +560,21 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
-.root-path { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.path-jump { width: 86px; min-width: 0; height: 20px; border: 1px solid var(--ed-border, #444c56); border-radius: 3px; background: var(--ed-editor-bg, #22272e); color: var(--ed-row-fg, #adbac7); font: inherit; font-size: 10px; padding: 0 4px; }
+.root-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  font: inherit;
+}
+.path-jump { flex: 1 1 auto; min-width: 0; height: 22px; border: 1px solid var(--ed-tab-active-bar, #539bf5); border-radius: 3px; background: var(--ed-editor-bg, #22272e); color: var(--ed-row-fg, #adbac7); font: inherit; font-size: 10px; padding: 0 5px; outline: none; }
 .readonly-badge {
   flex: 0 0 auto;
   padding: 1px 5px;
@@ -514,30 +585,6 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   text-transform: none;
   letter-spacing: 0;
 }
-.pin {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0 2px;
-  opacity: 0.55;
-  color: inherit;
-  display: inline-flex;
-  align-items: center;
-}
-.upload-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0 2px;
-  opacity: 0.55;
-  color: inherit;
-  display: inline-flex;
-  align-items: center;
-}
-.upload-btn:hover { opacity: 1; }
-.upload-btn:disabled { opacity: 0.35; cursor: default; }
-.pin:hover { opacity: 1; }
-.pin.pinned { opacity: 1; color: var(--ed-tab-active-bar, #539bf5); }
 .toolbar-btn {
   background: none;
   border: none;
@@ -549,6 +596,39 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   opacity: 0.65;
 }
 .toolbar-btn:hover { opacity: 1; }
+.header-menu-shell { position: relative; display: inline-flex; }
+.header-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 7px);
+  right: -2px;
+  width: 176px;
+  padding: 4px;
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 5px;
+  background: var(--ed-tree-header-bg, #22272e);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.header-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 29px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ed-row-fg, #adbac7);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.header-menu button:hover { background: var(--ed-row-hover, rgba(173, 186, 199, 0.1)); }
+.header-menu button:disabled { opacity: 0.45; cursor: default; }
 .upload-input {
   position: absolute;
   width: 1px;
@@ -563,47 +643,27 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   background: var(--ed-tree-bg, #2d333b);
 }
 .upload-status { padding: 4px 8px; color: var(--ed-muted, rgba(173, 186, 199, 0.75)); font-size: 11px; border-bottom: 1px solid var(--ed-border, #444c56); }
-.search-row { display: flex; gap: 6px; }
-.search-row input { flex: 1 1 auto; min-width: 0; }
-.search-mode {
-  flex: 0 0 auto;
-  width: 68px;
-  border: 1px solid var(--ed-border, #444c56);
-  border-radius: 4px;
-  background: var(--ed-editor-bg, #22272e);
-  color: var(--ed-row-fg, #adbac7);
-  font: inherit;
-  font-size: 11px;
-}
-.search-option {
-  flex: 0 0 auto;
-  width: 28px;
-  border: 1px solid var(--ed-border, #444c56);
-  border-radius: 4px;
-  background: var(--ed-editor-bg, #22272e);
-  color: var(--ed-muted, rgba(173, 186, 199, 0.7));
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-.search-option.active { color: var(--ed-tab-active-fg, #cdd9e5); border-color: var(--ed-tab-active-bar, #539bf5); background: var(--ed-row-selected, #37373d); }
-.tree-search input {
+.search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   width: 100%;
   min-width: 0;
-  height: 24px;
+  height: 28px;
   box-sizing: border-box;
   border: 1px solid var(--ed-border, #444c56);
   border-radius: 4px;
   background: var(--ed-editor-bg, #22272e);
-  color: var(--ed-row-fg, #adbac7);
+  color: var(--ed-muted, rgba(173, 186, 199, 0.72));
   padding: 0 8px;
   font: inherit;
   font-size: 12px;
   outline: none;
+  cursor: pointer;
+  text-align: left;
 }
-.tree-search input:focus {
-  border-color: var(--ed-tab-active-bar, #539bf5);
-}
+.search-trigger:hover, .search-trigger:focus-visible { border-color: var(--ed-tab-active-bar, #539bf5); }
+.search-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-toolbar {
   display: flex;
   align-items: center;
@@ -618,7 +678,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 
 .fe-body { flex: 1 1 auto; display: flex; min-height: 0; }
 .tree-pane {
-  min-width: 60px;
+  min-width: 190px;
   background: var(--ed-tree-bg, #2d333b);
   border-right: 1px solid var(--ed-border, #444c56);
   flex: 0 0 auto;
@@ -655,4 +715,5 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   font-size: 12px;
   padding: 12px;
 }
+
 </style>

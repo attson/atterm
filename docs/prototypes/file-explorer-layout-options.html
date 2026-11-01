@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AT Term 文件浏览器窄布局方案</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      background: #15191f;
+      color: #c9d1d9;
+      letter-spacing: 0;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    button, input, select { font: inherit; letter-spacing: 0; }
+    button { color: inherit; }
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-width: 320px;
+      overflow: hidden;
+    }
+
+    .prototype-bar {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-height: 58px;
+      padding: 10px 16px;
+      border-bottom: 1px solid #353d47;
+      background: #1b2027;
+    }
+    .brand {
+      flex: 0 0 auto;
+      color: #f0f3f6;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .scheme-tabs {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      border: 1px solid #3a434f;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .scheme-tab {
+      min-height: 34px;
+      padding: 0 13px;
+      border: 0;
+      border-right: 1px solid #3a434f;
+      background: #222831;
+      color: #9da7b3;
+      cursor: pointer;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .scheme-tab:last-child { border-right: 0; }
+    .scheme-tab:hover { background: #292f39; color: #d8dee4; }
+    .scheme-tab.active {
+      background: #303845;
+      color: #f0f3f6;
+      box-shadow: inset 0 -2px #58a6ff;
+    }
+    .width-control {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-left: auto;
+      color: #8c96a3;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .width-control input { width: min(190px, 18vw); accent-color: #58a6ff; }
+    .width-value {
+      min-width: 54px;
+      padding: 3px 7px;
+      border: 1px solid #3a434f;
+      border-radius: 4px;
+      background: #13171c;
+      color: #b8c1cc;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stage {
+      display: grid;
+      place-items: center;
+      min-height: 0;
+      padding: 18px;
+      overflow: auto;
+      background: #11151a;
+    }
+    .demo-shell {
+      width: 520px;
+      max-width: 100%;
+      height: min(760px, calc(100vh - 96px));
+      min-height: 500px;
+      border: 1px solid #414a56;
+      border-radius: 7px;
+      overflow: hidden;
+      background: #22272e;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, .34);
+    }
+    .explorer {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: grid;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: #22272e;
+    }
+    .explorer.scheme-a.wide { grid-template-columns: minmax(210px, var(--tree-size, 34%)) 5px minmax(220px, 1fr); }
+    .explorer.scheme-a.narrow { grid-template-rows: minmax(180px, var(--tree-size, 38%)) 5px minmax(220px, 1fr); }
+    .explorer.scheme-b,
+    .explorer.scheme-c { grid-template-columns: minmax(190px, var(--tree-size, 42%)) 5px minmax(190px, 1fr); }
+
+    .tree-pane, .editor-pane {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .tree-pane { background: #2d333b; }
+    .editor-pane { background: #22272e; }
+    .divider {
+      position: relative;
+      z-index: 3;
+      background: #1b2027;
+      touch-action: none;
+    }
+    .scheme-a.wide .divider,
+    .scheme-b .divider,
+    .scheme-c .divider { cursor: col-resize; border-left: 1px solid #444c56; border-right: 1px solid #22272e; }
+    .scheme-a.narrow .divider { cursor: row-resize; border-top: 1px solid #444c56; border-bottom: 1px solid #22272e; }
+    .divider:hover, .divider.dragging { background: #58a6ff; }
+
+    .tree-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 35px;
+      padding: 5px 8px 5px 10px;
+      border-bottom: 1px solid #444c56;
+      background: #22272e;
+    }
+    .root-button {
+      min-width: 0;
+      padding: 3px 0;
+      border: 0;
+      background: transparent;
+      color: #adb7c3;
+      text-align: left;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: text;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .path-input {
+      width: 100%;
+      height: 25px;
+      border: 1px solid #58a6ff;
+      border-radius: 4px;
+      outline: 0;
+      background: #151a20;
+      color: #d8dee4;
+      padding: 0 7px;
+      font-size: 11px;
+    }
+    .toolbar-actions { display: flex; align-items: center; gap: 2px; }
+    .icon-button {
+      display: inline-grid;
+      place-items: center;
+      width: 27px;
+      height: 27px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      color: #87919d;
+      cursor: pointer;
+      line-height: 1;
+      font-size: 16px;
+    }
+    .icon-button:hover, .icon-button.active {
+      border-color: #485260;
+      background: #30363f;
+      color: #d8dee4;
+    }
+
+    .search-strip {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      padding: 7px 8px;
+      border-bottom: 1px solid #444c56;
+      background: #2d333b;
+    }
+    .search-box {
+      position: relative;
+      min-width: 0;
+    }
+    .search-box::before {
+      content: "⌕";
+      position: absolute;
+      left: 8px;
+      top: 4px;
+      color: #7d8793;
+      font-size: 15px;
+      pointer-events: none;
+    }
+    .search-input {
+      width: 100%;
+      height: 28px;
+      padding: 0 8px 0 27px;
+      border: 1px solid #485260;
+      border-radius: 4px;
+      outline: 0;
+      background: #20252c;
+      color: #d8dee4;
+      font-size: 12px;
+    }
+    .search-input:focus { border-color: #58a6ff; }
+    .mode-button {
+      min-width: 62px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid #485260;
+      border-radius: 4px;
+      background: #22272e;
+      color: #b8c1cc;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .mode-button:hover { background: #30363f; }
+
+    .tree-meta {
+      display: flex;
+      align-items: center;
+      min-height: 25px;
+      padding: 3px 9px;
+      border-bottom: 1px solid #414852;
+      color: #7f8996;
+      font-size: 10px;
+    }
+    .tree-meta span:first-child { flex: 1; }
+    .tree-meta button {
+      border: 0;
+      background: transparent;
+      color: #99a3af;
+      cursor: pointer;
+      font-size: 10px;
+    }
+    .tree-scroll { flex: 1; min-height: 0; overflow: auto; padding: 5px 0 16px; }
+    .tree-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      height: 25px;
+      padding: 0 8px 0 calc(8px + var(--level, 0) * 14px);
+      border: 0;
+      background: transparent;
+      color: #b8c1cc;
+      cursor: pointer;
+      text-align: left;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .tree-row:hover { background: #353c45; }
+    .tree-row.selected { background: #39495e; color: #eef3f8; }
+    .twisty { width: 11px; flex: 0 0 11px; color: #8a95a2; font-size: 10px; }
+    .file-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      border: 1px solid #697584;
+      border-radius: 3px;
+      color: #aab4c0;
+      font-size: 8px;
+      font-weight: 700;
+    }
+    .folder-mark {
+      position: relative;
+      width: 17px;
+      height: 12px;
+      flex: 0 0 17px;
+      border: 1.5px solid #d4a14a;
+      border-radius: 2px;
+    }
+    .folder-mark::before {
+      content: "";
+      position: absolute;
+      left: 1px;
+      top: -5px;
+      width: 7px;
+      height: 4px;
+      border: 1.5px solid #d4a14a;
+      border-bottom: 0;
+      border-radius: 2px 2px 0 0;
+      background: #2d333b;
+    }
+    .tree-name { overflow: hidden; text-overflow: ellipsis; }
+
+    .tab-strip {
+      display: flex;
+      align-items: stretch;
+      min-height: 35px;
+      overflow: hidden;
+      border-bottom: 1px solid #444c56;
+      background: #20252b;
+    }
+    .file-tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      max-width: 240px;
+      padding: 0 10px;
+      border: 0;
+      border-right: 1px solid #444c56;
+      border-top: 2px solid #58a6ff;
+      background: #2d333b;
+      color: #d2dae3;
+      font-size: 11px;
+    }
+    .file-tab span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tab-close { color: #8b95a1; font-size: 15px; }
+    .editor-code {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px 0;
+      counter-reset: line;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .code-line {
+      display: grid;
+      grid-template-columns: 36px minmax(max-content, 1fr);
+      min-width: max-content;
+      padding-right: 16px;
+      white-space: pre;
+    }
+    .code-line::before {
+      counter-increment: line;
+      content: counter(line);
+      padding-right: 10px;
+      color: #56616d;
+      text-align: right;
+      user-select: none;
+    }
+    .tok-key { color: #ff7b72; }
+    .tok-fn { color: #d2a8ff; }
+    .tok-str { color: #a5d6ff; }
+    .tok-var { color: #79c0ff; }
+    .tok-comment { color: #768390; }
+    .editor-status {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 24px;
+      padding: 3px 9px;
+      border-top: 1px solid #444c56;
+      color: #7f8996;
+      font-size: 10px;
+    }
+    .editor-status .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .floating-menu, .search-palette {
+      position: absolute;
+      z-index: 10;
+      border: 1px solid #4a5563;
+      border-radius: 6px;
+      background: #252b33;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, .42);
+    }
+    .floating-menu {
+      top: 38px;
+      left: 8px;
+      width: 188px;
+      padding: 5px;
+    }
+    .floating-menu button {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-height: 30px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #bac4cf;
+      cursor: pointer;
+      text-align: left;
+      font-size: 11px;
+    }
+    .floating-menu button:hover { background: #343c47; }
+    .floating-menu .sep { height: 1px; margin: 4px 3px; background: #424b57; }
+
+    .search-palette {
+      top: 43px;
+      left: 12px;
+      right: 12px;
+      min-height: 210px;
+      padding: 10px;
+    }
+    .palette-controls { display: flex; gap: 6px; }
+    .palette-controls .search-input { height: 32px; }
+    .palette-modes { display: flex; gap: 4px; margin: 9px 0; }
+    .palette-chip {
+      min-height: 27px;
+      padding: 0 9px;
+      border: 1px solid #485260;
+      border-radius: 4px;
+      background: #20252c;
+      color: #9ea8b4;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .palette-chip.active { border-color: #58a6ff; color: #d8e9ff; background: #27384c; }
+    .result-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      width: 100%;
+      min-height: 38px;
+      padding: 5px 8px;
+      border: 0;
+      border-top: 1px solid #3d4651;
+      background: transparent;
+      color: #c5ced8;
+      cursor: pointer;
+      text-align: left;
+      font-size: 11px;
+    }
+    .result-row:hover { background: #343c47; }
+    .result-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .result-line { color: #718096; }
+
+    .scheme-b .tree-header { grid-template-columns: minmax(0, 1fr) auto; }
+    .scheme-b .search-strip { grid-template-columns: minmax(0, 1fr) 29px; }
+    .scheme-b .mode-button { min-width: 29px; width: 29px; padding: 0; font-size: 0; }
+    .scheme-b .mode-button::after { content: "⌄"; font-size: 13px; }
+    .scheme-b .tree-meta { display: none; }
+    .scheme-c .search-strip { grid-template-columns: 1fr; }
+    .scheme-c .search-input { cursor: pointer; }
+    .scheme-c .mode-button { display: none; }
+
+    .layout-badge {
+      position: absolute;
+      z-index: 5;
+      right: 8px;
+      bottom: 30px;
+      padding: 3px 7px;
+      border: 1px solid #46515e;
+      border-radius: 4px;
+      background: rgba(27, 32, 39, .92);
+      color: #788492;
+      font-size: 9px;
+      pointer-events: none;
+    }
+
+    @media (max-width: 720px) {
+      .prototype-bar { flex-wrap: wrap; gap: 8px 12px; }
+      .brand { width: 100%; }
+      .scheme-tabs { order: 2; flex: 1; }
+      .scheme-tab { flex: 1; padding: 0 7px; }
+      .width-control { order: 3; width: 100%; margin-left: 0; }
+      .width-control input { flex: 1; width: auto; }
+      .stage { padding: 10px; }
+      .demo-shell { height: calc(100vh - 132px); }
+    }
+  </style>
+</head>
+<body>
+  <header class="prototype-bar">
+    <div class="brand">文件浏览器 · 窄布局比较</div>
+    <nav class="scheme-tabs" aria-label="布局方案">
+      <button class="scheme-tab active" data-scheme="a">A · 响应式分栏</button>
+      <button class="scheme-tab" data-scheme="b">B · 紧凑双栏</button>
+      <button class="scheme-tab" data-scheme="c">C · 搜索浮层</button>
+    </nav>
+    <label class="width-control">
+      面板宽度
+      <input id="width-slider" type="range" min="360" max="820" value="520" step="10">
+      <span id="width-value" class="width-value">520 px</span>
+    </label>
+  </header>
+
+  <main class="stage">
+    <section id="demo-shell" class="demo-shell" aria-label="文件浏览器布局原型">
+      <div id="explorer" class="explorer scheme-a narrow">
+        <aside class="tree-pane">
+          <header class="tree-header">
+            <button id="root-button" class="root-button" title="点击编辑路径">~/Projects/atterm</button>
+            <div class="toolbar-actions">
+              <button class="icon-button" title="刷新目录" data-action="refresh">↻</button>
+              <button class="icon-button" title="折叠全部" data-action="collapse">⇱</button>
+              <button id="more-button" class="icon-button" title="更多文件操作">⋯</button>
+            </div>
+          </header>
+          <div class="search-strip">
+            <div class="search-box">
+              <input id="tree-search" class="search-input" type="search" placeholder="搜索文件">
+            </div>
+            <button id="mode-button" class="mode-button" title="切换搜索模式">文件名</button>
+          </div>
+          <div class="tree-meta">
+            <span id="tree-count">12 个项目</span>
+            <button id="sort-button" title="切换排序">名称⌄</button>
+          </div>
+          <div id="tree-scroll" class="tree-scroll"></div>
+        </aside>
+
+        <div id="divider" class="divider" title="拖动调整分栏"></div>
+
+        <section class="editor-pane">
+          <div class="tab-strip">
+            <div class="file-tab">
+              <span id="tab-name">FileExplorer.vue</span>
+              <span class="tab-close">×</span>
+            </div>
+          </div>
+          <div id="editor-code" class="editor-code"></div>
+          <footer class="editor-status">
+            <span>Ln 18, Col 7</span>
+            <span id="status-name" class="grow">FileExplorer.vue</span>
+            <span>Vue</span>
+          </footer>
+        </section>
+
+        <div id="floating-menu" class="floating-menu" hidden>
+          <button data-menu-action="path">跳转到路径…</button>
+          <button data-menu-action="upload">上传文件…</button>
+          <div class="sep"></div>
+          <button data-menu-action="hidden">显示隐藏文件</button>
+          <button data-menu-action="sort">排序：名称</button>
+        </div>
+
+        <div id="search-palette" class="search-palette" hidden>
+          <div class="palette-controls search-box">
+            <input id="palette-search" class="search-input" type="search" placeholder="搜索当前目录">
+            <button id="palette-close" class="icon-button" title="关闭搜索">×</button>
+          </div>
+          <div class="palette-modes">
+            <button class="palette-chip active" data-mode="name">文件名</button>
+            <button class="palette-chip" data-mode="content">内容</button>
+            <button class="palette-chip" data-mode="case">Aa</button>
+            <button class="palette-chip" data-mode="regex">.*</button>
+          </div>
+          <div id="palette-results"></div>
+        </div>
+
+        <div id="layout-badge" class="layout-badge">上下分栏</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const files = [
+      { name: ".github", type: "dir", level: 0 },
+      { name: "desktop", type: "dir", level: 0, open: true },
+      { name: "frontend", type: "dir", level: 1, open: true, parent: "desktop" },
+      { name: "src", type: "dir", level: 2, open: true, parent: "frontend" },
+      { name: "components", type: "dir", level: 3, parent: "src" },
+      { name: "plugins", type: "dir", level: 3, open: true, parent: "src" },
+      { name: "fileExplorer", type: "dir", level: 4, open: true, parent: "plugins" },
+      { name: "FileExplorer.vue", type: "file", ext: "V", level: 5, parent: "fileExplorer" },
+      { name: "FileTree.vue", type: "file", ext: "V", level: 5, parent: "fileExplorer" },
+      { name: "CodeEditor.vue", type: "file", ext: "V", level: 5, parent: "fileExplorer" },
+      { name: "tabsModel.ts", type: "file", ext: "TS", level: 5, parent: "fileExplorer" },
+      { name: "docs", type: "dir", level: 0 },
+      { name: "internal", type: "dir", level: 0 },
+      { name: "scripts", type: "dir", level: 0 },
+      { name: "AGENTS.md", type: "file", ext: "MD", level: 0 },
+      { name: "README.md", type: "file", ext: "MD", level: 0 },
+    ];
+
+    const codeSamples = {
+      "FileExplorer.vue": [
+        '<span class="tok-key">&lt;script</span> setup lang=<span class="tok-str">"ts"</span><span class="tok-key">&gt;</span>',
+        '<span class="tok-key">import</span> { computed, ref } <span class="tok-key">from</span> <span class="tok-str">"vue"</span>;',
+        '<span class="tok-key">import</span> FileTree <span class="tok-key">from</span> <span class="tok-str">"./FileTree.vue"</span>;',
+        '',
+        '<span class="tok-key">const</span> <span class="tok-var">treeRatio</span> = ref(<span class="tok-str">0.36</span>);',
+        '<span class="tok-key">const</span> <span class="tok-var">activePath</span> = ref(<span class="tok-key">null</span>);',
+        '',
+        '<span class="tok-key">function</span> <span class="tok-fn">openFile</span>(path: string) {',
+        '  activePath.value = path;',
+        '}',
+        '<span class="tok-key">&lt;/script&gt;</span>',
+        '',
+        '<span class="tok-key">&lt;template&gt;</span>',
+        '  &lt;div class=<span class="tok-str">"file-explorer"</span>&gt;',
+        '    &lt;FileTree @open=<span class="tok-str">"openFile"</span> /&gt;',
+        '    &lt;FileEditor :path=<span class="tok-str">"activePath"</span> /&gt;',
+        '  &lt;/div&gt;',
+        '<span class="tok-key">&lt;/template&gt;</span>',
+      ],
+      "FileTree.vue": [
+        '<span class="tok-key">const</span> <span class="tok-var">expanded</span> = ref(<span class="tok-key">new</span> Set());',
+        '',
+        '<span class="tok-key">function</span> <span class="tok-fn">toggleDirectory</span>(path: string) {',
+        '  expanded.value.has(path)',
+        '    ? expanded.value.delete(path)',
+        '    : expanded.value.add(path);',
+        '}',
+      ],
+      "CodeEditor.vue": [
+        '<span class="tok-key">import</span> { EditorView } <span class="tok-key">from</span> <span class="tok-str">"@codemirror/view"</span>;',
+        '<span class="tok-key">import</span> { search } <span class="tok-key">from</span> <span class="tok-str">"@codemirror/search"</span>;',
+        '',
+        '<span class="tok-comment">// Mod+F stays inside the focused editor.</span>',
+        '<span class="tok-key">const</span> extensions = [search({ top: <span class="tok-key">true</span> })];',
+      ],
+      "tabsModel.ts": [
+        '<span class="tok-key">export interface</span> TabState {',
+        '  path: string;',
+        '  dirty: boolean;',
+        '  viewMode: <span class="tok-str">"code"</span> | <span class="tok-str">"render"</span>;',
+        '}',
+      ],
+      "AGENTS.md": ['<span class="tok-comment"># AGENTS.md</span>', '', 'atterm = 跨平台终端模拟器 + 内建会话云同步。'],
+      "README.md": ['<span class="tok-comment"># AT Term</span>', '', 'Local-first terminal sessions, available everywhere.'],
+    };
+
+    const state = {
+      scheme: "a",
+      width: 520,
+      selected: "FileExplorer.vue",
+      searchMode: "文件名",
+      split: null,
+    };
+
+    const shell = document.getElementById("demo-shell");
+    const explorer = document.getElementById("explorer");
+    const slider = document.getElementById("width-slider");
+    const widthValue = document.getElementById("width-value");
+    const treeScroll = document.getElementById("tree-scroll");
+    const treeSearch = document.getElementById("tree-search");
+    const rootButton = document.getElementById("root-button");
+    const moreButton = document.getElementById("more-button");
+    const floatingMenu = document.getElementById("floating-menu");
+    const modeButton = document.getElementById("mode-button");
+    const searchPalette = document.getElementById("search-palette");
+    const paletteSearch = document.getElementById("palette-search");
+    const paletteResults = document.getElementById("palette-results");
+    const layoutBadge = document.getElementById("layout-badge");
+    const divider = document.getElementById("divider");
+
+    function visibleFiles(query = "") {
+      const normalized = query.trim().toLowerCase();
+      if (!normalized) return files;
+      return files.filter((item) => item.name.toLowerCase().includes(normalized));
+    }
+
+    function renderTree() {
+      const shown = visibleFiles(treeSearch.value);
+      treeScroll.innerHTML = "";
+      for (const item of shown) {
+        const row = document.createElement("button");
+        row.className = `tree-row${state.selected === item.name ? " selected" : ""}`;
+        row.style.setProperty("--level", treeSearch.value ? 0 : item.level);
+        row.innerHTML = item.type === "dir"
+          ? `<span class="twisty">${item.open ? "▾" : "›"}</span><span class="folder-mark"></span><span class="tree-name">${item.name}</span>`
+          : `<span class="twisty"></span><span class="file-mark">${item.ext}</span><span class="tree-name">${item.name}</span>`;
+        row.addEventListener("click", () => {
+          if (item.type === "dir") {
+            item.open = !item.open;
+            renderTree();
+            return;
+          }
+          openFile(item.name);
+        });
+        treeScroll.appendChild(row);
+      }
+      document.getElementById("tree-count").textContent = `${shown.length} 个项目`;
+    }
+
+    function openFile(name) {
+      state.selected = name;
+      document.getElementById("tab-name").textContent = name;
+      document.getElementById("status-name").textContent = name;
+      const lines = codeSamples[name] || [
+        '<span class="tok-comment">此原型只模拟文件浏览器布局。</span>',
+        '',
+        `Selected: <span class="tok-str">${name}</span>`,
+      ];
+      document.getElementById("editor-code").innerHTML = lines
+        .map((line) => `<div class="code-line"><span>${line || "&nbsp;"}</span></div>`)
+        .join("");
+      searchPalette.hidden = true;
+      renderTree();
+    }
+
+    function updateLayout() {
+      shell.style.width = `${state.width}px`;
+      widthValue.textContent = `${state.width} px`;
+      explorer.className = `explorer scheme-${state.scheme}`;
+      explorer.style.removeProperty("--tree-size");
+      state.split = null;
+
+      if (state.scheme === "a") {
+        const narrow = state.width < 640;
+        explorer.classList.add(narrow ? "narrow" : "wide");
+        layoutBadge.textContent = narrow ? "上下分栏" : "左右分栏";
+        modeButton.textContent = state.searchMode;
+        treeSearch.placeholder = "搜索文件";
+      } else if (state.scheme === "b") {
+        layoutBadge.textContent = "紧凑双栏";
+        modeButton.textContent = state.searchMode;
+        treeSearch.placeholder = "搜索";
+      } else {
+        layoutBadge.textContent = "双栏 + 搜索浮层";
+        treeSearch.placeholder = "打开搜索…";
+      }
+      floatingMenu.hidden = true;
+      searchPalette.hidden = true;
+    }
+
+    function renderPalette(query = "") {
+      const shown = visibleFiles(query).filter((item) => item.type === "file").slice(0, 5);
+      paletteResults.innerHTML = "";
+      for (const item of shown) {
+        const row = document.createElement("button");
+        row.className = "result-row";
+        row.innerHTML = `<span class="result-path">${item.name}</span><span class="result-line">src/plugins/fileExplorer</span>`;
+        row.addEventListener("click", () => openFile(item.name));
+        paletteResults.appendChild(row);
+      }
+    }
+
+    document.querySelectorAll(".scheme-tab").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".scheme-tab").forEach((tab) => tab.classList.remove("active"));
+        button.classList.add("active");
+        state.scheme = button.dataset.scheme;
+        updateLayout();
+      });
+    });
+
+    slider.addEventListener("input", () => {
+      state.width = Number(slider.value);
+      updateLayout();
+    });
+
+    treeSearch.addEventListener("input", () => {
+      if (state.scheme === "c") {
+        searchPalette.hidden = false;
+        paletteSearch.value = treeSearch.value;
+        renderPalette(treeSearch.value);
+      } else {
+        renderTree();
+      }
+    });
+    treeSearch.addEventListener("focus", () => {
+      if (state.scheme !== "c") return;
+      searchPalette.hidden = false;
+      renderPalette(paletteSearch.value);
+      requestAnimationFrame(() => paletteSearch.focus());
+    });
+
+    modeButton.addEventListener("click", () => {
+      state.searchMode = state.searchMode === "文件名" ? "内容" : "文件名";
+      modeButton.textContent = state.searchMode;
+      treeSearch.placeholder = state.searchMode === "文件名" ? "搜索文件" : "搜索文件内容";
+      modeButton.classList.toggle("active", state.searchMode === "内容");
+    });
+
+    rootButton.addEventListener("click", () => {
+      const input = document.createElement("input");
+      input.className = "path-input";
+      input.value = rootButton.textContent;
+      rootButton.replaceWith(input);
+      input.focus();
+      input.select();
+      const finish = () => {
+        rootButton.textContent = input.value.trim() || "~/Projects/atterm";
+        input.replaceWith(rootButton);
+      };
+      input.addEventListener("blur", finish, { once: true });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") input.blur();
+        if (event.key === "Escape") { input.value = rootButton.textContent; input.blur(); }
+      });
+    });
+
+    moreButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      floatingMenu.hidden = !floatingMenu.hidden;
+    });
+    document.addEventListener("click", (event) => {
+      if (!floatingMenu.contains(event.target) && event.target !== moreButton) floatingMenu.hidden = true;
+    });
+    document.querySelectorAll("[data-menu-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.menuAction === "path") rootButton.click();
+        if (button.dataset.menuAction === "hidden") button.textContent = button.textContent.startsWith("显示") ? "隐藏隐藏文件" : "显示隐藏文件";
+        floatingMenu.hidden = true;
+      });
+    });
+
+    document.getElementById("palette-close").addEventListener("click", () => { searchPalette.hidden = true; });
+    paletteSearch.addEventListener("input", () => renderPalette(paletteSearch.value));
+    document.querySelectorAll(".palette-chip").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.mode === "name" || button.dataset.mode === "content") {
+          document.querySelectorAll('.palette-chip[data-mode="name"], .palette-chip[data-mode="content"]')
+            .forEach((chip) => chip.classList.remove("active"));
+        }
+        button.classList.toggle("active", true);
+      });
+    });
+
+    document.querySelector('[data-action="refresh"]').addEventListener("click", (event) => {
+      event.currentTarget.animate(
+        [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
+        { duration: 360, easing: "ease-out" },
+      );
+    });
+    document.querySelector('[data-action="collapse"]').addEventListener("click", () => {
+      files.forEach((item) => { if (item.type === "dir") item.open = false; });
+      renderTree();
+    });
+
+    divider.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      divider.setPointerCapture(event.pointerId);
+      divider.classList.add("dragging");
+      const rect = explorer.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const horizontal = state.scheme === "a" && explorer.classList.contains("narrow");
+      const current = horizontal
+        ? divider.getBoundingClientRect().top - rect.top
+        : divider.getBoundingClientRect().left - rect.left;
+
+      const move = (nextEvent) => {
+        const raw = current + (horizontal ? nextEvent.clientY - startY : nextEvent.clientX - startX);
+        const total = horizontal ? rect.height : rect.width;
+        const min = horizontal ? 150 : 175;
+        const max = total - (horizontal ? 190 : 185);
+        explorer.style.setProperty("--tree-size", `${Math.max(min, Math.min(max, raw))}px`);
+      };
+      const up = () => {
+        divider.classList.remove("dragging");
+        divider.removeEventListener("pointermove", move);
+        divider.removeEventListener("pointerup", up);
+      };
+      divider.addEventListener("pointermove", move);
+      divider.addEventListener("pointerup", up);
+    });
+
+    openFile(state.selected);
+    renderPalette();
+    updateLayout();
+  </script>
+</body>
+</html>

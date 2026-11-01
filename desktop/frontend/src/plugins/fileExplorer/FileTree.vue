@@ -2,6 +2,7 @@
 import { errText, logWarn } from "../../lib/log";
 import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import FileTreeNode from "./FileTreeNode.vue";
+import InlineEditRow from "./InlineEditRow.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import type { FileSystemBridge } from "./fsBridge";
 import { searchFileNames, type FileNameSearchResult } from "./fileNameSearch";
@@ -54,7 +55,14 @@ const emit = defineEmits<{
   (e: "toggle-show-line-numbers", value: boolean): void;
 }>();
 
-type ContextMenuAnchor = { x: number; y: number; node: TreeNode; level: number; shift: boolean };
+type ContextMenuAnchor = {
+  x: number;
+  y: number;
+  node: TreeNode;
+  level: number;
+  shift: boolean;
+  background: boolean;
+};
 const menu = ref<ContextMenuAnchor | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 const copyBuffer = ref<{ path: string; isDir: boolean; fsIdentity: string } | null>(null);
@@ -80,9 +88,8 @@ function baseName(p: string): string {
   return i === -1 ? p : p.slice(i + 1);
 }
 
-function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
-  ev.preventDefault();
-  menu.value = { x: ev.clientX, y: ev.clientY, node, level, shift: ev.shiftKey };
+function openMenu(anchor: ContextMenuAnchor) {
+  menu.value = anchor;
   void nextTick(() => {
     const el = menuEl.value;
     if (!el || !menu.value) return;
@@ -91,6 +98,37 @@ function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
     const x = Math.max(pad, Math.min(menu.value.x, window.innerWidth - rect.width - pad));
     const y = Math.max(pad, Math.min(menu.value.y, window.innerHeight - rect.height - pad));
     menu.value = { ...menu.value, x, y };
+  });
+}
+
+function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
+  ev.preventDefault();
+  openMenu({ x: ev.clientX, y: ev.clientY, node, level, shift: ev.shiftKey, background: false });
+}
+
+function openMenuFromBackground(ev: MouseEvent) {
+  if (ev.defaultPrevented) return;
+  const target = ev.target;
+  if (target instanceof Element && target.closest("button, input, textarea, .ctx-menu, .search-result, [role='dialog']")) {
+    return;
+  }
+  ev.preventDefault();
+  const path = selectedDir.value;
+  const found = findNodeWithLevel(rootNodes.value, path);
+  const node = found?.node ?? {
+    path: props.root,
+    name: baseName(props.root) || props.root,
+    isDir: true,
+    expanded: true,
+    children: rootNodes.value,
+  };
+  openMenu({
+    x: ev.clientX,
+    y: ev.clientY,
+    node,
+    level: found?.level ?? -1,
+    shift: ev.shiftKey,
+    background: true,
   });
 }
 
@@ -197,7 +235,7 @@ function onTreeKeydown(e: KeyboardEvent) {
 }
 
 async function onMenuAction(
-  action: "newFile" | "newFolder" | "rename" | "delete" | "copyPath" | "copy" | "paste" | "sendToTerminal",
+  action: "newFile" | "newFolder" | "rename" | "delete" | "copyPath" | "copy" | "paste" | "refresh" | "sendToTerminal",
 ) {
   const anchor = menu.value;
   menu.value = null;
@@ -215,6 +253,10 @@ async function onMenuAction(
   if (action === "paste") {
     try { await pasteEntry(anchor); }
     catch (err) { props.context?.showToast?.(errText(err)); }
+    return;
+  }
+  if (action === "refresh") {
+    await refreshDir(node.isDir ? node.path : parentDir(node.path));
     return;
   }
   if (action === "sendToTerminal") {
@@ -696,6 +738,17 @@ function findNode(nodes: TreeNode[], path: string): TreeNode | null {
   return null;
 }
 
+function findNodeWithLevel(nodes: TreeNode[], path: string, level = 0): { node: TreeNode; level: number } | null {
+  for (const node of nodes) {
+    if (node.path === path) return { node, level };
+    if (node.children) {
+      const found = findNodeWithLevel(node.children, path, level + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function isCurrentNode(
   fs: FileSystemBridge,
   root: string,
@@ -820,7 +873,15 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir, co
 </script>
 
 <template>
-  <div class="tree-wrap" tabindex="0" @click="closeMenu" @keydown="onTreeKeydown" @dragover.prevent @drop.prevent="onDrop">
+  <div
+    class="tree-wrap"
+    tabindex="0"
+    @click="closeMenu"
+    @contextmenu="openMenuFromBackground"
+    @keydown="onTreeKeydown"
+    @dragover.prevent
+    @drop.prevent="onDrop"
+  >
     <div v-if="pasteState" class="operation-bar" data-test="paste-progress">
       <span>{{ t("plugins.fileExplorer.pasting", { path: pasteState.current }) }}</span>
       <button type="button" @click.stop="cancelPaste">{{ t("plugins.fileExplorer.cancel") }}</button>
@@ -857,6 +918,16 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir, co
     </div>
     <template v-else>
       <ul class="tree-root">
+        <li
+          v-if="inlineIntent && (inlineIntent.kind === 'newFile' || inlineIntent.kind === 'newFolder') && inlineIntent.parentPath === root"
+        >
+          <InlineEditRow
+            :level="0"
+            :icon="inlineIntent.kind === 'newFolder' ? 'folder' : 'file'"
+            @submit="submitInline"
+            @cancel="cancelInline"
+          />
+        </li>
         <li v-for="n in rootNodes" :key="n.path">
           <FileTreeNode
             :node="n"
@@ -894,17 +965,18 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir, co
     >
       <button v-if="!readOnly" data-test="menu-new-file" @click="onMenuAction('newFile')">{{ t("plugins.fileExplorer.newFile") }}</button>
       <button v-if="!readOnly" data-test="menu-new-folder" @click="onMenuAction('newFolder')">{{ t("plugins.fileExplorer.newFolder") }}</button>
-      <button v-if="!readOnly" data-test="menu-rename" @click="onMenuAction('rename')">{{ t("plugins.fileExplorer.rename") }}</button>
-      <button v-if="!readOnly" data-test="menu-copy" @click="onMenuAction('copy')">{{ t("plugins.fileExplorer.copy") }}</button>
+      <button v-if="!readOnly && !menu.background" data-test="menu-rename" @click="onMenuAction('rename')">{{ t("plugins.fileExplorer.rename") }}</button>
+      <button v-if="!readOnly && !menu.background" data-test="menu-copy" @click="onMenuAction('copy')">{{ t("plugins.fileExplorer.copy") }}</button>
       <button
         v-if="!readOnly"
         data-test="menu-paste"
         :disabled="!canPaste"
         @click="onMenuAction('paste')"
       >{{ t("plugins.fileExplorer.paste") }}</button>
+      <button v-if="menu.background" data-test="menu-refresh" @click="onMenuAction('refresh')">{{ t("plugins.fileExplorer.refresh") }}</button>
       <button data-test="menu-copy-path" @click="onMenuAction('copyPath')">{{ t("plugins.fileExplorer.copyPath") }}</button>
       <button data-test="menu-send-to-terminal" @click="onMenuAction('sendToTerminal')">{{ t("plugins.fileExplorer.sendToTerminal") }}</button>
-      <button v-if="!readOnly" data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
+      <button v-if="!readOnly && !menu.background" data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
       <hr class="ctx-sep" />
       <button
         class="ctx-toggle"

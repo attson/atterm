@@ -51,7 +51,7 @@ describe("FileExplorer filesystem bridge", () => {
     expect(wrapper.text()).toContain("remote-only.txt");
   });
 
-  it("renders a filename search box that drives recursive tree search", async () => {
+  it("opens recursive filename search in an overlay while keeping the directory tree visible", async () => {
     (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
       if (path === "/local") {
         return [
@@ -78,10 +78,46 @@ describe("FileExplorer filesystem bridge", () => {
 
     const wrapper = mount(FileExplorer, { props: { context } });
     await flushPromises();
+    await wrapper.find('[data-test="file-search-trigger"]').trigger("click");
     await wrapper.find('[data-test="file-name-search"]').setValue("search");
     await flushPromises();
 
+    expect(wrapper.find('[data-test="file-search-overlay"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("nested-search.ts");
+    expect(wrapper.find(".tree-scroll").text()).toContain("README.md");
+
+    await wrapper.find('[data-test="file-search-result"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="file-search-overlay"]').exists()).toBe(false);
+    expect(wrapper.find(".tree-scroll").text()).toContain("README.md");
+  });
+
+  it("keeps both directory tree and editor mounted after opening a file", async () => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: "README.md", isDir: false },
+    ]);
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/local"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+
+    const wrapper = mount(FileExplorer, {
+      props: { context },
+      global: { stubs: { FileEditor: true } },
+    });
+    await flushPromises();
+
+    await wrapper.find('.node[data-type="file"]').trigger("click");
+    expect(wrapper.find(".tree-pane").exists()).toBe(true);
+    expect(wrapper.find(".editor-pane").exists()).toBe(true);
+    expect(wrapper.find('[data-test="file-explorer-back"]').exists()).toBe(false);
   });
 
   it("rebinds a remote bridge when its connection is replaced for the same session", async () => {
@@ -147,12 +183,14 @@ describe("FileExplorer filesystem bridge", () => {
 
     const wrapper = mount(FileExplorer, { props: { context } });
     await flushPromises();
-    await wrapper.find(".pin").trigger("click");
+    await wrapper.find('[data-test="file-actions-menu"]').trigger("click");
+    await wrapper.find('[data-test="file-pin-action"]').trigger("click");
     activeCwd.value = "/new-cwd";
     activeConnection.value = second;
     await flushPromises();
 
-    expect(wrapper.find(".pin").classes()).toContain("pinned");
+    await wrapper.find('[data-test="file-actions-menu"]').trigger("click");
+    expect(wrapper.find('[data-test="file-pin-action"]').text()).toContain("Unpin");
     expect(wrapper.find(".root-path").text()).toBe("/remote");
   });
 
@@ -175,7 +213,8 @@ describe("FileExplorer filesystem bridge", () => {
 
     const wrapper = mount(FileExplorer, { props: { context } });
     await flushPromises();
-    await wrapper.find(".pin").trigger("click");
+    await wrapper.find('[data-test="file-actions-menu"]').trigger("click");
+    await wrapper.find('[data-test="file-pin-action"]').trigger("click");
 
     activeSessionID.value = "local-two";
     activeConnection.value = {} as SessionConnection;

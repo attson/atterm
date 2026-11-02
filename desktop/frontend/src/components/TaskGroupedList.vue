@@ -434,14 +434,10 @@ function groupPrimaryState(key: string): TaskState {
   return (best.task_state as TaskState | undefined) ?? "idle";
 }
 
-/**
- * Hands the row's own state colour to CSS as --unread-c. Unread is tinted with
- * the state colour rather than one dedicated "unread" hue, so a row only ever
- * speaks in one colour and the tint never contradicts the icon sitting in it.
- */
-function unreadTint(s: RemoteSession): Record<string, string> | undefined {
-  if (s.unread !== true) return undefined;
-  return { "--unread-c": stateColor((s.task_state as TaskState | undefined) ?? "idle") };
+/** Only the focused row receives a state-colour border; every other row stays neutral. */
+function activeRowStyle(s: RemoteSession): Record<string, string> | undefined {
+  if (s.session_id !== props.activeSessionId) return undefined;
+  return { "--active-c": stateColor((s.task_state as TaskState | undefined) ?? "idle") };
 }
 
 function unreadIdsForGroup(key: string): string[] {
@@ -498,7 +494,7 @@ function stateLabel(state: string | undefined): string {
           :key="s.session_id"
           class="task-row"
           :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), unread: s.unread === true }"
-          :style="unreadTint(s)"
+          :style="activeRowStyle(s)"
           data-test="task-row"
           :data-session-id="s.session_id"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
@@ -581,7 +577,7 @@ function stateLabel(state: string | undefined): string {
         :key="s.session_id"
         class="task-row"
         :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), unread: s.unread === true }"
-        :style="unreadTint(s)"
+        :style="activeRowStyle(s)"
         data-test="task-row"
         :data-session-id="s.session_id"
         :data-active="s.session_id === activeSessionId ? 'true' : undefined"
@@ -633,7 +629,7 @@ function stateLabel(state: string | undefined): string {
           :key="s.session_id"
           class="task-row dim"
           :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), unread: s.unread === true }"
-          :style="unreadTint(s)"
+          :style="activeRowStyle(s)"
           data-test="completed-fold-row"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
           :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
@@ -762,33 +758,38 @@ function stateLabel(state: string | undefined): string {
   .task-row :deep(.kind) { opacity: 1; }
 }
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
-/* Focus is a navigation affordance, so it gets the strongest treatment in
-   the row: a brighter border, a slightly wider accent rail, and a subtle
-   outer ring. This stays visible even when the same session is also unread. */
-.task-row.active { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
-.task-row.active:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* The focused session is the only row allowed to carry state colour outside
+   its icon. The full border makes focus unambiguous while the short left rail
+   remains easy to find when scanning a long list. */
+.task-row.active {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: var(--active-c, var(--accent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--active-c, var(--accent)) 22%, transparent);
+}
+.task-row.active::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: -1px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--active-c, var(--accent));
+}
+.task-row.active:hover { background: rgba(255, 255, 255, 0.06); }
 .task-row.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-/* Unread carries the row, not just the 12px icon: a wash of the same colour
-   and a bolder title. --unread-c is the row's *state* colour, set inline by
-   unreadTint() — so waiting rows glow amber and finished ones green. Do not
-   add another accent rail here: that rail is reserved for the focused row. */
+/* Unread strengthens the state icon and title without colouring the row. This
+   keeps focus as the sidebar's only coloured border/background treatment. */
 .task-row.unread {
-  background: color-mix(in srgb, var(--unread-c) 7%, transparent);
-  border-color: color-mix(in srgb, var(--unread-c) 24%, var(--border));
+  background: rgba(255, 255, 255, 0.02);
 }
-.task-row.unread:hover { background: color-mix(in srgb, var(--unread-c) 12%, transparent); }
+.task-row.unread:hover { background: rgba(255, 255, 255, 0.06); }
 .task-row.unread :deep(.cmd) { font-weight: 600; color: #fff; }
-/* Active *and* unread. Keep the active rail so the focused session remains
-   unmistakable; the state-colour wash still communicates that it has unread
-   activity. */
-.task-row.active.unread {
-  background: color-mix(in srgb, var(--unread-c) 14%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
-  box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
-}
+.task-row.active.unread { background: rgba(255, 255, 255, 0.045); }
+.task-row.active.unread:hover { background: rgba(255, 255, 255, 0.06); }
 .task-row.dim { opacity: 0.6; }
 .task-row.dim.active { opacity: 0.9; }
 /* An unread row in the completed fold is exactly the finished session still

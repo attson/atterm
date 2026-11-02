@@ -1106,19 +1106,18 @@ describe("TaskGroupedList detach menu item", () => {
   });
 });
 
-// I-4 unread styling: the row carries the *state* colour, not a dedicated
-// unread hue. One colour per row, so "what is it waiting on" and "have I seen
-// it" never fight for the same pixel.
-describe("TaskGroupedList unread row highlight", () => {
-  test("reserves the focus rail for the active row", () => {
+describe("TaskGroupedList focused row hierarchy", () => {
+  test("reserves state-colour chrome for the active row", () => {
     const activeRule = source.match(/\.task-row\.active\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
     const unreadRule = source.match(/\.task-row\.unread\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
-    expect(activeRule).toContain("inset 3px 0 0 var(--accent)");
+    expect(activeRule).toContain("border-color: var(--active-c");
+    expect(activeRule).toContain("box-shadow");
+    expect(source).toContain(".task-row.active::before");
+    expect(unreadRule).not.toContain("border-color");
     expect(unreadRule).not.toContain("box-shadow");
-    expect(source).toContain(".task-row.active.unread");
   });
 
-  test("tints an unread row with its state colour and leaves read rows alone", () => {
+  test("only exposes the state colour on the active row", () => {
     const byHost = {
       h: [
         mk({ session_id: "s1", host: "mac", task_state: "waiting_input", title: "codex", unread: true }),
@@ -1126,32 +1125,46 @@ describe("TaskGroupedList unread row highlight", () => {
       ],
     };
     const w = mount(TaskGroupedList, {
-      props: { byHost, unreadByHost: { h: 1 }, primaryStateForHost: () => "waiting_input", completedSeen: [] },
+      props: {
+        byHost,
+        unreadByHost: { h: 1 },
+        primaryStateForHost: () => "waiting_input",
+        completedSeen: [],
+        activeSessionId: "s2",
+      },
     });
     const unread = w.get('[data-session-id="s1"]');
-    const read = w.get('[data-session-id="s2"]');
+    const active = w.get('[data-session-id="s2"]');
     expect(unread.classes()).toContain("unread");
-    expect(unread.attributes("style")).toContain("--unread-c: #f59e0b");
-    expect(read.classes()).not.toContain("unread");
+    expect(unread.attributes("style")).toBeUndefined();
+    expect(active.classes()).not.toContain("unread");
+    expect(active.classes()).toContain("active");
+    expect(active.attributes("style")).toContain("--active-c: #f59e0b");
   });
 
-  test("uses the completed colour for an unread completed row", () => {
+  test("uses the active session's state colour for the focus border", () => {
     const byHost = {
       h: [mk({ session_id: "s1", host: "mac", task_state: "completed", title: "claude", unread: true })],
     };
     const w = mount(TaskGroupedList, {
-      props: { byHost, unreadByHost: { h: 1 }, primaryStateForHost: () => "completed", completedSeen: [] },
+      props: {
+        byHost,
+        unreadByHost: { h: 1 },
+        primaryStateForHost: () => "completed",
+        completedSeen: [],
+        activeSessionId: "s1",
+      },
     });
-    expect(w.get('[data-session-id="s1"]').attributes("style")).toContain("--unread-c: #22c55e");
+    expect(w.get('[data-session-id="s1"]').attributes("style")).toContain("--active-c: #22c55e");
   });
 });
 
 // The completed fold is a hand-written reduced row, so it does not inherit
 // TaskRowInner's markup — it has to be kept in step by hand. It can hold
-// unread sessions (the fold carries its own "mark all read"), so an unread
-// one must be tinted like any other row rather than only filling its icon.
+// unread sessions (the fold carries its own "mark all read"), so an unread one
+// must keep the stronger icon/title treatment without colouring the whole row.
 describe("TaskGroupedList completed fold unread", () => {
-  test("tints an unread folded row and lifts it out of the dim treatment", async () => {
+  test("keeps an unread folded row neutral and lifts it out of the dim treatment", async () => {
     const w = mount(TaskGroupedList, {
       props: {
         byHost: {},
@@ -1169,7 +1182,7 @@ describe("TaskGroupedList completed fold unread", () => {
     const rows = w.findAll('[data-test="completed-fold-row"]');
     expect(rows).toHaveLength(2);
     expect(rows[0].classes()).toContain("unread");
-    expect(rows[0].attributes("style")).toContain("--unread-c: #22c55e");
+    expect(rows[0].attributes("style")).toBeUndefined();
     expect(rows[1].classes()).not.toContain("unread");
   });
 });

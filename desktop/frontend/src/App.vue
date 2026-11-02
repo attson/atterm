@@ -1858,6 +1858,7 @@ onMounted(async () => {
       localHost.value = info.host;
       bootStage = "loadRecoverySnapshot";
       recoverySnap = await loadRecoverySnapshot();
+      recovery?.seedAIFromSnapshot(recoverySnap);
       recoveryEnabled = await getRecoveryDialogEnabled();
       bootStage = "connectLocalSessionList";
       connectLocalSessionList(localEndpoint.value);
@@ -2052,6 +2053,7 @@ defineExpose({ me });
         :pane-location-for="paneLocationForSession"
         :can-detach-session="canDetachSession"
         :tab-index-by-id="tabIndexById"
+        :ai-session-id-for="recovery?.aiSessionIdFor"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @close="requestCloseSession"

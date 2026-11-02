@@ -26,7 +26,7 @@ func (a *App) GetHookInstallState() hookinstall.State {
 		enabled = a.cfgStore.Get().HookAutoInstallEnabledOrDefault()
 	}
 	s := hookinstall.Check(a.ctx, enabled)
-	if !s.Healthy() && enabled && allowHookInstallRepair() {
+	if s.RepairNeeded() && enabled && allowHookInstallRepair() {
 		if err := hookinstall.Install(a.ctx); err != nil {
 			logWarn("hookinstall", "auto-repair: %v", err)
 		}

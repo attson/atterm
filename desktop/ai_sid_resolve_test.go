@@ -497,6 +497,71 @@ func TestStartCodexFileResolve_SameCwdResolversDoNotShareRollout(t *testing.T) {
 	}
 }
 
+func TestStartCodexFileResolve_SequentialSameCwdResolversBothCapture(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	first := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer first.Close()
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	firstCaptured := make(chan string, 1)
+	go startCodexFileResolve(firstCtx, first, cwd, 0, func(sid string) {
+		firstCaptured <- sid
+	})
+
+	time.Sleep(codexResolveInterval * 2)
+	firstSID := "019fae77-52c1-7201-bbdc-078634559f19"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+firstSID+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+firstSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"first pane"}}`,
+	)
+	select {
+	case got := <-firstCaptured:
+		if got != firstSID {
+			t.Fatalf("first captured sid = %q, want %q", got, firstSID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first codex sid capture")
+	}
+	deadline := time.Now().Add(time.Second)
+	for codexResolverCount(cwd) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := codexResolverCount(cwd); got != 0 {
+		t.Fatalf("resolver count after first capture = %d, want 0 while title tracking continues", got)
+	}
+
+	second := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer second.Close()
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	secondCaptured := make(chan string, 1)
+	go startCodexFileResolve(secondCtx, second, cwd, 0, func(sid string) {
+		secondCaptured <- sid
+	})
+
+	time.Sleep(codexResolveInterval * 2)
+	secondSID := "019fae77-52c1-7201-bbdc-078634559f20"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-22-23-"+secondSID+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+secondSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"second pane"}}`,
+	)
+	select {
+	case got := <-secondCaptured:
+		if got != secondSID {
+			t.Fatalf("second captured sid = %q, want %q", got, secondSID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for second codex sid capture")
+	}
+}
+
 func TestStartCodexKnownTitleResolve_FindsPreviousDaySidAndMirrorsUserTitle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

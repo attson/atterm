@@ -10,9 +10,10 @@ const props = withDefaults(defineProps<{
   x: number;
   y: number;
   session: RemoteSession | null;
+  aiSessionId?: string;
   paneLocation: { tabId: string; paneIdx: number } | null;
   tabIndexById: (tabId: string) => number;
-}>(), { open: false });
+}>(), { open: false, aiSessionId: "" });
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -21,6 +22,15 @@ const pins = useSessionPins();
 const popoverRef = ref<HTMLElement | null>(null);
 const positionedX = ref(0);
 const positionedY = ref(0);
+const dragging = ref(false);
+let dragPointerId: number | null = null;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+function clampPosition(x: number, y: number, width: number, height: number) {
+  positionedX.value = Math.min(Math.max(0, x), Math.max(0, window.innerWidth - width));
+  positionedY.value = Math.min(Math.max(0, y), Math.max(0, window.innerHeight - height));
+}
 
 function updatePosition() {
   if (!popoverRef.value) {
@@ -31,8 +41,9 @@ function updatePosition() {
   const rect = popoverRef.value.getBoundingClientRect();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  positionedX.value = props.x + rect.width > vw ? Math.max(0, props.x - rect.width) : props.x;
-  positionedY.value = props.y + rect.height > vh ? Math.max(0, props.y - rect.height) : props.y;
+  const x = props.x + rect.width > vw ? props.x - rect.width : props.x;
+  const y = props.y + rect.height > vh ? props.y - rect.height : props.y;
+  clampPosition(x, y, rect.width, rect.height);
 }
 
 const style = computed(() => ({
@@ -66,6 +77,38 @@ async function copy(value: string): Promise<void> {
   }
 }
 
+function onDragStart(e: PointerEvent) {
+  if (e.button !== 0 || !popoverRef.value) return;
+  const rect = popoverRef.value.getBoundingClientRect();
+  positionedX.value = rect.left;
+  positionedY.value = rect.top;
+  dragOffsetX = e.clientX - rect.left;
+  dragOffsetY = e.clientY - rect.top;
+  dragPointerId = e.pointerId;
+  dragging.value = true;
+  (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  e.preventDefault();
+}
+
+function onDragMove(e: PointerEvent) {
+  if (!dragging.value || dragPointerId !== e.pointerId || !popoverRef.value) return;
+  const rect = popoverRef.value.getBoundingClientRect();
+  clampPosition(
+    e.clientX - dragOffsetX,
+    e.clientY - dragOffsetY,
+    rect.width,
+    rect.height,
+  );
+}
+
+function onDragEnd(e: PointerEvent) {
+  if (dragPointerId !== e.pointerId) return;
+  const handle = e.currentTarget as HTMLElement;
+  if (handle.hasPointerCapture?.(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+  dragPointerId = null;
+  dragging.value = false;
+}
+
 // Compose the fields with `v-if` guards so an empty value collapses the row.
 const rows = computed(() => {
   const s = props.session;
@@ -77,6 +120,14 @@ const rows = computed(() => {
     copy?: boolean;
   }> = [];
   list.push({ key: "sessionId", label: t("tasks.details.sessionId"), value: s.session_id, copy: true });
+  if (s.type === "ai" && props.aiSessionId) {
+    list.push({
+      key: "aiSessionId",
+      label: t("tasks.details.aiSessionId"),
+      value: props.aiSessionId,
+      copy: true,
+    });
+  }
   if (s.type) list.push({ key: "type", label: t("tasks.details.type"), value: s.type });
   const hostLine = [s.user, s.host].filter(Boolean).join("@");
   if (hostLine || s.host_id) {
@@ -135,6 +186,8 @@ watch(
       window.addEventListener("keydown", onKeydown);
       window.addEventListener("mousedown", onOutside);
     } else {
+      dragging.value = false;
+      dragPointerId = null;
       window.removeEventListener("keydown", onKeydown);
       window.removeEventListener("mousedown", onOutside);
     }
@@ -165,7 +218,15 @@ onBeforeUnmount(() => {
     @focusout.capture="onFocusOut"
     @contextmenu.prevent
   >
-    <div class="popover-title">{{ t("tasks.details.title") }}</div>
+    <div
+      class="popover-title"
+      :class="{ dragging }"
+      data-test="session-details-drag-handle"
+      @pointerdown="onDragStart"
+      @pointermove="onDragMove"
+      @pointerup="onDragEnd"
+      @pointercancel="onDragEnd"
+    >{{ t("tasks.details.title") }}</div>
     <div class="rows">
       <div
         v-for="row in rows"
@@ -208,6 +269,12 @@ onBeforeUnmount(() => {
   padding-bottom: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   margin-bottom: 6px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.popover-title.dragging {
+  cursor: grabbing;
 }
 .rows {
   display: flex;

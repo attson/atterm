@@ -15,6 +15,10 @@ const HOOK_OK: api.HookInstallState = {
   binary_version: 'v',
   settings_path: '/y',
   settings_ok: true,
+  codex_settings_path: '/z',
+  codex_settings_ok: true,
+  codex_trust_path: '/c',
+  codex_trust_ok: true,
   last_error: '',
   last_check: '',
 }
@@ -35,6 +39,29 @@ afterEach(() => {
 })
 
 describe('SettingsFeishu configured view', () => {
+  it('shows pending Codex trust without offering an install retry', async () => {
+    vi.mocked(api.getHookInstallState).mockResolvedValue({
+      ...HOOK_OK,
+      codex_trust_ok: false,
+      last_error: 'Codex hook trust is pending',
+    } as never)
+    vi.spyOn(api, 'getFeishuStatus').mockResolvedValue({
+      enabled: false,
+      mode: 'local',
+      bound: false,
+      open_id: '',
+      disabled: true,
+      configured: false,
+    } as never)
+
+    const w = mount(SettingsFeishu)
+    await flushPromises()
+
+    expect(w.get('.hook-install__label').text()).toBe('settings.feishu.hook_install.needs_attention')
+    expect(w.get('.hook-install__error').text()).toContain('Codex hook trust is pending')
+    expect(w.find('[data-test="hook-install-retry"]').exists()).toBe(false)
+  })
+
   it('local mode: shows configured state, long-conn hint, no callback URL, pair enabled', async () => {
     vi.spyOn(api, 'getFeishuStatus').mockResolvedValue({
       enabled: true,

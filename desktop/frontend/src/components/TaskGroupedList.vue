@@ -59,6 +59,9 @@ const props = withDefaults(defineProps<{
   paneLocationFor?: (id: string) => { tabId: string; paneIdx: number } | null;
   // Resolves a tabId to its 0-based display index, for the same popover row.
   tabIndexById?: (tabId: string) => number;
+  // Returns the externally observed AI-side conversation id only after the
+  // desktop sniffer has confirmed it. An empty value keeps the detail row out.
+  aiSessionIdFor?: (id: string) => string;
   // True when the session shares a tab with other panes, so "move to its own
   // tab" is a real action. Only App knows the tab/pane shape.
   canDetachSession?: (id: string) => boolean;
@@ -72,6 +75,7 @@ const props = withDefaults(defineProps<{
   searchQuery: "",
   paneLocationFor: () => null,
   tabIndexById: () => 0,
+  aiSessionIdFor: () => "",
   canDetachSession: () => false,
 });
 
@@ -708,6 +712,7 @@ function stateLabel(state: string | undefined): string {
       :x="detailsState.x"
       :y="detailsState.y"
       :session="detailsState.session"
+      :ai-session-id="detailsState.session ? aiSessionIdFor(detailsState.session.session_id) : ''"
       :pane-location="detailsState.session ? paneLocationFor(detailsState.session.session_id) : null"
       :tab-index-by-id="tabIndexById"
       @close="closeDetails"

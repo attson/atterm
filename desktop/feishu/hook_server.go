@@ -209,10 +209,15 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ATTERM_SESSION_ID, and its inner session_id is the resume credential for
 	// that conversation. Consume only SessionStart: tool/subagent hooks may be
 	// delayed or nested and must never replace the pane's root conversation.
-	if kind, aiSessionID, ok := aiSessionIdentityForHook(req.AgentKind, req.HookInput); ok {
+	if kind, aiSessionID, status := aiSessionIdentityForHook(req.AgentKind, req.HookInput); status == aiIdentityValid {
 		if sink := h.aiSessionIdentitySink(); sink != nil {
 			sink.ApplyHookAISessionIdentity(sid, kind, aiSessionID)
 		}
+	} else if status != aiIdentityNotSessionStart {
+		// Never include the raw payload or invalid session_id here. Hook payloads
+		// can contain prompts and tool arguments; the fixed reason is enough to
+		// diagnose a Codex schema/trust problem without leaking user content.
+		logging.Warn("feishu-hook", "drop ai_identity reason=%s sid=%s fields=hook_event_name,session_id", status, sid)
 	}
 
 	// Task-state path. Runs BEFORE the adapter lookup and independently of the
@@ -313,22 +318,38 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func aiSessionIdentityForHook(agentKind string, raw json.RawMessage) (kind, sessionID string, ok bool) {
+type aiIdentityStatus string
+
+const (
+	aiIdentityNotSessionStart aiIdentityStatus = "not-session-start"
+	aiIdentityInvalidJSON     aiIdentityStatus = "invalid-json"
+	aiIdentityMissingID       aiIdentityStatus = "session-id-missing"
+	aiIdentityInvalidID       aiIdentityStatus = "session-id-invalid"
+	aiIdentityValid           aiIdentityStatus = "valid"
+)
+
+func aiSessionIdentityForHook(agentKind string, raw json.RawMessage) (kind, sessionID string, status aiIdentityStatus) {
 	if agentKind != "codex" {
-		return "", "", false
+		return "", "", aiIdentityNotSessionStart
 	}
 	var payload struct {
 		HookEventName string `json:"hook_event_name"`
 		SessionID     string `json:"session_id"`
 	}
-	if json.Unmarshal(raw, &payload) != nil || payload.HookEventName != "SessionStart" {
-		return "", "", false
+	if json.Unmarshal(raw, &payload) != nil {
+		return "", "", aiIdentityInvalidJSON
+	}
+	if payload.HookEventName != "SessionStart" {
+		return "", "", aiIdentityNotSessionStart
+	}
+	if strings.TrimSpace(payload.SessionID) == "" {
+		return "", "", aiIdentityMissingID
 	}
 	id, err := uuid.Parse(strings.TrimSpace(payload.SessionID))
 	if err != nil || id == uuid.Nil {
-		return "", "", false
+		return "", "", aiIdentityInvalidID
 	}
-	return "codex", id.String(), true
+	return "codex", id.String(), aiIdentityValid
 }
 
 func promptForHook(agentKind string, raw json.RawMessage) (string, bool) {

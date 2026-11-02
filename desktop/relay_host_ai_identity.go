@@ -10,7 +10,12 @@ func (h *relayHost) ApplyHookAISessionIdentity(sid uuid.UUID, kind, aiSessionID 
 	h.mu.Lock()
 	active := h.sessions[sid]
 	h.mu.Unlock()
-	if active == nil || active.applyHookAIIdentity == nil {
+	if active == nil {
+		logDebug("ai-sid", "ignore hook identity session=%s kind=%s reason=session-not-active", sid, kind)
+		return
+	}
+	if active.applyHookAIIdentity == nil {
+		logDebug("ai-sid", "ignore hook identity session=%s kind=%s reason=handler-unavailable", sid, kind)
 		return
 	}
 	active.applyHookAIIdentity(kind, aiSessionID)

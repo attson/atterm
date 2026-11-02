@@ -3,6 +3,7 @@ import { ref, nextTick, effectScope } from "vue";
 import { useRecoverySnapshot } from "./useRecoverySnapshot";
 import * as api from "../lib/api";
 import type { Tab } from "../lib/types";
+import type { RecoverySnapshot } from "../lib/api";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 
@@ -51,12 +52,15 @@ describe("useRecoverySnapshot", () => {
     }));
 
     const scope = effectScope();
+    let recovery!: ReturnType<typeof useRecoverySnapshot>;
     scope.run(() => {
-      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref("") });
+      recovery = useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref("") });
     });
+    expect(recovery.aiSessionIdFor("s1")).toBe("");
 
     // The subscription must have gone through the fake platform's event bus.
     events.emit("recovery:ai-sid", { session_id: "s1", kind: "claude", ai_session_id: "abc-uuid-xyz" });
+    expect(recovery.aiSessionIdFor("s1")).toBe("abc-uuid-xyz");
 
     vi.advanceTimersByTime(600);
     await Promise.resolve();
@@ -117,6 +121,47 @@ describe("useRecoverySnapshot", () => {
     const pane = calls[calls.length - 1][0].tabs[0].panes[0];
     expect(pane.session_type).toBe("shell");
     expect(pane.ai).toBeUndefined();
+    scope.stop();
+  });
+
+  it("restores only confirmed AI ids under their exact atterm session ids", () => {
+    const scope = effectScope();
+    let recovery!: ReturnType<typeof useRecoverySnapshot>;
+    scope.run(() => {
+      recovery = useRecoverySnapshot({
+        tabs: ref<Tab[]>([]),
+        currentTabId: ref(null),
+        sessionInfoFor: () => undefined,
+        localHostID: ref(""),
+        onEvent: () => () => {},
+      });
+    });
+
+    // Cast through unknown to model a malformed on-disk kind that crossed the
+    // JSON boundary despite the generated TypeScript union.
+    recovery.seedAIFromSnapshot({
+      version: 1,
+      host_id: "host",
+      clean_shutdown: false,
+      saved_at_unix: 1,
+      tabs: [{
+        id: "t1",
+        layout: "single",
+        active_pane_idx: 0,
+        col_ratio: 0.5,
+        row_ratio: 0.5,
+        panes: [
+          { slot: 0, shell: "zsh", session_id: "s1", ai: { kind: "codex", session_id: "codex-sid" } },
+          { slot: 1, shell: "zsh", session_id: "s2", ai: { kind: "unknown", session_id: "guessed-sid" } },
+          { slot: 2, shell: "zsh", session_id: "s3", ai: { kind: "claude", session_id: "" } },
+        ],
+      }],
+    } as unknown as RecoverySnapshot);
+
+    expect(recovery.aiSessionIdFor("s1")).toBe("codex-sid");
+    expect(recovery.aiSessionIdFor("s2")).toBe("");
+    expect(recovery.aiSessionIdFor("s3")).toBe("");
+    expect(recovery.aiSessionIdFor("new-session")).toBe("");
     scope.stop();
   });
 

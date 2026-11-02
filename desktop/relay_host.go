@@ -913,7 +913,18 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	active := &activeSession{host: pty, cleanup: combinedCleanup, restored: req.AIKind != ""}
 	active.applyHookAIIdentity = func(kind, aiSessionID string) {
 		resolveMu.Lock()
-		if kind == "" || aiSessionID == "" || currentResolveKind != kind || currentAISessionID == aiSessionID {
+		if kind == "" || aiSessionID == "" {
+			logWarn("ai-sid", "ignore hook identity session=%s reason=empty-identity", id)
+			resolveMu.Unlock()
+			return
+		}
+		if currentResolveKind != kind {
+			logDebug("ai-sid", "ignore hook identity session=%s kind=%s reason=kind-mismatch current_kind=%s", id, kind, currentResolveKind)
+			resolveMu.Unlock()
+			return
+		}
+		if currentAISessionID == aiSessionID {
+			logDebug("ai-sid", "ignore hook identity session=%s kind=%s reason=duplicate", id, kind)
 			resolveMu.Unlock()
 			return
 		}
@@ -929,6 +940,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		currentResolveCancel = generationCancel
 		currentAISessionID = aiSessionID
 		h.onAISidCaptured(id, kind, aiSessionID)
+		logInfo("ai-sid", "applied hook identity session=%s kind=%s source=session-start", id, kind)
 		resolveMu.Unlock()
 
 		if kind == "codex" {

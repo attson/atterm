@@ -1062,10 +1062,10 @@ export const en = {
         },
       },
       hook_install: {
-        enable: "Auto-install Claude Code hook",
+        enable: "Auto-install AI hooks",
         retry: "Retry",
-        healthy: "Hook installed and healthy",
-        needs_attention: "Hook needs attention",
+        healthy: "AI hooks installed and healthy",
+        needs_attention: "AI hooks need attention",
         disabled: "Hook auto-install disabled",
       },
       test_send: {
@@ -1493,6 +1493,7 @@ export const en = {
     details: {
       title: "Session details",
       sessionId: "Session ID",
+      aiSessionId: "AI Session ID",
       type: "Type",
       host: "Host",
       cwd: "CWD",

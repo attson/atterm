@@ -171,6 +171,10 @@ export namespace hookinstall {
 	    binary_version: string;
 	    settings_path: string;
 	    settings_ok: boolean;
+	    codex_settings_path: string;
+	    codex_settings_ok: boolean;
+	    codex_trust_path: string;
+	    codex_trust_ok: boolean;
 	    last_error: string;
 	    last_check: string;
 
@@ -186,6 +190,10 @@ export namespace hookinstall {
 	        this.binary_version = source["binary_version"];
 	        this.settings_path = source["settings_path"];
 	        this.settings_ok = source["settings_ok"];
+	        this.codex_settings_path = source["codex_settings_path"];
+	        this.codex_settings_ok = source["codex_settings_ok"];
+	        this.codex_trust_path = source["codex_trust_path"];
+	        this.codex_trust_ok = source["codex_trust_ok"];
 	        this.last_error = source["last_error"];
 	        this.last_check = source["last_check"];
 	    }

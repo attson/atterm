@@ -71,7 +71,7 @@ export function sendFeishuTestCard(scenario: string): Promise<void> {
   return bindings().SendFeishuTestCard(scenario);
 }
 
-// getHookInstallState returns the current Claude Code hook auto-install
+// getHookInstallState returns the current Claude Code + Codex hook auto-install
 // health. The backend silently runs Install when enabled + unhealthy +
 // not already attempted in the debounce window, so the returned state
 // reflects the post-repair situation.

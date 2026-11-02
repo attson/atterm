@@ -1,23 +1,58 @@
 package hookinstall
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func writeCodexTrustConfig(t *testing.T, home string) {
+	t.Helper()
+	raw, err := os.ReadFile(codexHooksPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := readCodexHooksDocument(raw)
+	var config strings.Builder
+	for _, event := range codexHookEvents {
+		trustEvent := codexTrustEventNames[event]
+		for entryIdx, entry := range doc.Hooks[event] {
+			if !isAttermCodexEntry(entry) {
+				continue
+			}
+			for hookIdx := range entry.Hooks {
+				key := fmt.Sprintf("%s:%s:%d:%d", codexHooksPath(home), trustEvent, entryIdx, hookIdx)
+				fmt.Fprintf(&config, "[hooks.state.%s]\ntrusted_hash = \"test-hash\"\n\n", strconv.Quote(key))
+			}
+		}
+	}
+	if err := os.WriteFile(codexConfigPath(home), []byte(config.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestCheck_Healthy(t *testing.T) {
 	home := t.TempDir()
 	if err := installAt(home); err != nil {
 		t.Fatal(err)
 	}
+	writeCodexTrustConfig(t, home)
 	s := checkAt(home, true /* enabled */)
 	if !s.BinaryOK {
 		t.Errorf("BinaryOK = false; LastError=%q", s.LastError)
 	}
 	if !s.SettingsOK {
 		t.Errorf("SettingsOK = false; LastError=%q", s.LastError)
+	}
+	if !s.CodexSettingsOK || !s.CodexTrustOK {
+		t.Errorf("Codex health = settings:%t trust:%t; LastError=%q", s.CodexSettingsOK, s.CodexTrustOK, s.LastError)
+	}
+	if !s.Healthy() {
+		t.Errorf("Healthy() = false; state=%+v", s)
 	}
 	if s.LastError != "" {
 		t.Errorf("LastError = %q; want empty", s.LastError)
@@ -34,8 +69,60 @@ func TestCheck_DisabledShortCircuits(t *testing.T) {
 		t.Errorf("Enabled = true; want false")
 	}
 	// Disabled state still reports correct paths so UI can show them.
-	if s.BinaryPath == "" || s.SettingsPath == "" {
+	if s.BinaryPath == "" || s.SettingsPath == "" || s.CodexSettingsPath == "" || s.CodexTrustPath == "" {
 		t.Errorf("paths empty: %+v", s)
+	}
+}
+
+func TestCheck_CodexEventMissing(t *testing.T) {
+	home := t.TempDir()
+	if err := installAt(home); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(codexHooksPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := readCodexHooksDocument(raw)
+	delete(doc.Hooks, "SessionStart")
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexHooksPath(home), out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := checkAt(home, true)
+	if s.CodexSettingsOK {
+		t.Fatal("CodexSettingsOK = true; want false")
+	}
+	if !s.RepairNeeded() {
+		t.Fatal("RepairNeeded() = false; missing hook event is repairable")
+	}
+	if !strings.Contains(s.LastError, "SessionStart") {
+		t.Errorf("LastError = %q; want SessionStart", s.LastError)
+	}
+}
+
+func TestCheck_CodexTrustMissingDoesNotRequestRepair(t *testing.T) {
+	home := t.TempDir()
+	if err := installAt(home); err != nil {
+		t.Fatal(err)
+	}
+
+	s := checkAt(home, true)
+	if !s.CodexSettingsOK {
+		t.Fatalf("CodexSettingsOK = false; LastError=%q", s.LastError)
+	}
+	if s.CodexTrustOK {
+		t.Fatal("CodexTrustOK = true; want false")
+	}
+	if s.RepairNeeded() {
+		t.Fatal("RepairNeeded() = true; install cannot approve Codex trust")
+	}
+	if !strings.Contains(s.LastError, "trust") {
+		t.Errorf("LastError = %q; want trust guidance", s.LastError)
 	}
 }
 

@@ -31,6 +31,7 @@ const props = withDefaults(defineProps<{
   paneLocationFor?: (id: string) => { tabId: string; paneIdx: number } | null;
   canDetachSession?: (id: string) => boolean;
   tabIndexById?: (tabId: string) => number;
+  aiSessionIdFor?: (id: string) => string;
 }>(), {
   byStateGroups: () => ({}),
   activeSessionId: null,
@@ -40,6 +41,7 @@ const props = withDefaults(defineProps<{
   paneLocationFor: () => null,
   canDetachSession: () => false,
   tabIndexById: () => 0,
+  aiSessionIdFor: () => "",
 });
 
 const emit = defineEmits<{
@@ -373,6 +375,7 @@ const railIcons = computed(() => {
             :pane-location-for="paneLocationFor"
             :can-detach-session="canDetachSession"
             :tab-index-by-id="tabIndexById"
+            :ai-session-id-for="aiSessionIdFor"
             @open="(s) => emit('open', s)"
             @close="(s) => emit('close', s)"
             @markSeen="(p) => emit('markSeen', p)"

@@ -423,22 +423,24 @@ var activeCodexResolvers = struct {
 	byCwd map[string]int
 }{byCwd: make(map[string]int)}
 
-// registerCodexResolver remains registered while title tracking is active, not
-// just during initial SID discovery. On platforms without process-owned file
-// lookup, that prevents a later same-cwd resolver from mistaking writes from
-// an already-bound pane for its own Codex conversation.
+// registerCodexResolver counts only unresolved SID discovery. Title tracking
+// starts after this registration is released: an already-bound pane must not
+// make every later same-cwd Codex launch look permanently ambiguous.
 func registerCodexResolver(cwd string) func() {
 	key := filepath.Clean(cwd)
 	activeCodexResolvers.Lock()
 	activeCodexResolvers.byCwd[key]++
 	activeCodexResolvers.Unlock()
+	var once sync.Once
 	return func() {
-		activeCodexResolvers.Lock()
-		activeCodexResolvers.byCwd[key]--
-		if activeCodexResolvers.byCwd[key] == 0 {
-			delete(activeCodexResolvers.byCwd, key)
-		}
-		activeCodexResolvers.Unlock()
+		once.Do(func() {
+			activeCodexResolvers.Lock()
+			activeCodexResolvers.byCwd[key]--
+			if activeCodexResolvers.byCwd[key] == 0 {
+				delete(activeCodexResolvers.byCwd, key)
+			}
+			activeCodexResolvers.Unlock()
+		})
 	}
 }
 
@@ -469,6 +471,11 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		logWarn("ai-sid", "mkdir %s: %v — skip codex resolve", dir, err)
 		return
 	}
+	capture := func(sid, path string) {
+		onCapture(sid)
+		unregister()
+		trackCodexUserTitle(ctx, sess, path)
+	}
 	before := codexRolloutFileInfos(dir, cwd)
 	deadline := time.Now().Add(codexResolveBudget)
 	for time.Now().Before(deadline) {
@@ -492,8 +499,7 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		}
 		if codexProcessRolloutLookupSupported && rootPID > 0 {
 			if sid, ok := codexRolloutOwnedByProcess(rootPID, files); ok {
-				onCapture(sid)
-				trackCodexUserTitle(ctx, sess, files[sid].Path)
+				capture(sid, files[sid].Path)
 				return
 			}
 			// Recent Codex releases delegate persistence to the long-lived
@@ -512,16 +518,14 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		switch {
 		case len(fresh) == 1:
 			sid := fresh[0]
-			onCapture(sid)
-			trackCodexUserTitle(ctx, sess, files[sid].Path)
+			capture(sid, files[sid].Path)
 			return
 		case len(fresh) >= 2:
 			logWarn("ai-sid", "codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
 			return
 		case len(advanced) == 1:
 			sid := advanced[0]
-			onCapture(sid)
-			trackCodexUserTitle(ctx, sess, files[sid].Path)
+			capture(sid, files[sid].Path)
 			return
 		case len(advanced) >= 2:
 			logWarn("ai-sid", "codex resolve ambiguous (%d advanced in %s) — abort", len(advanced), dir)

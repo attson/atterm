@@ -14,21 +14,34 @@ import (
 // State is the read-only health snapshot returned by Check. Renders
 // directly to the Settings · Feishu status row.
 type State struct {
-	Enabled       bool   `json:"enabled"`
-	BinaryPath    string `json:"binary_path"`
-	BinaryOK      bool   `json:"binary_ok"`
-	BinaryVersion string `json:"binary_version"`
-	SettingsPath  string `json:"settings_path"`
-	SettingsOK    bool   `json:"settings_ok"`
-	LastError     string `json:"last_error"`
+	Enabled           bool   `json:"enabled"`
+	BinaryPath        string `json:"binary_path"`
+	BinaryOK          bool   `json:"binary_ok"`
+	BinaryVersion     string `json:"binary_version"`
+	SettingsPath      string `json:"settings_path"`
+	SettingsOK        bool   `json:"settings_ok"`
+	CodexSettingsPath string `json:"codex_settings_path"`
+	CodexSettingsOK   bool   `json:"codex_settings_ok"`
+	CodexTrustPath    string `json:"codex_trust_path"`
+	CodexTrustOK      bool   `json:"codex_trust_ok"`
+	LastError         string `json:"last_error"`
 	// LastCheck is an RFC3339 timestamp. It is a string rather than a
 	// time.Time so the Wails binding generator can map it to a TS `string`
 	// (time.Time has no TS counterpart and is emitted as `any`).
 	LastCheck string `json:"last_check"`
 }
 
-// Healthy returns true when both surfaces are OK and auto-install is on.
-func (s State) Healthy() bool { return s.Enabled && s.BinaryOK && s.SettingsOK }
+// Healthy returns true when both agents' hook surfaces are OK and auto-install is on.
+func (s State) Healthy() bool {
+	return s.Enabled && s.BinaryOK && s.SettingsOK && s.CodexSettingsOK && s.CodexTrustOK
+}
+
+// RepairNeeded excludes Codex trust: only Codex may approve a changed hook.
+// Re-running Install for a missing trust record cannot fix it and would turn
+// every Settings poll into a pointless repair loop.
+func (s State) RepairNeeded() bool {
+	return s.Enabled && (!s.BinaryOK || !s.SettingsOK || !s.CodexSettingsOK)
+}
 
 // Check is a pure read of the current on-disk state. Does NOT mutate
 // anything. Cheap to call: a handful of file stats + one JSON parse.
@@ -47,10 +60,12 @@ func Check(_ context.Context, enabled bool) State {
 
 func checkAt(home string, enabled bool) State {
 	s := State{
-		Enabled:      enabled,
-		BinaryPath:   attermHookSymlink(home),
-		SettingsPath: claudeSettingsPath(home),
-		LastCheck:    time.Now().Format(time.RFC3339),
+		Enabled:           enabled,
+		BinaryPath:        attermHookSymlink(home),
+		SettingsPath:      claudeSettingsPath(home),
+		CodexSettingsPath: codexHooksPath(home),
+		CodexTrustPath:    codexConfigPath(home),
+		LastCheck:         time.Now().Format(time.RFC3339),
 	}
 	if !enabled {
 		return s
@@ -65,12 +80,19 @@ func checkAt(home string, enabled bool) State {
 	// unhealthy install that repairing cannot fix.
 	setOK, setErr := checkSettings(home, attermHookCommand(s.BinaryPath, "claude-code"))
 	s.SettingsOK = setOK
+	codexOK, trustOK, codexErr, trustErr := checkCodexHealth(home, s.BinaryPath)
+	s.CodexSettingsOK = codexOK
+	s.CodexTrustOK = trustOK
 
 	switch {
 	case binErr != "":
 		s.LastError = binErr
 	case setErr != "":
 		s.LastError = setErr
+	case codexErr != "":
+		s.LastError = codexErr
+	case trustErr != "":
+		s.LastError = trustErr
 	}
 	return s
 }

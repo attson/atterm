@@ -1,4 +1,4 @@
-import { watch, onScopeDispose } from "vue";
+import { reactive, watch, onScopeDispose } from "vue";
 import type { Ref } from "vue";
 import type { Tab } from "../lib/types";
 import type { SessionInfo } from "../lib/connection";
@@ -12,13 +12,18 @@ import {
 import { usePlatform } from "../platform";
 import { errText, logWarn } from "../lib/log";
 
-// AI session id captures keyed by atterm session id. Lives outside the
-// reactive store so non-structural changes don't trigger watcher re-runs.
+// AI session id captures keyed by atterm session id. This isolated reactive
+// map lets read-only consumers such as session details update as soon as the
+// sniffer confirms an id; the snapshot watchers below do not subscribe to it.
 type AIState = {
   kind: "claude" | "codex" | "aider";
   session_id: string;
   captured_at_unix: number;
 };
+
+function isAIKind(kind: string): kind is AIState["kind"] {
+  return kind === "claude" || kind === "codex" || kind === "aider";
+}
 
 // Default debounce intervals. Structural changes (tabs/panes/AI capture)
 // flush at 500ms; cwd/title heartbeat at 5s.
@@ -47,7 +52,7 @@ export interface UseRecoverySnapshotArgs {
 }
 
 export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
-  const aiBySid = new Map<string, AIState>();
+  const aiBySid = reactive(new Map<string, AIState>());
   let structuralTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   let dirty = false;
@@ -137,6 +142,25 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
       pauseDepth = Math.max(0, pauseDepth - 1);
       if (pauseDepth === 0 && dirty) flushNow();
     };
+  }
+
+  function aiSessionIdFor(sessionID: string): string {
+    return aiBySid.get(sessionID)?.session_id ?? "";
+  }
+
+  function seedAIFromSnapshot(snapshot: RecoverySnapshot): void {
+    for (const tab of snapshot.tabs ?? []) {
+      for (const pane of tab.panes ?? []) {
+        const sid = pane.session_id ?? "";
+        const ai = pane.ai;
+        if (!sid || !ai?.session_id || !isAIKind(ai.kind)) continue;
+        aiBySid.set(sid, {
+          kind: ai.kind,
+          session_id: ai.session_id,
+          captured_at_unix: ai.captured_at_unix ?? 0,
+        });
+      }
+    }
   }
 
   function scheduleStructural() {
@@ -243,7 +267,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     const kind = (payload?.kind ?? "") as "claude" | "codex" | "aider" | "";
     const aiSid: string = payload?.ai_session_id ?? "";
     if (!sid || !kind) return;
-    if (kind !== "claude" && kind !== "codex" && kind !== "aider") return;
+    if (!isAIKind(kind)) return;
     if (!aiSid) {
       aiBySid.delete(sid);
       scheduleStructural();
@@ -274,5 +298,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     buildSnapshot,
     flushNow,
     pause,
+    aiSessionIdFor,
+    seedAIFromSnapshot,
   };
 }

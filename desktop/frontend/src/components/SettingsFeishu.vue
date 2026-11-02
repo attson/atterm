@@ -9,7 +9,7 @@
           <span>{{ t('settings.feishu.hook_install.enable') }}</span>
         </label>
         <button
-          v-if="hookState.enabled && (!hookState.binary_ok || !hookState.settings_ok)"
+          v-if="hookState.enabled && hookNeedsRepair"
           type="button"
           class="hook-install__retry"
           @click="onRetryHook"
@@ -400,6 +400,10 @@ const hookState = ref<HookInstallState>({
   binary_version: '',
   settings_path: '',
   settings_ok: false,
+  codex_settings_path: '',
+  codex_settings_ok: false,
+  codex_trust_path: '',
+  codex_trust_ok: false,
   last_error: '',
   last_check: '',
 })
@@ -432,13 +436,26 @@ async function refreshHook() {
 
 const dotClass = computed(() => {
   if (!hookState.value.enabled) return 'hook-install__dot--gray'
-  if (hookState.value.binary_ok && hookState.value.settings_ok) return 'hook-install__dot--green'
+  if (hookHealthy.value) return 'hook-install__dot--green'
   return 'hook-install__dot--amber'
 })
 
+const hookHealthy = computed(() =>
+  hookState.value.binary_ok &&
+  hookState.value.settings_ok &&
+  hookState.value.codex_settings_ok &&
+  hookState.value.codex_trust_ok,
+)
+
+const hookNeedsRepair = computed(() =>
+  !hookState.value.binary_ok ||
+  !hookState.value.settings_ok ||
+  !hookState.value.codex_settings_ok,
+)
+
 const hookLabel = computed(() => {
   if (!hookState.value.enabled) return t('settings.feishu.hook_install.disabled')
-  if (hookState.value.binary_ok && hookState.value.settings_ok) return t('settings.feishu.hook_install.healthy')
+  if (hookHealthy.value) return t('settings.feishu.hook_install.healthy')
   return t('settings.feishu.hook_install.needs_attention')
 })
 

@@ -995,6 +995,20 @@ describe("TaskGroupedList — multi-select", () => {
     expect(popover.exists()).toBe(true);
     expect(popover.find("[data-test=details-field-sessionId] .value").text()).toBe("s2");
   });
+
+  test("passes the confirmed AI conversation id into session details", async () => {
+    const session = mk({ session_id: "ai-atterm", type: "ai", title: "codex" });
+    const w = mountList({
+      byHost: { h: [session] },
+      primaryStateForHost: () => "running",
+      completedSeen: [],
+      aiSessionIdFor: (id: string) => id === "ai-atterm" ? "codex-conversation-id" : "",
+    });
+
+    await w.find("[data-test=task-row]").trigger("contextmenu");
+    await w.find("[data-test=session-row-menu-item-details]").trigger("click");
+    expect(w.find("[data-test=details-field-aiSessionId] .value").text()).toBe("codex-conversation-id");
+  });
 });
 
 describe("TaskGroupedList row close affordance", () => {

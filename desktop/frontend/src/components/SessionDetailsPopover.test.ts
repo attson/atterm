@@ -35,6 +35,7 @@ function mkSession(over: Partial<RemoteSession> = {}): RemoteSession {
 
 function factory(over: {
   session?: RemoteSession | null;
+  aiSessionId?: string;
   paneLocation?: { tabId: string; paneIdx: number } | null;
 } = {}) {
   const session = over.session === undefined ? mkSession() : over.session;
@@ -46,6 +47,7 @@ function factory(over: {
       x: 200,
       y: 200,
       session,
+      aiSessionId: over.aiSessionId ?? "",
       paneLocation,
       tabIndexById: (id: string) => (id === "t1" ? 1 : 0),
     },
@@ -67,6 +69,28 @@ describe("SessionDetailsPopover", () => {
   test("renders session_id row", () => {
     const w = factory();
     expect(w.find("[data-test=details-field-sessionId] .value").text()).toBe("sess-abc");
+  });
+
+  test("renders a confirmed AI session id for AI sessions", async () => {
+    const w = factory({
+      session: mkSession({ type: "ai" }),
+      aiSessionId: "019faea7-292e-7ad3-a408-4faf2bb8a848",
+    });
+    const row = w.find("[data-test=details-field-aiSessionId]");
+    expect(row.find(".value").text()).toBe("019faea7-292e-7ad3-a408-4faf2bb8a848");
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    await row.find(".copy").trigger("click");
+    expect(writeText).toHaveBeenCalledWith("019faea7-292e-7ad3-a408-4faf2bb8a848");
+  });
+
+  test("hides the AI session id until it is confirmed and for non-AI sessions", async () => {
+    const w = factory({ session: mkSession({ type: "ai" }) });
+    expect(w.find("[data-test=details-field-aiSessionId]").exists()).toBe(false);
+
+    await w.setProps({ aiSessionId: "ai-sid", session: mkSession({ type: "shell" }) });
+    expect(w.find("[data-test=details-field-aiSessionId]").exists()).toBe(false);
   });
 
   test("skips optional rows when value is empty", () => {
@@ -100,6 +124,41 @@ describe("SessionDetailsPopover", () => {
     const w = factory();
     await w.find("[data-test=details-field-sessionId] .copy").trigger("click");
     expect(writeText).toHaveBeenCalledWith("sess-abc");
+  });
+
+  test("drags by the title and keeps the card inside the viewport", async () => {
+    const w = factory();
+    const popover = w.find<HTMLElement>("[data-test=session-details-popover]");
+    const handle = w.find("[data-test=session-details-drag-handle]");
+    vi.spyOn(popover.element, "getBoundingClientRect").mockReturnValue({
+      x: 200,
+      y: 200,
+      left: 200,
+      top: 200,
+      right: 620,
+      bottom: 500,
+      width: 420,
+      height: 300,
+      toJSON: () => ({}),
+    });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+
+    await handle.trigger("pointerdown", { button: 0, pointerId: 7, clientX: 240, clientY: 220 });
+    expect(handle.classes()).toContain("dragging");
+    await handle.trigger("pointermove", { pointerId: 7, clientX: 790, clientY: 590 });
+    expect(popover.attributes("style")).toContain("left: 380px");
+    expect(popover.attributes("style")).toContain("top: 300px");
+
+    await handle.trigger("pointerup", { pointerId: 7 });
+    expect(handle.classes()).not.toContain("dragging");
+  });
+
+  test("ignores non-primary pointer drags", async () => {
+    const w = factory();
+    const handle = w.find("[data-test=session-details-drag-handle]");
+    await handle.trigger("pointerdown", { button: 2, pointerId: 9, clientX: 240, clientY: 220 });
+    expect(handle.classes()).not.toContain("dragging");
   });
 
   test("details rows allow horizontal scrolling for long values on narrow screens", () => {

@@ -1029,10 +1029,10 @@ export const zhCN = {
         },
       },
       hook_install: {
-        enable: "自动安装 Claude Code Hook",
+        enable: "自动安装 AI Hooks",
         retry: "重试",
-        healthy: "Hook 已安装且健康",
-        needs_attention: "Hook 需要修复",
+        healthy: "AI Hooks 已安装且健康",
+        needs_attention: "AI Hooks 需要处理",
         disabled: "Hook 自动安装已关闭",
       },
       test_send: {
@@ -1460,6 +1460,7 @@ export const zhCN = {
     details: {
       title: "会话详细信息",
       sessionId: "Session ID",
+      aiSessionId: "AI 会话 ID",
       type: "类型",
       host: "主机",
       cwd: "工作目录",

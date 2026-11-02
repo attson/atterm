@@ -522,6 +522,10 @@ export interface HookInstallState {
   binary_version: string;
   settings_path: string;
   settings_ok: boolean;
+  codex_settings_path: string;
+  codex_settings_ok: boolean;
+  codex_trust_path: string;
+  codex_trust_ok: boolean;
   last_error: string;
   last_check: string; // ISO timestamp (Go time.Time -> JSON string)
 }

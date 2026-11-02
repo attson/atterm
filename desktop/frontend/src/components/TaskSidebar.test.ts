@@ -185,6 +185,23 @@ describe("TaskSidebar", () => {
     expect(list.props("searchQuery")).toBe("feishu");
   });
 
+  test("forwards the AI session id resolver to TaskGroupedList", () => {
+    const aiSessionIdFor = (id: string) => `ai-${id}`;
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+        aiSessionIdFor,
+      },
+    });
+
+    const list = w.findComponent({ name: "TaskGroupedList" });
+    expect(list.props("aiSessionIdFor")).toBe(aiSessionIdFor);
+  });
+
   test("Esc inside the search input clears the query first, then collapses on empty", async () => {
     const w = mount(TaskSidebar, {
       props: {

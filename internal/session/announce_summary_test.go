@@ -154,6 +154,23 @@ func TestUpdateAdvertisedInfoActivityOnlyDoesNotRequestListRefresh(t *testing.T)
 	}
 }
 
+func TestUpdateAdvertisedInfoActivityOnlyWithStableSealedDoesNotRequestListRefresh(t *testing.T) {
+	sealed := []byte("stable-randomized-envelope")
+	s := New(uuid.New(), proto.SessionInfo{
+		TaskState:    proto.TaskStateRunning,
+		LastOutputAt: 100,
+		Sealed:       append([]byte(nil), sealed...),
+	})
+
+	if got := s.UpdateAdvertisedInfo(proto.SessionInfo{
+		TaskState:    proto.TaskStateRunning,
+		LastOutputAt: 101,
+		Sealed:       append([]byte(nil), sealed...),
+	}); got {
+		t.Fatal("activity-only ANNOUNCE with stable Sealed requested a list refresh")
+	}
+}
+
 func TestUpdateMetaActivityOnlyDoesNotRequestListRefresh(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{
 		TaskState:    proto.TaskStateRunning,

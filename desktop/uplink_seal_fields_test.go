@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"testing"
@@ -81,6 +82,75 @@ func TestSealSessionInfoContent_RoundTrip(t *testing.T) {
 		got.Command != original.Command ||
 		got.CurrentCommand != original.CurrentCommand {
 		t.Fatalf("decrypted fields mismatch: %+v", got)
+	}
+}
+
+func TestSessionInfoSealCacheKeepsActivityOnlyAnnounceStable(t *testing.T) {
+	ak := mustAccountKey32(t)
+	info := mustSessionInfo()
+	var seals sessionInfoSealCache
+	var announces announceCache
+
+	firstSnapshot := stripContentFieldsFromSnapshot(seals.seal([]proto.SessionInfo{info}, ak))
+	firstPayload, err := buildAnnouncePayload("host-id", "host", "user", firstSnapshot, proto.RemotePermissionFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	announces.markSent(firstPayload)
+
+	sameSnapshot := stripContentFieldsFromSnapshot(seals.seal([]proto.SessionInfo{info}, ak))
+	samePayload, err := buildAnnouncePayload("host-id", "host", "user", sameSnapshot, proto.RemotePermissionFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if announces.shouldSend(samePayload) {
+		t.Fatal("unchanged encrypted snapshot bypassed ANNOUNCE deduplication")
+	}
+	if !bytes.Equal(firstSnapshot[0].Sealed, sameSnapshot[0].Sealed) {
+		t.Fatal("unchanged content was sealed with a fresh randomized envelope")
+	}
+
+	activity := info
+	activity.LastOutputAt++
+	activitySnapshot := stripContentFieldsFromSnapshot(seals.seal([]proto.SessionInfo{activity}, ak))
+	if !bytes.Equal(firstSnapshot[0].Sealed, activitySnapshot[0].Sealed) {
+		t.Fatal("activity-only update changed the content envelope")
+	}
+	activityPayload, err := buildAnnouncePayload("host-id", "host", "user", activitySnapshot, proto.RemotePermissionFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !announces.shouldSend(activityPayload) {
+		t.Fatal("activity timestamp change was incorrectly suppressed")
+	}
+
+	content := activity
+	content.Cwd = "/Users/alice/changed"
+	contentSnapshot := stripContentFieldsFromSnapshot(seals.seal([]proto.SessionInfo{content}, ak))
+	if bytes.Equal(activitySnapshot[0].Sealed, contentSnapshot[0].Sealed) {
+		t.Fatal("content change reused the previous envelope")
+	}
+}
+
+func TestSessionInfoSealCacheInvalidatesOnAccountKeyChange(t *testing.T) {
+	info := mustSessionInfo()
+	firstKey := mustAccountKey32(t)
+	secondKey := mustAccountKey32(t)
+	var seals sessionInfoSealCache
+
+	first := seals.seal([]proto.SessionInfo{info}, firstKey)
+	second := seals.seal([]proto.SessionInfo{info}, secondKey)
+	if bytes.Equal(first[0].Sealed, second[0].Sealed) {
+		t.Fatal("account-key change reused an envelope encrypted under the old key")
+	}
+
+	id := uuid.MustParse(info.ID)
+	secondSessionKey, err := e2eecrypto.DeriveSessionKey(secondKey, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e2eecrypto.OpenUnsequenced(secondSessionKey, id, sessionInfoSealedAADFrameType, second[0].Sealed); err != nil {
+		t.Fatalf("new account key could not open refreshed envelope: %v", err)
 	}
 }
 

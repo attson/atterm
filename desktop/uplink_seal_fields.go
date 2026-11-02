@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 
 	"github.com/google/uuid"
@@ -22,6 +24,59 @@ type sealedSessionFields struct {
 	CurrentCommand string `json:"current_command,omitempty"`
 }
 
+type sessionInfoSealCacheEntry struct {
+	contentMAC [sha256.Size]byte
+	sealed     []byte
+}
+
+// sessionInfoSealCache keeps randomized SessionInfo envelopes stable while
+// their plaintext is unchanged. Besides making ANNOUNCE deduplication work,
+// this lets the relay distinguish an activity-only update from a real content
+// update without learning the content. The keyed fingerprint avoids retaining
+// an extra plaintext copy or exposing a dictionary-testable unkeyed digest.
+type sessionInfoSealCache struct {
+	entries map[uuid.UUID]sessionInfoSealCacheEntry
+}
+
+func (c *sessionInfoSealCache) seal(snapshot []proto.SessionInfo, accountKey []byte) []proto.SessionInfo {
+	if len(accountKey) < e2eecrypto.SessionKeySize {
+		return snapshot
+	}
+	out := make([]proto.SessionInfo, len(snapshot))
+	next := make(map[uuid.UUID]sessionInfoSealCacheEntry, len(snapshot))
+	for i, s := range snapshot {
+		id, payload, ok := sessionInfoSealedPayload(s)
+		if !ok {
+			out[i] = s
+			continue
+		}
+		contentMAC := sessionInfoContentMAC(accountKey, id, payload)
+		entry, cached := c.entries[id]
+		if !cached || !hmac.Equal(entry.contentMAC[:], contentMAC[:]) {
+			sealed, err := sealSessionInfoPayload(id, payload, accountKey)
+			if err != nil {
+				out[i] = s
+				continue
+			}
+			entry = sessionInfoSealCacheEntry{contentMAC: contentMAC, sealed: sealed}
+		}
+		s.Sealed = append([]byte(nil), entry.sealed...)
+		next[id] = entry
+		out[i] = s
+	}
+	c.entries = next
+	return out
+}
+
+func sessionInfoContentMAC(accountKey []byte, id uuid.UUID, payload []byte) [sha256.Size]byte {
+	mac := hmac.New(sha256.New, accountKey)
+	_, _ = mac.Write(id[:])
+	_, _ = mac.Write(payload)
+	var result [sha256.Size]byte
+	copy(result[:], mac.Sum(nil))
+	return result
+}
+
 // sealSessionInfoContent populates the Sealed field of each session in
 // snapshot using HKDF-derived per-session keys from accountKey. Returns
 // a fresh slice so the agent's local renderer (which still uses the
@@ -36,45 +91,20 @@ type sealedSessionFields struct {
 // slice (M3b-strip) will drop them once the three client SDKs all
 // decrypt reliably.
 func sealSessionInfoContent(snapshot []proto.SessionInfo, accountKey []byte) []proto.SessionInfo {
-	if len(accountKey) < e2eecrypto.SessionKeySize {
-		return snapshot
-	}
-	out := make([]proto.SessionInfo, len(snapshot))
-	for i, s := range snapshot {
-		sealed, ok := sealOneSessionInfo(s, accountKey)
-		if ok {
-			s.Sealed = sealed
-		}
-		out[i] = s
-	}
-	return out
+	var cache sessionInfoSealCache
+	return cache.seal(snapshot, accountKey)
 }
 
-// sealOneSessionInfo derives the per-session key from accountKey, marshals
-// {title, cwd, command, current_command} as JSON, and AEAD-seals the
-// bytes using the unsequenced envelope variant. Returns ok == false if
-// the session id cannot be parsed or any cipher operation fails — the
-// caller leaves Sealed unset in that case.
-//
-// frameType byte for the AAD is 0x12 (TypeListResp), chosen because the
-// sealed bytes ride on the SessionInfo struct which is the payload of
-// /api/sessions and TypeListResp / TypeAnnounce. The constant is local
-// to this file — defining a dedicated AAD discriminator avoids leaking
-// SessionInfo encryption details into proto/codec.go's frame-type table.
-func sealOneSessionInfo(s proto.SessionInfo, accountKey []byte) ([]byte, bool) {
+func sessionInfoSealedPayload(s proto.SessionInfo) (uuid.UUID, []byte, bool) {
 	if s.Title == "" && s.Cwd == "" && s.Command == "" && s.CurrentCommand == "" {
 		// Nothing sensitive to hide. Emitting an empty Sealed envelope
 		// would just leak that a session_uuid is in use, which the
 		// outer struct already broadcasts.
-		return nil, false
+		return uuid.Nil, nil, false
 	}
 	id, err := uuid.Parse(s.ID)
 	if err != nil {
-		return nil, false
-	}
-	sk, err := e2eecrypto.DeriveSessionKey(accountKey, id)
-	if err != nil {
-		return nil, false
+		return uuid.Nil, nil, false
 	}
 	payload, err := json.Marshal(sealedSessionFields{
 		Title:          s.Title,
@@ -83,13 +113,17 @@ func sealOneSessionInfo(s proto.SessionInfo, accountKey []byte) ([]byte, bool) {
 		CurrentCommand: s.CurrentCommand,
 	})
 	if err != nil {
-		return nil, false
+		return uuid.Nil, nil, false
 	}
-	env, err := e2eecrypto.SealUnsequenced(sk, id, sessionInfoSealedAADFrameType, payload)
+	return id, payload, true
+}
+
+func sealSessionInfoPayload(id uuid.UUID, payload, accountKey []byte) ([]byte, error) {
+	sk, err := e2eecrypto.DeriveSessionKey(accountKey, id)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
-	return env, true
+	return e2eecrypto.SealUnsequenced(sk, id, sessionInfoSealedAADFrameType, payload)
 }
 
 // sessionInfoSealedAADFrameType is the AAD discriminator bound into

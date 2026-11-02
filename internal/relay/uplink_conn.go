@@ -342,6 +342,7 @@ func (u *uplinkSession) handleTaskNotifications(id uuid.UUID, ms *mirrorState) {
 // ones. Updates metadata for existing sessions.
 func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 	seen := make(map[uuid.UUID]struct{}, len(sessions))
+	listChanged := false
 	for _, info := range sessions {
 		id, err := uuid.Parse(info.ID)
 		if err != nil {
@@ -362,7 +363,7 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 				// LastOutputAt) into a full LIST_RESP broadcast for every
 				// /client-sessions subscriber. The mirror has already stored the
 				// activity timestamp and attached terminal clients receive META.
-				u.server.registry.NotifyChange()
+				listChanged = true
 			}
 			u.handleTaskNotifications(id, existing)
 			u.server.debugf("uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
@@ -420,6 +421,12 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 		u.cancelIdleTimer(ms)
 		u.server.removeSession(id)
 		u.server.debugf("uplink mirror_remove session=%s reason=missing_from_announce", id)
+	}
+	if listChanged {
+		// ANNOUNCE is one authoritative snapshot. Coalesce metadata changes
+		// across all existing mirrors so one update cannot fan out one full
+		// LIST_RESP per session to every list subscriber.
+		u.server.registry.NotifyChange()
 	}
 }
 

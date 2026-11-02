@@ -42,7 +42,8 @@ type uplink struct {
 	remotePermission    string
 	host                *relayHost
 
-	announced announceCache
+	announced     announceCache
+	sealedSession sessionInfoSealCache
 
 	// outMu protects out. out is the writer goroutine's input channel for
 	// the currently-active connection. nil when not connected. Producer
@@ -571,7 +572,7 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error 
 			// SessionInfo.Sealed so a future client with the same
 			// account_key can decrypt; plaintext fields stay on the
 			// outer struct during the M3b-additive rollout.
-			snapshot = sealSessionInfoContent(snapshot, ak)
+			snapshot = u.sealedSession.seal(snapshot, ak)
 			// M3a/c: strip Summary + CurrentCommand outright.
 			snapshot = stripContentFieldsFromSnapshot(snapshot)
 		}

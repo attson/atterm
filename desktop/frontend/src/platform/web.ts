@@ -87,7 +87,10 @@ const sessions: SessionBridge = {
     return items.map((s) => ({ ...s, session_id: s.id })) as unknown as RemoteSession[]
   },
   async markSessionsSeen(opts) {
-    await apiFetch('/api/sessions/seen', { method: 'POST', body: JSON.stringify(opts) })
+    const body = 'all' in opts && opts.all
+      ? { all: true }
+      : { session_ids: (opts as { ids: string[] }).ids }
+    await apiFetch('/api/sessions/seen', { method: 'POST', body: JSON.stringify(body) })
   },
   async getPins() {
     try {

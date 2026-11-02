@@ -83,6 +83,20 @@ describe('web platform', () => {
       return expect(createWebPlatform().sessions.listShells()).resolves.toEqual([])
     })
 
+    it('sessions.markSessionsSeen maps ids to the relay HTTP contract', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
+
+      await createWebPlatform().sessions.markSessionsSeen?.({ ids: ['s1', 's2'] })
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/sessions/seen',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ session_ids: ['s1', 's2'] }),
+        }),
+      )
+    })
+
     it('sessions.listRelaySessions fetches /api/me/sessions with bearer auth', async () => {
       localStorage.setItem('atterm.relay', JSON.stringify({ baseURL: 'https://relay.example', sessionToken: 'tok' }))
       const rows = [{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, last_seen_at: 1, is_online: true, is_current: true }]

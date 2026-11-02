@@ -35,6 +35,7 @@ import { useWebTabsSnapshot } from "./composables/useWebTabsSnapshot";
 import { useCloseSessionConfirm } from "./composables/useCloseSessionConfirm";
 import { useRecoveryRestore } from "./composables/useRecoveryRestore";
 import { useSessionListStreams } from "./composables/useSessionListStreams";
+import { useActiveSessionSeen } from "./composables/useActiveSessionSeen";
 import { usePlatform } from './platform'
 const $platform = usePlatform()
 const caps = $platform.caps
@@ -60,7 +61,6 @@ import {
   getAutoCheckUpdates,
   listShells,
   newSession,
-  markSessionsSeen,
   listRemoteSessions,
   getTaskSidebarCollapsed,
   setTaskSidebarCollapsed,
@@ -332,8 +332,22 @@ function requestCloseSession(s: RemoteSession) {
 }
 
 async function onMarkSeen(payload: MarkSessionsSeenOpts) {
+  if (!$platform.sessions.markSessionsSeen) return;
   try {
-    await markSessionsSeen(payload);
+    await $platform.sessions.markSessionsSeen(payload);
+    const ids = "all" in payload ? null : new Set(payload.ids);
+    const clearUnread = (list: SessionInfo[]) => {
+      let changed = false;
+      const next = list.map((session) => {
+        if (session.unread !== true || (ids !== null && !ids.has(session.id))) return session;
+        changed = true;
+        return { ...session, unread: false };
+      });
+      return changed ? next : list;
+    };
+    localList.value = clearUnread(localList.value);
+    remoteRawList.value = clearUnread(remoteRawList.value);
+    refreshVisibleRemoteSessions();
   } catch {
     logWarn("app", "markSessionsSeen failed", { payload: JSON.stringify(payload) });
   }
@@ -619,6 +633,12 @@ const selectedPane = computed<Pane | null>(() => {
 watch(selectedPane, (pane) => {
   activePaneRef.value = pane;
 }, { immediate: true });
+
+useActiveSessionSeen({
+  activeSessionId: computed(() => selectedPane.value?.sessionId ?? null),
+  sessions: sessions.all,
+  markSeen: (sessionId) => onMarkSeen({ ids: [sessionId] }),
+});
 
 // Drive the OS window title from the active tab's AI session OSC title.
 // claude / codex prefix their OSC title with status glyphs (● / ✻) already,

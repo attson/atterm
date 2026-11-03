@@ -99,6 +99,19 @@ describe("useTerminalShortcuts (default bindings)", () => {
     shortcutScope.stop();
   });
 
+  it("Ctrl++ -> onIncreaseFontSize, preventDefault", () => {
+    const onIncreaseFontSize = vi.fn();
+    const shortcutScope = effectScope();
+    shortcutScope.run(() => useTerminalShortcuts(
+      { ...handlers, onIncreaseFontSize },
+      { mod: "Control", bindings },
+    ));
+    const ev = fireKey({ key: "+", code: "Equal", ctrlKey: true, shiftKey: true });
+    expect(onIncreaseFontSize).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
+    shortcutScope.stop();
+  });
+
   it("plain N (no modifier) is ignored", () => {
     fireKey({ key: "n", code: "KeyN" });
     expect(handlers.onSplitVertical).not.toHaveBeenCalled();

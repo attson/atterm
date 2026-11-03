@@ -34,6 +34,7 @@ export const ACTIONS: readonly ShortcutAction[] = [
   { id: "toggleTaskSidebar",          group: "sidebar", labelKey: "tasks.sidebar.collapse",                               defaultBinding: "Mod+KeyB" },
   { id: "sidebar.focus-search",       group: "sidebar", labelKey: "settings.shortcuts.focusSidebarSearch",                defaultBinding: "Mod+Shift+KeyF" },
   { id: "application.toggle-maximize", group: "application", labelKey: "settings.shortcuts.toggleMaximize",              defaultBinding: "Mod+Enter" },
+  { id: "terminal.font-size-increase", group: "pane", labelKey: "settings.shortcuts.increaseFontSize",                    defaultBinding: "Mod+Shift+Equal" },
   { id: "terminal.font-size-decrease", group: "pane", labelKey: "settings.shortcuts.decreaseFontSize",                    defaultBinding: "Mod+Minus" },
 ] as const;
 

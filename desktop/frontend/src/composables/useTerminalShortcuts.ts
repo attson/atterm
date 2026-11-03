@@ -24,6 +24,8 @@ export interface ShortcutHandlers {
   onTerminalSearch?: () => void;
   /** Returns true only when a focused terminal opened local prompt history. */
   onPromptHistory?: () => boolean;
+  /** Increases the terminal font size, when the app can persist appearance. */
+  onIncreaseFontSize?: () => void;
   /** Decreases the terminal font size, when the app can persist appearance. */
   onDecreaseFontSize?: () => void;
   /** Selects a tab by its one-based visible position. */
@@ -68,6 +70,10 @@ function dispatch(actionId: string, h: ShortcutHandlers): boolean {
       return true;
     case "terminal.search":            h.onTerminalSearch?.(); return true;
     case "terminal.prompt-history":    return h.onPromptHistory?.() === true;
+    case "terminal.font-size-increase":
+      if (!h.onIncreaseFontSize) return false;
+      h.onIncreaseFontSize();
+      return true;
     case "terminal.font-size-decrease":
       if (!h.onDecreaseFontSize) return false;
       h.onDecreaseFontSize();

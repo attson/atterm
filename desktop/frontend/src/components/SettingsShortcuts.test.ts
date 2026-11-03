@@ -35,10 +35,10 @@ async function mountShortcuts(initial: Record<string, string> = {}) {
 }
 
 describe("SettingsShortcuts", () => {
-  it("renders 16 rows including the application window group", async () => {
+  it("renders 17 rows including the application window group", async () => {
     const wrapper = await mountShortcuts();
     const rows = wrapper.findAll(".shortcut-row");
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(17);
     expect(wrapper.text()).toContain("Pane");
     expect(wrapper.text()).toContain("Tab");
     expect(wrapper.text()).toContain("Sidebar");
@@ -96,8 +96,8 @@ describe("SettingsShortcuts", () => {
   it("saves through setShortcutBindings with only the modified entries (defaults stripped)", async () => {
     const wrapper = await mountShortcuts();
     const cells = wrapper.findAllComponents({ name: "HotkeyCaptureCell" });
-    // Index 10 is tab.new (the pane group now also includes font-size decrease).
-    await cells[10].vm.$emit("update", "Mod+KeyP");
+    // Index 11 is tab.new (the pane group also includes both font-size actions).
+    await cells[11].vm.$emit("update", "Mod+KeyP");
     await flushPromises();
     await wrapper.find("button.save").trigger("click");
     await flushPromises();

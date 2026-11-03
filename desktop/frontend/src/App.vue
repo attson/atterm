@@ -1118,19 +1118,27 @@ function onAppearanceChanged(appearance: TerminalAppearance) {
   terminalAppearance.value = appearance;
 }
 
-// Keep the keyboard shortcut in the same range as SettingsTerminalAppearance.
+// Keep the keyboard shortcuts in the same range as SettingsTerminalAppearance.
 // Update the reactive appearance first so every mounted pane follows the
 // shortcut immediately; persist on desktop builds, while web/mobile wrappers
 // without the Wails preference API still get the local visual change.
-function onDecreaseFontSize() {
+function adjustFontSize(delta: number) {
   const previous = terminalAppearance.value.fontSize;
-  const next = Math.max(8, Math.min(32, previous - 1));
+  const next = Math.max(8, Math.min(32, previous + delta));
   if (next === previous) return;
   terminalAppearance.value = { ...terminalAppearance.value, fontSize: next };
   if (!caps.wailsBindings) return;
   void setTerminalFontSize(next).catch(() => {
     terminalAppearance.value = { ...terminalAppearance.value, fontSize: previous };
   });
+}
+
+function onIncreaseFontSize() {
+  adjustFontSize(1);
+}
+
+function onDecreaseFontSize() {
+  adjustFontSize(-1);
 }
 
 function onDirectConnectionChanged(enabled: boolean) {
@@ -1687,6 +1695,7 @@ useTerminalShortcuts(
       document.dispatchEvent(request);
       return request.defaultPrevented;
     },
+    onIncreaseFontSize,
     onDecreaseFontSize,
   },
   { bindings: shortcutBindings },

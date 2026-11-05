@@ -14,7 +14,7 @@ import (
 // the same review.
 var expectedSyncedKeyKinds = map[string]preferenceKind{
 	"locale_preference":                preferenceKindString,
-	"traffic_time_zone":                 preferenceKindString,
+	"traffic_time_zone":                preferenceKindString,
 	"quick_templates":                  preferenceKindArray,
 	"notifications_enabled":            preferenceKindBool,
 	"ai_notifications_only":            preferenceKindBool,

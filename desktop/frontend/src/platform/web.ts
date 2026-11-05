@@ -10,6 +10,7 @@ import { errText, logWarn } from "../lib/log";
 import { createPeerClientBridge } from '../lib/peer/clientBridge'
 import { createLocalPeerStateStore } from '../lib/peer/clientState'
 import { createIndexedDBPeerIdentityStore, loadOrCreateWebPeerIdentity } from '../lib/peer/identity'
+import { notifyLocalChange } from '@webshared/sync/prefsSync'
 // ^ single source of truth for web's relay storage key ('atterm.relay') and
 // shape ({ baseURL, sessionToken, expiresAt, allowInsecure, ... }) — apiFetch
 // itself reads auth through loadRelayConfig, so the bridge below must adapt
@@ -245,6 +246,18 @@ export function createWebPlatform(): Platform {
       save: async (enabled) => {
         if (enabled) localStorage.setItem(DIRECT_CONNECTION_KEY, '1')
         else localStorage.removeItem(DIRECT_CONNECTION_KEY)
+      },
+    },
+    trafficPreferences: {
+      getTimeZone: async () => {
+        try {
+          const value = JSON.parse(localStorage.getItem('atterm.traffic_time_zone.value') ?? '""')
+          return typeof value === 'string' ? value : ''
+        } catch { return '' }
+      },
+      setTimeZone: async (zone) => {
+        localStorage.setItem('atterm.traffic_time_zone.value', JSON.stringify(zone))
+        notifyLocalChange('traffic_time_zone')
       },
     },
     peer,

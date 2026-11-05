@@ -172,7 +172,7 @@ export const zhCN = {
     traffic: {
       platformLive: "平台状态（当前节点 / 实例心跳）",
       title: '流量分析',
-      timezone: 'UTC · 按所选时间粒度统计',
+      timezone: '账号统计时区 · 按所选时间粒度统计',
       refresh: '刷新数据',
       platformScope: '平台范围',
       platformStatus: '平台状态',

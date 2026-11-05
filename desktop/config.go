@@ -108,6 +108,9 @@ type appConfig struct {
 	// LocalePreference controls UI language. Empty means "system" so older
 	// configs keep following the OS/browser language after upgrade.
 	LocalePreference string `json:"locale_preference,omitempty"`
+	// TrafficTimeZone is the account-wide IANA zone used for reporting-day
+	// boundaries. Timestamp rendering still follows each device's system zone.
+	TrafficTimeZone string `json:"traffic_time_zone,omitempty"`
 	// LocalAdminPassword is the stable password for the desktop-only admin
 	// user (local@atterm.local) that owns the in-process mini-relay's
 	// userstore. Generated on first run and persisted so the desktop can

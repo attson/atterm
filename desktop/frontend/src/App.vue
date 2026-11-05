@@ -1370,7 +1370,12 @@ function requestClosePane(t: Tab, idx: number) {
   closePaneAt(t, idx);
 }
 
-function closePaneAt(t: Tab, idx: number, opts?: { detachOnly?: boolean }) {
+type CloseTabOptions = {
+  detachOnly?: boolean;
+  startReplacement?: boolean;
+};
+
+function closePaneAt(t: Tab, idx: number, opts?: CloseTabOptions) {
   const target = t.panes[idx];
   // In single layout closePane() keeps the pane's sessionId and returns
   // closeTab:true; let closeTab() below handle the local kill so we don't
@@ -1386,7 +1391,10 @@ function closePaneAt(t: Tab, idx: number, opts?: { detachOnly?: boolean }) {
   t.colRatio = r.colRatio;
   t.rowRatio = r.rowRatio;
   if (r.closeTab) {
-    closeTab(t.id, opts);
+    closeTab(t.id, {
+      ...opts,
+      startReplacement: !opts?.detachOnly,
+    });
   }
 }
 
@@ -1403,7 +1411,7 @@ function optimisticallyDropLocalSession(sid: string) {
   closeSession(sid).catch(() => undefined);
 }
 
-function closeTab(id: string, opts?: { detachOnly?: boolean }) {
+function closeTab(id: string, opts?: CloseTabOptions) {
   const plan = computeCloseTabState(tabs.value, localList.value, currentTabId.value, id, opts);
   if (!plan) return;
   for (const sid of plan.localIdsToClose) pendingLocalIds.delete(sid);
@@ -1424,16 +1432,22 @@ function closeTab(id: string, opts?: { detachOnly?: boolean }) {
   for (const sid of plan.localIdsToClose) {
     closeSession(sid).catch(() => undefined);
   }
+  // Keep the desktop terminal usable after an explicit close removes the last
+  // tab. Cleanup-driven closes (for an exited PTY) omit startReplacement, and
+  // detachOnly moves must stay empty until their destination tab is committed.
+  if (opts?.startReplacement && tabs.value.length === 0 && caps.localPty) {
+    void startNewTab();
+  }
 }
 
 function requestCloseTab(id: string) {
   const t = tabs.value.find((tab) => tab.id === id);
   const risky = t ? riskyCloseCandidatesForPanes(t.panes) : [];
   if (risky.length > 0) {
-    openCloseSessionConfirm(risky, () => closeTab(id));
+    openCloseSessionConfirm(risky, () => closeTab(id, { startReplacement: true }));
     return;
   }
-  closeTab(id);
+  closeTab(id, { startReplacement: true });
 }
 
 function onFocusPane(dir: "left" | "right" | "up" | "down") {

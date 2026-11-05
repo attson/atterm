@@ -315,6 +315,18 @@ export function createCapacitorPlatform(): Platform {
       wailsBindings: false,
       capacitor: true,
     },
+    trafficPreferences: {
+      getTimeZone: async () => {
+        try {
+          const value = JSON.parse(localStorage.getItem('atterm.traffic_time_zone.value') ?? '""')
+          return typeof value === 'string' ? value : ''
+        } catch { return '' }
+      },
+      setTimeZone: async (zone) => {
+        localStorage.setItem('atterm.traffic_time_zone.value', JSON.stringify(zone))
+        notifyLocalChange('traffic_time_zone')
+      },
+    },
     relay: {
       // load: prefer localStorage (synchronous, never hangs). Keychain is a
       // last-resort fallback only consulted when localStorage is empty, with

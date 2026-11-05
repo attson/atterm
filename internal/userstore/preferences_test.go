@@ -116,6 +116,22 @@ func TestSetUserPreferences_AcceptsSyncedArrayAndBoolKeys(t *testing.T) {
 	}
 }
 
+func TestSetUserPreferencesValidatesTrafficTimeZone(t *testing.T) {
+	s := NewInMemory(t)
+	ctx := context.Background()
+	u, _ := s.CreateOpaqueUser(ctx, "tz@example.com")
+	if _, err := s.SetUserPreferences(ctx, u.ID, 1000, []PreferenceItem{{
+		Key: "traffic_time_zone", ValueJSON: json.RawMessage(`"Asia/Kathmandu"`), UpdatedAt: 1000,
+	}}); err != nil {
+		t.Fatalf("valid timezone rejected: %v", err)
+	}
+	if _, err := s.SetUserPreferences(ctx, u.ID, 2000, []PreferenceItem{{
+		Key: "traffic_time_zone", ValueJSON: json.RawMessage(`"Not/AZone"`), UpdatedAt: 2000,
+	}}); err == nil || !errorsIs(err, ErrInvalidPreferenceValue) {
+		t.Fatalf("invalid timezone error=%v", err)
+	}
+}
+
 func TestSetUserPreferences_RejectsOlderTimestamp(t *testing.T) {
 	s := NewInMemory(t)
 	ctx := context.Background()

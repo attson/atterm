@@ -96,6 +96,7 @@ function paneGridStub() {
 }
 
 let closeSessionMock: ReturnType<typeof vi.fn>;
+let newSessionMock: ReturnType<typeof vi.fn>;
 
 async function mountApp() {
   const wrapper = mount(App, {
@@ -126,6 +127,10 @@ describe("App — merge & batch close (integration)", () => {
     setActivePinia(createPinia());
     __setPlatformForTests(createFakePlatform());
     closeSessionMock = vi.fn().mockResolvedValue(undefined);
+    let nextLocalSession = 1;
+    newSessionMock = vi.fn().mockImplementation(() =>
+      Promise.resolve({ session_id: `local-${nextLocalSession++}` }),
+    );
     __setBindingsForTest({
       ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
       GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
@@ -149,7 +154,7 @@ describe("App — merge & batch close (integration)", () => {
       GetTerminalScrollback: vi.fn().mockResolvedValue(5000),
       GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(0),
       ListShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
-      NewSession: vi.fn().mockResolvedValue({ session_id: "local-1" }),
+      NewSession: newSessionMock,
       CloseSession: closeSessionMock,
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
       GetAutoCheckUpdates: vi.fn().mockResolvedValue(false),
@@ -241,7 +246,7 @@ describe("App — merge & batch close (integration)", () => {
     expect(localPane?.attributes("data-remote")).toBe("1");
   });
 
-  it("closeSelectedOpen closes only the open subset among the selection", async () => {
+  it("closeSelectedOpen replaces the final closed pane with a new local session", async () => {
     const wrapper = await mountApp();
     expect(wrapper.findAll('[data-testid="pane-grid"]')).toHaveLength(1);
 
@@ -255,7 +260,10 @@ describe("App — merge & batch close (integration)", () => {
 
     expect(closeSessionMock).toHaveBeenCalledWith("local-1");
     expect(closeSessionMock).not.toHaveBeenCalledWith("remote-never-opened");
-    expect(wrapper.findAll('[data-testid="pane-grid"]')).toHaveLength(0);
+    expect(newSessionMock).toHaveBeenCalledTimes(2);
+    const grids = wrapper.findAll('[data-testid="pane-grid"]');
+    expect(grids).toHaveLength(1);
+    expect(visiblePaneGrid(wrapper)?.find('[data-session-id="local-2"]').exists()).toBe(true);
     // closeSelectedOpen clears the whole selection unconditionally (mirrors
     // mergeSelectedIntoTab) — the unopened id is left untouched, not left
     // selected.

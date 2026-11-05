@@ -254,6 +254,10 @@ export function GetPeerTraffic(arg1, arg2) {
   return window['go']['main']['App']['GetPeerTraffic'](arg1, arg2);
 }
 
+export function GetPeerTrafficInTimeZone(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetPeerTrafficInTimeZone'](arg1, arg2, arg3);
+}
+
 export function GetPinnedSessionIds() {
   return window['go']['main']['App']['GetPinnedSessionIds']();
 }
@@ -344,6 +348,10 @@ export function GetTerminalScrollback() {
 
 export function GetTerminalTheme() {
   return window['go']['main']['App']['GetTerminalTheme']();
+}
+
+export function GetTrafficTimeZone() {
+  return window['go']['main']['App']['GetTrafficTimeZone']();
 }
 
 export function GetUpdateGHProxyURL() {
@@ -772,6 +780,10 @@ export function SetTerminalScrollback(arg1) {
 
 export function SetTerminalTheme(arg1) {
   return window['go']['main']['App']['SetTerminalTheme'](arg1);
+}
+
+export function SetTrafficTimeZone(arg1) {
+  return window['go']['main']['App']['SetTrafficTimeZone'](arg1);
 }
 
 export function SetUpdateGHProxyURL(arg1) {

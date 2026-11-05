@@ -719,7 +719,7 @@ Payload (UTF-8 JSON):
 | `/service-client` | GET (Upgrade: websocket) | Preview 客户端 E2EE multiplex 数据通道 |
 | `/service-host` | GET (Upgrade: websocket) | owner desktop E2EE multiplex 数据通道 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
-| `/api/me/traffic` | GET | 当前账号最多 180 天的 Relay 帧级/日级与 P2P 日级流量；只从认证上下文取 user id |
+| `/api/me/traffic` | GET | 当前账号最多 180 天的 Relay 帧级/日级与 P2P 日级流量；`tz=<IANA zone>` 按账号统计时区聚合绝对 15 分钟桶；只从认证上下文取 user id |
 | `/api/version` | GET | JSON 版本信息 |
 | `/api/pair/create` | POST | 桌面端 owner 签发一次性 pairing token（详见 [auth.md](./auth.md)） |
 | `/api/pair/consume` | POST | 移动端用 pairing token 换 relay URL + session token（详见 [auth.md](./auth.md)） |
@@ -821,7 +821,7 @@ ticket 有效期 30 秒且单次使用。Relay 内存只保留 ticket 的 SHA-25
 - client 只能发送一次 offer，host 只能在 offer 后发送一次 answer；两者各最多发送 64 个 ICE candidate 和一次 `ice_end`。
 - offer/answer payload 最大 32 KiB，单个 ICE candidate 最大 8 KiB；`ice_end` payload 必须为空。
 - `cancel` 终止并移除 attempt；`consumed` 只能由 host 发送，表示 ticket 已由 host 原子消费，同样移除 attempt。
-- 已认证 client 在活跃直连异常断开时可发送一次 `direct_result/route_lost`；已认证 host 可发送 `direct_stats` 的累计字节增量。host 在增量达到 256 KiB、每 5 秒存在未上报增量或直连关闭时发送，确保低流量活跃连接也能及时进入看板。`bytes_sent` / `bytes_received` 是 host 视角的双向已接受 terminal frame wire bytes，每个非零字段单条最多 64 MiB；`bytes_avoided` 是给旧 Relay 的兼容总量，新 Relay 在双向字段存在时忽略它。Relay 按认证账号和 UTC 日聚合 attempts / successes / fallbacks / bytes，个人看板刷新时会先落盘当前内存增量；统计不携带 session id、candidate 地址或 terminal 内容，也不参与路由/授权决策。
+- 已认证 client 在活跃直连异常断开时可发送一次 `direct_result/route_lost`；已认证 host 可发送 `direct_stats` 的累计字节增量。host 在增量达到 256 KiB、每 5 秒存在未上报增量或直连关闭时发送，确保低流量活跃连接也能及时进入看板。`bytes_sent` / `bytes_received` 是 host 视角的双向已接受 terminal frame wire bytes，每个非零字段单条最多 64 MiB；`bytes_avoided` 是给旧 Relay 的兼容总量，新 Relay 在双向字段存在时忽略它。Relay 按认证账号同时写 UTC 日与绝对 15 分钟桶，记录 attempts / successes / fallbacks / bytes；账号时区日汇总只从绝对桶重算。统计不携带 session id、candidate 地址或 terminal 内容，也不参与路由/授权决策。
 - signaling peer 断开会取消与它相关的全部 attempt；过期 attempt 在下一次相关操作时清理，并向仍在线的两端发送 `cancel` / `ticket_expired`。
 - Relay 不解析 SDP/ICE 做授权决策，也不得记录 ticket、SDP、ICE、proof、key 或 DataChannel payload。
 

@@ -78,7 +78,7 @@ type ImportReport struct {
 // keeps Preview from calling WriteValue (and thus Set) at all.
 func scalarPrefTarget(key string) any {
 	switch key {
-	case "locale_preference", "terminal_theme", "terminal_font_head",
+	case "locale_preference", "traffic_time_zone", "terminal_theme", "terminal_font_head",
 		"terminal_cursor_style", "default_shell":
 		return new(string)
 	case "quick_templates":
@@ -138,6 +138,10 @@ func validateScalarPrefValue(key string, target any) error {
 		case localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified:
 		default:
 			return errors.New("unsupported locale preference")
+		}
+	case "traffic_time_zone":
+		if !validTrafficTimeZone(*target.(*string)) {
+			return errors.New("invalid IANA time zone")
 		}
 	case "terminal_theme":
 		// TrimSpace first, because SetTerminalTheme does (app.go) — it trims,
@@ -681,6 +685,12 @@ func (a *App) applyScalarPref(key string, raw json.RawMessage) error {
 			return err
 		}
 		return a.SetLocalePreference(v)
+	case "traffic_time_zone":
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetTrafficTimeZone(v)
 	case "terminal_theme":
 		var v string
 		if err := json.Unmarshal(raw, &v); err != nil {

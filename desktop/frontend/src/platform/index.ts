@@ -22,6 +22,10 @@ export function usePlatform(): Platform {
   return _platform
 }
 
+export function useOptionalPlatform(): Platform | null {
+  return _platform
+}
+
 // Test-only escape hatch.
 export function __setPlatformForTests(p: Platform | null): void {
   _platform = p

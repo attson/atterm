@@ -27,6 +27,8 @@ import {
   StopNativeDirect,
   GetPeerSpaceStatus,
   GetPeerTraffic,
+  GetPeerTrafficInTimeZone,
+  GetTrafficTimeZone,
   GetPeerConfigSyncStatus,
   AcceptPendingPeerConfig,
   DiscardPendingPeerConfig,
@@ -61,6 +63,7 @@ import {
   StartPeerNativeDirect,
   SendPeerNativeDirectFrame,
   StopPeerNativeDirect,
+  SetTrafficTimeZone,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -101,8 +104,8 @@ function isPeerTrafficRoute(route: string): route is PeerTrafficRow['route'] {
   return peerTrafficRoutes.has(route as PeerTrafficRow['route'])
 }
 
-async function getPeerTraffic(from: string, to: string): Promise<PeerTrafficRow[]> {
-  const rows = await GetPeerTraffic(from, to)
+async function getPeerTraffic(from: string, to: string, timeZone?: string): Promise<PeerTrafficRow[]> {
+  const rows = timeZone ? await GetPeerTrafficInTimeZone(from, to, timeZone) : await GetPeerTraffic(from, to)
   return rows.flatMap((row) => isPeerTrafficRoute(row.route) ? [{ ...row, route: row.route }] : [])
 }
 
@@ -345,6 +348,10 @@ export function createWailsPlatform(): Platform {
         send: (id, frame) => SendNativeDirectFrame(id, frame),
         stop: (id) => StopNativeDirect(id),
       }),
+    },
+    trafficPreferences: {
+      getTimeZone: () => GetTrafficTimeZone(),
+      setTimeZone: (zone) => SetTrafficTimeZone(zone),
     },
     peer: {
       status: () => GetPeerSpaceStatus(),

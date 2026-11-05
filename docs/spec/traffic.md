@@ -2,9 +2,10 @@
 
 个人 Settings Relay 面板与管理侧复用时间窗口控件和分时图表，提供实时、分时、汇总三种模式。
 
-- 实时：最近 15 / 60 分钟，按 UTC 分钟统计，每 10 秒刷新。隐藏页面暂停轮询，回到前台补查。
-- 分时：选择 UTC 日期，按小时或分钟查看；点击小时进入该小时的 60 分钟明细。
-- 汇总：保留 7 / 30 / 90 天日统计与上一周期对比；点击日柱进入分时。
+- 实时：最近 15 / 60 分钟，事实桶使用 UTC 绝对时间，每 10 秒刷新。隐藏页面暂停轮询，回到前台补查。
+- 分时：选择账号统计时区中的日期，查询边界换算为 UTC；点击小时进入该绝对小时的 60 分钟明细。DST 切换日允许 23 / 25 小时。
+- 汇总：保留 7 / 30 / 90 个统计日及上一周期对比；点击日柱进入分时。所有设备共用账号级 IANA 统计时区，因此不同设备不会各自按系统时区切日。
+- 图表刻度、tooltip 和写入时间只按当前设备系统时区展示；展示时区不改变统计归属。
 - 速率为最近完整分钟的字节数 / 60；峰值也只使用完整分钟。当前时间桶标记「统计中」。
 - 个人类别摘要、帧排行与管理侧用户排行均跟随当前窗口；管理侧保留用户选择。
 - Peer / direct P2P 数据仍只在汇总模式展示，不能从日总量推导分钟明细。
@@ -12,19 +13,20 @@
 ## 采集与持久化
 
 `internal/relay/traffic_meter.go` 在记录 wire frame 时就按实际 UTC 分钟分桶，每 10 秒批量刷盘、正常退出时补刷。
-`userstore.AddTrafficDeltas` 在同一个事务里累计分钟、小时、日三种粒度；日归属来自采集时间，不能取刷盘当天。
+`userstore.AddTrafficDeltas` 在同一个事务里累计分钟、15 分钟、小时、UTC 日四种粒度；日归属来自采集时间，不能取刷盘当天。
 SQLite / Postgres 使用相同的 additive UPSERT 语义；多实例查询共享 DB 聚合，不合并某一节点尚未落库的内存增量。
 单实例崩溃或刷盘失败可能丢失尚未落库的一批数据；刷新接口不触发刷盘。
 
 Relay 流量同时按认证登录会话归因：`client_id` 是 `sessions.id_hash`（SHA-256 后的会话 ID，不是 bearer token），`client_name` / `client_kind` 由该会话登录时保存的 User-Agent 归一化。它表达的是“登录客户端”，不是不可复制的硬件身份；同一个 token 被复制后仍计入同一客户端。历史流量无法反推来源，迁移后使用空 `client_id`，前端显示为“升级前 / 未识别”。
 
-`relay_traffic_daily` 主键为 `(user_id, day, client_id, frame_type, direction)`；`relay_traffic_buckets` 主键为 `(user_id, bucket, started_at, client_id, frame_type, direction)`，`bucket` 为 minute / hour。
-按 UTC 日期边界清理：minute 删除早于 7 天前零点的数据，hour 删除早于 90 天前零点的数据。
+`relay_traffic_daily` 主键为 `(user_id, day, client_id, frame_type, direction)`；`relay_traffic_buckets` 主键为 `(user_id, bucket, started_at, client_id, frame_type, direction)`，`bucket` 为 minute / quarter / hour。Direct P2P 同步写入 `direct_traffic_buckets` 的绝对 15 分钟桶。
+按 UTC 日期边界清理：minute 删除早于 7 天前零点的数据，quarter / hour / Direct quarter 删除早于 90 天前零点的数据。
 启动时及之后每小时清理，日汇总不受清理影响。旧日统计无法反推分时；升级之前的明细为空。
 
 ## HTTP 查询
 
 既有 `/api/me/traffic` 与 `/admin/api/traffic` 的默认日统计响应、日期查询参数不变。
+传 `tz=<IANA zone>` 时，日查询的 `from` / `to` 是该时区的本地日，服务端从绝对 quarter 桶聚合；不传 `tz` 继续使用原 UTC 日表，保证旧客户端兼容。响应增加 `time_zone`、`day_basis=time_zone` 与 `local_coverage_from`。后者之前的旧 UTC 日行缺少原始时刻，不能精确重切日界线，客户端不得把它伪装成按时区统计。
 新增 `bucket=minute|hour` 时，`from` / `to` 使用 RFC3339 时间，区间为 `[from, to)`，最大 48 小时。
 `from` 向下对齐时间桶起点；时间范围须在该粒度保留期内，`to` 最晚为明天 UTC 零点，以允许查询今天全天。
 

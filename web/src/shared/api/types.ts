@@ -42,6 +42,9 @@ export interface TrafficTimeMetadata {
   server_time?: string
   retention_from?: string
   flush_interval_seconds?: number
+  time_zone?: string
+  day_basis?: 'utc' | 'time_zone'
+  local_coverage_from?: string
 }
 
 export interface MeTrafficResponse extends TrafficTimeMetadata {

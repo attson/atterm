@@ -38,6 +38,8 @@ type TrafficRow struct {
 
 // DirectTrafficDelta is one user's aggregate P2P usage increment.
 type DirectTrafficDelta struct {
+	// StartedAt is the UTC capture time. Zero preserves the legacy daily-only path.
+	StartedAt     int64
 	UserID        string
 	Attempts      int64
 	Successes     int64
@@ -48,6 +50,7 @@ type DirectTrafficDelta struct {
 
 // DirectTrafficRow is one persisted per-user, per-day P2P rollup row.
 type DirectTrafficRow struct {
+	StartedAt     int64
 	UserID        string
 	Day           string
 	Attempts      int64
@@ -110,7 +113,7 @@ func (s *DBStore) AddTrafficDeltas(ctx context.Context, day string, deltas []Tra
 			for _, bucket := range []struct {
 				name    string
 				seconds int64
-			}{{"minute", 60}, {"hour", 3600}} {
+			}{{"minute", 60}, {"quarter", 900}, {"hour", 3600}} {
 				_, err := tx.ExecContext(ctx, s.dia.Rebind(`INSERT INTO relay_traffic_buckets
 				(user_id, bucket, started_at, client_id, client_name, client_kind, frame_type, direction, bytes, frames, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -185,6 +188,13 @@ func (s *DBStore) AddDirectTrafficDeltas(ctx context.Context, day string, deltas
 	if len(deltas) == 0 {
 		return nil
 	}
+	deltas = append([]DirectTrafficDelta(nil), deltas...)
+	sort.Slice(deltas, func(i, j int) bool {
+		if deltas[i].UserID != deltas[j].UserID {
+			return deltas[i].UserID < deltas[j].UserID
+		}
+		return deltas[i].StartedAt < deltas[j].StartedAt
+	})
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin direct traffic tx: %w", err)
@@ -201,13 +211,71 @@ func (s *DBStore) AddDirectTrafficDeltas(ctx context.Context, day string, deltas
 		              bytes_received = direct_traffic_daily.bytes_received + excluded.bytes_received,
 		              updated_at = excluded.updated_at`)
 	for _, d := range deltas {
-		if _, err := tx.ExecContext(ctx, stmt, d.UserID, day, d.Attempts, d.Successes,
+		deltaDay := day
+		if d.StartedAt != 0 {
+			deltaDay = time.Unix(d.StartedAt, 0).UTC().Format(time.DateOnly)
+		}
+		if _, err := tx.ExecContext(ctx, stmt, d.UserID, deltaDay, d.Attempts, d.Successes,
 			d.Fallbacks, d.BytesSent, d.BytesReceived, now); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("upsert direct traffic: %w", err)
 		}
+		if d.StartedAt != 0 {
+			_, err := tx.ExecContext(ctx, s.dia.Rebind(`INSERT INTO direct_traffic_buckets
+				(user_id, started_at, attempts, successes, fallbacks, bytes_sent, bytes_received, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (user_id, started_at)
+				DO UPDATE SET attempts = direct_traffic_buckets.attempts + excluded.attempts,
+				              successes = direct_traffic_buckets.successes + excluded.successes,
+				              fallbacks = direct_traffic_buckets.fallbacks + excluded.fallbacks,
+				              bytes_sent = direct_traffic_buckets.bytes_sent + excluded.bytes_sent,
+				              bytes_received = direct_traffic_buckets.bytes_received + excluded.bytes_received,
+				              updated_at = excluded.updated_at`),
+				d.UserID, d.StartedAt/900*900, d.Attempts, d.Successes, d.Fallbacks, d.BytesSent, d.BytesReceived, now)
+			if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("upsert direct traffic bucket: %w", err)
+			}
+		}
 	}
 	return tx.Commit()
+}
+
+// QueryDirectTrafficBuckets returns absolute 15-minute P2P rollups in [from, to).
+func (s *DBStore) QueryDirectTrafficBuckets(ctx context.Context, userID string, from, to int64) ([]DirectTrafficRow, error) {
+	query := `SELECT user_id, started_at, attempts, successes, fallbacks, bytes_sent, bytes_received
+		FROM direct_traffic_buckets WHERE started_at >= ? AND started_at < ?`
+	args := []any{from, to}
+	if userID != "" {
+		query += " AND user_id = ?"
+		args = append(args, userID)
+	}
+	query += " ORDER BY started_at, user_id"
+	rows, err := s.db.QueryContext(ctx, s.dia.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("query direct traffic buckets: %w", err)
+	}
+	defer rows.Close()
+	out := make([]DirectTrafficRow, 0)
+	for rows.Next() {
+		var row DirectTrafficRow
+		if err := rows.Scan(&row.UserID, &row.StartedAt, &row.Attempts, &row.Successes, &row.Fallbacks, &row.BytesSent, &row.BytesReceived); err != nil {
+			return nil, fmt.Errorf("scan direct traffic bucket: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// TrafficBucketCoverageStart is the first instant at which all traffic paths
+// write absolute 15-minute buckets. Older UTC daily rows cannot be re-bucketed.
+func (s *DBStore) TrafficBucketCoverageStart(ctx context.Context) (int64, error) {
+	var startedAt int64
+	err := s.db.QueryRowContext(ctx, `SELECT started_at FROM traffic_bucket_coverage WHERE id = 1`).Scan(&startedAt)
+	if err != nil {
+		return 0, fmt.Errorf("query traffic bucket coverage: %w", err)
+	}
+	return startedAt, nil
 }
 
 // QueryDirectTraffic returns userID's P2P rollups in [from, to].
@@ -271,8 +339,12 @@ func (s *DBStore) QueryTrafficBuckets(ctx context.Context, userID, bucket string
 
 // PruneTrafficBuckets bounds fine-grained storage independently of daily totals.
 func (s *DBStore) PruneTrafficBuckets(ctx context.Context, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, s.dia.Rebind(`DELETE FROM relay_traffic_buckets
-	WHERE (bucket = 'minute' AND started_at < ?) OR (bucket = 'hour' AND started_at < ?)`),
-		now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -7).Unix(), now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -90).Unix())
+	minuteCutoff := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -7).Unix()
+	longCutoff := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -90).Unix()
+	if _, err := s.db.ExecContext(ctx, s.dia.Rebind(`DELETE FROM relay_traffic_buckets
+		WHERE (bucket = 'minute' AND started_at < ?) OR (bucket IN ('quarter', 'hour') AND started_at < ?)`), minuteCutoff, longCutoff); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, s.dia.Rebind(`DELETE FROM direct_traffic_buckets WHERE started_at < ?`), longCutoff)
 	return err
 }

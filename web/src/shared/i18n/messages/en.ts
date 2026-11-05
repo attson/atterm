@@ -170,7 +170,7 @@ export const en = {
     traffic: {
       platformLive: "Platform status (local node / instance heartbeats)",
       title: 'Traffic analysis',
-      timezone: 'UTC · selected time granularity',
+      timezone: 'Account reporting timezone · selected granularity',
       refresh: 'Refresh data',
       platformScope: 'Platform scope',
       platformStatus: 'Platform status',

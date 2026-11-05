@@ -242,6 +242,8 @@ type Store interface {
 	PruneTrafficBuckets(ctx context.Context, now time.Time) error
 	AddDirectTrafficDeltas(ctx context.Context, day string, deltas []DirectTrafficDelta) error
 	QueryDirectTraffic(ctx context.Context, userID, from, to string) ([]DirectTrafficRow, error)
+	QueryDirectTrafficBuckets(ctx context.Context, userID string, from, to int64) ([]DirectTrafficRow, error)
+	TrafficBucketCoverageStart(ctx context.Context) (int64, error)
 
 	Close() error
 }

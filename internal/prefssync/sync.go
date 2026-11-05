@@ -53,6 +53,7 @@ type ClientItem struct {
 
 var syncedKeys = []string{
 	"locale_preference",
+	"traffic_time_zone",
 	"quick_templates",
 	"notifications_enabled",
 	"ai_notifications_only",

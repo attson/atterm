@@ -6,12 +6,23 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/userstore"
 )
 
 // handleTrafficBucketsHTTP shares range validation and metadata between account
 // and admin views. Personal queries always supply the authenticated user ID.
 func (s *Server) handleTrafficBucketsHTTP(w http.ResponseWriter, r *http.Request, userID, bucket string) {
 	now := time.Now().UTC()
+	zoneName := r.URL.Query().Get("tz")
+	var reportingZone *time.Location
+	if zoneName != "" {
+		var err error
+		reportingZone, err = time.LoadLocation(zoneName)
+		if err != nil {
+			http.Error(w, "invalid time zone", http.StatusBadRequest)
+			return
+		}
+	}
 	seconds, retention := int64(60), 7
 	if bucket == "hour" {
 		seconds, retention = 3600, 90
@@ -19,7 +30,14 @@ func (s *Server) handleTrafficBucketsHTTP(w http.ResponseWriter, r *http.Request
 	from, errFrom := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
 	to, errTo := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
 	earliest := now.Truncate(24*time.Hour).AddDate(0, 0, -retention)
-	if errFrom != nil || errTo != nil || !from.Before(to) || to.Sub(from) > 48*time.Hour || from.Before(earliest) || to.After(now.Truncate(24*time.Hour).Add(24*time.Hour)) {
+	latest := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
+	if reportingZone != nil {
+		localNow := now.In(reportingZone)
+		localToday := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, reportingZone)
+		earliest = localToday.AddDate(0, 0, -retention)
+		latest = localToday.AddDate(0, 0, 1)
+	}
+	if errFrom != nil || errTo != nil || !from.Before(to) || to.Sub(from) > 48*time.Hour || from.Before(earliest) || to.After(latest) {
 		http.Error(w, "invalid time range or outside retention", http.StatusBadRequest)
 		return
 	}
@@ -35,10 +53,23 @@ func (s *Server) handleTrafficBucketsHTTP(w http.ResponseWriter, r *http.Request
 	if queryUser == "" {
 		queryUser = r.URL.Query().Get("user_id")
 	}
-	rows, err := s.cfg.Store.QueryTrafficBuckets(r.Context(), queryUser, bucket, from.Unix()/seconds*seconds, to.Unix())
+	queryBucket := bucket
+	querySeconds := seconds
+	queryFrom := from.Unix() / seconds * seconds
+	if zoneName != "" && bucket == "hour" {
+		// Local midnights in half/quarter-hour zones do not align with UTC hour
+		// buckets. Rebuild reporting hours from absolute quarter buckets.
+		queryBucket = "quarter"
+		querySeconds = 900
+		queryFrom = from.Unix() / querySeconds * querySeconds
+	}
+	rows, err := s.cfg.Store.QueryTrafficBuckets(r.Context(), queryUser, queryBucket, queryFrom, to.Unix())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	if queryBucket == "quarter" {
+		rows = aggregateTrafficBuckets(rows, from.Unix(), seconds)
 	}
 	updated := int64(0)
 	details := make([]meRelayTrafficDetail, 0, len(rows))
@@ -88,6 +119,13 @@ func (s *Server) handleTrafficBucketsHTTP(w http.ResponseWriter, r *http.Request
 	}
 	result := map[string]any{"from": from.Format(time.RFC3339), "to": to.Format(time.RFC3339), "bucket": bucket, "bucket_seconds": seconds,
 		"updated_at": updatedAt, "server_time": now.Format(time.RFC3339), "retention_from": earliest.Format(time.RFC3339), "flush_interval_seconds": int(trafficFlushInterval.Seconds())}
+	if zoneName != "" {
+		result["time_zone"] = zoneName
+		result["day_basis"] = "time_zone"
+		if coverage, err := s.cfg.Store.TrafficBucketCoverageStart(r.Context()); err == nil {
+			result["local_coverage_from"] = time.Unix(coverage, 0).UTC().Format(time.RFC3339)
+		}
+	}
 	if userID != "" {
 		result["relay_detail"] = details
 		result["relay"] = []meRelayTrafficDay{}
@@ -115,4 +153,55 @@ func (s *Server) handleTrafficBucketsHTTP(w http.ResponseWriter, r *http.Request
 		result["view"] = view
 	}
 	writeJSONStatus(w, http.StatusOK, result)
+}
+
+func aggregateTrafficBuckets(rows []userstore.TrafficRow, origin, seconds int64) []userstore.TrafficRow {
+	type key struct {
+		startedAt            int64
+		userID, clientID     string
+		frameType, direction int
+	}
+	aggregated := make(map[key]*userstore.TrafficRow)
+	for _, row := range rows {
+		startedAt, err := time.Parse(time.RFC3339, row.Day)
+		if err != nil || startedAt.Unix() < origin {
+			continue
+		}
+		bucketStart := origin + (startedAt.Unix()-origin)/seconds*seconds
+		k := key{startedAt: bucketStart, userID: row.UserID, clientID: row.ClientID, frameType: row.FrameType, direction: row.Direction}
+		cell := aggregated[k]
+		if cell == nil {
+			copyRow := row
+			copyRow.Day = time.Unix(bucketStart, 0).UTC().Format(time.RFC3339)
+			copyRow.Bytes = 0
+			copyRow.Frames = 0
+			cell = &copyRow
+			aggregated[k] = cell
+		}
+		cell.Bytes += row.Bytes
+		cell.Frames += row.Frames
+		if row.UpdatedAt > cell.UpdatedAt {
+			cell.UpdatedAt = row.UpdatedAt
+		}
+	}
+	out := make([]userstore.TrafficRow, 0, len(aggregated))
+	for _, row := range aggregated {
+		out = append(out, *row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Day != out[j].Day {
+			return out[i].Day < out[j].Day
+		}
+		if out[i].UserID != out[j].UserID {
+			return out[i].UserID < out[j].UserID
+		}
+		if out[i].ClientID != out[j].ClientID {
+			return out[i].ClientID < out[j].ClientID
+		}
+		if out[i].FrameType != out[j].FrameType {
+			return out[i].FrameType < out[j].FrameType
+		}
+		return out[i].Direction < out[j].Direction
+	})
+	return out
 }

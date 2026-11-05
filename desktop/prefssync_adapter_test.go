@@ -356,6 +356,7 @@ func TestIsPrefCustomizedNamesEverySyncedKey(t *testing.T) {
 	thresh := 30
 	cfg := appConfig{
 		LocalePreference:              "zh-CN",
+		TrafficTimeZone:               "Asia/Shanghai",
 		QuickTemplates:                []QuickTemplate{{ID: "t", Label: "t", Text: "t"}},
 		NotificationsEnabled:          &enabled,
 		AINotificationsOnly:           &enabled,

@@ -2,10 +2,13 @@
 import { computed, ref } from 'vue'
 import type { AdminTrafficRow } from '@shared/api/types'
 import { useI18n } from '../i18n/useI18n'
+import { resolvedLocale } from '../i18n'
 import { directionSeries, timelineSeries, type DirectionFilter, type TimelineDimension, type TrafficMetric } from './admin/trafficModel'
+import { formatLocalTime, formatLocalTimeRange, systemTimeZone } from '../lib/timeZone'
 const props = defineProps<{ rows: AdminTrafficRow[]; dates: string[]; seconds: number; realtime: boolean; dimension: TimelineDimension; direction: DirectionFilter; metric: TrafficMetric; serverTime?: string }>()
 const emit = defineEmits<{ drillDown: [key: string] }>()
 const { t } = useI18n()
+const timeZone = systemTimeZone()
 const hover = ref<number | null>(null)
 const serverNow = computed(() => props.serverTime ? Date.parse(props.serverTime) : Date.now())
 const directional = computed(() => directionSeries(props.rows, props.dates, 'bytes'))
@@ -37,7 +40,10 @@ function move(event: MouseEvent) {
 const index = computed(() => hover.value ?? (pendingIndex.value >= 0 ? pendingIndex.value : Math.max(0, props.dates.length - 1)))
 const selectedKey = computed(() => props.dates[index.value])
 const minuteAvailable = computed(() => Date.parse(selectedKey.value) >= Math.floor(serverNow.value / 86400000) * 86400000 - 6 * 86400000)
-const selectedEnd = computed(() => new Date(Date.parse(selectedKey.value) + props.seconds * 1000).toISOString().slice(11, 16))
+const selectedRange = computed(() => {
+  const start = Date.parse(selectedKey.value)
+  return formatLocalTimeRange(start, start + props.seconds * 1000, resolvedLocale.value, timeZone)
+})
 const selectedRows = computed(() => props.rows.filter(row => row.day === selectedKey.value))
 const selectedFrames = computed(() => selectedRows.value.reduce((sum, row) => sum + row.frames, 0))
 const selectedTotal = computed(() => (directional.value.outbound[index.value] || 0) + (directional.value.inbound[index.value] || 0))
@@ -70,9 +76,9 @@ function seriesName(label: string) {
       <line v-if="hover !== null" :x1="pointX(index)" :x2="pointX(index)" y1="28" y2="216" class="cursor" />
 
     </svg>
-    <div class="time-axis"><span v-for="key in dates.filter((_, i) => i === 0 || i === dates.length - 1 || i % Math.max(1, Math.ceil(dates.length / 6)) === 0)" :key="key">{{ key.slice(11, 16) }}</span></div>
+    <div class="time-axis"><span v-for="key in dates.filter((_, i) => i === 0 || i === dates.length - 1 || i % Math.max(1, Math.ceil(dates.length / 6)) === 0)" :key="key">{{ formatLocalTime(key, resolvedLocale, timeZone) }}</span></div>
     <div class="tooltip" aria-live="polite">
-      <strong>{{ selectedKey?.replace('T', ' ').replace('Z', '') }}–{{ selectedEnd }} UTC</strong>
+      <strong>{{ selectedRange }} {{ timeZone }}</strong>
       <span v-if="dates.length && !complete(index) && serverNow >= Date.parse(selectedKey)">{{ t('settings.account.traffic.time.pending') }}</span>
       <span>{{ t('settings.account.traffic.dirOut') }} {{ bytes(directional.outbound[index] || 0) }}</span>
       <span>{{ t('settings.account.traffic.dirIn') }} {{ bytes(directional.inbound[index] || 0) }}</span>

@@ -545,11 +545,11 @@ subscriber 或隐藏的中心上传路径。成员目录中的“最近直连交
 DataChannel、Quick Tunnel WSS 和 Manual LAN WSS 只在 record 成功发送，或 AEAD 验证并确认
 为 data record 后，累计密文 record 的方向、字节数和条数。握手、Rendezvous/ICE 信令、失败
 写入以及底层 IP/SCTP/WebSocket 开销不计入，因此该指标用于比较 atterm Peer 有效传输量，
-不是网络账单值。数据仅按 UTC 日和 `direct` / `quick_tunnel` / `lan` / `gateway` 路由类别聚合，
-保留 180 天；不写入 Peer ID、session ID、IP、endpoint、membership 或凭证。共享 host WSS
+不是网络账单值。v2 数据按 UTC 绝对 15 分钟桶和 `direct` / `quick_tunnel` / `lan` / `gateway` 路由类别聚合，
+保留 180 天；v1 UTC 日行只作为历史兼容保留，不参与账号时区重切日。存储不写入 Peer ID、session ID、IP、endpoint、membership 或凭证。共享 host WSS
 handler 同时服务 Quick Tunnel 与 Manual LAN，无法可靠区分来源时使用 `gateway`，不伪造路由
 精度。Desktop 的 `GetPeerTraffic(from,to)` 提供最多 90 个 UTC 日的只读查询并在返回前原子落盘；
-应用正常关闭时也会尽力 flush，失败不阻塞本地终端或关闭流程。
+应用正常关闭时也会尽力 flush，失败不阻塞本地终端或关闭流程。`GetPeerTrafficInTimeZone` 只从 v2 绝对桶按账号时区聚合。
 
 ## Relay 多实例架构
 

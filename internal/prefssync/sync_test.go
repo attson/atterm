@@ -50,6 +50,7 @@ func TestSyncedKeys_MatchesWhitelist(t *testing.T) {
 	got := SyncedKeys()
 	want := []string{
 		"locale_preference",
+		"traffic_time_zone",
 		"quick_templates",
 		"notifications_enabled",
 		"ai_notifications_only",

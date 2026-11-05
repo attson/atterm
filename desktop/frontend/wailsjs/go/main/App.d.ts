@@ -131,6 +131,8 @@ export function GetPeerSpaceStatus():Promise<main.PeerSpaceStatus>;
 
 export function GetPeerTraffic(arg1:string,arg2:string):Promise<Array<main.PeerTrafficRow>>;
 
+export function GetPeerTrafficInTimeZone(arg1:string,arg2:string,arg3:string):Promise<Array<main.PeerTrafficRow>>;
+
 export function GetPinnedSessionIds():Promise<Array<string>>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;
@@ -176,6 +178,8 @@ export function GetTerminalLineHeight():Promise<number>;
 export function GetTerminalScrollback():Promise<number>;
 
 export function GetTerminalTheme():Promise<string>;
+
+export function GetTrafficTimeZone():Promise<string>;
 
 export function GetUpdateGHProxyURL():Promise<string>;
 
@@ -390,6 +394,8 @@ export function SetTerminalLineHeight(arg1:number):Promise<void>;
 export function SetTerminalScrollback(arg1:number):Promise<void>;
 
 export function SetTerminalTheme(arg1:string):Promise<void>;
+
+export function SetTrafficTimeZone(arg1:string):Promise<void>;
 
 export function SetUpdateGHProxyURL(arg1:string):Promise<void>;
 

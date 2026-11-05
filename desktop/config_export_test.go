@@ -317,6 +317,7 @@ func TestBuildConfigExport_Metadata(t *testing.T) {
 func TestBuildConfigExport_HandlesEverySyncedKey(t *testing.T) {
 	handled := []string{
 		"locale_preference",
+		"traffic_time_zone",
 		"quick_templates",
 		"notifications_enabled",
 		"ai_notifications_only",

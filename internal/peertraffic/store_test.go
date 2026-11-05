@@ -129,3 +129,52 @@ func TestStoreFailedFlushRetainsPendingTraffic(t *testing.T) {
 		t.Fatalf("recovered rows=%+v err=%v", rows, err)
 	}
 }
+
+func TestStoreQueryInLocationUsesAbsoluteBuckets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "peer-traffic.json")
+	now := time.Date(2026, 11, 5, 1, 0, 0, 0, time.UTC)
+	store := New(path, func() time.Time { return now })
+	store.Record(RouteDirect, DirectionSent, 100)
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, coverage, err := store.QueryInLocation("2026-11-05", "2026-11-05", shanghai)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Day != "2026-11-05" || rows[0].BytesSent != 100 {
+		t.Fatalf("Shanghai rows=%+v", rows)
+	}
+	if coverage != now.Unix()/900*900 {
+		t.Fatalf("coverage=%d", coverage)
+	}
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err = store.QueryInLocation("2026-11-04", "2026-11-04", losAngeles)
+	if err != nil || len(rows) != 1 || rows[0].Day != "2026-11-04" {
+		t.Fatalf("Los Angeles rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestStoreV1RowsRemainUTCOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "peer-traffic.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"rows":[{"day":"2026-11-05","route":"direct","bytes_sent":10,"bytes_received":0,"records_sent":1,"records_received":0}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := New(path, time.Now)
+	utcRows, err := store.Query(time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC))
+	if err != nil || len(utcRows) != 1 {
+		t.Fatalf("UTC rows=%+v err=%v", utcRows, err)
+	}
+	zone, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	localRows, coverage, err := store.QueryInLocation("2026-11-05", "2026-11-05", zone)
+	if err != nil || len(localRows) != 0 || coverage != 0 {
+		t.Fatalf("local rows=%+v coverage=%d err=%v", localRows, coverage, err)
+	}
+}

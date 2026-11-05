@@ -68,12 +68,14 @@ describe('AccountTrafficDashboard', () => {
     vi.setSystemTime(new Date('2026-09-23T12:02:30Z'))
     await wrapper.get('[data-testid="traffic-mode-realtime"]').trigger('click')
     await flushPromises()
-    expect(getMeTrafficMock).toHaveBeenLastCalledWith(expect.stringContaining('T'), expect.stringContaining('T'), 'minute')
+    expect(getMeTrafficMock).toHaveBeenLastCalledWith(expect.stringContaining('T'), expect.stringContaining('T'), 'minute', expect.any(String))
     expect(wrapper.get('[data-testid="relay-traffic-total"]').text()).toContain('5.86 KB')
     expect(wrapper.find('[data-testid="traffic-time-chart"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="direct-traffic-total"]').exists()).toBe(false)
     getMeTrafficMock.mockRejectedValueOnce(new Error('offline'))
-    await wrapper.get('.icon-button').trigger('click')
+    const refresh = wrapper.get('[data-testid="traffic-refresh"]')
+    expect(refresh.attributes('aria-label')).toBe('settings.account.traffic.refresh')
+    await refresh.trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="relay-traffic-total"]').text()).toContain('5.86 KB')
     expect(wrapper.text()).toContain('settings.account.traffic.time.stale')
@@ -107,6 +109,22 @@ describe('AccountTrafficDashboard', () => {
     expect(elapsedDays).toBe(60)
   })
 
+  it('persists one account reporting timezone and uses it for queries', async () => {
+    const setTimeZone = vi.fn().mockResolvedValue(undefined)
+    platform.trafficPreferences = {
+      getTimeZone: vi.fn().mockResolvedValue('Asia/Shanghai'),
+      setTimeZone,
+    }
+    const wrapper = mount(AccountTrafficDashboard)
+    await flushPromises()
+    expect(getMeTrafficMock).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), undefined, 'Asia/Shanghai')
+
+    await wrapper.get('.timezone-select select').setValue('America/Los_Angeles')
+    await flushPromises()
+    expect(setTimeZone).toHaveBeenCalledWith('America/Los_Angeles')
+    expect(getMeTrafficMock).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), undefined, 'America/Los_Angeles')
+  })
+
   it('shows a retry state after a failed request', async () => {
     getMeTrafficMock.mockRejectedValueOnce(new Error('offline'))
     const wrapper = mount(AccountTrafficDashboard)
@@ -126,7 +144,7 @@ describe('AccountTrafficDashboard', () => {
     await flushPromises()
 
     expect(getMeTrafficMock).not.toHaveBeenCalled()
-    expect(getTraffic).toHaveBeenCalledWith('2026-09-10', '2026-09-23')
+    expect(getTraffic).toHaveBeenCalledWith('2026-09-10', '2026-09-23', expect.any(String))
     expect(wrapper.find('[data-testid="relay-kpis"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="peer-traffic-total"]').text()).toContain('4.00 KB')
     expect(wrapper.get('[data-testid="peer-traffic-sent"]').text()).toContain('1.50 KB')

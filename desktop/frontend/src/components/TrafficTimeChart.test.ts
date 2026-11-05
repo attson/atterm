@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import TrafficTimeChart from './TrafficTimeChart.vue'
 import { bucketRange } from '../composables/useTrafficWindow'
+import { formatLocalTimeRange, systemTimeZone } from '../lib/timeZone'
 
 describe('minute traffic chart', () => {
   it('zero-fills idle minutes and excludes the open minute from rates and peaks', () => {
@@ -19,6 +20,10 @@ describe('minute traffic chart', () => {
     const points = wrapper.find('polyline').attributes('points')!.split(' ')
     expect(points).toHaveLength(3)
     expect(points[0]).toContain(',216')
+    expect(wrapper.get('.tooltip strong').text()).toBe(
+      `${formatLocalTimeRange(dates[2], Date.parse(dates[2]) + 60_000, 'en')} ${systemTimeZone()}`,
+    )
+    expect(wrapper.get('.tooltip strong').text()).not.toContain(`${dates[2].replace('T', ' ').replace('Z', '')}`)
     wrapper.unmount()
   })
 

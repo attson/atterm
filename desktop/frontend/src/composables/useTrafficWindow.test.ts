@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { defineComponent, h, nextTick } from 'vue'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bucketRange, useTrafficWindow } from './useTrafficWindow'
 
@@ -63,6 +63,21 @@ describe('traffic time windows', () => {
     expect(window.bucket.value).toBe('minute')
     expect(window.range.value.days).toHaveLength(60)
     expect(window.range.value.currentFrom).toBe('2026-10-18T03:00:00Z')
+    wrapper.unmount()
+  })
+
+  it('uses 23/25 hourly buckets across Los Angeles DST boundaries', async () => {
+    const load = vi.fn().mockResolvedValue(undefined)
+    const zone = ref('America/Los_Angeles')
+    let window!: ReturnType<typeof useTrafficWindow>
+    const wrapper = mount(defineComponent({ setup() { window = useTrafficWindow(load, zone); return () => h('div') } }))
+    window.mode.value = 'intraday'
+    window.date.value = '2026-03-08'
+    await nextTick()
+    expect(window.range.value.days).toHaveLength(23)
+    window.date.value = '2026-11-01'
+    await nextTick()
+    expect(window.range.value.days).toHaveLength(25)
     wrapper.unmount()
   })
 })

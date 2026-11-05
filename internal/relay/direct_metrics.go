@@ -3,6 +3,7 @@ package relay
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -14,7 +15,13 @@ type directMetrics struct {
 	bytesAvoided atomic.Uint64
 
 	mu      sync.Mutex
-	pending map[string]*userstore.DirectTrafficDelta
+	pending map[directMetricsKey]*userstore.DirectTrafficDelta
+	now     func() time.Time
+}
+
+type directMetricsKey struct {
+	userID    string
+	startedAt int64
 }
 
 type directMetricsSnapshot struct {
@@ -25,14 +32,16 @@ type directMetricsSnapshot struct {
 }
 
 func newDirectMetrics() *directMetrics {
-	return &directMetrics{pending: make(map[string]*userstore.DirectTrafficDelta)}
+	return &directMetrics{pending: make(map[directMetricsKey]*userstore.DirectTrafficDelta), now: time.Now}
 }
 
 func (m *directMetrics) cellLocked(userID string) *userstore.DirectTrafficDelta {
-	cell := m.pending[userID]
+	startedAt := m.now().UTC().Unix() / 900 * 900
+	key := directMetricsKey{userID: userID, startedAt: startedAt}
+	cell := m.pending[key]
 	if cell == nil {
-		cell = &userstore.DirectTrafficDelta{UserID: userID}
-		m.pending[userID] = cell
+		cell = &userstore.DirectTrafficDelta{UserID: userID, StartedAt: startedAt}
+		m.pending[key] = cell
 	}
 	return cell
 }
@@ -86,7 +95,7 @@ func (m *directMetrics) drain() []userstore.DirectTrafficDelta {
 	for _, cell := range m.pending {
 		out = append(out, *cell)
 	}
-	m.pending = make(map[string]*userstore.DirectTrafficDelta)
+	m.pending = make(map[directMetricsKey]*userstore.DirectTrafficDelta)
 	return out
 }
 

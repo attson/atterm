@@ -48,6 +48,10 @@ describe('PrefsSyncEngine', () => {
     expect(SYNCED_KEYS).toContain('ai_notifications_only' as any)
   })
 
+  it('SYNCED_KEYS includes traffic_time_zone', () => {
+    expect(SYNCED_KEYS).toContain('traffic_time_zone' as any)
+  })
+
   it('pull adopts server value when newer and not dirty', async () => {
     const a = new FakeAdapter()
     a.writeValue('locale_preference', 'en')

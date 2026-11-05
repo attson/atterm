@@ -30,6 +30,33 @@ func TestTrafficBucketFailureRollsBackDailyAndMinuteTotals(t *testing.T) {
 	}
 }
 
+func TestTrafficQuarterAndDirectBucketsAreAbsoluteAndAdditive(t *testing.T) {
+	store := NewInMemory(t)
+	ctx := context.Background()
+	startedAt := time.Date(2026, 11, 5, 1, 7, 0, 0, time.UTC)
+	for range 2 {
+		if err := store.AddTrafficDeltas(ctx, startedAt.Format(time.DateOnly), []TrafficDelta{{
+			UserID: "u1", Minute: startedAt.Unix(), Bytes: 10, Frames: 1,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AddDirectTrafficDeltas(ctx, startedAt.Format(time.DateOnly), []DirectTrafficDelta{{
+			UserID: "u1", StartedAt: startedAt.Unix(), Attempts: 1, BytesSent: 20,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	quarter := startedAt.Unix() / 900 * 900
+	relayRows, err := store.QueryTrafficBuckets(ctx, "u1", "quarter", quarter, quarter+900)
+	if err != nil || len(relayRows) != 1 || relayRows[0].Bytes != 20 || relayRows[0].Frames != 2 {
+		t.Fatalf("relay quarter=%+v err=%v", relayRows, err)
+	}
+	directRows, err := store.QueryDirectTrafficBuckets(ctx, "u1", quarter, quarter+900)
+	if err != nil || len(directRows) != 1 || directRows[0].Attempts != 2 || directRows[0].BytesSent != 40 {
+		t.Fatalf("direct quarter=%+v err=%v", directRows, err)
+	}
+}
+
 func TestTrafficClientMigrationPreservesLegacyTotals(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "users.db")

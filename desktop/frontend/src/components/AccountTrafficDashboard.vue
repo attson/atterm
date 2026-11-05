@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Activity, ArrowDownRight, ArrowUpRight, Gauge, Minus, Network, Radio, RefreshCw } from "lucide-vue-next";
+import { Activity, ArrowDownRight, ArrowUpRight, Gauge, Minus, Network, Radio, RotateCw } from "lucide-vue-next";
 import TrafficTimeControls from "./TrafficTimeControls.vue";
 import TrafficTimeChart from "./TrafficTimeChart.vue";
 import { useTrafficWindow } from "../composables/useTrafficWindow";
@@ -10,6 +10,7 @@ import type { MessageKey } from "../i18n";
 import { useI18n } from "../i18n/useI18n";
 import { usePlatform } from "../platform";
 import type { PeerTrafficRow } from "../platform/types";
+import { dateInTimeZone, isValidTimeZone, systemTimeZone } from "../lib/timeZone";
 import {
   categorySummaries,
   directionSeries,
@@ -24,7 +25,8 @@ import {
 const props = withDefaults(defineProps<{ relayConnected?: boolean }>(), { relayConnected: true });
 const { t } = useI18n();
 const platform = usePlatform();
-const { mode, minutes, date, granularity, hour, rangeDays, bucket, seconds, range, now, autoRefresh, drillDown } = useTrafficWindow(load);
+const reportingTimeZone = ref(systemTimeZone());
+const { mode, minutes, date, granularity, hour, rangeDays, bucket, seconds, range, now, autoRefresh, drillDown } = useTrafficWindow(load, reportingTimeZone);
 const metric = ref<TrafficMetric>("bytes");
 const dimension = ref<TimelineDimension>("group");
 const direction = ref<DirectionFilter>("all");
@@ -44,12 +46,12 @@ async function load(): Promise<void> {
   error.value = false;
   partialError.value = false;
   const relayRequest = props.relayConnected
-    ? bucket.value ? getMeTraffic(range.value.currentFrom, range.value.to, bucket.value) : getMeTraffic(range.value.from, range.value.to)
+    ? bucket.value ? getMeTraffic(range.value.currentFrom, range.value.to, bucket.value, reportingTimeZone.value) : getMeTraffic(range.value.from, range.value.to, undefined, reportingTimeZone.value)
     : Promise.resolve<MeTrafficResponse | null>(null);
   const getPeerTraffic = platform.peer?.getTraffic;
   const peerFrom = rangeDays.value === 90 ? range.value.days[0] : range.value.from;
   const peerRequest = getPeerTraffic && mode.value === "summary"
-    ? getPeerTraffic(peerFrom, range.value.to)
+    ? getPeerTraffic(peerFrom, range.value.to, reportingTimeZone.value)
     : Promise.resolve<PeerTrafficRow[] | null>(null);
   const [relayResult, peerResult] = await Promise.allSettled([relayRequest, peerRequest]);
   if (generation !== loadGeneration) return;
@@ -111,10 +113,10 @@ const relayIn = computed(() => totalMetric(currentRows.value.filter((row) => row
 const relayFrames = computed(() => totalMetric(currentRows.value, "frames"));
 
 const kpis = computed(() => [
-  { key: "total", label: t("settings.account.traffic.kpiTotal"), value: humanBytes(relayTotal.value), trend: trendPercent(relayTotal.value, totalMetric(previousRows.value, "bytes")) },
-  { key: "out", label: t("settings.account.traffic.kpiOutbound"), value: humanBytes(relayOut.value), trend: trendPercent(relayOut.value, totalMetric(previousRows.value.filter((row) => row.direction === 1), "bytes")) },
-  { key: "in", label: t("settings.account.traffic.kpiInbound"), value: humanBytes(relayIn.value), trend: trendPercent(relayIn.value, totalMetric(previousRows.value.filter((row) => row.direction === 0), "bytes")) },
-  { key: "frames", label: t("settings.account.traffic.kpiFrames"), value: compactNumber(relayFrames.value), trend: trendPercent(relayFrames.value, totalMetric(previousRows.value, "frames")) },
+  { key: "total", label: t("settings.account.traffic.kpiTotal"), value: humanBytes(relayTotal.value), trend: rangeDays.value === 90 ? null : trendPercent(relayTotal.value, totalMetric(previousRows.value, "bytes")) },
+  { key: "out", label: t("settings.account.traffic.kpiOutbound"), value: humanBytes(relayOut.value), trend: rangeDays.value === 90 ? null : trendPercent(relayOut.value, totalMetric(previousRows.value.filter((row) => row.direction === 1), "bytes")) },
+  { key: "in", label: t("settings.account.traffic.kpiInbound"), value: humanBytes(relayIn.value), trend: rangeDays.value === 90 ? null : trendPercent(relayIn.value, totalMetric(previousRows.value.filter((row) => row.direction === 0), "bytes")) },
+  { key: "frames", label: t("settings.account.traffic.kpiFrames"), value: compactNumber(relayFrames.value), trend: rangeDays.value === 90 ? null : trendPercent(relayFrames.value, totalMetric(previousRows.value, "frames")) },
 ]);
 
 const currentDirect = computed(() => (traffic.value?.direct ?? []).filter((row) => currentDays.value.has(row.day)));
@@ -133,7 +135,7 @@ const offloadShare = computed(() => {
 });
 
 const directKpis = computed(() => [
-  { key: "direct", icon: Radio, label: t("settings.account.traffic.p2pTraffic"), value: humanBytes(directBytes.value), hint: t("settings.account.traffic.sentReceived", { sent: humanBytes(directSent.value), received: humanBytes(directReceived.value) }), trend: trendPercent(directBytes.value, previousDirectBytes.value) },
+  { key: "direct", icon: Radio, label: t("settings.account.traffic.p2pTraffic"), value: humanBytes(directBytes.value), hint: t("settings.account.traffic.sentReceived", { sent: humanBytes(directSent.value), received: humanBytes(directReceived.value) }), trend: rangeDays.value === 90 ? null : trendPercent(directBytes.value, previousDirectBytes.value) },
   { key: "share", icon: Gauge, label: t("settings.account.traffic.offloadShare"), value: `${offloadShare.value.toFixed(1)}%`, hint: t("settings.account.traffic.offloadHint"), trend: null },
   { key: "success", icon: Activity, label: t("settings.account.traffic.successRate"), value: `${successRate.value.toFixed(attempts.value ? 1 : 0)}%`, hint: t("settings.account.traffic.connectionCounts", { attempts: compactNumber(attempts.value), successes: compactNumber(successes.value), fallbacks: compactNumber(fallbacks.value) }), trend: null },
   { key: "fallback", icon: ArrowDownRight, label: t("settings.account.traffic.fallbacks"), value: compactNumber(fallbacks.value), hint: t("settings.account.traffic.fallbackHint"), trend: null },
@@ -258,8 +260,41 @@ function linePoints(values: number[]): string {
   return values.map((value, index) => `${34 + (index / count) * 932},${204 - (value / chartMax.value) * 168}`).join(" ");
 }
 
-onMounted(load);
-onBeforeUnmount(() => { loadGeneration++; });
+const timeZoneOptions = computed(() => {
+  const common = [systemTimeZone(), "UTC", "Asia/Shanghai", "Asia/Tokyo", "Asia/Kathmandu", "Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles"];
+  const all = (Intl as unknown as { supportedValuesOf?: (key: "timeZone") => string[] }).supportedValuesOf?.("timeZone") ?? common;
+  return [...new Set([reportingTimeZone.value, ...common, ...all])].filter(isValidTimeZone);
+});
+
+async function loadReportingTimeZone(): Promise<boolean> {
+  const stored = await platform.trafficPreferences?.getTimeZone();
+  if (stored && isValidTimeZone(stored)) {
+    const changed = stored !== reportingTimeZone.value;
+    reportingTimeZone.value = stored;
+    return changed;
+  }
+  await platform.trafficPreferences?.setTimeZone(reportingTimeZone.value);
+  return false;
+}
+
+function changeReportingTimeZone(event: Event): void {
+  const next = (event.target as HTMLSelectElement).value;
+  if (!isValidTimeZone(next)) return;
+  reportingTimeZone.value = next;
+  date.value = dateInTimeZone(Date.now(), next);
+  hour.value = null;
+  void platform.trafficPreferences?.setTimeZone(next);
+}
+
+let prefsChangedOff: (() => void) | undefined;
+onMounted(async () => {
+  const changed = await loadReportingTimeZone();
+  if (typeof platform.events?.on === "function") {
+    prefsChangedOff = platform.events.on("prefs:changed", () => { void loadReportingTimeZone().then((didChange) => didChange ? undefined : load()); });
+  }
+  if (!changed) await load();
+});
+onBeforeUnmount(() => { loadGeneration++; prefsChangedOff?.(); });
 watch(() => props.relayConnected, (connected) => {
   if (!connected && mode.value !== "summary") { mode.value = "summary"; return; }
   void load();
@@ -271,14 +306,26 @@ watch(() => props.relayConnected, (connected) => {
     <div class="traffic-heading">
       <div><h3>{{ t("settings.account.traffic.title") }}</h3><p v-if="mode === 'summary'">{{ t("settings.account.traffic.period", { days: rangeDays }) }}</p></div>
       <div class="traffic-actions">
+        <label class="timezone-select"><span>{{ t("settings.account.traffic.time.timeZone") }}</span><select :value="reportingTimeZone" @change="changeReportingTimeZone"><option v-for="zone in timeZoneOptions" :key="zone" :value="zone">{{ zone }}</option></select></label>
         <div v-if="mode === 'summary'" class="segmented" role="group" :aria-label="t('settings.account.traffic.range')">
           <button v-for="days in [7, 30, 90]" :key="days" type="button" :class="{ active: rangeDays === days }" :data-testid="`traffic-range-${days}`" @click="setRange(days)">{{ days }}{{ t("settings.account.traffic.dayUnit") }}</button>
         </div>
-        <button class="icon-button" type="button" :title="t('settings.account.traffic.refresh')" :aria-label="t('settings.account.traffic.refresh')" :disabled="loading" @click="load"><RefreshCw :class="{ spinning: loading }" /></button>
+        <button
+          class="icon-button refresh-button"
+          type="button"
+          data-testid="traffic-refresh"
+          :title="t('settings.account.traffic.refresh')"
+          :aria-label="t('settings.account.traffic.refresh')"
+          :disabled="loading"
+          @click="load"
+        >
+          <RotateCw :size="15" :stroke-width="1.8" :class="{ spinning: loading }" aria-hidden="true" />
+        </button>
       </div>
     </div>
 
-    <TrafficTimeControls v-if="relayConnected" v-model:mode="mode" v-model:minutes="minutes" v-model:date="date" v-model:granularity="granularity" v-model:hour="hour" :auto-refresh="autoRefresh" :now="now" :updated-at="traffic?.updated_at" :failed="error || partialError" />
+    <TrafficTimeControls v-if="relayConnected" v-model:mode="mode" v-model:minutes="minutes" v-model:date="date" v-model:granularity="granularity" v-model:hour="hour" :auto-refresh="autoRefresh" :now="now" :updated-at="traffic?.updated_at" :failed="error || partialError" :reporting-time-zone="reportingTimeZone" />
+    <p v-if="traffic?.local_coverage_from && range.from < dateInTimeZone(traffic.local_coverage_from, reportingTimeZone)" class="coverage-note" role="status">{{ t("settings.account.traffic.time.coverage", { date: dateInTimeZone(traffic.local_coverage_from, reportingTimeZone) }) }}</p>
     <p v-if="error && !traffic" class="traffic-state error" role="alert">{{ t("settings.account.traffic.loadFailed") }}<button type="button" @click="load">{{ t("settings.account.traffic.retry") }}</button></p>
     <div v-else-if="loading && !traffic && !peerTraffic" class="traffic-state">{{ t("common.loading") }}</div>
     <template v-else>
@@ -368,14 +415,21 @@ watch(() => props.relayConnected, (connected) => {
 .traffic-heading p, .panel-head p { margin: 4px 0 0; color: var(--fg-dim); font-size: 11px; }
 .panel-head h4 { margin: 2px 0 0; color: var(--fg); font-size: 13px; font-weight: 650; }
 .traffic-actions { display: flex; align-items: center; gap: 6px; }
+.timezone-select { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-dim); font-size: 11px; }
+.timezone-select select { height: 30px; max-width: 190px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); padding: 0 7px; }
+.coverage-note { margin: 0; color: var(--warn, #d29922); font-size: 11px; }
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .segmented button { min-width: 40px; height: 28px; padding: 0 8px; border: 0; border-right: 1px solid var(--border); background: transparent; color: var(--fg-dim); cursor: pointer; font-size: 11px; white-space: nowrap; }
 .segmented button:last-child { border-right: 0; }
 .segmented button.active { background: var(--accent); color: #0d1117; font-weight: 600; }
 .segmented.compact button { min-width: 34px; height: 24px; padding: 0 6px; font-size: 10px; }
-.icon-button { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--fg-dim); cursor: pointer; }
-.icon-button svg { width: 14px; height: 14px; }
-.icon-button:disabled { opacity: 0.5; }
+.icon-button { width: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center; flex: 0 0 28px; line-height: 0; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--fg-dim); cursor: pointer; transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease; }
+.icon-button svg { display: block; }
+.icon-button:hover:not(:disabled) { color: var(--fg); border-color: color-mix(in srgb, var(--fg-dim) 72%, var(--border)); background: rgba(255, 255, 255, 0.04); }
+.icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.icon-button:active:not(:disabled) { background: rgba(255, 255, 255, 0.07); }
+.icon-button:disabled { opacity: 0.5; cursor: wait; }
+.refresh-button { align-self: stretch; }
 .spinning { animation: traffic-spin 0.8s linear infinite; }
 .kpi-strip, .direct-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .kpi-cell, .direct-strip > div { min-width: 0; padding: 10px 12px; border-right: 1px solid var(--border); }
@@ -465,6 +519,7 @@ td small { color: var(--fg-dim); font-size: 8px; }
 @media (max-width: 760px) {
   .traffic-heading, .panel-head { flex-direction: column; }
   .traffic-actions { width: 100%; justify-content: space-between; }
+  .timezone-select span { display: none; }
   .analysis-controls { width: 100%; justify-content: flex-start; }
   .analysis-controls > div { align-items: flex-start; }
   .kpi-strip, .direct-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }

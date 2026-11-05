@@ -20,6 +20,7 @@
 // bottom of prefsSync.test.ts reads sync.go directly and asserts that.
 export const SYNCED_KEYS = [
   'locale_preference',
+  'traffic_time_zone',
   'quick_templates',
   'notifications_enabled',
   'ai_notifications_only',

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+	_ "time/tzdata"
 )
 
 // PreferenceItem is a single row in user_preferences. ValueJSON is the
@@ -28,6 +30,7 @@ type PreferenceItem struct {
 // poisoned batch forever, silently breaking sync for every other key too.
 var allowedPreferenceKeys = map[string]preferenceKind{
 	"locale_preference":                preferenceKindString,
+	"traffic_time_zone":                preferenceKindString,
 	"quick_templates":                  preferenceKindArray,
 	"notifications_enabled":            preferenceKindBool,
 	"ai_notifications_only":            preferenceKindBool,
@@ -128,6 +131,16 @@ func (s *DBStore) SetUserPreferences(
 		}
 		if err := validatePreferenceValue(kind, it.ValueJSON); err != nil {
 			return nil, fmt.Errorf("%w: %s: %s", ErrInvalidPreferenceValue, it.Key, err)
+		}
+		if it.Key == "traffic_time_zone" {
+			var zone string
+			_ = json.Unmarshal(it.ValueJSON, &zone)
+			if zone == "" || zone == "Local" {
+				return nil, fmt.Errorf("%w: %s: invalid IANA time zone", ErrInvalidPreferenceValue, it.Key)
+			}
+			if _, err := time.LoadLocation(zone); err != nil {
+				return nil, fmt.Errorf("%w: %s: invalid IANA time zone", ErrInvalidPreferenceValue, it.Key)
+			}
 		}
 	}
 

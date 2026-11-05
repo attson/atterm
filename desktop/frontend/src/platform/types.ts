@@ -390,7 +390,7 @@ export interface PeerBridge {
   getSessionRouteStatus?(sessionID: string): Promise<PeerSessionRouteStatus>
   createSessionTransport?: (options: NativeDirectClientOptions) => DirectTransport
   /** Desktop-only, device-local encrypted-record aggregates. */
-  getTraffic?(from: string, to: string): Promise<PeerTrafficRow[]>
+  getTraffic?(from: string, to: string, timeZone?: string): Promise<PeerTrafficRow[]>
   /** Desktop host controls. Clients without a local gateway leave these absent. */
   getQuickTunnelStatus?(): Promise<PeerQuickTunnelStatus>
   installCloudflared?(): Promise<PeerQuickTunnelStatus>
@@ -470,6 +470,12 @@ export interface PromptHistoryBridge {
   clear(): Promise<void>
 }
 
+export interface TrafficPreferencesBridge {
+  /** Account-wide IANA zone used only for reporting-day boundaries. */
+  getTimeZone(): Promise<string>
+  setTimeZone(zone: string): Promise<void>
+}
+
 export interface Platform {
   caps: Capabilities
   relay: RelayBridge
@@ -479,6 +485,7 @@ export interface Platform {
   templates: TemplateBridge
   auxKeys: AuxKeyBridge
   directConnection: DirectConnectionBridge
+  trafficPreferences?: TrafficPreferencesBridge
   peer?: PeerBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge

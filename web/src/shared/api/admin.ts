@@ -113,12 +113,14 @@ export async function getTrafficStats(params: {
   bucket?: TrafficBucket
   from?: string
   to?: string
+  timeZone?: string
 }): Promise<AdminTrafficResponse> {
   const q = new URLSearchParams()
   if (params.view) q.set('view', params.view)
   if (params.bucket) q.set('bucket', params.bucket)
   if (params.from) q.set('from', params.from)
   if (params.to) q.set('to', params.to)
+  if (params.timeZone) q.set('tz', params.timeZone)
   const { data } = await apiFetch<AdminTrafficResponse>(`/admin/api/traffic?${q.toString()}`)
   return data
 }

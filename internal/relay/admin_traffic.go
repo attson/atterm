@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/userstore"
 )
 
 type trafficRow struct {
@@ -21,11 +22,14 @@ type trafficRow struct {
 }
 
 type trafficResponse struct {
-	View   string       `json:"view"`
-	Bucket string       `json:"bucket"`
-	From   string       `json:"from"`
-	To     string       `json:"to"`
-	Rows   []trafficRow `json:"rows"`
+	View              string       `json:"view"`
+	Bucket            string       `json:"bucket"`
+	From              string       `json:"from"`
+	To                string       `json:"to"`
+	Rows              []trafficRow `json:"rows"`
+	TimeZone          string       `json:"time_zone,omitempty"`
+	DayBasis          string       `json:"day_basis,omitempty"`
+	LocalCoverageFrom string       `json:"local_coverage_from,omitempty"`
 }
 
 // handleAdminTrafficHTTP implements GET /admin/api/traffic. Query params:
@@ -59,6 +63,10 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 		bucket = "range"
 	default:
 		http.Error(w, "invalid bucket", http.StatusBadRequest)
+		return
+	}
+	if zoneName := r.URL.Query().Get("tz"); zoneName != "" {
+		s.handleAdminTrafficInTimeZone(w, r, view, bucket, zoneName)
 		return
 	}
 
@@ -147,6 +155,110 @@ func (s *Server) handleAdminTrafficHTTP(w http.ResponseWriter, r *http.Request) 
 		return out[i].Direction < out[j].Direction
 	})
 	writeJSONStatus(w, http.StatusOK, trafficResponse{View: view, Bucket: bucket, From: from, To: to, Rows: out})
+}
+
+func (s *Server) handleAdminTrafficInTimeZone(w http.ResponseWriter, r *http.Request, view, bucket, zoneName string) {
+	zone, err := time.LoadLocation(zoneName)
+	if err != nil {
+		http.Error(w, "invalid time zone", http.StatusBadRequest)
+		return
+	}
+	today := time.Now().In(zone)
+	to := r.URL.Query().Get("to")
+	from := r.URL.Query().Get("from")
+	if to == "" {
+		to = today.Format(time.DateOnly)
+	}
+	if from == "" {
+		from = today.AddDate(0, 0, -6).Format(time.DateOnly)
+	}
+	dayRange, err := parseTrafficDayRange(from, to, zoneName, meTrafficMaxDays)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	coverage, err := s.cfg.Store.TrafficBucketCoverageStart(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	queryFrom := dayRange.from.Unix()
+	if queryFrom < coverage {
+		queryFrom = coverage
+	}
+	rows, err := s.cfg.Store.QueryTrafficBuckets(r.Context(), "", "quarter", queryFrom, dayRange.to.Unix())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	for index := range rows {
+		startedAt, parseErr := time.Parse(time.RFC3339, rows[index].Day)
+		if parseErr == nil {
+			rows[index].Day = trafficLocalDay(startedAt.Unix(), dayRange.zone)
+		}
+	}
+	out := aggregateAdminTrafficRows(rows, s.userEmailMap(r), view, bucket)
+	writeJSONStatus(w, http.StatusOK, trafficResponse{View: view, Bucket: bucket, From: from, To: to, Rows: out,
+		TimeZone: zoneName, DayBasis: "time_zone", LocalCoverageFrom: time.Unix(coverage, 0).UTC().Format(time.RFC3339)})
+}
+
+func aggregateAdminTrafficRows(rows []userstore.TrafficRow, emails map[string]string, view, bucket string) []trafficRow {
+	type aggKey struct {
+		user, day string
+		disc      int
+		cat       string
+		dir       int
+	}
+	agg := map[aggKey]*trafficRow{}
+	for _, rr := range rows {
+		k := aggKey{user: rr.UserID, dir: rr.Direction}
+		if bucket == "day" {
+			k.day = rr.Day
+		}
+		switch view {
+		case "detail":
+			k.disc = rr.FrameType
+		case "group":
+			k.cat = frameCategory(proto.Type(rr.FrameType))
+		}
+		cell := agg[k]
+		if cell == nil {
+			cell = &trafficRow{UserID: rr.UserID, Email: emails[rr.UserID], Day: k.day, Direction: rr.Direction}
+			if view == "detail" {
+				cell.FrameType = rr.FrameType
+				cell.FrameTypeName = frameTypeName(proto.Type(rr.FrameType))
+				cell.Category = frameCategory(proto.Type(rr.FrameType))
+			} else if view == "group" {
+				cell.Category = k.cat
+			}
+			agg[k] = cell
+		}
+		cell.Bytes += rr.Bytes
+		cell.Frames += rr.Frames
+	}
+	out := make([]trafficRow, 0, len(agg))
+	for _, row := range agg {
+		out = append(out, *row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Day != out[j].Day {
+			return out[i].Day < out[j].Day
+		}
+		if out[i].Email != out[j].Email {
+			return out[i].Email < out[j].Email
+		}
+		if out[i].UserID != out[j].UserID {
+			return out[i].UserID < out[j].UserID
+		}
+		if out[i].Category != out[j].Category {
+			return out[i].Category < out[j].Category
+		}
+		if out[i].FrameType != out[j].FrameType {
+			return out[i].FrameType < out[j].FrameType
+		}
+		return out[i].Direction < out[j].Direction
+	})
+	return out
 }
 
 func validDay(s string) bool {

@@ -2094,6 +2094,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 		switch key {
 		case "locale_preference":
 			return c.LocalePreference != "" && c.LocalePreference != localePreferenceSystem
+		case "traffic_time_zone":
+			return c.TrafficTimeZone != ""
 		case "quick_templates":
 			return len(c.QuickTemplates) > 0
 		case "notifications_enabled":

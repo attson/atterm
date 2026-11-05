@@ -25,6 +25,8 @@ import { ApiError } from '@shared/api/client'
 import { getAdminHealth, getTrafficStats } from '@shared/api/admin'
 import type { AdminHealthResponse, AdminTrafficRow } from '@shared/api/types'
 import { useI18n } from '@shared/i18n/useI18n'
+import { useOptionalPlatform } from '../../platform'
+import { isValidTimeZone, systemTimeZone } from '../../lib/timeZone'
 import {
   categorySummaries,
   dailyTotals,
@@ -42,11 +44,13 @@ import {
 
 const { t } = useI18n()
 const message = useMessage()
+const platformBridge = useOptionalPlatform()
 
 const rows = ref<AdminTrafficRow[]>([])
 const health = ref<AdminHealthResponse | null>(null)
 const loading = ref(false)
-const { mode, minutes, date, granularity, hour, rangeDays, bucket, seconds, range, now, autoRefresh, drillDown } = useTrafficWindow(load)
+const reportingTimeZone = ref(systemTimeZone())
+const { mode, minutes, date, granularity, hour, rangeDays, bucket, seconds, range, now, autoRefresh, drillDown } = useTrafficWindow(load, reportingTimeZone)
 const updatedAt = ref<string>()
 const serverTime = ref<string>()
 const loadFailed = ref(false)
@@ -156,7 +160,7 @@ async function load() {
   const requestedRange = range.value
   try {
     const [trafficResult, healthResult] = await Promise.allSettled([
-      getTrafficStats({ view: 'detail', bucket: bucket.value ?? 'day', from: bucket.value ? requestedRange.currentFrom : requestedRange.from, to: requestedRange.to }),
+      getTrafficStats({ view: 'detail', bucket: bucket.value ?? 'day', from: bucket.value ? requestedRange.currentFrom : requestedRange.from, to: requestedRange.to, timeZone: reportingTimeZone.value }),
       getAdminHealth(),
     ])
     if (generation !== loadGeneration) return
@@ -282,7 +286,17 @@ async function openDrawer(id: string) {
 
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointer)
-  void load()
+  void (async () => {
+    const stored = await platformBridge?.trafficPreferences?.getTimeZone()
+    if (stored && isValidTimeZone(stored)) {
+      const changed = reportingTimeZone.value !== stored
+      reportingTimeZone.value = stored
+      if (!changed) await load()
+    } else {
+      await platformBridge?.trafficPreferences?.setTimeZone(reportingTimeZone.value)
+      await load()
+    }
+  })()
 })
 onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerdown', onDocumentPointer) })
 </script>
@@ -292,7 +306,7 @@ onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerd
     <div class="traffic-titlebar">
       <div>
         <h1>{{ t('admin.traffic.title') }}</h1>
-        <p>{{ t('admin.traffic.timezone') }}</p>
+        <p>{{ t('admin.traffic.timezone') }} · {{ reportingTimeZone }}</p>
       </div>
       <button class="icon-button" type="button" :aria-label="t('admin.traffic.refresh')" :title="t('admin.traffic.refresh')" :disabled="loading" data-test="traffic-refresh" @click="load">
         <RefreshCw :class="{ spinning: loading }" />
@@ -394,7 +408,7 @@ onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerd
           </div>
         </div>
 
-        <TrafficTimeControls v-model:mode="mode" v-model:minutes="minutes" v-model:date="date" v-model:granularity="granularity" v-model:hour="hour" :auto-refresh="autoRefresh" :now="now" :updated-at="updatedAt" :failed="loadFailed" />
+        <TrafficTimeControls v-model:mode="mode" v-model:minutes="minutes" v-model:date="date" v-model:granularity="granularity" v-model:hour="hour" :auto-refresh="autoRefresh" :now="now" :updated-at="updatedAt" :failed="loadFailed" :reporting-time-zone="reportingTimeZone" />
         <p v-if="loadFailed" role="alert" class="traffic-load-error">{{ t('admin.traffic.loadFailed') }}</p>
         <div v-if="!selectedUsers.length" class="selection-empty" data-test="traffic-selection-empty">
           <Users />

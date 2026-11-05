@@ -43,6 +43,12 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 	case "locale_preference":
 		b, _ := json.Marshal(c.LocalePreference)
 		return b, true
+	case "traffic_time_zone":
+		if c.TrafficTimeZone == "" {
+			return nil, false
+		}
+		b, _ := json.Marshal(c.TrafficTimeZone)
+		return b, true
 	case "quick_templates":
 		b, _ := json.Marshal(c.QuickTemplates)
 		return b, true
@@ -194,6 +200,16 @@ func applyPortableConfigValue(c *appConfig, key string, value json.RawMessage) (
 	switch key {
 	case "locale_preference":
 		return true, json.Unmarshal(value, &c.LocalePreference)
+	case "traffic_time_zone":
+		var zone string
+		if err := json.Unmarshal(value, &zone); err != nil {
+			return true, err
+		}
+		if !validTrafficTimeZone(zone) {
+			return true, fmt.Errorf("invalid traffic time zone %q", zone)
+		}
+		c.TrafficTimeZone = zone
+		return true, nil
 	case "quick_templates":
 		return true, json.Unmarshal(value, &c.QuickTemplates)
 	case "notifications_enabled":

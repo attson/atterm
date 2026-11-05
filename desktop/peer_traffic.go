@@ -78,3 +78,51 @@ func (a *App) GetPeerTraffic(from, to string) ([]PeerTrafficRow, error) {
 	}
 	return result, nil
 }
+
+// GetPeerTrafficInTimeZone returns device-local totals grouped by the same
+// account reporting-day boundary used by relay traffic.
+func (a *App) GetPeerTrafficInTimeZone(from, to, zoneName string) ([]PeerTrafficRow, error) {
+	if a == nil || a.peerTraffic == nil {
+		return nil, errors.New("Peer traffic meter unavailable")
+	}
+	zone, err := time.LoadLocation(zoneName)
+	if err != nil || !validTrafficTimeZone(zoneName) {
+		return nil, errors.New("invalid Peer traffic time zone")
+	}
+	fromTime, err := time.ParseInLocation(time.DateOnly, from, zone)
+	if err != nil || fromTime.Format(time.DateOnly) != from {
+		return nil, errors.New("invalid Peer traffic start date")
+	}
+	toTime, err := time.ParseInLocation(time.DateOnly, to, zone)
+	if err != nil || toTime.Format(time.DateOnly) != to || toTime.Before(fromTime) {
+		return nil, errors.New("invalid Peer traffic end date")
+	}
+	if daysBetween(fromTime, toTime) >= maxPeerTrafficQueryDays {
+		return nil, errors.New("Peer traffic range exceeds 90 days")
+	}
+	rows, _, err := a.peerTraffic.QueryInLocation(from, to, zone)
+	if err != nil {
+		return nil, fmt.Errorf("query Peer traffic: %w", err)
+	}
+	return peerTrafficRows(rows), nil
+}
+
+func daysBetween(from, to time.Time) int {
+	days := 0
+	for cursor := from; cursor.Before(to); cursor = cursor.AddDate(0, 0, 1) {
+		days++
+	}
+	return days
+}
+
+func peerTrafficRows(rows []peertraffic.Row) []PeerTrafficRow {
+	result := make([]PeerTrafficRow, len(rows))
+	for index, row := range rows {
+		result[index] = PeerTrafficRow{
+			Day: row.Day, Route: string(row.Route), BytesSent: row.BytesSent,
+			BytesReceived: row.BytesReceived, RecordsSent: row.RecordsSent,
+			RecordsReceived: row.RecordsReceived,
+		}
+	}
+	return result
+}

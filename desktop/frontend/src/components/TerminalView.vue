@@ -4080,7 +4080,12 @@ watch(
   color: var(--fg-dim);
   cursor: default;
 }
-.term-view.focused {
+.term-view.focused::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 10;
   box-shadow: inset 0 0 0 1px var(--accent);
+  pointer-events: none;
 }
 </style>

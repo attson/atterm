@@ -30,9 +30,12 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.connecting");
   });
 
-  test("keeps the personal traffic dashboard available for local Peer traffic", () => {
-    expect(source).not.toContain('<section v-if="connectedUserID" class="traffic-section">');
+  test("keeps traffic secondary and lazy while retaining local Peer traffic", () => {
+    expect(source).toContain('const trafficExpanded = ref(false)');
+    expect(source).toContain('data-testid="relay-traffic-toggle"');
+    expect(source).toContain('<div v-if="trafficExpanded" class="traffic-content">');
     expect(source).toContain('<AccountTrafficDashboard :relay-connected="!!connectedUserID" />');
+    expect(source.indexOf('id="relay-host"')).toBeLessThan(source.indexOf('data-testid="relay-traffic-section"'));
   });
 
   test("remote-session-permission selector is gone (single-user tool, no sharing)", () => {

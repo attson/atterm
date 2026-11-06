@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../lib/log";
-import { Info } from "lucide-vue-next";
+import { ChevronDown, Info } from "lucide-vue-next";
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, fetchRelayVersion, loadSavedRelayPassword, rememberRelayPassword, clearRelayConfig } from "../lib/api";
 import { usePlatform } from '../platform'
@@ -48,6 +48,7 @@ const togglingPause = ref(false);
 const directConnectionEnabled = ref(false);
 const directConnectionLoading = ref(true);
 const directConnectionSaving = ref(false);
+const trafficExpanded = ref(false);
 const error = ref("");
 const { t } = useI18n();
 
@@ -533,10 +534,6 @@ defineExpose({
         {{ t("settings.relay.hint") }}
       </p>
 
-      <section class="traffic-section">
-        <AccountTrafficDashboard :relay-connected="!!connectedUserID" />
-      </section>
-
       <div class="url-label-row">
         <label class="field-label" for="relay-host">{{ t("settings.relay.relayUrl") }}</label>
         <label class="insecure-inline">
@@ -684,6 +681,31 @@ defineExpose({
 
       <PairingPanel />
 
+      <section class="traffic-section" data-testid="relay-traffic-section">
+        <button
+          type="button"
+          class="traffic-toggle"
+          data-testid="relay-traffic-toggle"
+          :aria-expanded="trafficExpanded"
+          @click="trafficExpanded = !trafficExpanded"
+        >
+          <span class="traffic-toggle-copy">
+            <span class="traffic-toggle-title">{{ t("settings.account.traffic.title") }}</span>
+            <span class="traffic-toggle-hint">{{ t("settings.relay.trafficHint") }}</span>
+          </span>
+          <ChevronDown
+            :size="16"
+            :stroke-width="1.8"
+            class="traffic-toggle-icon"
+            :class="{ expanded: trafficExpanded }"
+            aria-hidden="true"
+          />
+        </button>
+        <div v-if="trafficExpanded" class="traffic-content">
+          <AccountTrafficDashboard :relay-connected="!!connectedUserID" />
+        </div>
+      </section>
+
       <div class="danger-zone">
         <div class="danger-zone-text">
           <div class="field-label">{{ t('settings.relay.clearTitle') }}</div>
@@ -796,9 +818,56 @@ defineExpose({
   gap: 12px;
 }
 .traffic-section {
-  padding: 14px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+}
+.traffic-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 54px;
+  padding: 9px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.traffic-toggle:hover {
+  color: var(--accent);
+}
+.traffic-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.traffic-toggle-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.traffic-toggle-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.traffic-toggle-hint {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 400;
+}
+.traffic-toggle-icon {
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+  transition: transform 160ms ease;
+}
+.traffic-toggle-icon.expanded {
+  transform: rotate(180deg);
+}
+.traffic-content {
+  padding: 4px 0 14px;
 }
 .dim {
   color: var(--fg-dim);

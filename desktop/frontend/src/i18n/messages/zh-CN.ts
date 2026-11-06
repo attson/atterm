@@ -837,6 +837,7 @@ export const zhCN = {
       relayUrl: "relay url",
       preferDirectConnection: "优先使用直连",
       preferDirectConnectionHint: "Relay 完成连接和历史恢复后，尝试建立端到端加密的 P2P 终端通道；直连失败时继续使用 Relay。该设置仅对当前设备生效；桌面端开启后，也会接受其他设备发起的直连。",
+      trafficHint: "查看 Relay、直连与 Peer 流量",
       scheme: "Relay 协议",
       email: "邮箱",
       password: "密码",

@@ -744,6 +744,14 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toContain(':style="{ bottom: templateBarBottom }"');
   });
 
+  test("draws the focused border above bottom shortcut bars", () => {
+    expect(source).toMatch(/\.term-view\.focused::after\s*\{[^}]*position:\s*absolute/);
+    expect(source).toMatch(/\.term-view\.focused::after\s*\{[^}]*inset:\s*0/);
+    expect(source).toMatch(/\.term-view\.focused::after\s*\{[^}]*z-index:\s*10/);
+    expect(source).toMatch(/\.term-view\.focused::after\s*\{[^}]*box-shadow:\s*inset 0 0 0 1px var\(--accent\)/);
+    expect(source).toMatch(/\.term-view\.focused::after\s*\{[^}]*pointer-events:\s*none/);
+  });
+
   test("capture-handles mobile IME insertText without touching composition events", () => {
     expect(source).toMatch(/function\s+onImeInput\s*\(\s*event:\s*InputEvent\s*\)/);
     expect(source).toContain('event.inputType !== "insertText"');

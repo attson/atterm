@@ -870,6 +870,7 @@ export const en = {
       relayUrl: "relay url",
       preferDirectConnection: "Prefer direct connection",
       preferDirectConnectionHint: "After the Relay attaches and restores history, try an encrypted peer-to-peer terminal route. If direct setup fails, the session stays on Relay. This setting applies only to the current device; enabling it on desktop also accepts direct connections from other devices.",
+      trafficHint: "View Relay, direct, and Peer traffic",
       scheme: "Relay protocol",
       email: "Email",
       password: "Password",

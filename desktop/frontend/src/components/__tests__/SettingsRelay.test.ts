@@ -161,6 +161,23 @@ describe('SettingsRelay direct connection preference', () => {
   })
 })
 
+describe('SettingsRelay traffic disclosure', () => {
+  it('mounts the traffic dashboard only after the secondary section is expanded', async () => {
+    const w = mount(SettingsRelay)
+    await flushPromises()
+
+    const toggle = w.get('[data-testid="relay-traffic-toggle"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(w.find('[data-testid="account-traffic-dashboard"]').exists()).toBe(false)
+
+    await toggle.trigger('click')
+    await flushPromises()
+
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(w.find('[data-testid="account-traffic-dashboard"]').exists()).toBe(true)
+  })
+})
+
 describe('SettingsRelay clear relay info', () => {
   // Pin MockInstance to the confirm() signature — the bare `ReturnType<typeof vi.spyOn>`
   // form drops the specific overload and trips vue-tsc (see PasteImagePreviewHost.test.ts).

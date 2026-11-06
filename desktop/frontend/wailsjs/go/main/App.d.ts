@@ -81,6 +81,8 @@ export function GetClipboardPastePayload():Promise<main.ClipboardPastePayload>;
 
 export function GetCommandNotifyThresholdSeconds():Promise<number>;
 
+export function GetDebugLoggingConfig():Promise<main.DebugLoggingConfig>;
+
 export function GetDefaultProfileID():Promise<string>;
 
 export function GetDefaultShell():Promise<string>;
@@ -324,6 +326,8 @@ export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
 export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
+
+export function SetDebugLoggingConfig(arg1:main.DebugLoggingConfig):Promise<void>;
 
 export function SetDefaultProfileID(arg1:string):Promise<void>;
 

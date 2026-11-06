@@ -221,6 +221,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			s.debugFrame("client", "send", resp)
 			ctx, cancel := context.WithTimeout(ctx, clientWriteWait)
 			respBytes := proto.Marshal(resp)
+			s.debugScopef(DebugScopeStateSync, "list_resp_send reason=request sessions=%d wire_bytes=%d", len(infos), len(respBytes))
 			err := c.Write(ctx, websocket.MessageBinary, respBytes)
 			cancel()
 			if err != nil {

@@ -143,6 +143,26 @@ func TestAppendFrontendLogsRespectsThreshold(t *testing.T) {
 	}
 }
 
+func TestAppendFrontendDebugLogsRespectScopes(t *testing.T) {
+	preserveDesktopDebugConfig(t)
+	buf := captureLogSink(t)
+	setTestLogLevelWarn(t)
+	configureDesktopDebug(true, []string{desktopDebugScopeStateSync}, "")
+	a := &App{}
+
+	a.AppendFrontendLogs([]FrontendLogRecord{
+		{Level: "DEBUG", Tag: "state-sync", Message: "selected"},
+		{Level: "DEBUG", Tag: "uplink", Message: "suppressed"},
+	})
+	out := buf.String()
+	if !strings.Contains(out, "selected") {
+		t.Fatalf("selected scoped DEBUG record missing: %q", out)
+	}
+	if strings.Contains(out, "suppressed") {
+		t.Fatalf("unselected scoped DEBUG record written: %q", out)
+	}
+}
+
 func TestFrontendLogTimeFallsBackToNow(t *testing.T) {
 	for _, ms := range []int64{0, -1, 1000} {
 		got := frontendLogTime(ms)

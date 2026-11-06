@@ -1,0 +1,2 @@
+ALTER TABLE relay_config ADD COLUMN debug_scopes TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE relay_config ADD COLUMN debug_until BIGINT NOT NULL DEFAULT 0;

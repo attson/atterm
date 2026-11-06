@@ -154,6 +154,10 @@ export function GetCommandNotifyThresholdSeconds() {
   return window['go']['main']['App']['GetCommandNotifyThresholdSeconds']();
 }
 
+export function GetDebugLoggingConfig() {
+  return window['go']['main']['App']['GetDebugLoggingConfig']();
+}
+
 export function GetDefaultProfileID() {
   return window['go']['main']['App']['GetDefaultProfileID']();
 }
@@ -640,6 +644,10 @@ export function SetAutoCheckUpdates(arg1) {
 
 export function SetCommandNotifyThresholdSeconds(arg1) {
   return window['go']['main']['App']['SetCommandNotifyThresholdSeconds'](arg1);
+}
+
+export function SetDebugLoggingConfig(arg1) {
+  return window['go']['main']['App']['SetDebugLoggingConfig'](arg1);
 }
 
 export function SetDefaultProfileID(arg1) {

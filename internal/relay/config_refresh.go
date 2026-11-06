@@ -32,7 +32,7 @@ func (s *Server) refreshConfigOnce(ctx context.Context) (bool, error) {
 // cross-instance config refresher does not propagate it live.
 func (s *Server) applyConfigToCaches(cfg AdminConfig) {
 	s.SetAllowedOrigins(OriginPatterns(cfg.AllowedOrigins))
-	s.SetDebug(cfg.Debug, cfg.DebugPayload)
+	s.SetDebugScopes(cfg.Debug, cfg.DebugScopes, cfg.DebugUntil)
 	s.applyRuntimeLimits(cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
 	if keyBytes, err := cfg.DecodeFeishuKey(); err == nil && cfg.FeishuEnabled {
 		if err := s.ApplyFeishuConfig(true, keyBytes, cfg.FeishuBaseURL); err != nil {

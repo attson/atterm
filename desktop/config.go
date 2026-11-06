@@ -147,6 +147,11 @@ type appConfig struct {
 	// at INFO keeps the rotating file readable while the instrumentation stays
 	// one dropdown away.
 	LogLevel string `json:"log_level,omitempty"`
+	// DebugEnabled and DebugScopes gate generation of verbose diagnostic
+	// records independently from the file's normal severity threshold.
+	DebugEnabled *bool    `json:"debug_enabled,omitempty"`
+	DebugScopes  []string `json:"debug_scopes,omitempty"`
+	DebugUntil   string   `json:"debug_until,omitempty"`
 
 	// Auto-update settings. Nil means "never set" → treated as default true
 	// at read time. Stored as a pointer so we can distinguish "user opted
@@ -564,6 +569,20 @@ func (c appConfig) LogFilePathOrDefault() string {
 // config.json must not cost the user their app.
 func (c appConfig) LogLevelOrDefault() logging.Level {
 	return logging.ParseLevelOr(c.LogLevel, logging.LevelInfo)
+}
+
+func (c appConfig) DebugEnabledOrDefault() bool {
+	if c.DebugEnabled == nil {
+		return c.LogLevelOrDefault() == logging.LevelDebug
+	}
+	return *c.DebugEnabled
+}
+
+func (c appConfig) DebugScopesOrDefault() []string {
+	if len(c.DebugScopes) == 0 {
+		return []string{desktopDebugScopeAll}
+	}
+	return normalizeDesktopDebugScopes(c.DebugScopes)
 }
 
 func (c appConfig) ShellIntegrationEnabledOrDefault() bool {

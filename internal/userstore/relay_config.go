@@ -19,11 +19,15 @@ type RelayConfig struct {
 	AllowedOrigins       []string
 	VAPIDSubject         string
 	Debug                bool
-	DebugPayload         bool
-	FeishuEnabled        bool
-	FeishuEncryptKey     string
-	FeishuBaseURL        string
-	Version              int64
+	DebugScopes          []string
+	DebugUntil           int64
+	// DebugPayload is retained for config migration from releases that used a
+	// separate payload switch. New callers should use the "payload" scope.
+	DebugPayload     bool
+	FeishuEnabled    bool
+	FeishuEncryptKey string
+	FeishuBaseURL    string
+	Version          int64
 }
 
 // GetRelayConfig reads the singleton row. If no row exists yet (fresh DB),
@@ -32,16 +36,16 @@ type RelayConfig struct {
 func (s *DBStore) GetRelayConfig(ctx context.Context) (RelayConfig, error) {
 	var (
 		c                                  RelayConfig
-		originsRaw                         string
+		originsRaw, debugScopesRaw         string
 		debug, debugPayload, feishuEnabled int64
 	)
 	err := s.db.QueryRowContext(ctx, s.dia.Rebind(
 		`SELECT rate_limit_per_minute, max_connections_per_key, allowed_origins,
-		        vapid_subject, debug, debug_payload, feishu_enabled,
+		        vapid_subject, debug, debug_payload, debug_scopes, debug_until, feishu_enabled,
 		        feishu_encrypt_key, feishu_base_url, version
 		 FROM relay_config WHERE id = 1`)).
 		Scan(&c.RateLimitPerMinute, &c.MaxConnectionsPerKey, &originsRaw,
-			&c.VAPIDSubject, &debug, &debugPayload, &feishuEnabled,
+			&c.VAPIDSubject, &debug, &debugPayload, &debugScopesRaw, &c.DebugUntil, &feishuEnabled,
 			&c.FeishuEncryptKey, &c.FeishuBaseURL, &c.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RelayConfig{Version: 0}, nil
@@ -55,6 +59,11 @@ func (s *DBStore) GetRelayConfig(ctx context.Context) (RelayConfig, error) {
 	if originsRaw != "" {
 		if err := json.Unmarshal([]byte(originsRaw), &c.AllowedOrigins); err != nil {
 			return RelayConfig{}, fmt.Errorf("decode allowed_origins: %w", err)
+		}
+	}
+	if debugScopesRaw != "" {
+		if err := json.Unmarshal([]byte(debugScopesRaw), &c.DebugScopes); err != nil {
+			return RelayConfig{}, fmt.Errorf("decode debug_scopes: %w", err)
 		}
 	}
 	return c, nil
@@ -71,14 +80,22 @@ func (s *DBStore) SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayCon
 	if err != nil {
 		return RelayConfig{}, fmt.Errorf("encode allowed_origins: %w", err)
 	}
+	debugScopes := cfg.DebugScopes
+	if debugScopes == nil {
+		debugScopes = []string{}
+	}
+	debugScopesJSON, err := json.Marshal(debugScopes)
+	if err != nil {
+		return RelayConfig{}, fmt.Errorf("encode debug_scopes: %w", err)
+	}
 	now := time.Now().Unix()
 	var newVersion int64
 	err = s.db.QueryRowContext(ctx, s.dia.Rebind(
 		`INSERT INTO relay_config(
 		     id, rate_limit_per_minute, max_connections_per_key, allowed_origins,
-		     vapid_subject, debug, debug_payload, feishu_enabled,
+		     vapid_subject, debug, debug_payload, debug_scopes, debug_until, feishu_enabled,
 		     feishu_encrypt_key, feishu_base_url, version, updated_at)
-		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		     rate_limit_per_minute   = excluded.rate_limit_per_minute,
 		     max_connections_per_key = excluded.max_connections_per_key,
@@ -86,6 +103,8 @@ func (s *DBStore) SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayCon
 		     vapid_subject           = excluded.vapid_subject,
 		     debug                   = excluded.debug,
 		     debug_payload           = excluded.debug_payload,
+		     debug_scopes            = excluded.debug_scopes,
+		     debug_until             = excluded.debug_until,
 		     feishu_enabled          = excluded.feishu_enabled,
 		     feishu_encrypt_key      = excluded.feishu_encrypt_key,
 		     feishu_base_url         = excluded.feishu_base_url,
@@ -93,7 +112,7 @@ func (s *DBStore) SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayCon
 		     updated_at              = excluded.updated_at
 		 RETURNING version`),
 		cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey, string(originsJSON),
-		cfg.VAPIDSubject, b2i(cfg.Debug), b2i(cfg.DebugPayload), b2i(cfg.FeishuEnabled),
+		cfg.VAPIDSubject, b2i(cfg.Debug), b2i(cfg.DebugPayload), string(debugScopesJSON), cfg.DebugUntil, b2i(cfg.FeishuEnabled),
 		cfg.FeishuEncryptKey, cfg.FeishuBaseURL, now).Scan(&newVersion)
 	if err != nil {
 		return RelayConfig{}, fmt.Errorf("set relay_config: %w", err)

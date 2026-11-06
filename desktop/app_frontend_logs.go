@@ -63,7 +63,14 @@ func (a *App) AppendFrontendLogs(records []FrontendLogRecord) int {
 		if len(msg) > frontendLogMaxMsg {
 			msg = msg[:frontendLogMaxMsg] + " …(truncated)"
 		}
-		logging.EmitAt(frontendLogTime(rec.TimestampMS), level, tag, msg)
+		if level == logging.LevelDebug && desktopDebugConfig.Load() != nil {
+			if !desktopDebugScopeEnabled(desktopDebugScopeForTag(strings.TrimPrefix(tag, frontendLogTagPrefix))) {
+				continue
+			}
+			logging.EmitForcedAt(frontendLogTime(rec.TimestampMS), level, tag, msg)
+		} else {
+			logging.EmitAt(frontendLogTime(rec.TimestampMS), level, tag, msg)
+		}
 		written++
 	}
 	return written

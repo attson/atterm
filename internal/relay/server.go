@@ -33,11 +33,15 @@ type Config struct {
 	// AllowedOrigins, when non-empty, gates browser WS upgrades by Origin host.
 	// Empty allows any origin (dev mode).
 	AllowedOrigins []string
-	// Debug enables verbose relay interaction logs. PTY byte payloads are
-	// summarized by default; set DebugPayload to include IN/OUT contents.
+	// Debug enables scoped verbose relay interaction logs.
 	Debug bool
-	// DebugPayload includes IN/OUT bytes in debug logs. This may leak command
-	// input or terminal output; only enable during local debugging.
+	// DebugScopes selects verbose categories. "*" includes every normal scope
+	// but never payload, which must be selected explicitly.
+	DebugScopes []string
+	// DebugUntil is an optional RFC3339 expiry for scoped debug logging.
+	DebugUntil string
+	// DebugPayload is the legacy payload switch. New callers use the payload
+	// scope; this field remains so older startup/config paths stay compatible.
 	DebugPayload bool
 	// RateLimitPerMinute limits HTTP requests and WS upgrade attempts per
 	// remote IP/token pair. Zero uses a conservative default; negative disables.
@@ -112,11 +116,9 @@ type Server struct {
 	// allowedOrigins is the hot-reloadable WS/HTTP Origin allow-list. Read
 	// per-request by acceptOptions/health; updated by SetAllowedOrigins.
 	allowedOrigins atomic.Pointer[[]string]
-	// debugEnabled / debugPayloadEnabled are hot-reloadable verbose-logging
-	// switches, read on every debug log call so the admin API can flip them
-	// without a restart. debugPayload additionally dumps PTY byte contents.
-	debugEnabled        atomic.Bool
-	debugPayloadEnabled atomic.Bool
+	// debugConfig is immutable after publication and replaced atomically when
+	// Admin Config changes on this or another relay instance.
+	debugConfig atomic.Pointer[debugRuntimeConfig]
 	// traffic accumulates per-user byte/frame counts on the send/receive
 	// paths; flushStop signals the flush goroutine to drain and exit, and
 	// flushDone is closed once it has.
@@ -151,8 +153,14 @@ func NewServer(cfg Config) *Server {
 	}
 	originsInit := append([]string(nil), cfg.AllowedOrigins...)
 	s.allowedOrigins.Store(&originsInit)
-	s.debugEnabled.Store(cfg.Debug)
-	s.debugPayloadEnabled.Store(cfg.DebugPayload)
+	debugScopes := append([]string(nil), cfg.DebugScopes...)
+	if (cfg.Debug || cfg.DebugPayload) && len(debugScopes) == 0 {
+		debugScopes = append(debugScopes, DebugScopeAll)
+	}
+	if cfg.DebugPayload && !containsDebugScope(debugScopes, DebugScopePayload) {
+		debugScopes = append(debugScopes, DebugScopePayload)
+	}
+	s.SetDebugScopes(cfg.Debug || cfg.DebugPayload, debugScopes, cfg.DebugUntil)
 	s.traffic = newTrafficMeter()
 	if cfg.Store != nil {
 		s.flushStop = make(chan struct{})

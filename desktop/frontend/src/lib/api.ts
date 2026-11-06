@@ -22,6 +22,7 @@ import {
 import { bindings } from "./api/_bindings";
 import type {
   ClipboardPastePayload,
+  DebugLoggingConfig,
   Endpoint,
   HostInfo,
   LocalePreference,
@@ -40,6 +41,7 @@ import type {
 export type {
   AppBindings,
   ClipboardPastePayload,
+  DebugLoggingConfig,
   ConnHealthSnapshot,
   DiagnosticsPayload,
   Endpoint,
@@ -194,6 +196,14 @@ export function setLoggingConfig(cfg: {
     // that only change the path or the on/off switch don't reset it.
     level: cfg.level ?? "",
   });
+}
+
+export function getDebugLoggingConfig(): Promise<DebugLoggingConfig> {
+  return bindings().GetDebugLoggingConfig();
+}
+
+export function setDebugLoggingConfig(cfg: DebugLoggingConfig): Promise<void> {
+  return bindings().SetDebugLoggingConfig(cfg);
 }
 
 export function pickLogFilePath(): Promise<string> {

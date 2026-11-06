@@ -2,10 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   getLogPreview,
+  getDebugLoggingConfig,
   getLoggingConfig,
   getPtyInputDebugEnabled,
   pickLogFilePath,
   setLoggingConfig,
+  setDebugLoggingConfig,
   setPtyInputDebugEnabled,
   type LogPreview,
 } from "../lib/api";
@@ -31,10 +33,40 @@ const effectivePath = ref("");
 const loading = ref(true);
 const error = ref("");
 const ptyInputDebug = ref(false);
+const debugEnabled = ref(false);
+const debugScopes = ref<string[]>(["*"]);
+const debugUntilLocal = ref("");
 // writeLevel is the minimum severity persisted to the file. Not to be confused
 // with tailMinLevel below, which only filters what is already there.
 const writeLevel = ref<LogLevel>("INFO");
 const { t } = useI18n();
+
+const DEBUG_SCOPE_OPTIONS = [
+  ["*", "all"],
+  ["app", "app"],
+  ["state-sync", "stateSync"],
+  ["connection", "connection"],
+  ["prefs-sync", "prefsSync"],
+  ["terminal-io", "terminalIO"],
+  ["notifications", "notifications"],
+  ["auth", "auth"],
+  ["peer", "peer"],
+  ["payload", "payload"],
+] as const;
+
+function rfc3339ToLocal(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function localToRFC3339(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
 
 // Inline log tail: refresh every 3 s while the panel is mounted so the
 // user can watch new lines land without opening the full-screen viewer.
@@ -127,6 +159,14 @@ onMounted(async () => {
   } catch {
     /* leave default false */
   }
+  try {
+    const debug = await getDebugLoggingConfig();
+    debugEnabled.value = debug.enabled;
+    debugScopes.value = [...debug.scopes];
+    debugUntilLocal.value = rfc3339ToLocal(debug.until);
+  } catch {
+    /* leave debug disabled */
+  }
   await refreshTail();
   tailTimer = window.setInterval(refreshTail, 3000);
 });
@@ -177,6 +217,28 @@ async function onTogglePtyInputDebug(e: Event) {
     ptyInputDebug.value = previous;
     error.value = err?.message ?? String(err);
   }
+}
+
+async function saveDebugConfig() {
+  error.value = "";
+  try {
+    await setDebugLoggingConfig({
+      enabled: debugEnabled.value,
+      scopes: debugScopes.value,
+      until: localToRFC3339(debugUntilLocal.value),
+    });
+  } catch (err: any) {
+    error.value = err?.message ?? String(err);
+    const current = await getDebugLoggingConfig();
+    debugEnabled.value = current.enabled;
+    debugScopes.value = [...current.scopes];
+    debugUntilLocal.value = rfc3339ToLocal(current.until);
+  }
+}
+
+function onToggleDebug(e: Event) {
+  debugEnabled.value = (e.target as HTMLInputElement).checked;
+  void saveDebugConfig();
 }
 
 async function onPickPath() {
@@ -245,6 +307,35 @@ async function onResetPath() {
           :title="t('settings.logging.ptyInputDebugHint')"
         >i</span>
       </div>
+
+      <section class="debug-scopes">
+        <label class="checkbox">
+          <input type="checkbox" :checked="debugEnabled" @change="onToggleDebug" />
+          {{ t("settings.logging.debugEnabled") }}
+        </label>
+        <div class="scope-grid" :class="{ disabled: !debugEnabled }">
+          <label v-for="([value, label]) in DEBUG_SCOPE_OPTIONS" :key="value" class="checkbox">
+            <input
+              v-model="debugScopes"
+              type="checkbox"
+              :value="value"
+              :disabled="!debugEnabled"
+              @change="saveDebugConfig"
+            />
+            {{ t(`settings.logging.debugScope.${label}`) }}
+          </label>
+        </div>
+        <label class="debug-until">
+          <span>{{ t("settings.logging.debugUntil") }}</span>
+          <input
+            v-model="debugUntilLocal"
+            type="datetime-local"
+            :disabled="!debugEnabled"
+            @change="saveDebugConfig"
+          />
+        </label>
+        <p class="debug-warning">{{ t("settings.logging.debugPayloadWarn") }}</p>
+      </section>
 
       <div class="kv">
         <span class="k">{{ t("settings.logging.currentFile") }}</span>
@@ -328,6 +419,41 @@ async function onResetPath() {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.debug-scopes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.scope-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 12px;
+}
+.scope-grid.disabled { opacity: 0.55; }
+.debug-until {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.debug-until input {
+  min-width: 0;
+  height: 30px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 8px;
+}
+.debug-warning {
+  margin: 0;
+  color: var(--warn);
+  font-size: 12px;
 }
 .level-row {
   display: flex;

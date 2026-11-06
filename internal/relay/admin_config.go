@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -29,10 +30,12 @@ type AdminConfig struct {
 	// consumes it once); changing it needs a relay restart.
 	VAPIDSubject string `json:"vapid_subject,omitempty"`
 
-	// Debug / DebugPayload are hot-reloadable verbose-logging switches.
-	// DebugPayload also logs PTY byte contents (terminal in/out) — sensitive.
-	Debug        bool `json:"debug,omitempty"`
-	DebugPayload bool `json:"debug_payload,omitempty"`
+	// DebugScopes controls which verbose records are generated. DebugUntil is
+	// RFC3339; an empty value means no automatic expiry. The payload scope is
+	// deliberately excluded from "*" and must always be selected explicitly.
+	Debug       bool     `json:"debug,omitempty"`
+	DebugScopes []string `json:"debug_scopes,omitempty"`
+	DebugUntil  string   `json:"debug_until,omitempty"`
 
 	// version is the DB relay_config.version; 0 = unconfigured. Unexported
 	// so it is never marshalled to JSON or surfaced directly; consumers use
@@ -110,13 +113,27 @@ func (s *AdminConfigStore) Set(ctx context.Context, cfg AdminConfig) error {
 }
 
 func relayConfigToAdmin(rc userstore.RelayConfig) AdminConfig {
+	debugScopes := normalizeDebugScopes(rc.DebugScopes)
+	// Releases before scoped debug persisted two booleans. Preserve their
+	// behavior while making payload explicit in the new representation.
+	if rc.Debug && len(debugScopes) == 0 {
+		debugScopes = []string{DebugScopeAll}
+	}
+	if rc.DebugPayload && !containsDebugScope(debugScopes, DebugScopePayload) {
+		debugScopes = append(debugScopes, DebugScopePayload)
+	}
+	debugUntil := ""
+	if rc.DebugUntil > 0 {
+		debugUntil = time.Unix(rc.DebugUntil, 0).UTC().Format(time.RFC3339)
+	}
 	return AdminConfig{
 		RateLimitPerMinute:   rc.RateLimitPerMinute,
 		MaxConnectionsPerKey: rc.MaxConnectionsPerKey,
 		AllowedOrigins:       append([]string(nil), rc.AllowedOrigins...),
 		VAPIDSubject:         rc.VAPIDSubject,
 		Debug:                rc.Debug,
-		DebugPayload:         rc.DebugPayload,
+		DebugScopes:          debugScopes,
+		DebugUntil:           debugUntil,
 		FeishuEnabled:        rc.FeishuEnabled,
 		FeishuEncryptKey:     rc.FeishuEncryptKey,
 		FeishuBaseURL:        rc.FeishuBaseURL,
@@ -125,16 +142,26 @@ func relayConfigToAdmin(rc userstore.RelayConfig) AdminConfig {
 }
 
 func adminToRelayConfig(c AdminConfig) userstore.RelayConfig {
+	debugUntil := int64(0)
+	if c.DebugUntil != "" {
+		if parsed, err := time.Parse(time.RFC3339, c.DebugUntil); err == nil {
+			debugUntil = parsed.Unix()
+		}
+	}
 	return userstore.RelayConfig{
 		RateLimitPerMinute:   c.RateLimitPerMinute,
 		MaxConnectionsPerKey: c.MaxConnectionsPerKey,
 		AllowedOrigins:       append([]string(nil), c.AllowedOrigins...),
 		VAPIDSubject:         c.VAPIDSubject,
 		Debug:                c.Debug,
-		DebugPayload:         c.DebugPayload,
-		FeishuEnabled:        c.FeishuEnabled,
-		FeishuEncryptKey:     c.FeishuEncryptKey,
-		FeishuBaseURL:        c.FeishuBaseURL,
+		DebugScopes:          normalizeDebugScopes(c.DebugScopes),
+		DebugUntil:           debugUntil,
+		// Keep older relay instances sharing this DB fail-safe: they still use
+		// this column and should only dump payload after explicit selection.
+		DebugPayload:     c.Debug && containsDebugScope(c.DebugScopes, DebugScopePayload),
+		FeishuEnabled:    c.FeishuEnabled,
+		FeishuEncryptKey: c.FeishuEncryptKey,
+		FeishuBaseURL:    c.FeishuBaseURL,
 	}
 }
 
@@ -145,10 +172,19 @@ func (c AdminConfig) validate() error {
 			return fmt.Errorf("feishu enabled but %w", err)
 		}
 	}
+	if _, err := validateDebugScopes(c.DebugScopes); err != nil {
+		return err
+	}
+	if c.DebugUntil != "" {
+		if _, err := time.Parse(time.RFC3339, c.DebugUntil); err != nil {
+			return fmt.Errorf("debug_until must be RFC3339: %w", err)
+		}
+	}
 	return nil
 }
 
 func cloneAdminConfig(cfg AdminConfig) AdminConfig {
 	cfg.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
+	cfg.DebugScopes = append([]string(nil), cfg.DebugScopes...)
 	return cfg
 }

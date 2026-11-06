@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -147,6 +148,29 @@ func TestAdminConfig_DebugHotToggle(t *testing.T) {
 	}
 	if srv.debugOn() || srv.debugPayloadOn() {
 		t.Fatal("debug not cleared after disable")
+	}
+}
+
+func TestAdminConfig_DebugScopesAndExpiryRoundTrip(t *testing.T) {
+	srv, tok := newFeishuAdminServer(t)
+	until := time.Now().Add(time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
+	w := adminPutBearer(srv, "/admin/api/config", map[string]any{
+		"rate_limit_per_minute": 0, "max_connections_per_key": 0,
+		"debug": true, "debug_scopes": []string{"state-sync", "payload"}, "debug_until": until,
+	}, tok)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT: %d (%s)", w.Code, w.Body.String())
+	}
+	if !srv.debugScopeOn(DebugScopeStateSync) || !srv.debugPayloadOn() || srv.debugScopeOn(DebugScopeConnection) {
+		t.Fatalf("scope toggle mismatch: state=%v payload=%v connection=%v",
+			srv.debugScopeOn(DebugScopeStateSync), srv.debugPayloadOn(), srv.debugScopeOn(DebugScopeConnection))
+	}
+	var got adminConfigResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DebugUntil != until || len(got.DebugScopes) != 2 {
+		t.Fatalf("response mismatch: %+v", got)
 	}
 }
 

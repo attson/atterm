@@ -115,6 +115,9 @@ export interface AdminConfig {
   default_rate_limit_per_minute: number
   default_max_connections_per_key: number
   debug: boolean
+  debug_scopes: string[]
+  debug_until: string
+  /** Legacy compatibility; use the payload scope. */
   debug_payload: boolean
   allowed_origins: string[]
   version: string
@@ -124,6 +127,9 @@ export interface AdminConfigUpdate {
   rate_limit_per_minute: number
   max_connections_per_key: number
   debug?: boolean
+  debug_scopes?: string[]
+  debug_until?: string
+  /** Legacy compatibility; use the payload scope. */
   debug_payload?: boolean
   allowed_origins?: string[]
 }

@@ -180,6 +180,13 @@ func EmitForced(l Level, tag, msg string) {
 	write(FormatLine(time.Now(), l, tag, msg))
 }
 
+// EmitForcedAt is EmitForced with a caller-supplied timestamp. It is used for
+// renderer DEBUG records after the desktop's explicit scope gate has accepted
+// them, preserving the time the browser-side event actually occurred.
+func EmitForcedAt(t time.Time, l Level, tag, msg string) {
+	write(FormatLine(t, l, tag, msg))
+}
+
 // The leveled helpers check the threshold before formatting, so a below-
 // threshold call on a per-frame or per-keystroke path allocates nothing.
 

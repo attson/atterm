@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { NCard, NForm, NFormItem, NInputNumber, NInput, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
+import { NButton, NCard, NCheckbox, NCheckboxGroup, NDatePicker, NForm, NFormItem, NInput, NInputNumber, NSpace, NSwitch, useMessage } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { getAdminConfig, setAdminConfig } from '@shared/api/admin'
 import type { AdminConfig } from '@shared/api/types'
@@ -10,13 +10,26 @@ const cfg = ref<AdminConfig | null>(null)
 const rateInput = ref<number>(0)
 const connInput = ref<number>(0)
 const debugInput = ref(false)
-const debugPayloadInput = ref(false)
+const debugScopesInput = ref<string[]>([])
+const debugUntilInput = ref<number | null>(null)
 const originsInput = ref<string>('')
 const loading = ref(true)
 const saving = ref(false)
 const errorMsg = ref('')
 const message = useMessage()
 const { t } = useI18n()
+
+const debugScopeOptions = [
+  ['*', 'all'],
+  ['state-sync', 'stateSync'],
+  ['connection', 'connection'],
+  ['prefs-sync', 'prefsSync'],
+  ['terminal-io', 'terminalIO'],
+  ['notifications', 'notifications'],
+  ['auth', 'auth'],
+  ['peer', 'peer'],
+  ['payload', 'payload'],
+] as const
 
 // Newline-separated list ⇄ string[]; blank lines are dropped so save doesn't
 // send stray "" patterns (which nhooyr's filepath.Match would treat as literal).
@@ -46,7 +59,8 @@ async function load() {
     rateInput.value = c.rate_limit_per_minute
     connInput.value = c.max_connections_per_key
     debugInput.value = c.debug
-    debugPayloadInput.value = c.debug_payload
+    debugScopesInput.value = [...(c.debug_scopes ?? [])]
+    debugUntilInput.value = c.debug_until ? Date.parse(c.debug_until) : null
     originsInput.value = (c.allowed_origins ?? []).join('\n')
   } catch (e) {
     if (e instanceof ApiError) errorMsg.value = t('admin.config.loadFailed')
@@ -64,14 +78,16 @@ async function onSave() {
       rate_limit_per_minute: Math.round(rateInput.value),
       max_connections_per_key: Math.round(connInput.value),
       debug: debugInput.value,
-      debug_payload: debugPayloadInput.value,
+      debug_scopes: debugScopesInput.value,
+      debug_until: debugUntilInput.value ? new Date(debugUntilInput.value).toISOString() : '',
       allowed_origins: parseOrigins(originsInput.value),
     })
     cfg.value = updated
     rateInput.value = updated.rate_limit_per_minute
     connInput.value = updated.max_connections_per_key
     debugInput.value = updated.debug
-    debugPayloadInput.value = updated.debug_payload
+    debugScopesInput.value = [...(updated.debug_scopes ?? [])]
+    debugUntilInput.value = updated.debug_until ? Date.parse(updated.debug_until) : null
     originsInput.value = (updated.allowed_origins ?? []).join('\n')
     message.success(t('setup.saved'))
   } catch (e) {
@@ -119,10 +135,31 @@ onMounted(load)
           <span class="muted">{{ t('admin.config.debugHint') }}</span>
         </n-space>
       </n-form-item>
-      <n-form-item :label="t('admin.config.debugPayload')" :show-feedback="false">
-        <n-space align="center" :size="8">
-          <n-switch v-model:value="debugPayloadInput" data-testid="cfg-debug-payload" />
-          <span class="warn">{{ t('admin.config.debugPayloadWarn') }}</span>
+      <n-form-item :label="t('admin.config.debugScopes')" :show-feedback="false">
+        <n-checkbox-group v-model:value="debugScopesInput" :disabled="!debugInput">
+          <n-space vertical :size="8">
+            <n-checkbox
+              v-for="([value, label]) in debugScopeOptions"
+              :key="value"
+              :value="value"
+              :data-testid="`cfg-debug-scope-${label}`"
+            >
+              {{ t(`admin.config.debugScope.${label}`) }}
+            </n-checkbox>
+          </n-space>
+        </n-checkbox-group>
+        <p class="warn">{{ t('admin.config.debugPayloadWarn') }}</p>
+      </n-form-item>
+      <n-form-item :label="t('admin.config.debugUntil')" :show-feedback="false">
+        <n-space vertical :size="4" style="width: 100%">
+          <n-date-picker
+            v-model:value="debugUntilInput"
+            type="datetime"
+            clearable
+            :disabled="!debugInput"
+            data-testid="cfg-debug-until"
+          />
+          <span class="muted">{{ t('admin.config.debugUntilHint') }}</span>
         </n-space>
       </n-form-item>
       <n-form-item :label="t('admin.config.allowedOrigins')" :show-feedback="false">

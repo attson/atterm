@@ -548,6 +548,12 @@ export interface LoggingConfig {
   level: string;
 }
 
+export interface DebugLoggingConfig {
+  enabled: boolean;
+  scopes: string[];
+  until: string;
+}
+
 /** One log line produced in the renderer, flushed in batches to the Go side. */
 export interface FrontendLogRecord {
   timestamp_ms: number;
@@ -813,6 +819,8 @@ export interface AppBindings {
   CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
+  GetDebugLoggingConfig(): Promise<DebugLoggingConfig>;
+  SetDebugLoggingConfig(cfg: DebugLoggingConfig): Promise<void>;
   PickLogFilePath(): Promise<string>;
   GetLogPreview(): Promise<LogPreview>;
   AppendFrontendLogs(records: FrontendLogRecord[]): Promise<number>;

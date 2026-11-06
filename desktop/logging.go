@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -65,7 +66,20 @@ func (s rawSink) Write(p []byte) (int, error) {
 // lot; the one-word names keep call sites readable. Sibling packages
 // (desktop/feishu, desktop/shellintegration) call internal/logging directly.
 
-func logDebug(tag, format string, args ...any) { logging.Debug(tag, format, args...) }
+func logDebug(tag, format string, args ...any) {
+	if !desktopDebugScopeEnabled(desktopDebugScopeForTag(tag)) {
+		return
+	}
+	msg := format
+	if len(args) > 0 {
+		msg = fmt.Sprintf(format, args...)
+	}
+	if desktopDebugConfig.Load() == nil {
+		logging.Debug(tag, "%s", msg)
+		return
+	}
+	logging.EmitForced(logging.LevelDebug, tag, msg)
+}
 func logInfo(tag, format string, args ...any)  { logging.Info(tag, format, args...) }
 func logWarn(tag, format string, args ...any)  { logging.Warn(tag, format, args...) }
 func logError(tag, format string, args ...any) { logging.Error(tag, format, args...) }
@@ -249,6 +263,7 @@ func isDevBuild(version string) bool {
 }
 
 func newDesktopLoggingManager(cfg appConfig, version string) (*loggingManager, error) {
+	configureDesktopDebug(cfg.DebugEnabledOrDefault(), cfg.DebugScopesOrDefault(), cfg.DebugUntil)
 	m, err := newLoggingManager(loggingOptions{
 		devMode:  isDevBuild(version),
 		terminal: os.Stderr,

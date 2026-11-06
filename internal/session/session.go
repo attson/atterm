@@ -152,7 +152,8 @@ type Session struct {
 	// full LIST_RESP for every other chunk would turn metadata into a hot path.
 	// The first eligible chunk notifies immediately, then at most once per
 	// interval while output continues. Uses monotonic time via time.Time.
-	lastListActivityNotify time.Time
+	lastListActivityNotify     time.Time
+	listActivityNotifyDisabled bool
 
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
 	// frames are forwarded to the PTY. Nil means no driver is currently
@@ -309,6 +310,32 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 func (s *Session) SetDriverFromUpstream(v bool) {
 	s.mu.Lock()
 	s.driverFromUpstream = v
+	s.mu.Unlock()
+}
+
+// DisableSilenceDetection makes externally-published task state authoritative.
+// Mirror sessions have no local PTY activity clock (and lazy mirrors may receive
+// no OUT frames at all), so running the local silence heuristic there would
+// oscillate upstream "running" back to "waiting_input" on every heartbeat.
+func (s *Session) DisableSilenceDetection() {
+	s.mu.Lock()
+	s.silenceDetectEnabled = false
+	if s.silenceTimer != nil {
+		s.silenceTimer.Stop()
+		s.silenceTimer = nil
+	}
+	s.waitingFromSilence = false
+	s.resetSilenceRestoreLocked()
+	s.resetSilenceActivityBurstLocked()
+	s.mu.Unlock()
+}
+
+// DisableListActivityNotifications suppresses periodic list refreshes caused
+// only by OUT activity. Semantic changes parsed from plaintext OUT still make
+// PushOut return true and remain visible to the registry owner.
+func (s *Session) DisableListActivityNotifications() {
+	s.mu.Lock()
+	s.listActivityNotifyDisabled = true
 	s.mu.Unlock()
 }
 
@@ -966,8 +993,9 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	listActivityDue := false
 	if !inResizeGrace {
 		s.meta.LastOutputAt = now.Unix()
-		listActivityDue = s.lastListActivityNotify.IsZero() ||
-			now.Sub(s.lastListActivityNotify) >= listActivityNotifyInterval
+		listActivityDue = !s.listActivityNotifyDisabled &&
+			(s.lastListActivityNotify.IsZero() ||
+				now.Sub(s.lastListActivityNotify) >= listActivityNotifyInterval)
 		if listActivityDue {
 			s.lastListActivityNotify = now
 		}

@@ -26,7 +26,7 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 	prefsSub := s.prefsNotify.Subscribe(ownerUserID)
 	defer prefsSub.Close()
 
-	if !s.writeSessionList(ctx, c, ownerUserID, client) {
+	if !s.writeSessionList(ctx, c, ownerUserID, client, "initial") {
 		return
 	}
 
@@ -45,7 +45,7 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 				return
 			}
 		case <-sub.C():
-			if !s.writeSessionList(ctx, c, ownerUserID, client) {
+			if !s.writeSessionList(ctx, c, ownerUserID, client, "registry_change") {
 				return
 			}
 		case <-prefsSub.C():
@@ -71,14 +71,14 @@ func (s *Server) writePrefsChanged(ctx context.Context, c *websocket.Conn, owner
 	err := c.Write(wctx, websocket.MessageBinary, b)
 	cancel()
 	if err != nil {
-		s.debugf("client-sessions prefs_changed_write_failed error=%q", err)
+		s.debugScopef(DebugScopePrefsSync, "client-sessions prefs_changed_write_failed error=%q", err)
 		return false
 	}
 	s.recordTraffic(ownerUserID, client, frame.Type, trafficOut, len(b))
 	return true
 }
 
-func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string, client trafficClient) bool {
+func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string, client trafficClient, reason string) bool {
 	var infos []proto.SessionInfo
 	if ownerUserID != "" {
 		infos = s.sessionInfoListForOwner(ownerUserID, s.seenForOwner(ctx, ownerUserID))
@@ -94,6 +94,7 @@ func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerU
 	s.debugFrame("client-sessions", "send", frame)
 	wctx, cancel := context.WithTimeout(ctx, clientSessionsWriteWait)
 	b := proto.Marshal(frame)
+	s.debugScopef(DebugScopeStateSync, "list_resp_send reason=%s sessions=%d wire_bytes=%d", reason, len(infos), len(b))
 	err = c.Write(wctx, websocket.MessageBinary, b)
 	cancel()
 	if err != nil {

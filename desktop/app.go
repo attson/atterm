@@ -241,6 +241,12 @@ type LoggingConfig struct {
 	Level string `json:"level"`
 }
 
+type DebugLoggingConfig struct {
+	Enabled bool     `json:"enabled"`
+	Scopes  []string `json:"scopes"`
+	Until   string   `json:"until"`
+}
+
 type LogPreview struct {
 	Path      string `json:"path"`
 	Exists    bool   `json:"exists"`
@@ -1109,6 +1115,49 @@ func (a *App) SetLoggingConfig(req LoggingConfig) error {
 		}
 		return err
 	}
+	if nextCfg.DebugEnabled == nil {
+		configureDesktopDebug(nextCfg.DebugEnabledOrDefault(), nextCfg.DebugScopesOrDefault(), nextCfg.DebugUntil)
+	}
+	return nil
+}
+
+func (a *App) GetDebugLoggingConfig() DebugLoggingConfig {
+	cfg := appConfig{}
+	if a.cfgStore != nil {
+		cfg = a.cfgStore.Get()
+	}
+	return DebugLoggingConfig{
+		Enabled: cfg.DebugEnabledOrDefault(),
+		Scopes:  cfg.DebugScopesOrDefault(),
+		Until:   cfg.DebugUntil,
+	}
+}
+
+func (a *App) SetDebugLoggingConfig(req DebugLoggingConfig) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	if err := validateDesktopDebugScopes(req.Scopes); err != nil {
+		return err
+	}
+	until := strings.TrimSpace(req.Until)
+	if until != "" {
+		if _, err := time.Parse(time.RFC3339, until); err != nil {
+			return fmt.Errorf("debug until must be RFC3339: %w", err)
+		}
+	}
+	scopes := normalizeDesktopDebugScopes(req.Scopes)
+	if req.Enabled && len(scopes) == 0 {
+		scopes = []string{desktopDebugScopeAll}
+	}
+	next := a.cfgStore.Get()
+	next.DebugEnabled = &req.Enabled
+	next.DebugScopes = scopes
+	next.DebugUntil = until
+	if err := a.cfgStore.Set(next); err != nil {
+		return err
+	}
+	configureDesktopDebug(req.Enabled, scopes, until)
 	return nil
 }
 

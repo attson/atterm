@@ -44,9 +44,12 @@ func (b *lockedBuffer) Len() int {
 func captureLogSink(t *testing.T) *lockedBuffer {
 	t.Helper()
 	prevLevel := logging.CurrentLevel()
+	prevDebug := desktopDebugConfig.Load()
+	desktopDebugConfig.Store(nil)
 	t.Cleanup(func() {
 		logging.SetSink(nil)
 		logging.SetLevel(prevLevel)
+		desktopDebugConfig.Store(prevDebug)
 	})
 	buf := &lockedBuffer{}
 	logging.SetSink(buf)

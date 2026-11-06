@@ -28,20 +28,54 @@ func TestAnnounceCacheSkipsUnchangedSnapshot(t *testing.T) {
 		Cwd:   "/tmp",
 		Title: "/bin/zsh",
 	}})
+	firstSemantic := mustAnnounceSemanticPayload(t, []proto.SessionInfo{{
+		ID:    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		Cwd:   "/Users/attson",
+		Title: "/bin/zsh",
+	}})
+	sameSemantic := append([]byte(nil), firstSemantic...)
+	changedSemantic := mustAnnounceSemanticPayload(t, []proto.SessionInfo{{
+		ID:    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		Cwd:   "/tmp",
+		Title: "/bin/zsh",
+	}})
 
-	if !cache.shouldSend(first) {
+	if !cache.shouldSend(first, firstSemantic, false) {
 		t.Fatal("first announce should send")
 	}
-	cache.markSent(first)
-	if cache.shouldSend(same) {
+	cache.markSent(first, firstSemantic)
+	if cache.shouldSend(same, sameSemantic, false) {
 		t.Fatal("unchanged announce should be skipped")
 	}
-	if !cache.shouldSend(changed) {
+	if !cache.shouldSend(changed, changedSemantic, false) {
 		t.Fatal("changed cwd should send")
 	}
-	cache.markSent(changed)
-	if cache.shouldSend(changed) {
+	cache.markSent(changed, changedSemantic)
+	if cache.shouldSend(changed, changedSemantic, false) {
 		t.Fatal("same changed payload should be skipped after markSent")
+	}
+}
+
+func TestAnnounceCacheDefersActivityOnlyChangesUntilHeartbeat(t *testing.T) {
+	var cache announceCache
+	firstInfo := proto.SessionInfo{
+		ID:           "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		Cwd:          "/Users/attson",
+		LastOutputAt: 100,
+	}
+	first := mustAnnouncePayload(t, []proto.SessionInfo{firstInfo})
+	firstSemantic := mustAnnounceSemanticPayload(t, []proto.SessionInfo{firstInfo})
+	cache.markSent(first, firstSemantic)
+
+	activityInfo := firstInfo
+	activityInfo.LastOutputAt++
+	activity := mustAnnouncePayload(t, []proto.SessionInfo{activityInfo})
+	activitySemantic := mustAnnounceSemanticPayload(t, []proto.SessionInfo{activityInfo})
+	if cache.shouldSend(activity, activitySemantic, false) {
+		t.Fatal("registry activity refresh bypassed the heartbeat interval")
+	}
+	if !cache.shouldSend(activity, activitySemantic, true) {
+		t.Fatal("periodic heartbeat suppressed changed activity timestamp")
 	}
 }
 
@@ -99,6 +133,15 @@ func TestLocalFrameAllowedByPermission(t *testing.T) {
 func mustAnnouncePayload(t *testing.T, sessions []proto.SessionInfo) []byte {
 	t.Helper()
 	payload, err := buildAnnouncePayload("host-id", "host", "user", sessions, proto.RemotePermissionFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func mustAnnounceSemanticPayload(t *testing.T, sessions []proto.SessionInfo) []byte {
+	t.Helper()
+	payload, err := buildAnnounceSemanticPayload("host-id", "host", "user", sessions, proto.RemotePermissionFull)
 	if err != nil {
 		t.Fatal(err)
 	}

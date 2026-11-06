@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
@@ -70,8 +71,8 @@ func TestDebugFrameSummarizesInOutWithoutPayload(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"[relay-debug] client recv IN session=11111111-1111-1111-1111-111111111111 bytes=15",
-		"[relay-debug] agent recv OUT session=11111111-1111-1111-1111-111111111111 seq=42 bytes=14",
+		"[relay-debug/terminal-io] client recv IN session=11111111-1111-1111-1111-111111111111 bytes=15",
+		"[relay-debug/terminal-io] agent recv OUT session=11111111-1111-1111-1111-111111111111 seq=42 bytes=14",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log %q missing %q", got, want)
@@ -102,6 +103,44 @@ func TestDebugFrameCanIncludeInOutPayload(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log %q missing %q", got, want)
 		}
+	}
+}
+
+func TestDebugAllScopeExcludesPayload(t *testing.T) {
+	buf := captureDebugLog(t)
+	s := NewServer(Config{Debug: true, DebugScopes: []string{DebugScopeAll}})
+	s.debugScopef(DebugScopeConnection, "connection-record")
+	s.debugScopef(DebugScopePayload, "secret-payload")
+
+	got := buf.String()
+	if !strings.Contains(got, "connection-record") {
+		t.Fatalf("normal scope missing from *: %q", got)
+	}
+	if strings.Contains(got, "secret-payload") {
+		t.Fatalf("payload scope must not be included by *: %q", got)
+	}
+}
+
+func TestDebugScopeSelectionAndExpiry(t *testing.T) {
+	buf := captureDebugLog(t)
+	s := NewServer(Config{
+		Debug:       true,
+		DebugScopes: []string{DebugScopeStateSync},
+	})
+	s.debugScopef(DebugScopeConnection, "connection-record")
+	s.debugScopef(DebugScopeStateSync, "state-record")
+	got := buf.String()
+	if strings.Contains(got, "connection-record") || !strings.Contains(got, "state-record") {
+		t.Fatalf("scope gate mismatch: %q", got)
+	}
+
+	buf.mu.Lock()
+	buf.buf.Reset()
+	buf.mu.Unlock()
+	s.SetDebugScopes(true, []string{DebugScopeStateSync}, time.Now().Add(-time.Second).Format(time.RFC3339))
+	s.debugScopef(DebugScopeStateSync, "expired-record")
+	if got := buf.String(); got != "" {
+		t.Fatalf("expired debug wrote %q; want empty", got)
 	}
 }
 

@@ -19,9 +19,12 @@ type adminConfigResponse struct {
 	DefaultRateLimitPerMinute   int `json:"default_rate_limit_per_minute"`
 	DefaultMaxConnectionsPerKey int `json:"default_max_connections_per_key"`
 
-	// Hot-reloadable verbose logging switches.
-	Debug        bool `json:"debug"`
-	DebugPayload bool `json:"debug_payload"`
+	// Hot-reloadable verbose logging configuration. DebugPayload remains in
+	// the response for older admin clients; new clients use DebugScopes.
+	Debug        bool     `json:"debug"`
+	DebugScopes  []string `json:"debug_scopes"`
+	DebugUntil   string   `json:"debug_until"`
+	DebugPayload bool     `json:"debug_payload"`
 
 	// AllowedOrigins is the current HTTP/WS Origin allow-list. Editable via
 	// PUT with allowed_origins in the body. An empty list means "any origin"
@@ -53,6 +56,8 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 			AllowedOrigins       *[]string `json:"allowed_origins,omitempty"`
 			VAPIDSubject         *string   `json:"vapid_subject,omitempty"`
 			Debug                *bool     `json:"debug,omitempty"`
+			DebugScopes          *[]string `json:"debug_scopes,omitempty"`
+			DebugUntil           *string   `json:"debug_until,omitempty"`
 			DebugPayload         *bool     `json:"debug_payload,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -71,8 +76,27 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 			if req.Debug != nil {
 				cfg.Debug = *req.Debug
 			}
+			if req.DebugScopes != nil {
+				cfg.DebugScopes = append([]string(nil), (*req.DebugScopes)...)
+			}
+			if req.DebugUntil != nil {
+				cfg.DebugUntil = *req.DebugUntil
+			}
 			if req.DebugPayload != nil {
-				cfg.DebugPayload = *req.DebugPayload
+				scopes := make([]string, 0, len(cfg.DebugScopes)+1)
+				for _, scope := range cfg.DebugScopes {
+					if scope != DebugScopePayload {
+						scopes = append(scopes, scope)
+					}
+				}
+				if *req.DebugPayload {
+					cfg.Debug = true
+					if len(scopes) == 0 {
+						scopes = append(scopes, DebugScopeAll)
+					}
+					scopes = append(scopes, DebugScopePayload)
+				}
+				cfg.DebugScopes = scopes
 			}
 			return cfg
 		}); err != nil {
@@ -85,9 +109,9 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 		if req.AllowedOrigins != nil {
 			s.SetAllowedOrigins(OriginPatterns(*req.AllowedOrigins))
 		}
-		if req.Debug != nil || req.DebugPayload != nil {
+		if req.Debug != nil || req.DebugScopes != nil || req.DebugUntil != nil || req.DebugPayload != nil {
 			cur := s.cfg.AdminConfigStore.Snapshot()
-			s.SetDebug(cur.Debug, cur.DebugPayload)
+			s.SetDebugScopes(cur.Debug, cur.DebugScopes, cur.DebugUntil)
 		}
 		writeJSON(w, s.adminConfigResponse())
 	default:
@@ -108,6 +132,8 @@ func (s *Server) adminConfigResponse() adminConfigResponse {
 		DefaultRateLimitPerMinute:   defaultRateLimitPerMinute,
 		DefaultMaxConnectionsPerKey: defaultMaxConnections,
 		Debug:                       s.debugOn(),
+		DebugScopes:                 append([]string(nil), cfg.DebugScopes...),
+		DebugUntil:                  cfg.DebugUntil,
 		DebugPayload:                s.debugPayloadOn(),
 		AllowedOrigins:              append([]string(nil), cfg.AllowedOrigins...),
 		Version:                     s.cfg.Version,

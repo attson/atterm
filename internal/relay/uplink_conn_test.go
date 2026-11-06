@@ -355,6 +355,31 @@ func TestNewMirrorSessionAdoptsUpstreamDriver(t *testing.T) {
 	}
 }
 
+func TestNewMirrorSessionKeepsUpstreamTaskStateAuthoritative(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "20")
+	sess := newMirrorSession(uuid.New(), proto.SessionInfo{
+		Cols:      80,
+		Rows:      24,
+		Type:      session.SessionTypeAI,
+		TaskState: proto.TaskStateWaitingInput,
+	}, "owner-user")
+	defer sess.Close()
+	listRefreshes := make(chan struct{}, 1)
+	sess.SetMetaChangedHook(func() { listRefreshes <- struct{}{} })
+	sess.PushOut(1, []byte("ordinary output"))
+	select {
+	case <-listRefreshes:
+		t.Fatal("mirror emitted a raw-OUT activity list refresh")
+	default:
+	}
+
+	sess.UpdateMeta(proto.MetaPayload{TaskState: proto.TaskStateRunning})
+	time.Sleep(80 * time.Millisecond)
+	if got := sess.Info().TaskState; got != proto.TaskStateRunning {
+		t.Fatalf("mirror inferred task state %q; want upstream running", got)
+	}
+}
+
 // TestUplink_EchoesPingPayloadAsPong verifies the relay /uplink reader echoes
 // the payload of a TypePing back as TypePong. This is the application-level
 // RTT probe path used by the desktop uplink and (later) by web/mobile.

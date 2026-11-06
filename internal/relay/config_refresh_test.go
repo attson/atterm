@@ -95,6 +95,34 @@ func TestConfigRefresherNoOpWhenVersionUnchanged(t *testing.T) {
 	}
 }
 
+func TestConfigRefresherHotAppliesDebugScopes(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if _, err := store.SetRelayConfig(ctx, userstore.RelayConfig{}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	srv := newConfigRefreshTestServer(t, store)
+
+	if _, err := store.SetRelayConfig(ctx, userstore.RelayConfig{
+		Debug:       true,
+		DebugScopes: []string{DebugScopeStateSync},
+		DebugUntil:  time.Now().Add(time.Hour).Unix(),
+	}); err != nil {
+		t.Fatalf("remote change: %v", err)
+	}
+	if applied, err := srv.refreshConfigOnce(ctx); err != nil || !applied {
+		t.Fatalf("refresh applied=%v err=%v", applied, err)
+	}
+	if !srv.debugScopeOn(DebugScopeStateSync) || srv.debugScopeOn(DebugScopeConnection) || srv.debugPayloadOn() {
+		t.Fatalf("unexpected debug scopes: state-sync=%v connection=%v payload=%v",
+			srv.debugScopeOn(DebugScopeStateSync), srv.debugScopeOn(DebugScopeConnection), srv.debugPayloadOn())
+	}
+}
+
 // TestOriginNormalizationThroughRefresh verifies that refreshConfigOnce passes
 // raw DB origins through OriginPatterns so only host patterns (not full URLs)
 // end up in the hot-cache. Fails before the Bug 2 fix.

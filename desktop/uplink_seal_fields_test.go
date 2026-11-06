@@ -96,14 +96,22 @@ func TestSessionInfoSealCacheKeepsActivityOnlyAnnounceStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	announces.markSent(firstPayload)
+	firstSemantic, err := buildAnnounceSemanticPayload("host-id", "host", "user", firstSnapshot, proto.RemotePermissionFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	announces.markSent(firstPayload, firstSemantic)
 
 	sameSnapshot := stripContentFieldsFromSnapshot(seals.seal([]proto.SessionInfo{info}, ak))
 	samePayload, err := buildAnnouncePayload("host-id", "host", "user", sameSnapshot, proto.RemotePermissionFull)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if announces.shouldSend(samePayload) {
+	sameSemantic, err := buildAnnounceSemanticPayload("host-id", "host", "user", sameSnapshot, proto.RemotePermissionFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if announces.shouldSend(samePayload, sameSemantic, false) {
 		t.Fatal("unchanged encrypted snapshot bypassed ANNOUNCE deduplication")
 	}
 	if !bytes.Equal(firstSnapshot[0].Sealed, sameSnapshot[0].Sealed) {
@@ -120,8 +128,15 @@ func TestSessionInfoSealCacheKeepsActivityOnlyAnnounceStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !announces.shouldSend(activityPayload) {
-		t.Fatal("activity timestamp change was incorrectly suppressed")
+	activitySemantic, err := buildAnnounceSemanticPayload("host-id", "host", "user", activitySnapshot, proto.RemotePermissionFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if announces.shouldSend(activityPayload, activitySemantic, false) {
+		t.Fatal("activity timestamp change bypassed the heartbeat interval")
+	}
+	if !announces.shouldSend(activityPayload, activitySemantic, true) {
+		t.Fatal("activity timestamp change was suppressed at heartbeat")
 	}
 
 	content := activity

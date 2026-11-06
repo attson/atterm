@@ -353,6 +353,22 @@ export namespace main {
 	        this.can_sync_secrets = source["can_sync_secrets"];
 	    }
 	}
+	export class DebugLoggingConfig {
+	    enabled: boolean;
+	    scopes: string[];
+	    until: string;
+
+	    static createFrom(source: any = {}) {
+	        return new DebugLoggingConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.scopes = source["scopes"];
+	        this.until = source["until"];
+	    }
+	}
 	export class RendezvousDiagnostics {
 	    mode: string;
 	    service_origin: string;

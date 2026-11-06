@@ -44,6 +44,15 @@ func newMirrorSession(id uuid.UUID, info proto.SessionInfo, ownerUserID string) 
 	sess := session.New(id, info)
 	sess.OwnerUserID = ownerUserID
 	sess.SetDriverFromUpstream(true)
+	// The desktop owner publishes task state through ANNOUNCE/META. A lazy
+	// mirror has no local PTY activity clock, so local silence inference would
+	// fight that authoritative state and broadcast a full LIST_RESP on each
+	// running -> waiting_input -> running cycle.
+	sess.DisableSilenceDetection()
+	// Plaintext compatibility streams may still be parsed for semantic state,
+	// but raw activity is already published by the owner and must not create a
+	// second 3-second LIST_RESP loop here.
+	sess.DisableListActivityNotifications()
 	return sess
 }
 
@@ -343,6 +352,8 @@ func (u *uplinkSession) handleTaskNotifications(id uuid.UUID, ms *mirrorState) {
 func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 	seen := make(map[uuid.UUID]struct{}, len(sessions))
 	listChanged := false
+	added := 0
+	semanticUpdates := 0
 	for _, info := range sessions {
 		id, err := uuid.Parse(info.ID)
 		if err != nil {
@@ -364,9 +375,10 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 				// /client-sessions subscriber. The mirror has already stored the
 				// activity timestamp and attached terminal clients receive META.
 				listChanged = true
+				semanticUpdates++
 			}
 			u.handleTaskNotifications(id, existing)
-			u.server.debugf("uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
+			u.server.debugScopef(DebugScopePayload, "uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
 			continue
 		}
 
@@ -397,12 +409,13 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 		ms := &mirrorState{sess: sess}
 		u.mirrors[id] = ms
 		u.mu.Unlock()
+		added++
 		u.server.services.registerSession(id, u.ownerUserID, u.out)
 		// Resident inbound forwarder: must run regardless of remote
 		// subscribers so relay-injected IN frames reach the PTY.
 		u.startInboundForwarder(sess)
 		u.handleTaskNotifications(id, ms)
-		u.server.debugf("uplink mirror_add session=%s command=%q host_id=%q host=%q user=%q", id, info.Command, info.HostID, info.Host, info.User)
+		u.server.debugScopef(DebugScopePayload, "uplink mirror_add session=%s command=%q host_id=%q host=%q user=%q", id, info.Command, info.HostID, info.Host, info.User)
 	}
 	// remove sessions no longer in the manifest
 	u.mu.Lock()
@@ -428,6 +441,9 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 		// LIST_RESP per session to every list subscriber.
 		u.server.registry.NotifyChange()
 	}
+	u.server.debugScopef(DebugScopeStateSync,
+		"announce_reconcile advertised=%d added=%d removed=%d semantic_updates=%d list_notify=%t",
+		len(sessions), added, len(gone), semanticUpdates, listChanged || added > 0 || len(gone) > 0)
 }
 
 func (u *uplinkSession) cleanup() {
@@ -509,6 +525,7 @@ func (u *uplinkSession) readLoop() {
 		case proto.TypeAnnounce:
 			var p proto.AnnouncePayload
 			if err := json.Unmarshal(f.Payload, &p); err == nil {
+				u.server.debugScopef(DebugScopeStateSync, "announce_received sessions=%d payload_bytes=%d", len(p.Sessions), len(f.Payload))
 				u.reconcile(p.Sessions)
 			}
 		case proto.TypeOut:
@@ -637,14 +654,14 @@ func (u *uplinkSession) handleCommandEvent(f proto.Frame) {
 	}
 	payload, err := proto.DecodeCommandEvent(f)
 	if err != nil {
-		u.server.debugf("uplink command_event decode_failed session=%s error=%q", f.SessionID, err)
+		u.server.debugScopef(DebugScopeNotifications, "uplink command_event decode_failed session=%s error=%q", f.SessionID, err)
 		return
 	}
 	u.mu.Lock()
 	ms, ok := u.mirrors[f.SessionID]
 	u.mu.Unlock()
 	if !ok || ms == nil {
-		u.server.debugf("uplink command_event unknown_session session=%s", f.SessionID)
+		u.server.debugScopef(DebugScopeNotifications, "uplink command_event unknown_session session=%s", f.SessionID)
 		return
 	}
 	info := ms.sess.Info()

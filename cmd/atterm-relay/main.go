@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -151,10 +152,14 @@ func main() {
 	// "unset" from "false"); the admin UI is then the source of truth.
 	if *debug && !adminCfg.Debug {
 		adminCfg.Debug = true
+		if len(adminCfg.DebugScopes) == 0 {
+			adminCfg.DebugScopes = []string{relay.DebugScopeAll}
+		}
 		seeded = true
 	}
-	if *debugPayload && !adminCfg.DebugPayload {
-		adminCfg.DebugPayload = true
+	if *debugPayload && !slices.Contains(adminCfg.DebugScopes, relay.DebugScopePayload) {
+		adminCfg.Debug = true
+		adminCfg.DebugScopes = append(adminCfg.DebugScopes, relay.DebugScopePayload)
 		seeded = true
 	}
 	if seeded {
@@ -194,8 +199,9 @@ func main() {
 		WebFS:                webFS,
 		Version:              Version,
 		AllowedOrigins:       allowedOrigins,
-		Debug:                adminCfg.Debug || adminCfg.DebugPayload,
-		DebugPayload:         adminCfg.DebugPayload,
+		Debug:                adminCfg.Debug,
+		DebugScopes:          adminCfg.DebugScopes,
+		DebugUntil:           adminCfg.DebugUntil,
 		RateLimitPerMinute:   rateVal,
 		MaxConnectionsPerKey: maxVal,
 		AdminConfigStore:     adminStore,

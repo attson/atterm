@@ -507,17 +507,19 @@ if (startupErr?.fatal) showStartupFailure(startupErr);
 | `DEBUG` | 逐帧/逐字节/逐轮询的内部细节 | `inbound_recv`、`stream_out_progress`、repaint nudge、pty-input hex |
 
 **写盘阈值**默认 `INFO`（`config.json` 的 `log_level`，Settings → Logging 可改，
-热生效）。所以高频日志一律 `DEBUG`——平时不写盘，排查时一个下拉切过去就有。
-注意 Settings 里两个下拉不是一回事：**日志级别**决定写不写进文件，viewer 里的
-**显示**只过滤已经写进去的内容。
+热生效）。普通 DEBUG 诊断另有 `debug_enabled` / `debug_scopes` / `debug_until` 三层门控；
+显式开启后按 scope 生成并写盘，不受普通阈值遮挡。`*` 不包含 `payload`，后者必须显式
+选择。旧配置没有 `debug_enabled` 时继续以 `log_level=DEBUG` 作为总开关，避免升级后静默
+丢失原有诊断能力。viewer 的**显示**仍只过滤已经写进去的内容。
 
-**`EmitForced` 只给"自带开关"的三处用**：`pty-input` 字节追踪（Settings 勾选框）、
-relay 的 `debugOn()`（admin UI 开关）、`ATTERM_DEBUG_SILENCE=1`。它们各自的开关
+**`EmitForced` 只给"自带开关"的几处用**：桌面范围化 DEBUG、`pty-input` 字节追踪
+（Settings 勾选框）、relay 的 `debugScopeOn()`（admin UI 的总开关 + scope + 到期时间）、
+`ATTERM_DEBUG_SILENCE=1`。它们各自的开关
 **就是**门控，再叠一层全局级别只会让人勾了开关却看不到输出。新代码不要随手用。
 
 **tag 用小写 kebab、按子系统**：`app` `boot` `config` `uplink` `uplink-stream`
 `relay` `relay-host` `relay-client` `relay-agent` `relay-uplink` `relay-admin`
-`relay-adopt` `relay-config` `relay-feishu` `relay-debug` `session` `silence`
+`relay-adopt` `relay-config` `relay-feishu` `relay-debug/<scope>` `session` `silence`
 `pty` `pty-input` `repaint` `recovery` `ai-sid` `feishu` `feishu-anchor`
 `feishu-form` `feishu-hook` `feishu-card` `feishu-turn` `shell-integration`
 `paste` `updater` `notify` `keychain` `e2ee` `prefs` `plugin` `webpush` `events`

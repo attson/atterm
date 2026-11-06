@@ -234,7 +234,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	defer serviceHosts.close()
 
 	// Send first ANNOUNCE so the relay registers the host immediately.
-	if err := u.writeAnnounce(connCtx, conn); err != nil {
+	if err := u.writeAnnounce(connCtx, conn, true); err != nil {
 		return err
 	}
 	logInfo("uplink", "connected, sent ANNOUNCE (%d session(s))", len(u.host.Snapshot()))
@@ -267,13 +267,15 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		changes := u.host.server.Registry().SubscribeChanges()
 		defer changes.Close()
 		for {
+			allowActivityOnly := false
 			select {
 			case <-connCtx.Done():
 				return
 			case <-ticker.C:
+				allowActivityOnly = true
 			case <-changes.C():
 			}
-			if err := u.writeAnnounce(connCtx, conn); err != nil {
+			if err := u.writeAnnounce(connCtx, conn, allowActivityOnly); err != nil {
 				cancelConn()
 				return
 			}
@@ -562,7 +564,7 @@ func (u *uplink) handleCloseError(ctx context.Context, ce websocket.CloseError) 
 	}
 }
 
-func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error {
+func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn, allowActivityOnly bool) error {
 	hostID, host, user := u.host.HostMeta()
 	snapshot := u.host.Snapshot()
 	if u.accountKey != nil {
@@ -581,8 +583,25 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error 
 	if err != nil {
 		return err
 	}
-	if !u.announced.shouldSend(payload) {
+	semanticPayload, err := buildAnnounceSemanticPayload(hostID, host, user, snapshot, u.remotePermission)
+	if err != nil {
+		return err
+	}
+	if !u.announced.shouldSend(payload, semanticPayload, allowActivityOnly) {
+		reason := "unchanged"
+		if !bytes.Equal(u.announced.last, payload) {
+			reason = "activity_only_deferred"
+		}
+		logDebug("state-sync", "announce_suppressed reason=%s sessions=%d payload_bytes=%d", reason, len(snapshot), len(payload))
 		return nil
+	}
+	reason := "initial"
+	if u.announced.last != nil {
+		if bytes.Equal(u.announced.lastSemantic, semanticPayload) {
+			reason = "activity_heartbeat"
+		} else {
+			reason = "semantic_change"
+		}
 	}
 	wctx, cancel := context.WithTimeout(ctx, uplinkWriteTimeout)
 	defer cancel()
@@ -592,7 +611,8 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error 
 	})); err != nil {
 		return err
 	}
-	u.announced.markSent(payload)
+	u.announced.markSent(payload, semanticPayload)
+	logDebug("state-sync", "announce_sent reason=%s sessions=%d wire_bytes=%d", reason, len(snapshot), 22+len(payload))
 	return nil
 }
 
@@ -645,6 +665,18 @@ func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInf
 		User:     user,
 		Sessions: snapshot,
 	})
+}
+
+// buildAnnounceSemanticPayload removes the volatile activity clock used by
+// list freshness. Registry notifications fire for that clock every few
+// seconds, but only the 30-second heartbeat should promote it to a full remote
+// manifest. All fields that change rendered or routable session state remain.
+func buildAnnounceSemanticPayload(hostID, host, user string, sessions []proto.SessionInfo, remotePermission string) ([]byte, error) {
+	snapshot := append([]proto.SessionInfo(nil), sessions...)
+	for i := range snapshot {
+		snapshot[i].LastOutputAt = 0
+	}
+	return buildAnnouncePayload(hostID, host, user, snapshot, remotePermission)
 }
 
 func normalizeRemotePermission(value string) string {
@@ -782,17 +814,23 @@ func (u *uplink) SendCommandEvent(sessionID uuid.UUID, exit, elapsedMS int, labe
 }
 
 type announceCache struct {
-	last []byte
+	last         []byte
+	lastSemantic []byte
 }
 
-func (c *announceCache) shouldSend(payload []byte) bool {
-	return !bytes.Equal(c.last, payload)
+func (c *announceCache) shouldSend(payload, semanticPayload []byte, allowActivityOnly bool) bool {
+	if allowActivityOnly {
+		return !bytes.Equal(c.last, payload)
+	}
+	return !bytes.Equal(c.lastSemantic, semanticPayload)
 }
 
-func (c *announceCache) markSent(payload []byte) {
+func (c *announceCache) markSent(payload, semanticPayload []byte) {
 	c.last = append(c.last[:0], payload...)
+	c.lastSemantic = append(c.lastSemantic[:0], semanticPayload...)
 }
 
 func (c *announceCache) reset() {
 	c.last = nil
+	c.lastSemantic = nil
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func loadConfigStoreFrom(cfg appConfig) *configStore {
@@ -73,6 +74,26 @@ func TestSetLoggingConfigPersistsAndReconfigures(t *testing.T) {
 	}
 	if cfg.LogToFileEnabled == nil || !*cfg.LogToFileEnabled {
 		t.Fatalf("LogToFileEnabled = %#v; want true", cfg.LogToFileEnabled)
+	}
+}
+
+func TestSetDebugLoggingConfigPersistsAndHotApplies(t *testing.T) {
+	preserveDesktopDebugConfig(t)
+	a := newLoggingTestApp(t, appConfig{})
+	until := time.Now().Add(time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
+	if err := a.SetDebugLoggingConfig(DebugLoggingConfig{
+		Enabled: true,
+		Scopes:  []string{desktopDebugScopeStateSync, desktopDebugScopePayload},
+		Until:   until,
+	}); err != nil {
+		t.Fatalf("SetDebugLoggingConfig() error = %v", err)
+	}
+	got := a.GetDebugLoggingConfig()
+	if !got.Enabled || got.Until != until || len(got.Scopes) != 2 {
+		t.Fatalf("GetDebugLoggingConfig() = %+v", got)
+	}
+	if !desktopDebugScopeEnabled(desktopDebugScopeStateSync) || !desktopDebugScopeEnabled(desktopDebugScopePayload) || desktopDebugScopeEnabled(desktopDebugScopeConnection) {
+		t.Fatal("runtime debug scopes were not hot-applied")
 	}
 }
 

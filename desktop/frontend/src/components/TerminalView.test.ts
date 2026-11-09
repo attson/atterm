@@ -179,8 +179,17 @@ describe("TerminalView overlay placement", () => {
 });
 
 describe("TerminalView replay scroll", () => {
+  test("routes output through the bounded xterm write queue", () => {
+    expect(source).toContain('createTerminalWriteQueue');
+    expect(source).toMatch(/terminalWriteQueue = createTerminalWriteQueue\(term\)/);
+    expect(source).toMatch(/onOutput: \(data\) => terminalWriteQueue\?\.write\(data\)/);
+    expect(source).toMatch(/onClose: \(info\) => \{[\s\S]*?terminalWriteQueue\?\.write\(/);
+    expect(source).not.toMatch(/onOutput: \(data\) => term\?\.write\(data\)/);
+  });
+
   test("scrolls to the newest output after initial replay finishes", () => {
     expect(source).toMatch(/function scrollToBottomAfterWriteQueue\(done\?: \(\) => void\)/);
+    expect(source).toMatch(/currentQueue\.drain\(\(\) => \{/);
     expect(source).toMatch(/progress\.phase === "start" \|\| progress\.phase === "chunk"/);
     expect(source).toMatch(/replayInputGuard\.onProgress\("end"[\s\S]*scrollToBottomAfterWriteQueue\(release\)/);
   });

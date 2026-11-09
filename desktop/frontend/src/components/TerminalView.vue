@@ -13,6 +13,7 @@ import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { createReplayInputGuard } from "../lib/replayInputGuard";
+import { createTerminalWriteQueue, type TerminalWriteQueue } from "../lib/terminalWriteQueue";
 import { copyTerminalSelection, copyTextToClipboard, isTerminalCopyShortcut, type ClipboardWriter } from "../lib/terminalCopy";
 import { resolveTerminalFontFamily } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
@@ -345,6 +346,7 @@ function savePreviewDraft(): void {
 }
 
 let term: Terminal | null = null;
+let terminalWriteQueue: TerminalWriteQueue | null = null;
 let fit: FitAddon | null = null;
 let searchAddon: SearchAddon | null = null;
 // Snapshot of the metrics-affecting fields (font family / size / line
@@ -2189,11 +2191,12 @@ async function applyAppearance(next: TerminalAppearance) {
 
 function scrollToBottomAfterWriteQueue(done?: () => void) {
   const current = term;
-  if (!current) {
+  const currentQueue = terminalWriteQueue;
+  if (!current || !currentQueue) {
     done?.();
     return;
   }
-  current.write("", () => {
+  currentQueue.drain(() => {
     if (term === current) current.scrollToBottom();
     done?.();
   });
@@ -2229,6 +2232,7 @@ async function ensureTerm() {
     disableStdin: !isDriver.value,
     allowProposedApi: true,
   });
+  terminalWriteQueue = createTerminalWriteQueue(term);
   // Metrics are already applied via the constructor args above; seed the
   // snapshot so the first props.appearance watch firing after mount only
   // re-fits if a metrics field actually differs from what was just
@@ -2575,9 +2579,9 @@ function startConnection() {
     return;
   }
   const handlers: ConnectionHandlers = {
-    onOutput: (data) => term?.write(data),
+    onOutput: (data) => terminalWriteQueue?.write(data),
     onClose: (info) => {
-      term?.write(
+      terminalWriteQueue?.write(
         `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`,
       );
     },
@@ -2988,6 +2992,7 @@ onBeforeUnmount(() => {
   imagePreviewDisposer = null;
   conn?.detach();
   conn = null;
+  terminalWriteQueue = null;
   // term.dispose() can throw from inside xterm: RenderService schedules a
   // redraw via Promise.resolve().then(); if dispose interleaves with that
   // tick, `this._renderer.value.onRequestRedraw` is undefined and throws.

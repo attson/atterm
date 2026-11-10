@@ -217,8 +217,8 @@ function cancelReset() { resetOpen.value = false }
         class="row"
         :data-testid="`template-row-${it.id}`"
       >
-        <span class="label" :title="it.label">{{ it.label }}</span>
-        <code class="text" :title="it.text">{{ it.text }}</code>
+        <span class="label" v-tooltip="it.label">{{ it.label }}</span>
+        <code class="text" v-tooltip="it.text">{{ it.text }}</code>
         <code class="hotkey">{{ it.hotkey || '—' }}</code>
         <div class="actions">
           <button :disabled="idx === 0" @click="moveUp(it.id)">↑</button>

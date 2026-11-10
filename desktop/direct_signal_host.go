@@ -532,12 +532,40 @@ func (a *directHostAttempt) handleRecord(ctx context.Context, kind peertransport
 			sess.ClaimDriver(sub, claim.ClientID, claim.ClientName)
 			a.addDirectBytes(0, uint64(len(payload)), false)
 			return nil
+		case proto.TypeInputHistoryRequest:
+			response, err := a.handleInputHistoryRequest(frame, accountKey)
+			if err != nil {
+				return err
+			}
+			a.mu.Lock()
+			channel := a.channel
+			a.mu.Unlock()
+			if channel == nil {
+				return errors.New("direct transport unavailable")
+			}
+			wire := proto.Marshal(response)
+			if err := channel.SendFrame(ctx, wire); err != nil {
+				return err
+			}
+			a.addDirectBytes(uint64(len(wire)), uint64(len(payload)), false)
+			return nil
 		default:
 			return fmt.Errorf("direct frame type 0x%02x is not allowed", frame.Type)
 		}
 	default:
 		return fmt.Errorf("direct record kind %d is not accepted from client", kind)
 	}
+}
+
+func (a *directHostAttempt) handleInputHistoryRequest(frame proto.Frame, accountKey []byte) (proto.Frame, error) {
+	if frame.Type != proto.TypeInputHistoryRequest || frame.SessionID != a.sessionID {
+		return proto.Frame{}, errors.New("invalid input history request")
+	}
+	var request proto.InputHistoryRequestPayload
+	if err := json.Unmarshal(frame.Payload, &request); err != nil || request.RequestID == "" {
+		return proto.Frame{}, errors.New("invalid input history request")
+	}
+	return a.host.host.buildInputHistoryResponse(frame.SessionID, request.RequestID, accountKey), nil
 }
 
 func (h *directSignalHost) unlockedAccountKey() ([]byte, bool) {

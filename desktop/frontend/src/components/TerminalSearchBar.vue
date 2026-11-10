@@ -86,7 +86,7 @@ function onKeydown(e: KeyboardEvent) {
     <button
       class="term-search-btn"
       data-test="terminal-search-prev"
-      :title="t('terminal.search.prev')"
+      v-tooltip="t('terminal.search.prev')"
       :aria-label="t('terminal.search.prev')"
       :disabled="resultCount === 0"
       @click="step('prev')"
@@ -94,7 +94,7 @@ function onKeydown(e: KeyboardEvent) {
     <button
       class="term-search-btn"
       data-test="terminal-search-next"
-      :title="t('terminal.search.next')"
+      v-tooltip="t('terminal.search.next')"
       :aria-label="t('terminal.search.next')"
       :disabled="resultCount === 0"
       @click="step('next')"
@@ -102,7 +102,7 @@ function onKeydown(e: KeyboardEvent) {
     <button
       class="term-search-btn"
       data-test="terminal-search-close"
-      :title="t('terminal.search.close')"
+      v-tooltip="t('terminal.search.close')"
       :aria-label="t('terminal.search.close')"
       @click="emit('close')"
     >×</button>

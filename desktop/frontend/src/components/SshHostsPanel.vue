@@ -1149,11 +1149,11 @@ async function confirmConfigImport() {
           <button
             class="new-btn" data-test="ssh-tunnel-new"
             :disabled="tunnelHostOptions.length === 0"
-            :title="tunnelHostOptions.length === 0 ? t('ssh.forwards.newNeedsHost') : ''"
+            v-tooltip="tunnelHostOptions.length === 0 ? t('ssh.forwards.newNeedsHost') : ''"
             @click="openNewTunnel"
           ><Plus :size="14" /> {{ t("ssh.forwards.new") }}</button>
         </template>
-        <button class="close-x" :title="t('common.close')" @click="$emit('close')"><X :size="16" /></button>
+        <button class="close-x" v-tooltip="t('common.close')" :aria-label="t('common.close')" @click="$emit('close')"><X :size="16" /></button>
       </header>
 
       <p v-if="errorMsg" class="ssh-error" data-test="ssh-hosts-error">{{ errorMsg }}</p>
@@ -1221,7 +1221,7 @@ async function confirmConfigImport() {
                     <span
                       class="proxy-badge" :class="{ blocked: runsProxyCommand(h) }"
                       :data-test="`ssh-host-proxy-${h.id}`"
-                      :title="proxyReason(h)"
+                      v-tooltip="proxyReason(h)"
                     >{{ proxyLabel(h) }}</span>
                   </div>
                   <div v-if="h.tags?.length" class="card-tags">
@@ -1235,11 +1235,12 @@ async function confirmConfigImport() {
                   <button
                     class="act connect" :data-test="`ssh-connect-${h.id}`"
                     :disabled="connectingId === h.id || runsProxyCommand(h)"
-                    :title="proxyReason(h) || t('common.connect')"
+                    v-tooltip="proxyReason(h) || t('common.connect')"
+                    :aria-label="proxyReason(h) || t('common.connect')"
                     @click.stop="connect(h.id)"
                   ><Zap :size="13" /></button>
-                  <button class="act" :title="t('ssh.edit')" @click.stop="openEditHost(h)"><Pencil :size="13" /></button>
-                  <button class="act danger" :data-test="`ssh-delete-${h.id}`" :title="t('common.delete')" @click.stop="removeHost(h.id)"><Trash2 :size="13" /></button>
+                  <button class="act" v-tooltip="t('ssh.edit')" :aria-label="t('ssh.edit')" @click.stop="openEditHost(h)"><Pencil :size="13" /></button>
+                  <button class="act danger" :data-test="`ssh-delete-${h.id}`" v-tooltip="t('common.delete')" :aria-label="t('common.delete')" @click.stop="removeHost(h.id)"><Trash2 :size="13" /></button>
                 </div>
               </article>
             </div>
@@ -1262,8 +1263,8 @@ async function confirmConfigImport() {
               <div class="card-sub">{{ k.key_type ? t("ssh.keys.typeLabel", { type: k.key_type }) : t("ssh.keys.genericSubtitle") }}</div>
             </div>
             <div class="card-actions">
-              <button class="act" :data-test="`ssh-key-edit-${k.id}`" :title="t('ssh.edit')" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
-              <button class="act danger" :data-test="`ssh-key-delete-${k.id}`" :title="t('common.delete')" @click.stop="removeKey(k.id)"><Trash2 :size="13" /></button>
+              <button class="act" :data-test="`ssh-key-edit-${k.id}`" v-tooltip="t('ssh.edit')" :aria-label="t('ssh.edit')" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
+              <button class="act danger" :data-test="`ssh-key-delete-${k.id}`" v-tooltip="t('common.delete')" :aria-label="t('common.delete')" @click.stop="removeKey(k.id)"><Trash2 :size="13" /></button>
             </div>
           </article>
         </div>
@@ -1291,7 +1292,7 @@ async function confirmConfigImport() {
               v-if="hasProxyMarker(h)" class="proxy-badge"
               :class="{ blocked: runsProxyCommand(h) }"
               :data-test="`ssh-tunnel-proxy-${h.id}`"
-              :title="proxyReason(h)"
+              v-tooltip="proxyReason(h)"
             >{{ proxyLabel(h) }}</span>
           </header>
           <!-- Spelled out, not just a tooltip on a greyed button: the reason a
@@ -1340,7 +1341,8 @@ async function confirmConfigImport() {
                   <button
                     v-if="isForwardRunning(h.id, r.id)" class="act danger"
                     :data-test="`ssh-tunnel-stop-${h.id}-${r.id}`"
-                    :title="t('ssh.forwards.stop')"
+                    v-tooltip="t('ssh.forwards.stop')"
+                    :aria-label="t('ssh.forwards.stop')"
                     :disabled="forwardBusyKey !== ''"
                     @click="stopRule(h, r)"
                   ><Square :size="13" /></button>
@@ -1348,25 +1350,27 @@ async function confirmConfigImport() {
                     <button
                       class="act connect"
                       :data-test="`ssh-tunnel-start-${h.id}-${r.id}`"
-                      :title="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
+                      v-tooltip="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
+                      :aria-label="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
                       :disabled="runsProxyCommand(h) || forwardBusyKey !== ''"
                       @click="startRule(h, r)"
                     ><Play :size="13" /></button>
                     <button
                       v-if="forwardState(h.id, r.id)" class="act"
                       :data-test="`ssh-tunnel-dismiss-${h.id}-${r.id}`"
-                      :title="t('ssh.forwards.dismiss')"
+                      v-tooltip="t('ssh.forwards.dismiss')"
+                      :aria-label="t('ssh.forwards.dismiss')"
                       :disabled="forwardBusyKey !== ''"
                       @click="stopRule(h, r)"
                     ><X :size="13" /></button>
                   </template>
                   <button
                     class="act" :data-test="`ssh-tunnel-edit-${h.id}-${r.id}`"
-                    :title="t('ssh.edit')" @click="openEditTunnel(h, r)"
+                    v-tooltip="t('ssh.edit')" :aria-label="t('ssh.edit')" @click="openEditTunnel(h, r)"
                   ><Pencil :size="13" /></button>
                   <button
                     class="act danger" :data-test="`ssh-tunnel-delete-${h.id}-${r.id}`"
-                    :title="t('common.delete')" @click="removeTunnelRule(h, r)"
+                    v-tooltip="t('common.delete')" :aria-label="t('common.delete')" @click="removeTunnelRule(h, r)"
                   ><Trash2 :size="13" /></button>
                 </div>
               </div>
@@ -1400,7 +1404,7 @@ async function confirmConfigImport() {
                   {{ tag }}
                   <button
                     type="button" class="chip-x" :data-test="`ssh-add-tag-remove-${tag}`"
-                    :title="t('ssh.hostDrawer.removeTag', { tag })" @click.prevent="removeFormTag(tag)"
+                    v-tooltip="t('ssh.hostDrawer.removeTag', { tag })" :aria-label="t('ssh.hostDrawer.removeTag', { tag })" @click.prevent="removeFormTag(tag)"
                   ><X :size="10" /></button>
                 </span>
                 <input
@@ -1525,7 +1529,8 @@ async function confirmConfigImport() {
                   <button
                     type="button" class="act danger"
                     :data-test="`ssh-forward-remove-${r.id}`"
-                    :title="t('ssh.forwards.remove')"
+                    v-tooltip="t('ssh.forwards.remove')"
+                    :aria-label="t('ssh.forwards.remove')"
                     @click.prevent="removeForwardRule(r.id)"
                   ><Trash2 :size="13" /></button>
                 </div>
@@ -1595,12 +1600,13 @@ async function confirmConfigImport() {
                   <button
                     type="button" class="act" data-test="ssh-key-reveal"
                     :disabled="kRevealing"
-                    :title="kRevealed ? t('ssh.keyDrawer.hide') : t('ssh.keyDrawer.reveal')"
+                    v-tooltip="kRevealed ? t('ssh.keyDrawer.hide') : t('ssh.keyDrawer.reveal')"
+                    :aria-label="kRevealed ? t('ssh.keyDrawer.hide') : t('ssh.keyDrawer.reveal')"
                     @click.prevent="toggleRevealKey"
                   ><EyeOff v-if="kRevealed" :size="13" /><Eye v-else :size="13" /></button>
                   <button
                     type="button" class="act" data-test="ssh-key-copy"
-                    :title="t('ssh.keyDrawer.copy')" @click.prevent="copyKeyPem"
+                    v-tooltip="t('ssh.keyDrawer.copy')" :aria-label="t('ssh.keyDrawer.copy')" @click.prevent="copyKeyPem"
                   ><Copy :size="13" /></button>
                 </span>
               </span>
@@ -1782,7 +1788,7 @@ async function confirmConfigImport() {
                         <span
                           v-if="willOverwrite(e)" class="overwrite-badge"
                           :data-test="`ssh-config-entry-overwrite-${i}`"
-                          :title="t('ssh.configImport.overwriteTitle')"
+                          v-tooltip="t('ssh.configImport.overwriteTitle')"
                         >{{ t("ssh.configImport.overwriteBadge") }}</span>
                         <!-- Only a ProxyCommand entry carries the "not
                              directly connectable" disclaimer now; a ProxyJump
@@ -1792,7 +1798,7 @@ async function confirmConfigImport() {
                           v-if="hasProxyMarker(e)" class="proxy-badge"
                           :class="{ blocked: runsProxyCommand(e) }"
                           :data-test="`ssh-config-entry-proxy-${i}`"
-                          :title="proxyReason(e)"
+                          v-tooltip="proxyReason(e)"
                         >{{
                           runsProxyCommand(e)
                             ? t("ssh.configImport.proxyBadge", { label: proxyLabel(e) })

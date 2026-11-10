@@ -29,6 +29,7 @@ export function buildRestoreSessionReq(
     ai_kind: (pane.ai?.kind ?? "") as NewSessionReq["ai_kind"],
     initial_ai_session_id: pane.ai?.session_id ?? "",
     initial_ai_command_line: pane.last_command_line ?? "",
+    input_history_from_session_id: pane.session_id ?? "",
   };
 }
 

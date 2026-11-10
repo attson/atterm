@@ -239,6 +239,33 @@ func TestDirectHostPermissionGateDefaultsDeny(t *testing.T) {
 	}
 }
 
+func TestDirectHostViewCanReadSealedSessionInputHistory(t *testing.T) {
+	host := newTestRelayHost(t)
+	sessionID := uuid.New()
+	addDirectTestSession(t, host, sessionID)
+	host.sessions[sessionID] = &activeSession{
+		host:         &repaintRecordingPTY{},
+		cleanup:      func() {},
+		inputHistory: newSessionInputHistory(time.Now),
+	}
+	host.sessions[sessionID].inputHistory.Append("direct secret")
+	accountKey := bytes.Repeat([]byte{0x45}, e2eecrypto.SessionKeySize)
+	directHost := newDirectSignalHost("ws://unused", "", proto.RemotePermissionFull, host, func() []byte { return accountKey }, false)
+	attempt := &directHostAttempt{id: uuid.New(), sessionID: sessionID, permission: proto.RemotePermissionView, host: directHost}
+	payload, _ := json.Marshal(proto.InputHistoryRequestPayload{RequestID: "direct-request"})
+
+	response, err := attempt.handleInputHistoryRequest(proto.Frame{
+		Type: proto.TypeInputHistoryRequest, SessionID: sessionID, Payload: payload,
+	}, accountKey)
+	if err != nil {
+		t.Fatalf("view history request rejected: %v", err)
+	}
+	var head proto.InputHistoryResponsePayload
+	if response.Type != proto.TypeInputHistoryResponse || json.Unmarshal(response.Payload, &head) != nil || !head.OK || len(head.Sealed) == 0 {
+		t.Fatalf("direct response = %+v head=%+v", response, head)
+	}
+}
+
 func TestDirectSignalDisconnectClosesOnlyPendingAttempts(t *testing.T) {
 	host := newTestRelayHost(t)
 	sessionID := uuid.New()

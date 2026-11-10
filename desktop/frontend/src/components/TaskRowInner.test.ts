@@ -122,9 +122,10 @@ describe("TaskRowInner layout", () => {
     expect(source).toMatch(/\.row-tail\.time-only\s*\{[^}]*justify-content:\s*flex-end/);
   });
 
-  test("the truncated title carries the full text as a tooltip", () => {
+  test("the truncated title carries the full text as a tooltip", async () => {
     const w = factory({ title: "a very long session title that will not fit", cwd: "/tmp" });
-    expect(w.find(".cmd-and-cwd").attributes("title")).toContain(
+    await w.find(".cmd-and-cwd").trigger("focus");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
       "a very long session title that will not fit",
     );
   });

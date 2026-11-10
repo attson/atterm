@@ -44,6 +44,9 @@ func TestZshSnippetHasGuardAndHookRegistration(t *testing.T) {
 	if !strings.Contains(zshSnippet, "133;C;%s") || !strings.Contains(zshSnippet, `${3:-`) {
 		t.Fatalf("zsh snippet must emit the full ($3) preexec command in OSC 133;C, not the truncated $2 form")
 	}
+	if !strings.Contains(zshSnippet, "133;I;%s") || !strings.Contains(zshSnippet, `"$1"`) {
+		t.Fatalf("zsh snippet must emit the raw ($1) command in OSC 133;I for input history")
+	}
 }
 
 func TestBashSnippetHasGuardAndHookRegistration(t *testing.T) {
@@ -74,6 +77,9 @@ func TestFishSnippetHasGuardAndEventHooks(t *testing.T) {
 	if !strings.Contains(fishSnippet, "133;C;%s") || !strings.Contains(fishSnippet, "string join") {
 		t.Fatalf("fish snippet does not include the preexec command in OSC 133;C")
 	}
+	if !strings.Contains(fishSnippet, "133;I;%s") {
+		t.Fatalf("fish snippet does not include raw input in OSC 133;I")
+	}
 }
 
 func TestPwshSnippetHasGuardAndPromptWrapper(t *testing.T) {
@@ -85,5 +91,8 @@ func TestPwshSnippetHasGuardAndPromptWrapper(t *testing.T) {
 	}
 	if !strings.Contains(pwshSnippet, "PSReadLine") && !strings.Contains(pwshSnippet, "AddToHistoryHandler") && !strings.Contains(pwshSnippet, "133;C") {
 		t.Fatalf("pwsh snippet does not emit OSC 133;C on preexec (either via PSReadLine handler or inline)")
+	}
+	if !strings.Contains(pwshSnippet, "GetBufferState") || !strings.Contains(pwshSnippet, "133;I;") {
+		t.Fatalf("pwsh snippet does not capture and emit the raw input in OSC 133;I")
 	}
 }

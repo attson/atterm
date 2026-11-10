@@ -562,7 +562,7 @@ function stateLabel(state: string | undefined): string {
           v-if="unreadIdsForGroup(key).length > 0"
           class="mark-all"
           data-test="host-mark-all"
-          :title="t('tasks.markAllRead')"
+          v-tooltip="t('tasks.markAllRead')"
           :aria-label="t('tasks.markAllRead')"
           @click.stop="onMarkGroup(key)"
         >
@@ -652,7 +652,7 @@ function stateLabel(state: string | undefined): string {
                 class="state-label"
                 data-test="state-label"
               >{{ stateLabel(s.task_state) }}</span>
-              <span class="cmd-and-cwd" :title="rowTitle(s)">
+              <span class="cmd-and-cwd" v-tooltip="rowTitle(s)">
                 <span class="cmd">{{ titleOrCommand(s) }}</span>
               </span>
             </span>
@@ -683,7 +683,7 @@ function stateLabel(state: string | undefined): string {
             v-if="openSessionIdSet.has(s.session_id)"
             class="row-close completed-row-close"
             data-test="row-close"
-            :title="t('common.close')"
+            v-tooltip="t('common.close')"
             :aria-label="t('common.close')"
             @click.stop="emit('close', s)"
           >

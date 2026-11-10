@@ -17,7 +17,7 @@ const display = computed(() => formatLastOutput(props.lastOutputAt, props.taskSt
     v-if="display"
     class="last-output"
     :class="{ live: display.live }"
-    :title="display.title"
+    v-tooltip="display.title"
     :aria-label="display.title"
     data-test="last-output"
   >

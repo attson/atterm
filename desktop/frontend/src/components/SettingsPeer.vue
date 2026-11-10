@@ -1019,7 +1019,7 @@ function resetSetupChoice(): void {
             data-testid="peer-rendezvous-reconnect"
             :disabled="Boolean(rendezvousBusy) || lanOnly"
             :aria-label="t('settings.peer.rendezvous.reconnect')"
-            :title="t('settings.peer.rendezvous.reconnect')"
+            v-tooltip="t('settings.peer.rendezvous.reconnect')"
             @click="reconnectRendezvous"
           >
             <RefreshCw :size="15" :class="{ spinning: rendezvousBusy === 'reconnect' }" aria-hidden="true" />
@@ -1148,7 +1148,7 @@ function resetSetupChoice(): void {
               data-testid="peer-lan-route-add"
               :disabled="lanBusy || !lanRouteHost.trim() || !lanRouteFingerprint.trim()"
               :aria-label="t('settings.peer.lan.addRoute')"
-              :title="t('settings.peer.lan.addRoute')"
+              v-tooltip="t('settings.peer.lan.addRoute')"
               @click="addLANRoute"
             >
               <Plus :size="15" aria-hidden="true" />
@@ -1166,7 +1166,7 @@ function resetSetupChoice(): void {
                 data-testid="peer-lan-route-remove"
                 :disabled="lanBusy"
                 :aria-label="t('settings.peer.lan.removeRoute')"
-                :title="t('settings.peer.lan.removeRoute')"
+                v-tooltip="t('settings.peer.lan.removeRoute')"
                 @click="removeLANRoute(index)"
               >
                 <Trash2 :size="14" aria-hidden="true" />
@@ -1192,7 +1192,7 @@ function resetSetupChoice(): void {
               data-testid="peer-sync-now"
               :disabled="configSyncLoading || Boolean(configSyncAction)"
               :aria-label="t('settings.peer.sync.syncNow')"
-              :title="t('settings.peer.sync.syncNow')"
+              v-tooltip="t('settings.peer.sync.syncNow')"
               @click.stop="syncConfigNow"
             >
               <Database :size="15" :class="{ spinning: configSyncAction === 'sync' }" aria-hidden="true" />
@@ -1204,7 +1204,7 @@ function resetSetupChoice(): void {
               data-testid="peer-sync-refresh"
               :disabled="configSyncLoading || Boolean(configSyncAction)"
               :aria-label="t('settings.peer.sync.refresh')"
-              :title="t('settings.peer.sync.refresh')"
+              v-tooltip="t('settings.peer.sync.refresh')"
               @click.stop="refreshConfigSyncStatus"
             >
               <RefreshCw :size="15" :class="{ spinning: configSyncLoading }" aria-hidden="true" />
@@ -1306,7 +1306,7 @@ function resetSetupChoice(): void {
                   class="icon-action"
                   :disabled="Boolean(configSyncAction)"
                   :aria-label="t('common.cancel')"
-                  :title="t('common.cancel')"
+                  v-tooltip="t('common.cancel')"
                   @click="discardPendingConfirming = false"
                 >
                   <X :size="15" aria-hidden="true" />
@@ -1458,7 +1458,7 @@ function resetSetupChoice(): void {
               class="icon-action"
               :disabled="tunnelBusy"
               :aria-label="t('common.cancel')"
-              :title="t('common.cancel')"
+              v-tooltip="t('common.cancel')"
               @click="tunnelInstallConfirming = false"
             >
               <X :size="15" aria-hidden="true" />
@@ -1472,7 +1472,7 @@ function resetSetupChoice(): void {
             class="primary-action"
             data-testid="peer-tunnel-start"
             :disabled="tunnelBusy || lanOnly"
-            :title="lanOnly ? t('settings.peer.tunnel.lanOnlyBlocked') : t('settings.peer.tunnel.start')"
+            v-tooltip="lanOnly ? t('settings.peer.tunnel.lanOnlyBlocked') : t('settings.peer.tunnel.start')"
             @click="startQuickTunnel"
           >
             <Play :size="15" aria-hidden="true" />
@@ -1654,7 +1654,7 @@ function resetSetupChoice(): void {
                 class="secondary-action"
                 data-testid="peer-copy-invitation"
                 :disabled="!hasPublishedBootstrapRoute || !invitation.token || tunnelBusy || Boolean(invitationActionID)"
-                :title="!hasPublishedBootstrapRoute ? t('settings.peer.invitations.startTunnelFirst') : undefined"
+                v-tooltip="!hasPublishedBootstrapRoute ? t('settings.peer.invitations.startTunnelFirst') : undefined"
                 @click="copyInvitationRoute(invitation)"
               >
                 <Copy :size="14" aria-hidden="true" />
@@ -1670,7 +1670,7 @@ function resetSetupChoice(): void {
                 data-testid="peer-revoke-invitation"
                 :disabled="Boolean(invitationActionID)"
                 :aria-label="t('settings.peer.invitations.revoke')"
-                :title="t('settings.peer.invitations.revoke')"
+                v-tooltip="t('settings.peer.invitations.revoke')"
                 @click="revokeInvitation(invitation)"
               >
                 <Trash2 :size="15" aria-hidden="true" />

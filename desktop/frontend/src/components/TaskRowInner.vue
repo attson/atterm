@@ -69,7 +69,7 @@ function stateLabel(state: string | undefined): string {
       class="state-label"
       data-test="state-label"
     >{{ stateLabel(props.session.task_state) }}</span>
-    <span class="cmd-and-cwd" :title="rowTitle(props.session)">
+    <span class="cmd-and-cwd" v-tooltip="rowTitle(props.session)">
       <span class="cmd">{{ titleOrCommand(props.session) }}</span>
     </span>
   </span>
@@ -101,7 +101,7 @@ function stateLabel(state: string | undefined): string {
     data-test="row-close"
     role="button"
     tabindex="0"
-    :title="t('common.close')"
+    v-tooltip="t('common.close')"
     :aria-label="t('common.close')"
     @click.stop="emit('close')"
     @keydown.enter.stop.prevent="emit('close')"

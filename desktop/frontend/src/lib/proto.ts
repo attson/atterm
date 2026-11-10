@@ -35,6 +35,8 @@ export const TYPE = {
   SERVICE_OPEN: 0x3d,
   SERVICE_OPENED: 0x3e,
   SERVICE_CLOSE: 0x3f,
+  INPUT_HISTORY_REQUEST: 0x41,
+  INPUT_HISTORY_RESPONSE: 0x42,
 } as const;
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE];

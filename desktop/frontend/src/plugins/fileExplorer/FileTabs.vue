@@ -61,7 +61,7 @@ const activeHasDualMode = computed(() => {
       :key="t.path"
       class="tab"
       :class="{ active: i === props.activeIdx, preview: !t.persistent }"
-      :title="t.path"
+      v-tooltip="t.path"
       @click="emit('select', i)"
       @contextmenu="openMenu($event, i)"
     >
@@ -75,7 +75,7 @@ const activeHasDualMode = computed(() => {
     <button
       v-if="activeHasDualMode"
       class="view-toggle"
-      :title="viewMode === 'code'
+      v-tooltip="viewMode === 'code'
         ? t('plugins.fileExplorer.showAsRender')
         : t('plugins.fileExplorer.showAsCode')"
       @click="emit('toggle-view-mode')"

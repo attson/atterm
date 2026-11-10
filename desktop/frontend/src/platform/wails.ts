@@ -202,6 +202,7 @@ export function createWailsPlatform(): Platform {
       closeSession: api.closeSession,
       listShells: api.listShells,
       listRemoteSessions: listPeerRemoteSessions,
+      getInputHistory: api.getSessionInputHistory,
       listRemoteHosts: listPeerRemoteHosts,
       markSessionsSeen: api.markSessionsSeen,
       getPins: () => api.getPinnedSessionIds(),

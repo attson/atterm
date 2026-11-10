@@ -2139,7 +2139,7 @@ defineExpose({ me });
         <div v-if="toast" class="toast">{{ toast }}</div>
       </main>
       <template v-if="caps.pluginHost && rightPanelHasPlugin">
-        <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? i18nT('app.showPanel') : i18nT('app.hidePanel')">
+        <button class="panel-toggle" @click="togglePanel" v-tooltip="panelCollapsed ? i18nT('app.showPanel') : i18nT('app.hidePanel')">
           {{ panelCollapsed ? '‹' : '›' }}
         </button>
         <template v-if="!panelCollapsed">

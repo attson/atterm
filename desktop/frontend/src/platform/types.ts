@@ -21,7 +21,7 @@ export type { main as PluginModels } from '../../wailsjs/go/models'
 // File system types re-exported from wailsjs/go/models so there's one
 // source of truth — the Go side regenerates wailsjs/* on changes.
 import type { main as _Models } from '../../wailsjs/go/models'
-import type { SessionSummary } from '../lib/connection'
+import type { SessionInputHistoryResult, SessionSummary } from '../lib/connection'
 import type { PromptHistoryPage } from '../lib/api'
 export type { SessionSummary } from '../lib/connection'
 export type DirEntry = _Models.DirEntry
@@ -155,6 +155,8 @@ export interface SessionBridge {
   closeSession(sessionID: string): Promise<void>
   listShells(): Promise<string[]>
   listRemoteSessions(): Promise<RemoteSession[]>
+  /** Desktop-local PTY history. Remote clients read through SessionConnection. */
+  getInputHistory?(sessionID: string): Promise<SessionInputHistoryResult>
   /** Peer hosts are independent from PTYs so an authorized desktop with no
    *  open sessions can still receive a profile launch request. */
   listRemoteHosts?(): Promise<RemoteHost[]>

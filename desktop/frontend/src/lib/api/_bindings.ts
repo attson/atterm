@@ -42,6 +42,16 @@ export interface PromptHistoryPage {
   total: number;
 }
 
+export interface SessionInputHistoryItem {
+  text: string;
+  submitted_at_unix_ms: number;
+}
+
+export interface SessionInputHistoryResult {
+  items: SessionInputHistoryItem[];
+  truncated: boolean;
+}
+
 export type LocalePreference = "system" | "en" | "zh-CN";
 
 export interface NewSessionReq {
@@ -67,6 +77,9 @@ export interface NewSessionReq {
   // --permission-mode) into the injected `claude --resume <id>` so recovery
   // preserves them. Not passed as a spawn arg.
   initial_ai_command_line?: string;
+  // Previous local PTY generation whose persisted input history must be
+  // loaded before the replacement session is announced.
+  input_history_from_session_id?: string;
   // Explicit session-profile override for this new session. Empty/absent
   // means "use the default profile if one is set, else the existing
   // default_shell + HOME behavior" — resolved entirely on the Go side
@@ -875,6 +888,7 @@ export interface AppBindings {
   LoadRecoverySnapshot(): Promise<RecoverySnapshot>;
   SaveRecoverySnapshot(payload: string): Promise<void>;
   DiscardRecoverySnapshot(): Promise<void>;
+  RestoreSessionInputHistory?(previousSessionID: string, currentSessionID: string): Promise<void>;
   GetRecoveryDialogEnabled(): Promise<boolean>;
   SetRecoveryDialogEnabled(enabled: boolean): Promise<void>;
   GetWebglRendererEnabled(): Promise<boolean>;
@@ -916,6 +930,7 @@ export interface AppBindings {
   QueryPromptHistoryPage(prefix: string, cursor: string, limit: number): Promise<PromptHistoryPage>;
   SetPromptHistoryEnabled(enabled: boolean): Promise<void>;
   ClearPromptHistory(): Promise<void>;
+  GetSessionInputHistory?(sessionID: string): Promise<SessionInputHistoryResult>;
   // RunSnippetOnHosts starts a batch run of snippetText (labelled
   // snippetLabel for anything that needs a human-readable name) across
   // several saved hosts and returns immediately with a run id; results only

@@ -62,6 +62,31 @@ describe("TerminalView direct transport plumbing", () => {
   });
 });
 
+describe("TerminalView submitted input history", () => {
+  test("mounts one pane-scoped button and keeps the panel outside terminal sizing", () => {
+    expect(paneSource).toContain('`session-input-history-controls-${pane.sessionId}`');
+    expect(source).toContain("const inputHistoryTarget = computed(() => `#session-input-history-controls-${props.sessionId}`)");
+    expect(source).toContain('<Teleport defer :to="inputHistoryTarget">');
+    expect(source).toContain('data-test="session-input-history-trigger"');
+    expect(source).toContain("<SessionInputHistoryPanel");
+    expect(source).toMatch(/<SessionInputHistoryPanel[\s\S]*?v-if="inputHistoryOpen"/);
+  });
+
+  test("loads local history through the platform bridge and remote history through the live connection", () => {
+    expect(source).toMatch(/props\.isLocalSession[\s\S]*?platform\.sessions\.getInputHistory/);
+    expect(source).toMatch(/conn instanceof SessionConnection[\s\S]*?conn\.requestInputHistory\(\)/);
+    expect(source).toMatch(/inputHistoryRequestGeneration/);
+    expect(source).toMatch(/SessionInputHistoryError[\s\S]*?history_locked/);
+  });
+
+  test("closes on Escape and an outside pointer without stealing panel interactions", () => {
+    expect(source).toContain('document.addEventListener("pointerdown", onInputHistoryDocumentPointerDown, true)');
+    expect(source).toContain('document.addEventListener("keydown", onInputHistoryDocumentKeyDown)');
+    expect(source).toMatch(/onInputHistoryDocumentKeyDown[\s\S]*?event\.key !== "Escape"[\s\S]*?closeInputHistory/);
+    expect(source).toMatch(/onInputHistoryDocumentPointerDown[\s\S]*?inputHistoryTriggerRef[\s\S]*?inputHistoryPanelRef[\s\S]*?closeInputHistory/);
+  });
+});
+
 describe("TerminalView desktop prompt history suggestions", () => {
   test("receives AI metadata from PaneGrid and gates the desktop-only sidecar", () => {
     expect(paneSource).toContain(':session-type="sessionInfoFor(pane)?.type"');

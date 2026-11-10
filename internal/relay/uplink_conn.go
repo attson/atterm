@@ -611,6 +611,13 @@ func (u *uplinkSession) readLoop() {
 				continue
 			}
 			u.server.fsRoutes().routeResponse(f)
+		case proto.TypeInputHistoryResponse:
+			u.mu.Lock()
+			ms := u.mirrors[f.SessionID]
+			u.mu.Unlock()
+			if ms == nil || !u.server.inputHistoryRoutes().route(f) {
+				u.server.debugf("uplink input_history_response_drop reason=unrouted session=%s", f.SessionID)
+			}
 		case proto.TypeFSEvent:
 			u.mu.Lock()
 			ms := u.mirrors[f.SessionID]

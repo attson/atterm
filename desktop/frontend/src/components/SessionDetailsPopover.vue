@@ -235,12 +235,12 @@ onBeforeUnmount(() => {
         :data-test="`details-field-${row.key}`"
       >
         <span class="label">{{ row.label }}</span>
-        <span class="value" :title="row.value">{{ row.value }}</span>
+        <span class="value" v-tooltip="row.value">{{ row.value }}</span>
         <button
           v-if="row.copy"
           class="copy"
           type="button"
-          :title="t('common.copy')"
+          v-tooltip="t('common.copy')"
           :aria-label="t('common.copy')"
           @click.stop="copy(row.value)"
         >⧉</button>

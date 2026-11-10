@@ -61,7 +61,7 @@ onBeforeUnmount(() => document.removeEventListener("click", onDocClick, true));
         type="button"
         class="sp-current"
         :class="{ active: onPreview, reconnecting: active?.reconnecting }"
-        :title="active?.reconnecting ? t('terminal.preview.reconnecting') : t('terminal.preview.switch')"
+        v-tooltip="active?.reconnecting ? t('terminal.preview.reconnecting') : t('terminal.preview.switch')"
         @click="toggleMenu"
       >
         <span class="sp-dot" :class="{ reconnecting: active?.reconnecting }"></span>
@@ -71,13 +71,13 @@ onBeforeUnmount(() => document.removeEventListener("click", onDocClick, true));
     </div>
 
     <div v-if="onPreview" class="sp-actions">
-      <button type="button" :title="t('terminal.preview.openInBrowser')" :aria-label="t('terminal.preview.openInBrowser')" @click="emit('open-browser')">
+      <button type="button" v-tooltip="t('terminal.preview.openInBrowser')" :aria-label="t('terminal.preview.openInBrowser')" @click="emit('open-browser')">
         <span class="sp-ico"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8l4 4-4 4"/></svg></span>
       </button>
-      <button type="button" :title="t('terminal.preview.copyURL')" :aria-label="t('terminal.preview.copyURL')" @click="emit('copy')">
+      <button type="button" v-tooltip="t('terminal.preview.copyURL')" :aria-label="t('terminal.preview.copyURL')" @click="emit('copy')">
         <span class="sp-ico"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
       </button>
-      <button type="button" class="close" :title="t('terminal.preview.closeThis')" :aria-label="t('terminal.preview.closeThis')" @click="active && emit('close', active.id)">✕</button>
+      <button type="button" class="close" v-tooltip="t('terminal.preview.closeThis')" :aria-label="t('terminal.preview.closeThis')" @click="active && emit('close', active.id)">✕</button>
     </div>
 
     <div v-if="menuOpen" class="sp-menu" role="menu">
@@ -91,13 +91,13 @@ onBeforeUnmount(() => document.removeEventListener("click", onDocClick, true));
       >
         <span class="sp-dot" :class="{ reconnecting: p.reconnecting }"></span>
         <span class="sp-lbl">{{ t("terminal.preview.previewPort", { port: p.port }) }}</span>
-        <span class="sp-mini" :title="t('terminal.preview.openInBrowser')" @click.stop="select(p.id); emit('open-browser')">
+        <span class="sp-mini" v-tooltip="t('terminal.preview.openInBrowser')" @click.stop="select(p.id); emit('open-browser')">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8l4 4-4 4"/></svg>
         </span>
-        <span class="sp-mini" :title="t('terminal.preview.copyURL')" @click.stop="select(p.id); emit('copy')">
+        <span class="sp-mini" v-tooltip="t('terminal.preview.copyURL')" @click.stop="select(p.id); emit('copy')">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </span>
-        <span class="sp-x" :title="t('terminal.preview.closeThis')" @click.stop="emit('close', p.id)">✕</span>
+        <span class="sp-x" v-tooltip="t('terminal.preview.closeThis')" @click.stop="emit('close', p.id)">✕</span>
       </button>
       <div class="sp-sep"></div>
       <button type="button" class="sp-item sp-add" @click="add">＋ {{ t("terminal.preview.newPreview") }}</button>

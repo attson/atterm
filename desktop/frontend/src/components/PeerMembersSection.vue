@@ -94,7 +94,7 @@ function toggleMember(peerID: string): void {
             data-testid="peer-member-revoke-open"
             :disabled="Boolean(busyPeerId)"
             :aria-label="t('settings.peer.members.revoke')"
-            :title="t('settings.peer.members.revoke')"
+            v-tooltip="t('settings.peer.members.revoke')"
             @click="pendingPeerID = member.peer_id"
           >
             <Trash2 :size="15" aria-hidden="true" />

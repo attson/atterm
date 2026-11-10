@@ -787,7 +787,7 @@ function dblClickSearchResult(result: FileNameSearchResult | FileContentSearchRe
   emit("file-double-clicked", result.path);
 }
 
-// Minimal CSS attribute-selector escaper for the title lookup in revealPath.
+// Minimal CSS attribute-selector escaper for the data-path lookup in revealPath.
 function cssEscape(s: string): string {
   return s.replace(/["\\]/g, "\\$&");
 }
@@ -826,7 +826,7 @@ async function revealPath(path: string): Promise<boolean> {
   if (!target) return false;
   selectedPath.value = path;
   await nextTick();
-  const el = document.querySelector<HTMLElement>(`.node[title="${cssEscape(path)}"]`);
+  const el = document.querySelector<HTMLElement>(`.node[data-path="${cssEscape(path)}"]`);
   el?.scrollIntoView?.({ block: "nearest" });
   return !target.isDir;
 }
@@ -902,7 +902,7 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir, co
         :key="result.path"
         class="search-result"
         data-test="file-search-result"
-        :title="result.path"
+        v-tooltip="result.path"
         @click.stop="clickSearchResult(result)"
         @dblclick.stop="dblClickSearchResult(result)"
       >
@@ -948,7 +948,7 @@ defineExpose({ refresh: startGeneration, refreshDir, revealPath, selectedDir, co
         :key="notice.path"
         class="search-status"
         data-test="listing-truncated"
-        :title="notice.path"
+        v-tooltip="notice.path"
       >
         {{ t("plugins.fileExplorer.listingTruncated", {
           path: notice.path, shown: notice.shown, total: notice.total,

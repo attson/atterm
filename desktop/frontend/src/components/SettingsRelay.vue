@@ -500,7 +500,7 @@ defineExpose({
             type="button"
             class="connection-info"
             data-testid="direct-connection-info"
-            :title="t('settings.relay.preferDirectConnectionHint')"
+            v-tooltip="t('settings.relay.preferDirectConnectionHint')"
             :aria-label="t('settings.relay.preferDirectConnectionHint')"
           >
             <Info :size="14" :stroke-width="1.8" aria-hidden="true" />

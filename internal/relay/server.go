@@ -323,6 +323,7 @@ func (s *Server) Store() *userstore.DBStore {
 // session_seen table does not accumulate rows for dead sessions.
 func (s *Server) removeSession(id uuid.UUID) {
 	s.fsRoutes().unregisterSession(id)
+	s.inputHistoryRoutes().unregisterSession(id)
 	if s.services != nil {
 		s.services.closeSession(id)
 	}

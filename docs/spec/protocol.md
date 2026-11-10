@@ -74,6 +74,8 @@ const (
 
     // Auth frames (server → client).
     TypeAuthInfo        Type = 0x40  // relay → uplink; UTF-8 JSON {user_id}
+    TypeInputHistoryRequest  Type = 0x41 // client → relay/direct host
+    TypeInputHistoryResponse Type = 0x42 // desktop host → requester client
 )
 ```
 
@@ -694,6 +696,52 @@ Payload (UTF-8 JSON):
 - Unknown JSON keys MUST be ignored by clients (forward-compat).
 - The desktop fetches the user's email separately via `/api/me` (see Task 8.1).
 
+### `INPUT_HISTORY_REQUEST` (0x41) / `INPUT_HISTORY_RESPONSE` (0x42)
+
+按需读取一个活跃 PTY 会话中经 OSC 133 C 确认开始执行的 shell 命令，以及已提交给 Claude/Codex 的用户输入记录。新版 shell integration 用紧邻 C 之前的 Atterm 私有 OSC 133 I 携带用户原始输入（例如 alias 展开前的 `ls`），C 仍是分类/恢复使用的完整可执行命令；旧 integration 没有 I 时历史回退记录 C。未执行草稿和逐键输入不采集。该能力不进入 `SessionInfo` / `META`，没有请求时不上传任何历史内容，因此不改变 Lazy 上传语义。viewer 与 driver 都可读取；请求者必须已 attach 目标 `session_id`。
+
+`INPUT_HISTORY_REQUEST` 方向为 client → relay → owner uplink，或 negotiated direct client → owner host。header `SessionID` 是唯一权威会话标识，payload 为 UTF-8 JSON：
+
+```json
+{
+  "request_id": "<uuid>"
+}
+```
+
+`INPUT_HISTORY_RESPONSE` 方向为 owner uplink → relay → 原请求 client，或 owner host → 同一 direct attempt。外层 payload 只包含路由头与密文：
+
+```json
+{
+  "request_id": "<uuid>",
+  "ok": true,
+  "error": "",
+  "sealed": "<base64 AEAD envelope>"
+}
+```
+
+`sealed` 使用 AAD `session_uuid(16B) || 0x42`，解密后是：
+
+```json
+{
+  "request_id": "<uuid>",
+  "items": [
+    {
+      "text": "完整多行输入",
+      "submitted_at_unix_ms": 1794296538000
+    }
+  ],
+  "truncated": false
+}
+```
+
+- `items` 按执行/提交时间从新到旧；相同文本不去重。`truncated=true` 表示 owner 已因每会话 200 条 / 2 MiB 上限省略较早内容。
+- relay 以 `(session_id, request_id)` 保存 30 秒一次性路由，只把 response 发给原请求连接；不得广播给该 session 的其它 subscriber。client 断开、session 关闭、超时或成功转发后删除路由。
+- relay 只允许已 attach 的 client 发起请求，但不要求 driver，`remote_permission=view|control|full` 都允许该只读操作。
+- owner 缺少 `account_key`、会话不存在或 seal 失败时必须 fail closed：`ok=false`、`sealed` 为空，并返回固定 `error`；绝不回退到明文历史。
+- 客户端解密后必须校验 sealed `request_id` 同时等于外层值和当前 pending request。session/type AAD、AEAD 或 request id 任一不匹配都丢弃，最终按本地超时处理。
+- 稳定错误码包括 `history_locked`、`not_attached`、`session_unavailable`、`duplicate_request`、`upstream_unavailable`；错误响应不得包含输入文本。
+- 旧 relay / owner 不认识新帧时可忽略，客户端超时后允许用户重试；`internal/proto.Version` 仍为 1。
+
 ## Driver / Viewer 模型
 
 每个 session 在任意时刻最多有一个 driver subscriber。driver 是唯一允许把 `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` 转发到 PTY 的连接；其它都是 viewer（只收 `OUT` / `META` / `CLOSE` / `REPLAY_PROGRESS`）。
@@ -875,6 +923,7 @@ Relay session 信封的 AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字�
 | `0x39` `FS_RESPONSE` | segment 1（元数据）+ segment 2（文件字节） | segment 1 = JSON `SealedFSResponseFields { entries, meta, error, content, chunk }`；segment 2 = 原始文件字节，不经 base64 |
 | `0x3a` `FS_EVENT` | 分段 payload 的 segment 1（裸二进制） | JSON `SealedFSEventFields { path }` |
 | `0x3d` `SERVICE_OPEN` | `ServiceOpenPayload.sealed`（base64） | JSON `SealedServiceOpenFields { port, scheme }` |
+| `0x42` `INPUT_HISTORY_RESPONSE` | `InputHistoryResponsePayload.sealed`（base64） | JSON `SealedInputHistoryResponse { request_id, items, truncated }` |
 | `0xF0` （合成，不上 wire） | `ssh_hosts_encrypted` 偏好值 | JSON `sshSyncPayload { hosts, keys }` |
 | `0xF1` （合成，不上 wire） | `profiles_encrypted` 偏好值 | JSON `profilesSyncPayload { profiles, default_profile_id }` |
 | `0xF2` （合成，不上 wire） | Peer config payload | `space_id(16B) || 0xF2 || key_class(1B) || epoch(be64) || len16+collection || len16+record_id || len16+op_id` |

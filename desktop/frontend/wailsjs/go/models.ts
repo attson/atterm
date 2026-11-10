@@ -862,6 +862,7 @@ export namespace main {
 	    ai_kind?: string;
 	    initial_ai_session_id?: string;
 	    initial_ai_command_line?: string;
+	    input_history_from_session_id?: string;
 
 	    static createFrom(source: any = {}) {
 	        return new NewSessionReq(source);
@@ -879,6 +880,7 @@ export namespace main {
 	        this.ai_kind = source["ai_kind"];
 	        this.initial_ai_session_id = source["initial_ai_session_id"];
 	        this.initial_ai_command_line = source["initial_ai_command_line"];
+	        this.input_history_from_session_id = source["input_history_from_session_id"];
 	    }
 	}
 	export class NewSessionResp {
@@ -2059,6 +2061,52 @@ export namespace main {
 	        this.id = source["id"];
 	        this.url = source["url"];
 	    }
+	}
+	export class SessionInputHistoryItem {
+	    text: string;
+	    submitted_at_unix_ms: number;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionInputHistoryItem(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.submitted_at_unix_ms = source["submitted_at_unix_ms"];
+	    }
+	}
+	export class SessionInputHistoryResult {
+	    items: SessionInputHistoryItem[];
+	    truncated: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionInputHistoryResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.items = this.convertValues(source["items"], SessionInputHistoryItem);
+	        this.truncated = source["truncated"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class SessionProfile {
 	    id: string;

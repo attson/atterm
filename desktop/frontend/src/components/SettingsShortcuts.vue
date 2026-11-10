@@ -141,7 +141,7 @@ defineExpose({ dirty });
           :mod="mod"
           @update="(v) => onCellUpdate(action, v)"
         />
-        <button class="reset-row" :title="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
+        <button class="reset-row" v-tooltip="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" :aria-label="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
         <div class="conflict" v-if="conflictsFor(action).length">
           {{ t("settings.shortcuts.conflictsWith", { labels: conflictsFor(action).map((id) => ACTION_BY_ID[id] ? t(ACTION_BY_ID[id]!.labelKey) : id).join(", ") }) }}
         </div>
@@ -157,7 +157,7 @@ defineExpose({ dirty });
           :mod="mod"
           @update="(v) => onCellUpdate(action, v)"
         />
-        <button class="reset-row" :title="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
+        <button class="reset-row" v-tooltip="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" :aria-label="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
         <div class="conflict" v-if="conflictsFor(action).length">
           {{ t("settings.shortcuts.conflictsWith", { labels: conflictsFor(action).map((id) => ACTION_BY_ID[id] ? t(ACTION_BY_ID[id]!.labelKey) : id).join(", ") }) }}
         </div>
@@ -173,7 +173,7 @@ defineExpose({ dirty });
           :mod="mod"
           @update="(v) => onCellUpdate(action, v)"
         />
-        <button class="reset-row" :title="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
+        <button class="reset-row" v-tooltip="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" :aria-label="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
         <div class="conflict" v-if="conflictsFor(action).length">
           {{ t("settings.shortcuts.conflictsWith", { labels: conflictsFor(action).map((id) => ACTION_BY_ID[id] ? t(ACTION_BY_ID[id]!.labelKey) : id).join(", ") }) }}
         </div>
@@ -189,7 +189,7 @@ defineExpose({ dirty });
           :mod="mod"
           @update="(v) => onCellUpdate(action, v)"
         />
-        <button class="reset-row" :title="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
+        <button class="reset-row" v-tooltip="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" :aria-label="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
         <div class="conflict" v-if="conflictsFor(action).length">
           {{ t("settings.shortcuts.conflictsWith", { labels: conflictsFor(action).map((id) => ACTION_BY_ID[id] ? t(ACTION_BY_ID[id]!.labelKey) : id).join(", ") }) }}
         </div>

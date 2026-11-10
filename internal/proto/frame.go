@@ -80,6 +80,11 @@ const (
 
 	// Auth frames (server → client).
 	TypeAuthInfo Type = 0x40 // relay -> uplink; UTF-8 JSON {user_id}
+
+	// On-demand, per-PTY executed shell command and submitted AI prompt history.
+	// The response is targeted to the requesting client and always sealed.
+	TypeInputHistoryRequest  Type = 0x41 // client -> relay/direct host
+	TypeInputHistoryResponse Type = 0x42 // desktop host -> requester client
 )
 
 // Frame is a single protocol message.
@@ -87,6 +92,34 @@ type Frame struct {
 	Type      Type
 	SessionID uuid.UUID
 	Payload   []byte
+}
+
+// InputHistoryRequestPayload identifies one on-demand history read.
+type InputHistoryRequestPayload struct {
+	RequestID string `json:"request_id"`
+}
+
+// InputHistoryResponsePayload is the relay-visible routing head. Prompt text
+// exists only inside Sealed.
+type InputHistoryResponsePayload struct {
+	RequestID string `json:"request_id"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+	Sealed    []byte `json:"sealed,omitempty"`
+}
+
+// InputHistoryItem is one executed command or submitted prompt in the sealed body.
+type InputHistoryItem struct {
+	Text              string `json:"text"`
+	SubmittedAtUnixMS int64  `json:"submitted_at_unix_ms"`
+}
+
+// SealedInputHistoryResponse is encrypted under the per-session key. Repeating
+// RequestID inside the envelope binds a response to the pending request.
+type SealedInputHistoryResponse struct {
+	RequestID string             `json:"request_id"`
+	Items     []InputHistoryItem `json:"items"`
+	Truncated bool               `json:"truncated"`
 }
 
 // OpenPayload is the JSON body of a TypeOpen frame.

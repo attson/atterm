@@ -124,12 +124,6 @@ func (s *PromptHistoryStore) Record(text string) error {
 	return s.saveLocked()
 }
 
-// RecordPrompt implements feishu.PromptSink without coupling that ingress
-// package to the desktop store type.
-func (s *PromptHistoryStore) RecordPrompt(prompt string) error {
-	return s.Record(prompt)
-}
-
 // GetPromptHistoryStatus returns the local suggestion setting and entry count.
 func (a *App) GetPromptHistoryStatus() PromptHistoryStatus {
 	if a.promptHistory == nil {

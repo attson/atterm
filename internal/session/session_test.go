@@ -1355,6 +1355,63 @@ func TestSession_OnAIClassified_DoesNotFireOnShellCommands(t *testing.T) {
 	}
 }
 
+func TestSession_OnCommandSubmitted_FiresOnlyForOSC133CommandBoundary(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	defer s.Close()
+
+	var commands []string
+	s.SetOnCommandSubmitted(func(command string) { commands = append(commands, command) })
+
+	_ = s.PushOut(1, []byte("draft text\x1b]133;A\x07"))
+	_ = s.PushOut(2, []byte("\x1b]133;C;printf 'one\\ntwo'\x07output"))
+	_ = s.PushOut(3, []byte("\x1b]133;D;0\x07"))
+	_ = s.PushOut(4, []byte("plain output"))
+	_ = s.PushOut(5, []byte("\x1b]133;C;   \x07"))
+	_ = s.PushOut(6, []byte("\x1b]133;C;printf 'one\\ntwo'\x07"))
+
+	want := []string{"printf 'one\\ntwo'", "printf 'one\\ntwo'"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("submitted command callbacks = %q, want %q", commands, want)
+	}
+}
+
+func TestSession_OnCommandSubmitted_PrefersRawInputWithoutChangingExpandedCommand(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	defer s.Close()
+
+	var commands []string
+	s.SetOnCommandSubmitted(func(command string) { commands = append(commands, command) })
+
+	// zsh reports the line as typed in I and the alias-expanded command in C.
+	// History must keep the former, while classification/recovery metadata keeps
+	// the latter so flags and executable detection remain complete.
+	_ = s.PushOut(1, []byte("\x1b]133;I;ls\x07\x1b]133;C;ls --color=tty\x07"))
+
+	if want := []string{"ls"}; !reflect.DeepEqual(commands, want) {
+		t.Fatalf("submitted command callbacks = %q, want %q", commands, want)
+	}
+	if got := s.Info().CurrentCommand; got != "ls --color=tty" {
+		t.Fatalf("CurrentCommand = %q, want expanded command", got)
+	}
+}
+
+func TestSession_OnCommandSubmitted_RawInputSupportsSplitMarkersAndLegacyFallback(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	defer s.Close()
+
+	var commands []string
+	s.SetOnCommandSubmitted(func(command string) { commands = append(commands, command) })
+
+	_ = s.PushOut(1, []byte("\x1b]133;I;git sta"))
+	_ = s.PushOut(2, []byte("tus\x07\x1b]133;C;git status\x07"))
+	// Older integrations emit only C; those commands must still be recorded.
+	_ = s.PushOut(3, []byte("\x1b]133;C;go test ./...\x07"))
+
+	if want := []string{"git status", "go test ./..."}; !reflect.DeepEqual(commands, want) {
+		t.Fatalf("submitted command callbacks = %q, want %q", commands, want)
+	}
+}
+
 func TestSession_OnTaskStateChange_FiresOnTransitions(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{})
 	var transitions []struct{ Prev, Next string }

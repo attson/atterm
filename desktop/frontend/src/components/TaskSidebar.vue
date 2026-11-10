@@ -276,7 +276,7 @@ const railIcons = computed(() => {
       <div v-if="collapsed" class="rail" data-test="sidebar-rail">
         <button
           class="expand-button"
-          :title="t('tasks.sidebar.expand')"
+          v-tooltip="t('tasks.sidebar.expand')"
           :aria-label="t('tasks.sidebar.expand')"
           @click="emit('update:collapsed', false)"
         >
@@ -315,7 +315,7 @@ const railIcons = computed(() => {
             v-if="!(searchOpen || query)"
             class="search-icon-btn"
             data-test="sidebar-search-toggle"
-            :title="t('tasks.sidebar.searchPlaceholder')"
+            v-tooltip="t('tasks.sidebar.searchPlaceholder')"
             :aria-label="t('tasks.sidebar.searchPlaceholder')"
             @click="openSearch"
           >
@@ -340,7 +340,7 @@ const railIcons = computed(() => {
             v-if="!(searchOpen || query)"
             class="group-toggle"
             data-test="group-toggle"
-            :title="t('tasks.settings.groupBy')"
+            v-tooltip="t('tasks.settings.groupBy')"
             @click="onToggleGroupBy"
           >
             {{ groupByState.activeId.value === 'state'
@@ -350,7 +350,7 @@ const railIcons = computed(() => {
           <button
             class="collapse-button"
             data-test="collapse-button"
-            :title="t('tasks.sidebar.collapse')"
+            v-tooltip="t('tasks.sidebar.collapse')"
             :aria-label="t('tasks.sidebar.collapse')"
             @click="emit('update:collapsed', true)"
           >

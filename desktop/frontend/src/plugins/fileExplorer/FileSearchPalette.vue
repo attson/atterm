@@ -121,7 +121,7 @@ onBeforeUnmount(() => {
             : t('plugins.fileExplorer.searchContent')"
           @input="emit('update:query', ($event.target as HTMLInputElement).value)"
         >
-        <button class="close-search" type="button" :title="t('plugins.fileExplorer.closeSearch')" @click="emit('close')">
+        <button class="close-search" type="button" v-tooltip="t('plugins.fileExplorer.closeSearch')" :aria-label="t('plugins.fileExplorer.closeSearch')" @click="emit('close')">
           <X :size="16" :stroke-width="1.5" />
         </button>
       </div>
@@ -140,14 +140,16 @@ onBeforeUnmount(() => {
             type="button"
             class="search-option"
             :class="{ active: caseSensitive }"
-            :title="t('plugins.fileExplorer.searchCaseSensitive')"
+            v-tooltip="t('plugins.fileExplorer.searchCaseSensitive')"
+            :aria-label="t('plugins.fileExplorer.searchCaseSensitive')"
             @click="emit('update:case-sensitive', !caseSensitive)"
           >Aa</button>
           <button
             type="button"
             class="search-option"
             :class="{ active: useRegex }"
-            :title="t('plugins.fileExplorer.searchRegex')"
+            v-tooltip="t('plugins.fileExplorer.searchRegex')"
+            :aria-label="t('plugins.fileExplorer.searchRegex')"
             @click="emit('update:use-regex', !useRegex)"
           >.*</button>
         </template>
@@ -164,7 +166,7 @@ onBeforeUnmount(() => {
           class="search-result"
           type="button"
           data-test="file-search-result"
-          :title="result.path"
+          v-tooltip="result.path"
           @click="emit('open', result.path)"
         >
           <span class="result-main">

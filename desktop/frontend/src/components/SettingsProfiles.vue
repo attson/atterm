@@ -333,7 +333,7 @@ async function clearDefault() {
     <template v-if="!loading">
       <ul class="list">
         <li v-for="p in profiles" :key="p.id" class="row" :data-testid="`profile-row-${p.id}`">
-          <span class="name" :title="p.name">
+          <span class="name" v-tooltip="p.name">
             {{ p.name }}
             <span v-if="p.id === defaultProfileId" class="badge" data-testid="profile-default-badge">{{
               t("settings.profiles.defaultBadge")
@@ -349,7 +349,7 @@ async function clearDefault() {
               :data-testid="`profile-peer-open-${p.id}`"
               :disabled="Boolean(creatingProfileID)"
               :aria-label="creatingProfileID === p.id ? t('settings.profiles.peerOpening') : t('settings.profiles.peerOpen')"
-              :title="creatingProfileID === p.id ? t('settings.profiles.peerOpening') : t('settings.profiles.peerOpen')"
+              v-tooltip="creatingProfileID === p.id ? t('settings.profiles.peerOpening') : t('settings.profiles.peerOpen')"
               @click="openOnPeer(p.id)"
             >
               <LoaderCircle v-if="creatingProfileID === p.id" :size="14" class="spin" aria-hidden="true" />

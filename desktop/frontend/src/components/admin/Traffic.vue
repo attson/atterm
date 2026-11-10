@@ -308,7 +308,7 @@ onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerd
         <h1>{{ t('admin.traffic.title') }}</h1>
         <p>{{ t('admin.traffic.timezone') }} · {{ reportingTimeZone }}</p>
       </div>
-      <button class="icon-button" type="button" :aria-label="t('admin.traffic.refresh')" :title="t('admin.traffic.refresh')" :disabled="loading" data-test="traffic-refresh" @click="load">
+      <button class="icon-button" type="button" :aria-label="t('admin.traffic.refresh')" v-tooltip="t('admin.traffic.refresh')" :disabled="loading" data-test="traffic-refresh" @click="load">
         <RefreshCw :class="{ spinning: loading }" />
       </button>
     </div>
@@ -464,8 +464,8 @@ onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerd
             <div v-else-if="isMatrix" class="matrix-chart" data-test="matrix-chart">
               <div class="matrix-grid" :style="{ '--columns': String(range.days.length) }">
                 <template v-for="series in visibleMatrixSeries" :key="series.key">
-                  <div class="matrix-label" :title="`${series.userLabel} · ${categoryName(series.label)}`"><strong>{{ series.userLabel }}</strong><span>{{ dimension === 'group' ? categoryName(series.label) : series.label }}</span></div>
-                  <div class="matrix-cells"><i v-for="(value, index) in series.values" :key="index" :style="{ background: matrixColor(value) }" :title="`${series.userLabel} · ${series.label} · ${range.days[index]} · ${formatMetric(value)}`"></i></div>
+                  <div class="matrix-label" v-tooltip="`${series.userLabel} · ${categoryName(series.label)}`"><strong>{{ series.userLabel }}</strong><span>{{ dimension === 'group' ? categoryName(series.label) : series.label }}</span></div>
+                  <div class="matrix-cells"><i v-for="(value, index) in series.values" :key="index" :style="{ background: matrixColor(value) }" v-tooltip="`${series.userLabel} · ${series.label} · ${range.days[index]} · ${formatMetric(value)}`"></i></div>
                 </template>
               </div>
               <div class="matrix-axis" :style="{ '--columns': String(range.days.length) }"><span v-for="day in range.days" :key="day">{{ shortDay(day) }}</span></div>
@@ -473,7 +473,7 @@ onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerd
             <div v-else class="bar-chart" data-test="stacked-chart">
               <div v-for="(day, dayIndex) in range.days" :key="day" class="bar-column" role="button" tabindex="0" @click="drillDown(day)" @keydown.enter="drillDown(day)">
                 <div class="bar-stack">
-                  <i v-for="series in chartSeries.slice(0, 8)" :key="series.key" :style="{ height: `${(series.values[dayIndex] / stackedMax) * 100}%`, background: series.color }" :title="`${series.label} · ${formatMetric(series.values[dayIndex])}`"></i>
+                  <i v-for="series in chartSeries.slice(0, 8)" :key="series.key" :style="{ height: `${(series.values[dayIndex] / stackedMax) * 100}%`, background: series.color }" v-tooltip="`${series.label} · ${formatMetric(series.values[dayIndex])}`"></i>
                 </div>
                 <span>{{ shortDay(day) }}</span>
               </div>
@@ -531,7 +531,7 @@ onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerd
               <div class="diagnostic-block">
                 <h4>{{ t('admin.traffic.dailyActivity') }}</h4>
                 <div class="activity-grid" :style="{ '--columns': String(range.days.length) }">
-                  <template v-for="item in activityRows" :key="item.user.id"><span :title="item.user.email">{{ item.user.email }}</span><div><i v-for="(value, index) in item.values" :key="index" :style="{ background: activityColor(value) }" :title="`${range.days[index]} · ${humanBytes(value)}`"></i></div></template>
+                  <template v-for="item in activityRows" :key="item.user.id"><span v-tooltip="item.user.email">{{ item.user.email }}</span><div><i v-for="(value, index) in item.values" :key="index" :style="{ background: activityColor(value) }" v-tooltip="`${range.days[index]} · ${humanBytes(value)}`"></i></div></template>
                 </div>
               </div>
               <div class="diagnostic-block">
@@ -548,7 +548,7 @@ onBeforeUnmount(() => { loadGeneration++; document.removeEventListener('pointerd
       <aside class="user-drawer">
         <div class="drawer-head"><div><span>{{ t('admin.traffic.userTraffic') }}</span><h3>{{ drawerUser.email }}</h3><small>{{ drawerUser.id }}</small></div><button class="icon-button" type="button" :aria-label="t('common.close')" @click="drawerUserID = null"><X /></button></div>
         <div class="drawer-kpis"><div><span>{{ t('admin.traffic.totalTraffic') }}</span><strong>{{ humanBytes(drawerUser.bytes) }}</strong></div><div v-if="mode === 'summary'"><span>{{ t('admin.traffic.periodTrend') }}</span><strong>{{ trendText(drawerUser.trend) }}</strong></div><div><span>{{ t('admin.traffic.kpiFrames') }}</span><strong>{{ compactNumber(drawerUser.frames) }}</strong></div></div>
-        <section v-if="mode === 'summary'"><h4><Clock3 />{{ t('admin.traffic.dailyTraffic') }}</h4><div class="drawer-bars"><div v-for="(value, index) in drawerDays" :key="range.days[index]"><i :style="{ height: `${(value / drawerDayMax) * 100}%` }" :title="`${range.days[index]} · ${humanBytes(value)}`"></i><span>{{ shortDay(range.days[index]) }}</span></div></div></section>
+        <section v-if="mode === 'summary'"><h4><Clock3 />{{ t('admin.traffic.dailyTraffic') }}</h4><div class="drawer-bars"><div v-for="(value, index) in drawerDays" :key="range.days[index]"><i :style="{ height: `${(value / drawerDayMax) * 100}%` }" v-tooltip="`${range.days[index]} · ${humanBytes(value)}`"></i><span>{{ shortDay(range.days[index]) }}</span></div></div></section>
         <section v-if="mode !== 'summary'"><TrafficTimeChart :rows="drawerRows" :dates="range.days" :seconds="seconds" :realtime="mode === 'realtime'" :dimension="dimension" :direction="direction" :metric="metric" :server-time="serverTime" @drill-down="drillDown" /></section>
         <section><h4><Activity />{{ t('admin.traffic.frameBreakdown') }}</h4><table><thead><tr><th>{{ t('admin.traffic.colFrameType') }}</th><th>{{ t('admin.traffic.colCategory') }}</th><th>{{ t('admin.traffic.colBytes') }}</th><th>{{ t('admin.traffic.colFrames') }}</th></tr></thead><tbody><tr v-for="frame in drawerFrames" :key="frame.name"><td>{{ frame.name }}</td><td>{{ categoryName(frame.category) }}</td><td>{{ humanBytes(frame.bytes) }}</td><td>{{ compactNumber(frame.frames) }}</td></tr></tbody></table></section>
       </aside>

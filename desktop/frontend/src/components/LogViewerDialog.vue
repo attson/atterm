@@ -53,7 +53,7 @@ async function copyContent() {
     <div class="dialog">
       <div class="header">
         <h2>{{ t("settings.logging.title") }}</h2>
-        <div class="path" :title="props.preview.path">{{ props.preview.path }}</div>
+        <div class="path" v-tooltip="props.preview.path">{{ props.preview.path }}</div>
       </div>
 
       <div v-if="props.error" class="error">{{ props.error }}</div>

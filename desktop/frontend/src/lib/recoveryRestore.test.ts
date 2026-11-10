@@ -10,6 +10,7 @@ describe("buildRestoreSessionReq", () => {
       shell_args: ["-l"],
       last_cwd: "/x",
       session_type: "ai",
+      session_id: "previous-atterm-sid",
       ai: { kind: "claude", session_id: "sid-1" },
     };
     const req = buildRestoreSessionReq(pane, 80, 24, "/opt/homebrew/bin/zsh");
@@ -21,6 +22,7 @@ describe("buildRestoreSessionReq", () => {
     expect(req.recovered).toBe(true);
     expect(req.ai_kind).toBe("claude");
     expect(req.initial_ai_session_id).toBe("sid-1");
+    expect(req.input_history_from_session_id).toBe("previous-atterm-sid");
   });
 
   it("forwards last_command_line as initial_ai_command_line so Go can preserve claude flags", () => {

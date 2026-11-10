@@ -79,6 +79,12 @@ type NewSessionReq struct {
 	// settings — see computeResumeArgs / claudePreservedFlags. It is NOT passed
 	// as an arg to the spawned shell.
 	InitialAICommandLine string `json:"initial_ai_command_line,omitempty"`
+
+	// InputHistoryFromSessionID is the previous local PTY generation restored
+	// by this request. The host loads its persisted input list before the new
+	// session is announced, so local and remote readers never observe an empty
+	// migration window.
+	InputHistoryFromSessionID string `json:"input_history_from_session_id,omitempty"`
 }
 
 // NewSessionResp is returned by NewSession.
@@ -561,6 +567,11 @@ func (a *App) startup(ctx context.Context) {
 		a.recoveryStore = rs
 	} else {
 		logWarn("recovery", "store unavailable: %v", err)
+	}
+	if historyStore, err := NewSessionInputHistoryStore(); err != nil {
+		logWarn("session-input-history", "store unavailable: %v", err)
+	} else {
+		a.host.SetSessionInputHistoryStore(historyStore)
 	}
 	if history, err := NewPromptHistoryStore(); err != nil {
 		logWarn("prompt-history", "store unavailable: %v", err)

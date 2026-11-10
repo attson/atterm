@@ -325,12 +325,12 @@ function onStripDrop(e: DragEvent) {
           dragging: drag?.active && drag?.fromId === t.id,
         }"
         :style="unreadTint(t.activeSession)"
-        :title="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.disconnected ? i18nT('terminal.tabDisconnectedSuffix') + ' ' : '') + (t.activeSession?.command ?? '')"
+        v-tooltip="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.disconnected ? i18nT('terminal.tabDisconnectedSuffix') + ' ' : '') + (t.activeSession?.command ?? '')"
         @click="emit('activate', t.id)"
         @pointerdown="onTabPointerDown(t.id, $event)"
       >
         <span class="num">{{ idx + 1 }}:</span>
-        <span v-if="t.layout !== 'single'" class="layout-icon" :title="layoutTitle(t)">{{ layoutLabel(t) }}</span>
+        <span v-if="t.layout !== 'single'" class="layout-icon" v-tooltip="layoutTitle(t)">{{ layoutLabel(t) }}</span>
         <span
           v-else-if="t.activeRemote"
           class="dot remote-dot"
@@ -357,7 +357,7 @@ function onStripDrop(e: DragEvent) {
       class="profile-picker"
       data-test="new-tab-profile"
       :aria-label="i18nT('terminal.newTabProfileLabel')"
-      :title="i18nT('terminal.newTabProfileLabel')"
+      v-tooltip="i18nT('terminal.newTabProfileLabel')"
       :value="selectedProfileId"
       @change="emit('select-profile', ($event.target as HTMLSelectElement).value)"
       @click.stop
@@ -370,7 +370,8 @@ function onStripDrop(e: DragEvent) {
       class="plus"
       data-test="new-local-shell"
       :disabled="starting"
-      :title="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
+      v-tooltip="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
+      :aria-label="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
       @click="emit('new')"
     >+</button>
     <button
@@ -378,7 +379,8 @@ function onStripDrop(e: DragEvent) {
       class="ssh-btn"
       type="button"
       data-test="new-ssh"
-      title="SSH hosts"
+      v-tooltip="'SSH hosts'"
+      aria-label="SSH hosts"
       @click="emit('new-ssh')"
     >
       <Server :size="14" />
@@ -389,7 +391,8 @@ function onStripDrop(e: DragEvent) {
       type="button"
       data-test="admin-button"
       :class="{ active: adminOpen }"
-      :title="i18nT('terminal.adminPanel')"
+      v-tooltip="i18nT('terminal.adminPanel')"
+      :aria-label="i18nT('terminal.adminPanel')"
       @click="emit('toggle-admin')"
     >
       <ShieldUser :size="14" />
@@ -398,7 +401,8 @@ function onStripDrop(e: DragEvent) {
       class="settings-btn"
       type="button"
       data-test="tabbar-settings"
-      :title="i18nT('terminal.relaySettings')"
+      v-tooltip="i18nT('terminal.relaySettings')"
+      :aria-label="i18nT('terminal.relaySettings')"
       @click="emit('open-settings')"
     >
       <svg

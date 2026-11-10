@@ -18,15 +18,31 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) (changed, comman
 		}
 		switch payload[0] {
 		case 'A', 'B':
+			// A prompt without a matching C means a private raw-input marker was
+			// abandoned. Do not let it leak into the next command boundary.
+			s.pendingRawCommand = ""
 			// Prompt start/end: the shell is ready for input. Fire the
 			// first-prompt hook once (used to inject a restored AI resume).
 			if !s.firstPromptFired && s.onFirstPrompt != nil {
 				s.firstPromptFired = true
 				s.onFirstPrompt()
 			}
+		case 'I':
+			// I is Atterm-private and carries the command line exactly as typed.
+			// Keep C authoritative for task metadata; consume I only when C
+			// confirms the command boundary.
+			s.pendingRawCommand = strings.TrimSpace(strings.TrimPrefix(payload, "I;"))
 		case 'C':
 			commandActivity = true
 			command := strings.TrimSpace(strings.TrimPrefix(payload, "C;"))
+			submittedCommand := s.pendingRawCommand
+			s.pendingRawCommand = ""
+			if submittedCommand == "" {
+				submittedCommand = command
+			}
+			if submittedCommand != "" && s.onCommandSubmitted != nil {
+				s.onCommandSubmitted(submittedCommand)
+			}
 			exitNil := (*int)(nil)
 			prevStateC := s.meta.TaskState
 			if s.meta.TaskState != proto.TaskStateRunning {
@@ -81,6 +97,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) (changed, comman
 			}
 			s.fireTaskStateLocked(prevStateC, proto.TaskStateRunning, TaskMeta{Label: command})
 		case 'D':
+			s.pendingRawCommand = ""
 			if s.meta.TaskState != proto.TaskStateRunning && s.meta.CommandStartedAt == 0 {
 				continue
 			}

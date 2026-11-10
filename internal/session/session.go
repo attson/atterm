@@ -68,6 +68,10 @@ type Session struct {
 	altScreen bool
 	termTail  []byte
 	osc133Buf []byte
+	// pendingRawCommand is the user-typed command reported by Atterm's private
+	// OSC 133;I marker. The following standard C marker remains authoritative
+	// for classification and recovery because shells may expand aliases there.
+	pendingRawCommand string
 	// contentOpaque is the E2EE bypass flag. When set, PushOut treats the
 	// session's OUT bytes as opaque ciphertext and skips OSC 133 parsing /
 	// Summary accumulation. Set by uplink_conn the first time it sees the
@@ -201,6 +205,13 @@ type Session struct {
 	// sid sniffer for fresh sessions (restored sessions get sniff via
 	// NewSession's req.AIKind path).
 	onAIClassified func(commandLine, cwd string)
+
+	// onCommandSubmitted fires for every non-empty OSC 133 C command boundary,
+	// preferring a preceding private I marker when the shell can report the
+	// command exactly as the user typed it.
+	// It runs while s.mu is held, so callers must stay non-blocking and must not
+	// call back into Session methods.
+	onCommandSubmitted func(commandLine string)
 
 	// aiCommandFinished records the exact boundary where an AI CLI command has
 	// emitted OSC 133;D. If the next OSC 133;C is a plain shell command, the
@@ -400,6 +411,14 @@ func (s *Session) SetOnInput(fn func()) {
 func (s *Session) SetOnAIClassified(fn func(commandLine, cwd string)) {
 	s.mu.Lock()
 	s.onAIClassified = fn
+	s.mu.Unlock()
+}
+
+// SetOnCommandSubmitted registers a callback for executed shell command lines.
+// The callback runs while s.mu is held and must not call back into Session.
+func (s *Session) SetOnCommandSubmitted(fn func(commandLine string)) {
+	s.mu.Lock()
+	s.onCommandSubmitted = fn
 	s.mu.Unlock()
 }
 

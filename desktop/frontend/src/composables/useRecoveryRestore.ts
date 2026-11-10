@@ -6,6 +6,7 @@ import {
   listShells,
   newSession,
   newSshSessionByID,
+  restoreSessionInputHistory,
   type RecoverySnapshot,
   type RecoveryTabSnapshot,
 } from "../lib/api";
@@ -91,6 +92,19 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
     open: false,
     snapshot: null,
   });
+
+  async function carryInputHistory(previousSessionID: string | undefined, currentSessionID: string) {
+    if (!previousSessionID || !currentSessionID || previousSessionID === currentSessionID) return;
+    try {
+      await restoreSessionInputHistory(previousSessionID, currentSessionID);
+    } catch (e) {
+      logWarn("recovery", "restore session input history failed", {
+        previousSessionID,
+        currentSessionID,
+        error: errText(e),
+      });
+    }
+  }
 
   async function onRecoveryRestore(picks: RecoveryTabSnapshot[]) {
     const savedActive = recoveryDialogState.value.snapshot?.active_tab_id ?? "";
@@ -241,6 +255,7 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
       if (sshKind.kind === "reconnect") {
         try {
           const resp = await newSshSessionByID(sshKind.hostId);
+          await carryInputHistory(snap.session_id, resp.session_id);
           const dims = predictCellDims(tab.layout);
           return {
             pickIdx,

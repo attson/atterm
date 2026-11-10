@@ -1,7 +1,7 @@
 # 组件样式规范
 
 > **Audience**: 改 atterm 前端 UI 的工程师
-> **Last updated**: 2026-08-24
+> **Last updated**: 2026-11-10
 > **Status**: stable
 > **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md) · [session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)
 
@@ -71,7 +71,43 @@
 - 普通按钮：透明或 `--bg` 背景、`--border` 边框、6px radius、13px 字号。
 - Primary：`--accent` 背景，文字使用深色 `#0d1117`，只用于主动作。
 - Danger：边框/文字使用 `--bad`，hover 使用低透明红背景，不用整块高饱和红。
-- Icon button 需要有 title/aria-label；hover 背景用 `rgba(255, 255, 255, 0.04-0.08)`。
+- Icon button 必须有 `aria-label`；需要可见提示时使用 `v-tooltip`。hover 背景用 `rgba(255, 255, 255, 0.04-0.08)`。
+
+### Tooltip
+
+桌面、Web、Capacitor 和桌面挂件统一使用
+`desktop/frontend/src/directives/tooltip.ts` 提供的全局 `v-tooltip`。禁止用原生 HTML
+`title` 属性充当可见 tooltip：其样式、延迟、位置和换行由浏览器或 WebKit 决定，无法
+保证跨端一致，也不能满足项目的键盘与 viewport 避让要求。
+
+```vue
+<button
+  v-tooltip="t('common.close')"
+  :aria-label="t('common.close')"
+>
+  <X aria-hidden="true" />
+</button>
+
+<span v-tooltip="'Static text'">...</span>
+```
+
+约束：
+
+- hover 延迟 320ms；键盘 focus 立即显示。pointer leave / blur 后关闭，`Escape`、滚动或
+  viewport resize 也必须关闭，避免浮层脱离目标。
+- 默认显示在目标上方并水平居中；上方空间不足时翻到下方，左右至少留 8px viewport
+  间距。浮层通过 `document.body` portal 渲染，不能被 pane、dialog 或滚动容器裁切。
+- 最大宽度 320px，允许长词和多行文本换行；使用 `--panel` / `--border` / `--fg`，
+  字号 12px、radius 5px，不使用系统原生外观。
+- 浮层使用 `role="tooltip"`，显示期间通过 `aria-describedby` 关联目标；icon-only button
+  仍必须独立提供 `aria-label`，不能把 tooltip 当作 accessible name。
+- `undefined`、`null`、`false` 和空字符串不显示。禁用控件可保留 `v-tooltip` 供 pointer
+  查看；若提示是完成操作的必要信息，还必须在控件附近提供常驻文案，不能只藏在 tooltip。
+- 动画必须服从 `prefers-reduced-motion`；tooltip 只承载补充信息，不能放按钮、链接或
+  其他需要 pointer 交互的内容。
+- 语义型组件 prop（例如 `n-card :title`、dialog 的标题）、作为 iframe accessible name 的
+  `<iframe title>`、文档 `<title>` 和用于 SVG accessible name 的 `<title>` 元素不属于本
+  禁令，不应机械替换为 `v-tooltip`。
 
 ### Input / textarea / number
 

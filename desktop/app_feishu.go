@@ -304,7 +304,7 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	// not the user has a Feishu binding at all.
 	svc.HookServer().SetTaskStateSink(a.host)
 	svc.HookServer().SetAISessionIdentitySink(a.host)
-	svc.HookServer().SetPromptSink(a.promptHistory)
+	svc.HookServer().SetPromptSink(a.host)
 
 	svc.HookServer().SetSuspectCallback(func() {
 		// A misrouted POST may indicate stale install; nudge the

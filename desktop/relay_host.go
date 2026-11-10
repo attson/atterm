@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -89,6 +90,10 @@ type relayHost struct {
 	// turns from the rollout bound to this PTY. Atomic publication keeps session
 	// goroutines race-free while app startup wires the device-local store.
 	promptHistory atomic.Pointer[PromptHistoryStore]
+
+	// inputHistoryStore persists each live session's bounded input list so a
+	// replacement PTY created by recovery can inherit the previous generation.
+	inputHistoryStore *sessionInputHistoryStore
 
 	// feishuRemoteTermState reports the remote-terminal gate state for the live
 	// Feishu mode. Injected by app.go so the guard does not bind to a concrete
@@ -225,6 +230,7 @@ type activeSession struct {
 	restored            bool // true when NewSession was invoked with AIKind set (recovery path)
 	applyHookAIIdentity func(kind, aiSessionID string)
 	feishuUserActivated atomic.Bool
+	inputHistory        *sessionInputHistory
 }
 
 // startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
@@ -328,12 +334,25 @@ func (h *relayHost) SetPromptHistoryStore(store *PromptHistoryStore) {
 	h.promptHistory.Store(store)
 }
 
+func (h *relayHost) SetSessionInputHistoryStore(store *sessionInputHistoryStore) {
+	h.inputHistoryStore = store
+}
+
+// RecordPrompt fans one verified submission into the PTY-lifetime history and
+// the independent device-level suggestion store.
+func (h *relayHost) RecordPrompt(id uuid.UUID, prompt string) error {
+	sessionErr := h.recordSessionInput(id, prompt)
+	var suggestionErr error
+	if history := h.promptHistory.Load(); history != nil {
+		suggestionErr = history.Record(prompt)
+	}
+	return errors.Join(sessionErr, suggestionErr)
+}
+
 func (h *relayHost) handleCodexTranscriptTurn(id uuid.UUID, aiSID string, turn codexTranscriptTurn) {
 	if turn.Role == codexTurnRoleUser {
-		if history := h.promptHistory.Load(); history != nil {
-			if err := history.RecordPrompt(turn.Text); err != nil {
-				logWarn("prompt-history", "record codex rollout prompt: %v", err)
-			}
+		if err := h.RecordPrompt(id, turn.Text); err != nil {
+			logWarn("prompt-history", "record codex rollout prompt session=%s: %v", id, err)
 		}
 	}
 
@@ -633,6 +652,12 @@ func (h *relayHost) Stop() {
 		_ = h.store.Close()
 		h.store = nil
 	}
+	if h.inputHistoryStore != nil {
+		if err := h.inputHistoryStore.Close(); err != nil {
+			logWarn("session-input-history", "flush on shutdown: %v", err)
+		}
+		h.inputHistoryStore = nil
+	}
 }
 
 // resolveSessionProfile implements design §4's precedence for choosing a
@@ -910,7 +935,20 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			}
 		})
 	}
-	active := &activeSession{host: pty, cleanup: combinedCleanup, restored: req.AIKind != ""}
+	active := &activeSession{
+		host:         pty,
+		cleanup:      combinedCleanup,
+		restored:     req.AIKind != "",
+		inputHistory: h.newSessionInputHistory(id),
+	}
+	if req.InputHistoryFromSessionID != "" {
+		previousID, err := uuid.Parse(req.InputHistoryFromSessionID)
+		if err != nil || previousID == uuid.Nil {
+			logWarn("session-input-history", "ignore invalid restore source session=%s", req.InputHistoryFromSessionID)
+		} else if err := h.restorePersistedInputHistory(previousID, active.inputHistory); err != nil {
+			logWarn("session-input-history", "restore source=%s target=%s: %v", previousID, id, err)
+		}
+	}
 	active.applyHookAIIdentity = func(kind, aiSessionID string) {
 		resolveMu.Lock()
 		if kind == "" || aiSessionID == "" {
@@ -962,6 +1000,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	// confirms the generation already established below instead of clearing the
 	// known initial SID and starting a duplicate resolver.
 	if sess, ok := h.server.Registry().Get(id); ok {
+		sess.SetOnCommandSubmitted(active.inputHistory.Append)
 		if req.Recovered {
 			// Recovery deliberately skips eager Feishu attachment so restoring a
 			// workspace does not recreate cards for every idle pane. This gate also

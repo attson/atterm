@@ -143,12 +143,13 @@ function onContext(ev: MouseEvent) {
       class="node"
       :class="{ selected: isSelected, 'is-dir': node.isDir, 'is-file': !node.isDir }"
       :data-type="node.isDir ? 'dir' : 'file'"
+      :data-path="node.path"
       :style="{
         paddingLeft: `${level * INDENT_PX}px`,
         height: `${ROW_HEIGHT}px`,
         lineHeight: `${ROW_HEIGHT}px`,
       }"
-      :title="node.path"
+      v-tooltip="node.path"
       @click="onClick"
       @dblclick="onDblClick"
       @contextmenu="onContext"

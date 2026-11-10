@@ -151,6 +151,8 @@ export function GetRecoveryDialogEnabled():Promise<boolean>;
 
 export function GetRelayConfig():Promise<main.RelayConfig>;
 
+export function GetSessionInputHistory(arg1:string):Promise<main.SessionInputHistoryResult>;
+
 export function GetShellIntegrationEnabled():Promise<boolean>;
 
 export function GetShortcutBindings():Promise<Record<string, string>>;
@@ -282,6 +284,8 @@ export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:str
 export function RememberRelayPassword(arg1:string):Promise<void>;
 
 export function RemoveKnownHost(arg1:string):Promise<void>;
+
+export function RestoreSessionInputHistory(arg1:string,arg2:string):Promise<void>;
 
 export function RevealSSHKey(arg1:string):Promise<main.SSHKeySecret>;
 

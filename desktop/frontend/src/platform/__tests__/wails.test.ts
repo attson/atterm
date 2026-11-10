@@ -12,6 +12,10 @@ vi.mock('../../lib/api', () => ({
   newSession: vi.fn().mockResolvedValue({ session_id: 's1' }),
   closeSession: vi.fn().mockResolvedValue(undefined),
   listShells: vi.fn().mockResolvedValue(['/bin/zsh']),
+  getSessionInputHistory: vi.fn().mockResolvedValue({
+    items: [{ text: 'review this diff', submitted_at_unix_ms: 123 }],
+    truncated: false,
+  }),
   getUpdateState: vi.fn().mockResolvedValue({ state: 'idle' }),
   checkUpdate: vi.fn().mockResolvedValue(undefined),
   startDownload: vi.fn().mockResolvedValue(undefined),
@@ -147,6 +151,7 @@ import {
   showNotification,
   setUplinkPaused,
   markSessionsSeen,
+  getSessionInputHistory,
   getPinnedSessionIds,
   setPinnedSessionIds,
   listRelaySessions,
@@ -186,6 +191,16 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.sessions.markSessionsSeen!({ ids: ['s1'] })
     expect(markSessionsSeen).toHaveBeenCalledWith({ ids: ['s1'] })
+  })
+
+  it('sessions.getInputHistory delegates to api.getSessionInputHistory', async () => {
+    const p = createWailsPlatform()
+    const result = await p.sessions.getInputHistory!('session-1')
+    expect(getSessionInputHistory).toHaveBeenCalledWith('session-1')
+    expect(result).toEqual({
+      items: [{ text: 'review this diff', submitted_at_unix_ms: 123 }],
+      truncated: false,
+    })
   })
 
   it('sessions.getPins delegates to api.getPinnedSessionIds', async () => {

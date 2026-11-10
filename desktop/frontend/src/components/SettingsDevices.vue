@@ -199,7 +199,7 @@ function activityText(row: RelaySessionRow): string {
       <div v-else class="device-list">
         <div v-for="row in displayRows" :key="row.id_hash" class="device-row">
           <div class="device-info">
-            <div class="ua" :title="row.user_agent">{{ deviceName(row.user_agent) }}</div>
+            <div class="ua" v-tooltip="row.user_agent">{{ deviceName(row.user_agent) }}</div>
             <div class="meta">
               {{
                 t("settings.devices.loginLine", {

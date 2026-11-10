@@ -6,6 +6,7 @@ import { initI18n, type LocalePreference } from "../i18n";
 import { bridgeSharedI18n } from "../i18n/shared-bridge";
 import { initPlatform, type Platform } from "../platform";
 import { installLogFlushHandlers, logInfo } from "./log";
+import { installTooltip } from "../directives/tooltip";
 
 /**
  * bootstrapApp is the shared boot skeleton for the three entry points
@@ -64,6 +65,7 @@ export async function bootstrapApp(opts: BootstrapAppOptions): Promise<void> {
 
   const app = createApp(App);
   app.use(createPinia());
+  installTooltip(app);
   app.provide("platform", platform);
   app.config.globalProperties.$platform = platform;
   app.mount("#app");

@@ -48,6 +48,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 	// eventually clear it, but there's no reason to wait: nothing will ever
 	// read targetedOut again once this connection is gone.
 	defer s.sessionCreateRoutes().unregisterClient(targetedOut)
+	defer s.inputHistoryRoutes().unregisterClient(targetedOut)
 	defer s.services.closeRequester(targetedOut)
 	defer func() {
 		routes := s.fsRoutes()
@@ -324,6 +325,30 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
 
+		case proto.TypeInputHistoryRequest:
+			var request proto.InputHistoryRequestPayload
+			if err := json.Unmarshal(f.Payload, &request); err != nil || request.RequestID == "" {
+				s.sendInputHistoryError(targetedOut, f.SessionID, request.RequestID, "invalid_request")
+				continue
+			}
+			if sess == nil || f.SessionID != sess.ID {
+				s.sendInputHistoryError(targetedOut, f.SessionID, request.RequestID, "not_attached")
+				continue
+			}
+			if !sess.DriverFromUpstream() {
+				s.sendInputHistoryError(targetedOut, sess.ID, request.RequestID, "upstream_unavailable")
+				continue
+			}
+			routes := s.inputHistoryRoutes()
+			if !routes.register(sess.ID, request.RequestID, targetedOut) {
+				s.sendInputHistoryError(targetedOut, sess.ID, request.RequestID, "duplicate_request")
+				continue
+			}
+			if !sess.SendInbound(f) {
+				routes.unregister(sess.ID, request.RequestID, targetedOut)
+				s.sendInputHistoryError(targetedOut, sess.ID, request.RequestID, "upstream_unavailable")
+			}
+
 		case proto.TypeSessionCreate:
 			// No ATTACH required: this asks a desktop to fork a brand new
 			// session, so there is nothing to attach to yet. sess may be nil.
@@ -521,6 +546,14 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			logging.Warn("relay-client", "unexpected frame type 0x%02x", f.Type)
 		}
 	}
+}
+
+func (s *Server) sendInputHistoryError(out chan<- proto.Frame, sessionID uuid.UUID, requestID, code string) {
+	payload, err := json.Marshal(proto.InputHistoryResponsePayload{RequestID: requestID, Error: code})
+	if err != nil {
+		return
+	}
+	_ = sendFSFrame(out, proto.Frame{Type: proto.TypeInputHistoryResponse, SessionID: sessionID, Payload: payload})
 }
 
 func isReadOnlyFSOperation(op string) bool {

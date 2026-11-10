@@ -150,7 +150,8 @@ describe('SettingsRelay direct connection preference', () => {
     const toggle = w.get<HTMLInputElement>('[data-testid="direct-connection-toggle"]')
     const info = w.get<HTMLButtonElement>('[data-testid="direct-connection-info"]')
     expect(toggle.element.closest('.uplink-toggle-row')).not.toBeNull()
-    expect(info.attributes('title')).toBe('settings.relay.preferDirectConnectionHint')
+    await info.trigger('focus')
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('settings.relay.preferDirectConnectionHint')
     expect(toggle.element.checked).toBe(true)
 
     await toggle.setValue(false)

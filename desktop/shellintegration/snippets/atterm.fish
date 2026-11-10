@@ -8,7 +8,7 @@ set -g __atterm_loaded 1
 
 function __atterm_preexec --on-event fish_preexec
     set -l cmd (string join " " -- $argv)
-    printf '\033]133;C;%s\007' "$cmd"
+    printf '\033]133;I;%s\007\033]133;C;%s\007' "$cmd" "$cmd"
 end
 
 function __atterm_postexec --on-event fish_postexec

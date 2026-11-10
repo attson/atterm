@@ -6,13 +6,14 @@ import source from "./LastOutputIndicator.vue?raw";
 const NOW = 1_800_000_000_000;
 
 describe("LastOutputIndicator", () => {
-  it("renders the compact clock label and tooltip", () => {
+  it("renders the compact clock label and tooltip", async () => {
     const w = mount(LastOutputIndicator, {
       props: { lastOutputAt: NOW / 1000 - 60, taskState: "idle", nowMs: NOW },
     });
     const indicator = w.get('[data-test="last-output"]');
     expect(indicator.text()).toBe("1m");
-    expect(indicator.attributes("title")).toBe("Last output 1m ago");
+    await indicator.trigger("focus");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe("Last output 1m ago");
     expect(indicator.find("svg").exists()).toBe(true);
   });
 

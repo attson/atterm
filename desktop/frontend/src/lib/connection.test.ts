@@ -6,7 +6,7 @@ import { utf8ToBytes, randomBytes } from "@noble/hashes/utils.js";
 import source from "./connection.ts?raw";
 import { decryptSessionFields, SessionConnection, SessionListConnection, type FSResponse, type SessionInfo } from "./connection";
 import { setAccountKeyProvider } from "./account-key";
-import type { SealedSessionFields } from "./opaque";
+import { sealUnsequenced, type SealedSessionFields } from "./opaque";
 import { TYPE, NIL_SID, decodeFrame, decodeText, encodeFrame, encodeText, uuidParse } from "./proto";
 import { encodeSegments, decodeSegments } from "./fsSegments";
 import { logWarn } from "./log";
@@ -168,6 +168,52 @@ describe("SessionConnection FS RPC", () => {
     expect(opened.clientToHostKey).toHaveLength(32);
     expect(opened.hostToClientKey).toHaveLength(32);
     expect(opened.clientToHostKey).not.toEqual(opened.hostToClientKey);
+  });
+
+  test("requestInputHistory opens only the matching sealed response", async () => {
+    const accountKey = new Uint8Array(32).fill(0x43);
+    setAccountKeyProvider(() => accountKey);
+    const { conn, ws } = openConnection();
+    const requestID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(requestID);
+
+    const pending = conn.requestInputHistory();
+    const request = decodeFrame(ws.sent[1]);
+    expect(request.type).toBe(TYPE.INPUT_HISTORY_REQUEST);
+    expect(JSON.parse(decodeText(request.payload))).toEqual({ request_id: requestID });
+
+    const body = {
+      request_id: requestID,
+      items: [{ text: "line one\nline two", submitted_at_unix_ms: 1234 }],
+      truncated: true,
+    };
+    const sealed = sealUnsequenced(accountKey, sessionId, TYPE.INPUT_HISTORY_RESPONSE, encodeText(JSON.stringify(body)));
+    ws.emit(TYPE.INPUT_HISTORY_RESPONSE, {
+      request_id: requestID,
+      ok: true,
+      sealed: btoa(String.fromCharCode(...sealed)),
+    });
+
+    await expect(pending).resolves.toEqual({ items: body.items, truncated: true });
+  });
+
+  test("requestInputHistory drops malformed envelopes and times out", async () => {
+    vi.useFakeTimers();
+    setAccountKeyProvider(() => new Uint8Array(32).fill(0x43));
+    const { conn, ws } = openConnection();
+    const requestID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(requestID);
+
+    const pending = conn.requestInputHistory(10);
+    expect(() => ws.emit(TYPE.INPUT_HISTORY_RESPONSE, {
+      request_id: requestID,
+      ok: true,
+      sealed: "not valid base64 ***",
+    })).not.toThrow();
+
+    const rejected = expect(pending).rejects.toMatchObject({ code: "timeout" });
+    await vi.advanceTimersByTimeAsync(10);
+    await rejected;
   });
 
   test("openService fails closed without an unlocked account key", async () => {

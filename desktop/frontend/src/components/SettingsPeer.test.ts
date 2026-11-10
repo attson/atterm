@@ -686,7 +686,11 @@ describe('SettingsPeer', () => {
     const copy = wrapper.get('[data-testid="peer-copy-invitation"]')
 
     expect(copy.attributes('disabled')).toBeDefined()
-    expect(copy.attributes('title')).toBe('settings.peer.invitations.startTunnelFirst')
+    vi.useFakeTimers()
+    copy.element.dispatchEvent(new Event('pointerenter'))
+    await vi.advanceTimersByTimeAsync(350)
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('settings.peer.invitations.startTunnelFirst')
+    vi.useRealTimers()
     await copy.trigger('click')
     await flushPromises()
     expect(fakePlatform.peer.createConnectionBundle).not.toHaveBeenCalled()

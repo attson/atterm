@@ -1,9 +1,9 @@
 import type { PresetId } from "../taskState";
 import type { QuickTemplate } from "../templates";
 import { bindings } from "./_bindings";
-import type { MarkSessionsSeenOpts, PromptHistoryPage, PromptHistoryStatus, TaskGroupBy } from "./_bindings";
+import type { MarkSessionsSeenOpts, PromptHistoryPage, PromptHistoryStatus, SessionInputHistoryResult, TaskGroupBy } from "./_bindings";
 
-export type { MarkSessionsSeenOpts, PromptHistoryPage, TaskGroupBy } from "./_bindings";
+export type { MarkSessionsSeenOpts, PromptHistoryPage, SessionInputHistoryResult, TaskGroupBy } from "./_bindings";
 
 export function getQuickTemplates(): Promise<QuickTemplate[]> {
   return bindings().GetQuickTemplates();
@@ -31,6 +31,12 @@ export function setPromptHistoryEnabled(enabled: boolean): Promise<void> {
 
 export function clearPromptHistory(): Promise<void> {
   return bindings().ClearPromptHistory();
+}
+
+export function getSessionInputHistory(sessionID: string): Promise<SessionInputHistoryResult> {
+  const fn = bindings().GetSessionInputHistory;
+  if (!fn) return Promise.reject(new Error("session input history unavailable"));
+  return fn(sessionID);
 }
 
 export function getTaskPreset(): Promise<string> {

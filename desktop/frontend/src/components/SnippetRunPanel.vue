@@ -221,7 +221,7 @@ defineExpose({ buildCopyAllText })
             class="primary"
             data-testid="snippet-run-start"
             :disabled="!canStart"
-            :title="selected.size === 0 ? t('snippets.noHostsSelected') : ''"
+            v-tooltip="selected.size === 0 ? t('snippets.noHostsSelected') : ''"
             @click="startRun"
           >{{ t('snippets.runOnHosts') }}</button>
         </div>

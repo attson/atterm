@@ -764,10 +764,13 @@ func TestShouldNotifySession(t *testing.T) {
 
 func TestRelayHostCodexTranscriptRecordsPromptWithoutFeishu(t *testing.T) {
 	store, _ := tempPromptHistoryStore(t)
-	h := &relayHost{}
+	sid := uuid.New()
+	h := &relayHost{sessions: map[uuid.UUID]*activeSession{
+		sid: {inputHistory: newSessionInputHistory(time.Now)},
+	}}
 	h.SetPromptHistoryStore(store)
 
-	h.handleCodexTranscriptTurn(uuid.New(), "codex-session", codexTranscriptTurn{
+	h.handleCodexTranscriptTurn(sid, "codex-session", codexTranscriptTurn{
 		Role: codexTurnRoleUser,
 		Text: "fix this issue",
 	})
@@ -782,6 +785,24 @@ func TestRelayHostCodexTranscriptRecordsPromptWithoutFeishu(t *testing.T) {
 	}
 	if status := store.Status(); status.Count != 1 {
 		t.Fatalf("history count = %d, want only the user turn", status.Count)
+	}
+	sessionHistory, err := h.sessionInputHistory(sid)
+	if err != nil || len(sessionHistory.Items) != 1 || sessionHistory.Items[0].Text != "fix this issue" {
+		t.Fatalf("session history = %+v, err=%v", sessionHistory, err)
+	}
+}
+
+func TestRelayHostRecordPromptKeepsSuggestionHistoryIndependent(t *testing.T) {
+	store, _ := tempPromptHistoryStore(t)
+	h := &relayHost{sessions: map[uuid.UUID]*activeSession{}}
+	h.SetPromptHistoryStore(store)
+
+	if err := h.RecordPrompt(uuid.New(), "keep the existing suggestion"); err == nil {
+		t.Fatal("missing live session should still be reported")
+	}
+	got := store.Query("keep", 3)
+	if len(got) != 1 || got[0] != "keep the existing suggestion" {
+		t.Fatalf("device suggestion history = %q", got)
 	}
 }
 

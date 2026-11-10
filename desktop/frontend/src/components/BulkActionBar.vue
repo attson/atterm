@@ -51,7 +51,7 @@ function onClear() {
       data-test="bulk-merge"
       type="button"
       :disabled="!canMerge"
-      :title="mergeTitle"
+      v-tooltip="mergeTitle"
       @click="onMerge"
     >
       {{ t("tasks.bulk.mergeTab") }} ({{ count }})
@@ -61,7 +61,7 @@ function onClear() {
       data-test="bulk-close"
       type="button"
       :disabled="openCount === 0"
-      :title="closeTitle"
+      v-tooltip="closeTitle"
       @click="onClose"
     >
       {{ t("tasks.bulk.close", { count: openCount }) }}
@@ -70,7 +70,7 @@ function onClear() {
       class="btn ghost"
       data-test="bulk-clear"
       type="button"
-      :title="t('tasks.bulk.cancel')"
+      v-tooltip="t('tasks.bulk.cancel')"
       @click="onClear"
     >
       {{ t("tasks.bulk.cancel") }}

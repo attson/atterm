@@ -42,7 +42,7 @@ type AISessionIdentitySink interface {
 // PromptSink receives already-validated user prompt submissions. Keeping it
 // separate from WaitingDispatcher lets local history work with Feishu off.
 type PromptSink interface {
-	RecordPrompt(prompt string) error
+	RecordPrompt(sessionID uuid.UUID, prompt string) error
 }
 
 // WaitingDispatcher is the subset of *Dispatcher the hook server uses.
@@ -238,7 +238,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if prompt, ok := promptForHook(req.AgentKind, req.HookInput); ok {
 		promptRecognized = true
 		if sink := h.promptHistorySink(); sink != nil {
-			if err := sink.RecordPrompt(prompt); err != nil {
+			if err := sink.RecordPrompt(sid, prompt); err != nil {
 				logging.Warn("prompt-history", "record hook prompt: %v", err)
 			}
 		}

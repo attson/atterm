@@ -50,6 +50,7 @@ vi.mock('../../lib/api', () => ({
   newSession: vi.fn().mockResolvedValue({ session_id: 's1' }),
   closeSession: vi.fn().mockResolvedValue(undefined),
   listShells: vi.fn().mockResolvedValue([]),
+  getSessionInputHistory: vi.fn().mockResolvedValue({ items: [], truncated: false }),
   getUpdateState: vi.fn().mockResolvedValue({ state: 'idle' }),
   checkUpdate: vi.fn().mockResolvedValue(undefined),
   startDownload: vi.fn().mockResolvedValue(undefined),

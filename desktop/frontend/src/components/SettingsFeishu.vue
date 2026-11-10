@@ -2,7 +2,7 @@
   <div class="tab-pane">
     <section class="hook-install" data-test="hook-install">
       <header class="hook-install__row">
-        <span class="hook-install__dot" :class="dotClass" :title="hookState.last_error || ''"></span>
+        <span class="hook-install__dot" :class="dotClass" v-tooltip="hookState.last_error || ''"></span>
         <span class="hook-install__label">{{ hookLabel }}</span>
         <label class="hook-install__toggle">
           <input type="checkbox" :checked="hookState.enabled" @change="onToggleHook" />

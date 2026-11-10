@@ -31,7 +31,10 @@ function global:prompt {
 if (Get-Module -ListAvailable PSReadLine) {
     Import-Module PSReadLine
     Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
-        [Console]::Write("`e]133;C`a")
+        $line = ""
+        $cursor = 0
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+        [Console]::Write("`e]133;I;$line`a`e]133;C;$line`a")
         [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
     }
 }

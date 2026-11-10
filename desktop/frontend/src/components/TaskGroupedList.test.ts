@@ -191,7 +191,7 @@ describe("TaskGroupedList", () => {
     expect(text).toMatch(/atterm/); // last segment always present after shortenCwd
   });
 
-  test("row shows only the executable basename, full command lives in title", () => {
+  test("row shows only the executable basename, full command lives in tooltip", async () => {
     const byHost = {
       h: [
         mk({
@@ -214,11 +214,12 @@ describe("TaskGroupedList", () => {
     // Visible cmd span shows only "claude" — no flags, no leading path.
     const cmd = w.find('[data-test="task-row"] .cmd');
     expect(cmd.text()).toBe("claude");
-    // Full command + cwd live in the row's title attribute (hover tooltip).
+    // Full command + cwd live in the project's hover/focus tooltip.
     const wrap = w.find('[data-test="task-row"] .cmd-and-cwd');
-    const title = wrap.attributes("title") || "";
-    expect(title).toContain("/usr/local/bin/claude --permission-mode bypassPermissions");
-    expect(title).toContain("/tmp");
+    await wrap.trigger("focus");
+    const tooltip = document.querySelector('[role="tooltip"]')?.textContent || "";
+    expect(tooltip).toContain("/usr/local/bin/claude --permission-mode bypassPermissions");
+    expect(tooltip).toContain("/tmp");
   });
 });
 

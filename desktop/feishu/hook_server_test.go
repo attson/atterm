@@ -276,13 +276,15 @@ func (f *aiIdentitySinkFake) identities() []aiIdentityCall {
 }
 
 type promptSinkFake struct {
-	mu      sync.Mutex
-	prompts []string
+	mu         sync.Mutex
+	prompts    []string
+	sessionIDs []uuid.UUID
 }
 
-func (f *promptSinkFake) RecordPrompt(prompt string) error {
+func (f *promptSinkFake) RecordPrompt(sessionID uuid.UUID, prompt string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.sessionIDs = append(f.sessionIDs, sessionID)
 	f.prompts = append(f.prompts, prompt)
 	return nil
 }
@@ -320,6 +322,9 @@ func TestHookServer_RecordsVerifiedClaudePrompts(t *testing.T) {
 	want := []string{"review this diff"}
 	if !reflect.DeepEqual(sink.prompts, want) {
 		t.Fatalf("recorded prompts = %q, want %q", sink.prompts, want)
+	}
+	if !reflect.DeepEqual(sink.sessionIDs, []uuid.UUID{sid}) {
+		t.Fatalf("recorded session ids = %v, want %s", sink.sessionIDs, sid)
 	}
 }
 

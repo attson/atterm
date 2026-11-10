@@ -294,6 +294,10 @@ export function GetRelayConfig() {
   return window['go']['main']['App']['GetRelayConfig']();
 }
 
+export function GetSessionInputHistory(arg1) {
+  return window['go']['main']['App']['GetSessionInputHistory'](arg1);
+}
+
 export function GetShellIntegrationEnabled() {
   return window['go']['main']['App']['GetShellIntegrationEnabled']();
 }
@@ -556,6 +560,10 @@ export function RememberRelayPassword(arg1) {
 
 export function RemoveKnownHost(arg1) {
   return window['go']['main']['App']['RemoveKnownHost'](arg1);
+}
+
+export function RestoreSessionInputHistory(arg1, arg2) {
+  return window['go']['main']['App']['RestoreSessionInputHistory'](arg1, arg2);
 }
 
 export function RevealSSHKey(arg1) {

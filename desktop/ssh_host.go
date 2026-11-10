@@ -280,6 +280,10 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 
 	host := &sshPtyHost{Session: sess}
 	cleanup := h.server.AdoptSession(ctx, id, info, host, h.adminUserID)
+	active := &activeSession{host: host, cleanup: cleanup, inputHistory: h.newSessionInputHistory(id)}
+	if relaySession, ok := h.server.Registry().Get(id); ok {
+		relaySession.SetOnCommandSubmitted(active.inputHistory.Append)
+	}
 
 	h.mu.Lock()
 	if h.sessions == nil {
@@ -289,7 +293,7 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 		_ = chain.Close()
 		return uuid.Nil, fmt.Errorf("relay host stopped")
 	}
-	h.sessions[id] = &activeSession{host: host, cleanup: cleanup}
+	h.sessions[id] = active
 	h.mu.Unlock()
 	h.notifyChange()
 

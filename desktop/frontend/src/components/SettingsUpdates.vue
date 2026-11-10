@@ -229,7 +229,7 @@ const statusLine = computed(() => {
           class="kv"
         >
           <span class="k">{{ t("settings.updates.downloadPath") }}</span>
-          <span class="v path" :title="state.download_path">
+          <span class="v path" v-tooltip="state.download_path">
             {{ state.download_path }}
           </span>
         </div>

@@ -25,6 +25,12 @@ export function discardRecoverySnapshot(): Promise<void> {
   return bindings().DiscardRecoverySnapshot();
 }
 
+export function restoreSessionInputHistory(previousSessionID: string, currentSessionID: string): Promise<void> {
+  const fn = bindings().RestoreSessionInputHistory;
+  if (!fn) return Promise.resolve();
+  return fn(previousSessionID, currentSessionID);
+}
+
 export function getRecoveryDialogEnabled(): Promise<boolean> {
   return bindings().GetRecoveryDialogEnabled();
 }

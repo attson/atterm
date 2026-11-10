@@ -595,6 +595,28 @@ non-shell 时才覆盖。这条 sticky 规则保证：
 "sticky" 补丁，否则两层规则会互相打架。`type` 同样需要走 MetaPayload 广播
 路径（P2.12 之前漏了这点，导致已连接的 subscriber 拿不到实时类型变化）。
 
+会话输入历史需要区分“用户实际输入”和“shell 将执行的命令”。新版 shell
+integration 在 `C` 前发送 Atterm 私有 `OSC 133;I;<raw>`：`I` 只暂存原始输入，
+紧随的 `C` 才确认执行边界并触发历史追加；`CurrentCommand`、`ClassifyCommand` 和 AI
+恢复始终使用 `C` 的完整命令。zsh 的 `C` 必须继续取 alias-expanded、未截断的 `$3`，
+不能为了让历史显示 `ls` 而改成会丢恢复参数的 `$2`。旧 integration 只有 `C` 时，
+历史回退记录 `C`；`A/B/D` 会清掉未配对的 `I`，防止串到下一条命令。
+
+桌面端把每个本地会话的输入历史独立持久化到
+`~/.config/atterm/session-input-history/<session_id>.json`：目录权限 `0700`、
+文件权限 `0600`，单会话继续遵守 200 条 / 2 MiB 的内存上限，并按 recovery
+相同的 14 天 TTL 清理。写盘由单 writer 合并同一 session 的待处理快照，OSC
+回调只入队，不能在持有 `internal/session.Session` 锁时做文件 I/O。
+
+进程重启恢复本地 shell 或 saved-host SSH 时会产生新 `session_id`。普通本地
+shell 通过 `NewSessionReq.input_history_from_session_id` 让 Go 在发布新会话前
+载入旧记录；saved-host SSH 建连后立即调用
+`RestoreSessionInputHistory(old_sid, new_sid)`。Go 侧将旧记录放在新
+generation 已产生记录之前并重新执行容量裁剪。renderer reload 和真正的
+remote pane 继续 attach 原 session id，不做迁移。`recovery.json`
+每次落盘前必须 flush 历史 writer，使快照里的 sid 与独立历史文件处在同一
+持久化边界；不要把历史正文塞进 256 KiB 的 `recovery.json`。
+
 ## Commit 风格
 
 参考现有 git log：

@@ -216,9 +216,9 @@ describe("FileTree", () => {
       .mockResolvedValueOnce(20);
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/parent"]').trigger("click");
+    await w.find('.node[data-path="/proj/parent"]').trigger("click");
     await flushPromises();
-    await w.find('.node[title="/proj/parent/child"]').trigger("click");
+    await w.find('.node[data-path="/proj/parent/child"]').trigger("click");
     await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(2));
 
     emitDirChanged("/proj/parent");
@@ -243,7 +243,7 @@ describe("FileTree", () => {
     });
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/parent"]').trigger("click");
+    await w.find('.node[data-path="/proj/parent"]').trigger("click");
     await flushPromises();
 
     emitDirChanged("/proj/parent");
@@ -276,14 +276,14 @@ describe("FileTree", () => {
     });
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/parent"]').trigger("click");
+    await w.find('.node[data-path="/proj/parent"]').trigger("click");
     await flushPromises();
-    void w.find('.node[title="/proj/parent/child"]').trigger("click");
+    void w.find('.node[data-path="/proj/parent/child"]').trigger("click");
     await vi.waitFor(() => expect(childWatchResolvers).toHaveLength(1));
 
     emitDirChanged("/proj/parent");
     await flushPromises();
-    void w.find('.node[title="/proj/parent/child"]').trigger("click");
+    void w.find('.node[data-path="/proj/parent/child"]').trigger("click");
     await vi.waitFor(() => expect(childWatchResolvers).toHaveLength(2));
     childWatchResolvers[1](22);
     await flushPromises();
@@ -310,10 +310,10 @@ describe("FileTree", () => {
       .mockResolvedValueOnce(20);
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    const parent = w.find('.node[title="/proj/parent"]');
+    const parent = w.find('.node[data-path="/proj/parent"]');
     await parent.trigger("click");
     await flushPromises();
-    await w.find('.node[title="/proj/parent/child"]').trigger("click");
+    await w.find('.node[data-path="/proj/parent/child"]').trigger("click");
     await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(2));
     const childReadsBeforeCollapse = listDir.mock.calls.filter(([path]) => path === "/proj/parent/child").length;
 
@@ -369,9 +369,9 @@ describe("FileTree context menu + CRUD", () => {
     });
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/src"]').trigger("click");
+    await w.find('.node[data-path="/proj/src"]').trigger("click");
     await flushPromises();
-    await w.find('.node[title="/proj/src/app.ts"]').trigger("click");
+    await w.find('.node[data-path="/proj/src/app.ts"]').trigger("click");
     await w.find(".tree-wrap").trigger("contextmenu");
     await w.find('[data-test="menu-new-file"]').trigger("click");
     await flushPromises();
@@ -396,7 +396,7 @@ describe("FileTree context menu + CRUD", () => {
   it("right-click on a file opens the context menu with four items", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu");
     await flushPromises();
     expect(w.find('[data-test="file-tree-menu"]').exists()).toBe(true);
     expect(w.find('[data-test="menu-new-file"]').exists()).toBe(true);
@@ -410,7 +410,7 @@ describe("FileTree context menu + CRUD", () => {
       props: { fs, root: "/proj", showHidden: true, showLineNumbers: false },
     });
     await flushPromises();
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu");
     await flushPromises();
     const hidden = w.find('[data-test="menu-toggle-hidden"]');
     const lineNumbers = w.find('[data-test="menu-toggle-line-numbers"]');
@@ -425,14 +425,14 @@ describe("FileTree context menu + CRUD", () => {
       props: { fs, root: "/proj", showHidden: false, showLineNumbers: false },
     });
     await flushPromises();
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-toggle-hidden"]').trigger("click");
     await flushPromises();
     expect(w.emitted("toggle-show-hidden")).toEqual([[true]]);
     expect(w.find('[data-test="file-tree-menu"]').exists()).toBe(false);
 
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-toggle-line-numbers"]').trigger("click");
     await flushPromises();
@@ -442,7 +442,7 @@ describe("FileTree context menu + CRUD", () => {
   it("clicking Delete without Shift dispatches fs.trash", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-delete"]').trigger("click");
     await flushPromises();
@@ -455,7 +455,7 @@ describe("FileTree context menu + CRUD", () => {
   it("shift-right-click delete dispatches fs.remove", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu", { shiftKey: true });
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu", { shiftKey: true });
     await flushPromises();
     await w.find('[data-test="menu-delete"]').trigger("click");
     await flushPromises();
@@ -470,9 +470,9 @@ describe("FileTree context menu + CRUD", () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
     // expand /proj/src
-    await w.find('.node[title="/proj/src"]').trigger("click");
+    await w.find('.node[data-path="/proj/src"]').trigger("click");
     await flushPromises();
-    await w.find('.node[title="/proj/src"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/src"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-new-file"]').trigger("click");
     await flushPromises();
@@ -488,7 +488,7 @@ describe("FileTree context menu + CRUD", () => {
   it("Rename replaces the row with an inline editor and calls rename", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-rename"]').trigger("click");
     await flushPromises();
@@ -505,7 +505,7 @@ describe("FileTree context menu + CRUD", () => {
     );
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
-    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/README.md"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-delete"]').trigger("click");
     await flushPromises();
@@ -578,13 +578,31 @@ describe("FileTree — revealPath", () => {
   });
 
   it("expands ancestors and selects a nested file, returning true", async () => {
-    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
-    await flushPromises();
-    const isFile = await (w.vm as any).revealPath("/proj/src/app.ts");
-    await flushPromises();
-    expect(isFile).toBe(true);
-    const names = w.findAll(".node-name").map((n) => n.text());
-    expect(names).toContain("app.ts");
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const w = mount(FileTree, {
+      attachTo: document.body,
+      props: { fs, root: "/proj", showHidden: false },
+    });
+    try {
+      await flushPromises();
+      const isFile = await (w.vm as any).revealPath("/proj/src/app.ts");
+      await flushPromises();
+      expect(isFile).toBe(true);
+      const names = w.findAll(".node-name").map((n) => n.text());
+      expect(names).toContain("app.ts");
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+      }
+    }
   });
 
   it("returns false for a directory path", async () => {
@@ -657,7 +675,7 @@ describe("FileTree — a source whose listings cap, fail, or refuse", () => {
     const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false } });
     await flushPromises();
 
-    const big = w.find('.node[title="/proj/big"]');
+    const big = w.find('.node[data-path="/proj/big"]');
     await big.trigger("click");
     await flushPromises();
     expect(w.find('[data-test="listing-truncated"]').exists()).toBe(true);
@@ -688,13 +706,13 @@ describe("FileTree — a source whose listings cap, fail, or refuse", () => {
     const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false, context } });
     await flushPromises();
 
-    await w.find('.node[title="/proj/gone"]').trigger("click");
+    await w.find('.node[data-path="/proj/gone"]').trigger("click");
     await flushPromises();
 
     const toast = (context.showToast as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
     expect(toast).toContain("/proj/gone");
     // The directory stays closed rather than pretending to be empty.
-    expect(w.find('.node[title="/proj/gone"]').exists()).toBe(true);
+    expect(w.find('.node[data-path="/proj/gone"]').exists()).toBe(true);
   });
 
   it("refuses a directory delete outright when the source will not do it", async () => {
@@ -707,7 +725,7 @@ describe("FileTree — a source whose listings cap, fail, or refuse", () => {
     const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false, context } });
     await flushPromises();
 
-    await w.find('.node[title="/proj/sub"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/sub"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-delete"]').trigger("click");
     await flushPromises();
@@ -725,7 +743,7 @@ describe("FileTree — a source whose listings cap, fail, or refuse", () => {
     const w = mount(FileTree, { props: { fs: bridge, root: "/proj", showHidden: false, context: makeStubContext() } });
     await flushPromises();
 
-    await w.find('.node[title="/proj/one.log"]').trigger("contextmenu");
+    await w.find('.node[data-path="/proj/one.log"]').trigger("contextmenu");
     await flushPromises();
     await w.find('[data-test="menu-delete"]').trigger("click");
     await flushPromises();

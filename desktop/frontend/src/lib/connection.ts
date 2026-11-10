@@ -118,6 +118,23 @@ export interface FSEvent {
   event: "changed" | string;
 }
 
+export interface SessionInputHistoryItem {
+  text: string;
+  submitted_at_unix_ms: number;
+}
+
+export interface SessionInputHistoryResult {
+  items: SessionInputHistoryItem[];
+  truncated: boolean;
+}
+
+export class SessionInputHistoryError extends Error {
+  constructor(public readonly code: string) {
+    super(`input history request failed: ${code}`);
+    this.name = "SessionInputHistoryError";
+  }
+}
+
 /** Minimal connection surface consumed by the remote file explorer. Both
  * Relay-backed SessionConnection and accountless PeerSessionConnection
  * implement it. */
@@ -235,6 +252,7 @@ export const MAX_PASTE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 export const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SERVICE_OPEN_TIMEOUT_MS = 30_000;
+const DEFAULT_INPUT_HISTORY_TIMEOUT_MS = 30_000;
 
 export interface ServiceOpenResult {
   serviceId: string;
@@ -626,6 +644,14 @@ export class SessionConnection {
       hostToClientKey: Uint8Array;
     }
   >();
+  private pendingInputHistory = new Map<
+    string,
+    {
+      resolve: (result: SessionInputHistoryResult) => void;
+      reject: (err: Error) => void;
+      timer: number;
+    }
+  >();
 
   constructor(
     private endpoint: Endpoint,
@@ -704,6 +730,7 @@ export class SessionConnection {
     this.suspended = true;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection suspended"));
     this.rejectPendingServiceOpens(new Error("service preview failed: connection suspended"));
+    this.rejectPendingInputHistory(new Error("input history request failed: connection suspended"));
     this.retiredFSRequestIDs.clear();
     this.direct?.close();
     this.direct = null;
@@ -727,6 +754,7 @@ export class SessionConnection {
     this.suspended = false;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
     this.rejectPendingServiceOpens(new Error("service preview failed: connection detached"));
+    this.rejectPendingInputHistory(new Error("input history request failed: connection detached"));
     this.retiredFSRequestIDs.clear();
     this.direct?.close();
     this.direct = null;
@@ -773,6 +801,38 @@ export class SessionConnection {
         window.clearTimeout(timer);
         this.pendingFSRequests.delete(requestID);
         reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  }
+
+  requestInputHistory(timeoutMs = DEFAULT_INPUT_HISTORY_TIMEOUT_MS): Promise<SessionInputHistoryResult> {
+    if (!getCurrentAccountKey()) {
+      return Promise.reject(new SessionInputHistoryError("history_locked"));
+    }
+    const requestID = crypto.randomUUID();
+    const frame = encodeFrame(
+      TYPE.INPUT_HISTORY_REQUEST,
+      this.sidBytes,
+      encodeText(JSON.stringify({ request_id: requestID })),
+    );
+
+    return new Promise<SessionInputHistoryResult>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingInputHistory.delete(requestID);
+        reject(new SessionInputHistoryError("timeout"));
+      }, timeoutMs);
+      this.pendingInputHistory.set(requestID, { resolve, reject, timer });
+      try {
+        if (this.route.inputRoute() === DirectRoute.Direct) {
+          if (!this.direct?.sendFrame(frame)) throw new Error("direct connection is not open");
+        } else {
+          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error("websocket is not open");
+          this.ws.send(frame);
+        }
+      } catch (error) {
+        window.clearTimeout(timer);
+        this.pendingInputHistory.delete(requestID);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -1020,6 +1080,7 @@ export class SessionConnection {
       this.ws = null;
       this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
       this.rejectPendingServiceOpens(new Error("service preview failed: websocket closed"));
+      this.rejectPendingInputHistory(new Error("input history request failed: websocket closed"));
       this.retiredFSRequestIDs.clear();
       if (this.detached || this.suspended) return;
       // The close code is the only thing that distinguishes "the relay hung up"
@@ -1121,6 +1182,10 @@ export class SessionConnection {
       return;
     }
 
+    if (f.type === TYPE.INPUT_HISTORY_RESPONSE) {
+      this.handleInputHistoryResponse(f.payload);
+      return;
+    }
     if (route === DirectRoute.Direct) {
       throw new Error(`unsupported direct frame type 0x${f.type.toString(16).padStart(2, "0")}`);
     }
@@ -1264,6 +1329,7 @@ export class SessionConnection {
     this.ws = null;
     this.rejectPendingFSRequests(new Error("filesystem request failed: direct terminal route activated"));
     this.rejectPendingServiceOpens(new Error("service preview failed: direct terminal route activated"));
+    this.rejectPendingInputHistory(new Error("input history request failed: direct terminal route activated"));
     this.retiredFSRequestIDs.clear();
     try { relay?.close(); } catch { /* ignore */ }
     this.flushPendingDirectWrites(transport);
@@ -1500,10 +1566,72 @@ export class SessionConnection {
     return true;
   }
 
+  private handleInputHistoryResponse(payload: Uint8Array): void {
+    let head: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(decodeText(payload));
+      if (!isRecord(parsed)) return;
+      head = parsed;
+    } catch {
+      return;
+    }
+    const requestID = typeof head.request_id === "string" ? head.request_id : "";
+    const pending = this.pendingInputHistory.get(requestID);
+    if (!pending) return;
+    if (head.ok !== true) {
+      window.clearTimeout(pending.timer);
+      this.pendingInputHistory.delete(requestID);
+      pending.reject(new SessionInputHistoryError(
+        typeof head.error === "string" && head.error ? head.error : "request_failed",
+      ));
+      return;
+    }
+    if (typeof head.sealed !== "string" || !head.sealed) return;
+    const accountKey = getCurrentAccountKey();
+    if (!accountKey) return;
+    let envelope: Uint8Array;
+    try {
+      envelope = b64ToBytes(head.sealed);
+    } catch {
+      return;
+    }
+    const plaintext = openUnsequencedFrame(
+      accountKey,
+      this.sessionId,
+      TYPE.INPUT_HISTORY_RESPONSE,
+      envelope,
+    );
+    if (!plaintext) return;
+    try {
+      const body: unknown = JSON.parse(decodeText(plaintext));
+      if (!isRecord(body) || body.request_id !== requestID || !Array.isArray(body.items) || typeof body.truncated !== "boolean") return;
+      const items: SessionInputHistoryItem[] = [];
+      for (const item of body.items) {
+        if (!isRecord(item) || typeof item.text !== "string" || typeof item.submitted_at_unix_ms !== "number") return;
+        items.push({ text: item.text, submitted_at_unix_ms: item.submitted_at_unix_ms });
+      }
+      window.clearTimeout(pending.timer);
+      this.pendingInputHistory.delete(requestID);
+      pending.resolve({ items, truncated: body.truncated });
+    } catch {
+      return;
+    }
+  }
+
   private rejectPendingFSRequests(err: Error): void {
     if (this.pendingFSRequests.size === 0) return;
     const pending = Array.from(this.pendingFSRequests.values());
     this.pendingFSRequests.clear();
+    for (const item of pending) {
+      window.clearTimeout(item.timer);
+      item.reject(err);
+    }
+  }
+
+  private rejectPendingInputHistory(err: Error): void {
+    if (this.pendingInputHistory.size === 0) return;
+    const pending = Array.from(this.pendingInputHistory.values());
+    this.pendingInputHistory.clear();
     for (const item of pending) {
       window.clearTimeout(item.timer);
       item.reject(err);

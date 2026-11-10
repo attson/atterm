@@ -24,17 +24,18 @@ package e2eecrypto
 // without the other silently reintroduces the exact drift this file exists
 // to prevent — update both by hand.
 const (
-	AADTagIn           byte = 0x02
-	AADTagOut          byte = 0x03
-	AADTagMeta         byte = 0x05
-	AADTagListResp     byte = 0x12
-	AADTagPasteImage   byte = 0x33
-	AADTagCommandEvent byte = 0x35
-	AADTagPasteFile    byte = 0x37
-	AADTagFSRequest    byte = 0x38
-	AADTagFSResponse   byte = 0x39
-	AADTagFSEvent      byte = 0x3a
-	AADTagServiceOpen  byte = 0x3d
+	AADTagIn                   byte = 0x02
+	AADTagOut                  byte = 0x03
+	AADTagMeta                 byte = 0x05
+	AADTagListResp             byte = 0x12
+	AADTagPasteImage           byte = 0x33
+	AADTagCommandEvent         byte = 0x35
+	AADTagPasteFile            byte = 0x37
+	AADTagFSRequest            byte = 0x38
+	AADTagFSResponse           byte = 0x39
+	AADTagFSEvent              byte = 0x3a
+	AADTagServiceOpen          byte = 0x3d
+	AADTagInputHistoryResponse byte = 0x42
 
 	// Synthetic, AAD-only — no wire frame carries these.
 	AADTagSSHHosts          byte = 0xF0
@@ -44,19 +45,20 @@ const (
 )
 
 var AADTags = map[byte]string{
-	AADTagIn:                "IN",
-	AADTagOut:               "OUT",
-	AADTagMeta:              "META",
-	AADTagListResp:          "LIST_RESP",
-	AADTagPasteImage:        "PASTE_IMAGE",
-	AADTagCommandEvent:      "COMMAND_EVENT",
-	AADTagPasteFile:         "PASTE_FILE",
-	AADTagFSRequest:         "FS_REQUEST",
-	AADTagFSResponse:        "FS_RESPONSE",
-	AADTagFSEvent:           "FS_EVENT",
-	AADTagServiceOpen:       "SERVICE_OPEN",
-	AADTagSSHHosts:          "ssh_hosts_encrypted sync",
-	AADTagProfiles:          "profiles_encrypted sync",
-	AADTagPeerConfigPayload: "Peer config payload",
-	AADTagPeerEpochEnvelope: "Peer epoch envelope",
+	AADTagIn:                   "IN",
+	AADTagOut:                  "OUT",
+	AADTagMeta:                 "META",
+	AADTagListResp:             "LIST_RESP",
+	AADTagPasteImage:           "PASTE_IMAGE",
+	AADTagCommandEvent:         "COMMAND_EVENT",
+	AADTagPasteFile:            "PASTE_FILE",
+	AADTagFSRequest:            "FS_REQUEST",
+	AADTagFSResponse:           "FS_RESPONSE",
+	AADTagFSEvent:              "FS_EVENT",
+	AADTagServiceOpen:          "SERVICE_OPEN",
+	AADTagInputHistoryResponse: "INPUT_HISTORY_RESPONSE",
+	AADTagSSHHosts:             "ssh_hosts_encrypted sync",
+	AADTagProfiles:             "profiles_encrypted sync",
+	AADTagPeerConfigPayload:    "Peer config payload",
+	AADTagPeerEpochEnvelope:    "Peer epoch envelope",
 }

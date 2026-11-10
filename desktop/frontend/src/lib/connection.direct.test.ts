@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setAccountKeyProvider } from "./account-key";
+import { sealUnsequenced } from "./opaque";
 import {
   SessionConnection,
   type DirectTransport,
@@ -272,6 +273,54 @@ describe("SessionConnection direct route handover", () => {
     ]);
     expect(decodeText(decodeFrame(fallback.sent[2]).payload)).toBe("queued-during-fallback");
     expect(statuses.at(-1)).toBe("attached");
+  });
+
+  test("requests and opens input history over the active direct route", async () => {
+    const accountKey = new Uint8Array(32).fill(0x42);
+    const conn = new SessionConnection(relayEndpoint, sessionId, {}, {
+      clientName: "viewer-device",
+      remote: true,
+      preferDirect: true,
+      directEndpoint,
+      directTransportFactory: directFactory,
+    });
+
+    conn.attach();
+    const relay = FakeWebSocket.instances[0];
+    relay.open();
+    const attach = JSON.parse(decodeText(decodeFrame(relay.sent[0]).payload)) as { client_id: string };
+    relay.emitJSON(TYPE.META, { driver_client_id: attach.client_id, driver_client_name: "viewer-device" });
+    relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
+
+    const direct = directInstances[0];
+    direct.authenticate();
+    direct.ready(0);
+    const requestID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(requestID);
+
+    const pending = conn.requestInputHistory();
+    const request = decodeFrame(direct.sent.at(-1)!);
+    expect(request.type).toBe(TYPE.INPUT_HISTORY_REQUEST);
+    expect(JSON.parse(decodeText(request.payload))).toEqual({ request_id: requestID });
+
+    const body = {
+      request_id: requestID,
+      items: [{ text: "direct prompt", submitted_at_unix_ms: 1234 }],
+      truncated: false,
+    };
+    const sealed = sealUnsequenced(
+      accountKey,
+      sessionId,
+      TYPE.INPUT_HISTORY_RESPONSE,
+      encodeText(JSON.stringify(body)),
+    );
+    direct.emitFrame(TYPE.INPUT_HISTORY_RESPONSE, encodeText(JSON.stringify({
+      request_id: requestID,
+      ok: true,
+      sealed: btoa(String.fromCharCode(...sealed)),
+    })));
+
+    await expect(pending).resolves.toEqual({ items: body.items, truncated: false });
   });
 
   test("rejects cross-route late callbacks through one hundred route flaps", () => {

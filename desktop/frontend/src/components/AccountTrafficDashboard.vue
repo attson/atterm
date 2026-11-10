@@ -325,7 +325,7 @@ watch(() => props.relayConnected, (connected) => {
           class="icon-button refresh-button"
           type="button"
           data-testid="traffic-refresh"
-          :title="t('settings.account.traffic.refresh')"
+          v-tooltip="t('settings.account.traffic.refresh')"
           :aria-label="t('settings.account.traffic.refresh')"
           :disabled="loading"
           @click="load"
@@ -362,7 +362,7 @@ watch(() => props.relayConnected, (connected) => {
           <svg viewBox="0 0 1000 230" preserveAspectRatio="none" role="img" :aria-label="t('settings.account.traffic.directionTrend')"><g class="grid-lines"><line v-for="y in [36, 78, 120, 162, 204]" :key="y" x1="34" :y1="y" x2="966" :y2="y" /></g><polyline class="line outbound" :points="linePoints(chartDirection.outbound)" /><polyline class="line inbound" :points="linePoints(chartDirection.inbound)" /></svg>
           <div class="legend"><span><i class="outbound"></i>{{ t("settings.account.traffic.dirOut") }}</span><span><i class="inbound"></i>{{ t("settings.account.traffic.dirIn") }}</span></div>
         </div>
-        <div v-else class="bar-chart" data-testid="traffic-stacked-chart"><div v-for="(day, dayIndex) in range.days" :key="day" class="bar-column" role="button" tabindex="0" :title="t('settings.account.traffic.time.drillDown')" @click="drillDown(day)" @keydown.enter="drillDown(day)"><div class="bar-stack"><i v-for="series in chartSeries.slice(0, 8)" :key="series.key" :style="{ height: `${(series.values[dayIndex] / stackedMax) * 100}%`, background: series.color }" :title="`${series.label} · ${day} · ${formatMetric(series.values[dayIndex])}`"></i></div><span>{{ showDayLabel(dayIndex) ? shortDay(day) : '' }}</span></div></div>
+        <div v-else class="bar-chart" data-testid="traffic-stacked-chart"><div v-for="(day, dayIndex) in range.days" :key="day" class="bar-column" role="button" tabindex="0" v-tooltip="t('settings.account.traffic.time.drillDown')" @click="drillDown(day)" @keydown.enter="drillDown(day)"><div class="bar-stack"><i v-for="series in chartSeries.slice(0, 8)" :key="series.key" :style="{ height: `${(series.values[dayIndex] / stackedMax) * 100}%`, background: series.color }" v-tooltip="`${series.label} · ${day} · ${formatMetric(series.values[dayIndex])}`"></i></div><span>{{ showDayLabel(dayIndex) ? shortDay(day) : '' }}</span></div></div>
         <div v-if="mode === 'summary' && dimension !== 'direction' && currentRows.length" class="legend series-legend"><span v-for="series in chartSeries.slice(0, 8)" :key="series.key"><i :style="{ background: series.color }"></i>{{ dimension === "group" ? categoryName(series.label) : series.label }}</span></div>
       </section>
 
@@ -379,7 +379,7 @@ watch(() => props.relayConnected, (connected) => {
       <section v-if="mode === 'summary' && relayConnected && traffic" class="direct-panel">
         <div class="panel-head"><div><span>{{ t("settings.account.traffic.p2p") }}</span><h4>{{ t("settings.account.traffic.directQuality") }}</h4></div><small><Network />{{ t("settings.account.traffic.aggregateOnly") }}</small></div>
         <div class="direct-strip"><div v-for="item in directKpis" :key="item.key" :data-testid="item.key === 'direct' ? 'direct-traffic-total' : item.key === 'success' ? 'direct-success-rate' : undefined"><span><component :is="item.icon" />{{ item.label }}</span><strong>{{ item.value }}</strong><small>{{ item.hint }}</small><em v-if="item.trend !== null">{{ trendText(item.trend) }}</em></div></div>
-        <div class="success-meter" :title="`${successRate.toFixed(1)}%`"><i :style="{ width: `${successRate}%` }"></i></div>
+        <div class="success-meter" v-tooltip="`${successRate.toFixed(1)}%`"><i :style="{ width: `${successRate}%` }"></i></div>
       </section>
 
       <section v-if="mode === 'summary' && peerTrafficAvailable && peerTraffic" class="peer-panel" data-testid="peer-traffic-panel">

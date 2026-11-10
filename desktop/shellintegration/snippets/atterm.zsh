@@ -13,9 +13,9 @@ ATTERM_SHELL_INTEGRATION_LOADED=1
 #        drop the trailing token, e.g. "claude --permission-mode bypassPermissions"
 #        arrives as "claude --permission-mode " — see the AI-resume flag-loss bug)
 #   $3 — the full single-line command as it will run (alias-expanded, untruncated)
-# Use $3 so the captured OSC 133;C command line is complete; fall back to $2/$1
-# only if an older zsh doesn't provide it.
-__atterm_preexec()      { printf '\033]133;C;%s\007' "${3:-${2:-$1}}"; }
+# Keep the exact input and executable form separate: history displays $1 as the
+# user typed it, while C retains complete alias-expanded $3 for AI recovery.
+__atterm_preexec()      { printf '\033]133;I;%s\007\033]133;C;%s\007' "$1" "${3:-${2:-$1}}"; }
 __atterm_precmd()       { printf '\033]133;D;%s\007' "$?"; }
 
 # Use additive hook arrays so frameworks (oh-my-zsh, powerlevel10k, starship)

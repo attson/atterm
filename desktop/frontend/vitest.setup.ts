@@ -6,7 +6,8 @@
 // full WebCrypto — this just brings the test env in line with them.
 import { webcrypto } from "node:crypto";
 import { afterEach } from "vitest";
-import { enableAutoUnmount } from "@vue/test-utils";
+import { config, enableAutoUnmount } from "@vue/test-utils";
+import { tooltipDirective } from "./src/directives/tooltip";
 
 // Component tests across the suite mount App (and other components) without
 // always unmounting afterward. Vue-level effects usually don't leak across
@@ -16,6 +17,10 @@ import { enableAutoUnmount } from "@vue/test-utils";
 // be picked up by every earlier still-mounted App instance too. Auto-unmount
 // after each test closes those listeners down deterministically.
 enableAutoUnmount(afterEach);
+config.global.directives = {
+  ...config.global.directives,
+  tooltip: tooltipDirective,
+};
 
 // App.vue's web-only tabs snapshot (lib/webTabsSnapshot) reads/writes real
 // jsdom localStorage/sessionStorage keyed by a per-session window id. Since

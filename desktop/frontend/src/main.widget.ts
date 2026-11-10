@@ -1,5 +1,6 @@
 import { createApp } from "vue";
 import WidgetApp from "./widget/WidgetApp.vue";
+import { installTooltip } from "./directives/tooltip";
 
 /**
  * Entry point for the companion window ("桌面挂件" / Desk Widget) — the `--widget` process.
@@ -24,4 +25,6 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-createApp(WidgetApp).mount("#widget");
+const app = createApp(WidgetApp);
+installTooltip(app);
+app.mount("#widget");

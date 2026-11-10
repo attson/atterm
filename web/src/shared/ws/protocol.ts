@@ -34,6 +34,8 @@ export const TYPE = {
   FS_REQUEST:       0x38,
   FS_RESPONSE:      0x39,
   FS_EVENT:         0x3a,
+  INPUT_HISTORY_REQUEST:  0x41,
+  INPUT_HISTORY_RESPONSE: 0x42,
 } as const
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE]

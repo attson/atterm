@@ -392,7 +392,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             v-if="!pathEditing"
             class="root-path"
             type="button"
-            :title="root ? t('plugins.fileExplorer.pathLabel') : ''"
+            v-tooltip="root ? t('plugins.fileExplorer.pathLabel') : ''"
             @click.stop="beginPathEdit"
           >{{ root ?? t("plugins.fileExplorer.noActivePaneShort") }}</button>
           <input
@@ -411,14 +411,16 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             v-if="fs"
             class="toolbar-btn"
             data-test="refresh-tree"
-            :title="t('plugins.fileExplorer.refresh')"
+            v-tooltip="t('plugins.fileExplorer.refresh')"
+            :aria-label="t('plugins.fileExplorer.refresh')"
             @click="fileTreeRef?.refresh()"
           ><RefreshCw :size="14" :stroke-width="1.5" /></button>
           <button
             v-if="fs"
             class="toolbar-btn"
             data-test="collapse-tree"
-            :title="t('plugins.fileExplorer.collapseAll')"
+            v-tooltip="t('plugins.fileExplorer.collapseAll')"
+            :aria-label="t('plugins.fileExplorer.collapseAll')"
             @click="fileTreeRef?.collapseAll()"
           ><ChevronsDownUp :size="14" :stroke-width="1.5" /></button>
           <div class="header-menu-shell">
@@ -426,7 +428,8 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
               class="toolbar-btn"
               type="button"
               data-test="file-actions-menu"
-              :title="t('plugins.fileExplorer.moreActions')"
+              v-tooltip="t('plugins.fileExplorer.moreActions')"
+              :aria-label="t('plugins.fileExplorer.moreActions')"
               @click.stop="headerMenuOpen = !headerMenuOpen"
             ><MoreHorizontal :size="15" :stroke-width="1.5" /></button>
             <div v-if="headerMenuOpen" class="header-menu" @click.stop>

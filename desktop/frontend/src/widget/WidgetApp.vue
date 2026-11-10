@@ -296,7 +296,7 @@ onUnmounted(() => {
         <div class="headline">{{ state.headline }}</div>
         <div v-if="state.subline" class="subline">{{ state.subline }}</div>
       </div>
-      <span v-if="muted" class="muted-flag" title="已静音">zZ</span>
+      <span v-if="muted" class="muted-flag" v-tooltip="'已静音'">zZ</span>
     </header>
 
     <div v-if="showRows" class="rows">

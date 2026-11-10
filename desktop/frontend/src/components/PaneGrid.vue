@@ -249,10 +249,16 @@ function requestServicePreview(pane: Pane): void {
       </div>
 
       <div class="cell-controls">
+        <span
+          v-if="pane.sessionId"
+          class="session-input-history-controls-slot"
+          :id="`session-input-history-controls-${pane.sessionId}`"
+        ></span>
+
         <div
           v-if="pane.sessionId && !pane.remote && (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
           class="viewers-badge"
-          :title="t('terminal.remoteViewerWatching', { count: viewerCountFor!(pane.sessionId) })"
+          v-tooltip="t('terminal.remoteViewerWatching', { count: viewerCountFor!(pane.sessionId) })"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
@@ -274,7 +280,7 @@ function requestServicePreview(pane: Pane): void {
         <div
           v-if="pane.sessionId && pane.remote"
           class="remote-badge"
-          :title="
+          v-tooltip="
             (sessionInfoFor(pane)?.host_id
               ? t('sessions.hostIdTitle', { hostId: sessionInfoFor(pane)!.host_id ?? '' }) + '\n'
               : '') + t('sessions.sessionTitle', { sessionId: pane.sessionId })
@@ -285,7 +291,7 @@ function requestServicePreview(pane: Pane): void {
             type="button"
             class="remote-preview-trigger"
             data-testid="remote-preview-trigger"
-            :title="t('terminal.preview.open')"
+            v-tooltip="t('terminal.preview.open')"
             :aria-label="t('terminal.preview.open')"
             @mousedown.stop
             @click.stop="requestServicePreview(pane)"
@@ -318,7 +324,7 @@ function requestServicePreview(pane: Pane): void {
           class="pane-grip"
           data-test="pane-grip"
           draggable="true"
-          :title="t('terminal.dragPaneOut')"
+          v-tooltip="t('terminal.dragPaneOut')"
           @mousedown.stop
           @dragstart="onGripDragStart($event, pane)"
           @dragend="onGripDragEnd"
@@ -327,7 +333,8 @@ function requestServicePreview(pane: Pane): void {
           v-if="tab.layout !== 'single'"
           type="button"
           class="close-pane"
-          :title="t('terminal.closePaneTitle')"
+          v-tooltip="t('terminal.closePaneTitle')"
+          :aria-label="t('terminal.closePaneTitle')"
           @mousedown.stop
           @click.stop="emit('close-pane', idx)"
         >×</button>
@@ -418,6 +425,11 @@ function requestServicePreview(pane: Pane): void {
   display: inline-flex;
   align-items: center;
   min-width: 0;
+  pointer-events: auto;
+}
+.session-input-history-controls-slot {
+  display: inline-flex;
+  align-items: center;
   pointer-events: auto;
 }
 .remote-badge {

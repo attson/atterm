@@ -61,6 +61,14 @@ func (a *App) SaveRecoverySnapshot(payload string) error {
 	if appdir.IsDev() {
 		logDebug("recovery", "save %s", summarizeRecoverySnapshot(snap))
 	}
+	// Keep the session-id snapshot and its separately bounded input history at
+	// the same durability boundary. A later restore must never point at a new
+	// generation whose queued history has not reached disk yet.
+	if a.host != nil && a.host.inputHistoryStore != nil {
+		if err := a.host.inputHistoryStore.Flush(); err != nil {
+			logWarn("session-input-history", "flush with recovery snapshot: %v", err)
+		}
+	}
 	return a.recoveryStore.Save(snap)
 }
 

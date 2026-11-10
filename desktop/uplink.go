@@ -478,6 +478,22 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				continue
 			}
 			fsPool.submit(f.SessionID, req)
+		case proto.TypeInputHistoryRequest:
+			var req proto.InputHistoryRequestPayload
+			if err := json.Unmarshal(f.Payload, &req); err != nil || req.RequestID == "" {
+				logWarn("uplink", "input_history_request_decode_failed session=%s", f.SessionID)
+				continue
+			}
+			var accountKey []byte
+			if u.accountKey != nil {
+				accountKey = u.accountKey()
+			}
+			response := u.host.buildInputHistoryResponse(f.SessionID, req.RequestID, accountKey)
+			select {
+			case out <- response:
+			default:
+				logWarn("uplink", "out chan full; dropping input history response session=%s request_id=%s", f.SessionID, req.RequestID)
+			}
 		case proto.TypeSessionCreate:
 			var req proto.SessionCreatePayload
 			if err := json.Unmarshal(f.Payload, &req); err != nil || req.RequestID == "" {

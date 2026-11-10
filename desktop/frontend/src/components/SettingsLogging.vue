@@ -291,7 +291,7 @@ async function onResetPath() {
           class="info-icon"
           role="img"
           :aria-label="t('settings.logging.writeLevelHint')"
-          :title="t('settings.logging.writeLevelHint')"
+          v-tooltip="t('settings.logging.writeLevelHint')"
         >i</span>
       </div>
 
@@ -304,7 +304,7 @@ async function onResetPath() {
           class="info-icon"
           role="img"
           :aria-label="t('settings.logging.ptyInputDebugHint')"
-          :title="t('settings.logging.ptyInputDebugHint')"
+          v-tooltip="t('settings.logging.ptyInputDebugHint')"
         >i</span>
       </div>
 
@@ -339,7 +339,7 @@ async function onResetPath() {
 
       <div class="kv">
         <span class="k">{{ t("settings.logging.currentFile") }}</span>
-        <span class="v path" :title="effectivePath">{{ effectivePath }}</span>
+        <span class="v path" v-tooltip="effectivePath">{{ effectivePath }}</span>
       </div>
 
       <div class="actions">
@@ -356,7 +356,7 @@ async function onResetPath() {
           <button
             v-if="!following"
             class="tail-paused"
-            :title="t('settings.logging.tailPausedHint')"
+            v-tooltip="t('settings.logging.tailPausedHint')"
             @click="refreshTail({ force: true })"
           >
             {{ t("settings.logging.tailPaused") }}

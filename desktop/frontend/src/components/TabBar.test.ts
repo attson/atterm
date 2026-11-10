@@ -106,8 +106,9 @@ describe("TabBar", () => {
       },
     });
 
-    expect(wrapper.get(".layout-icon").attributes("title")).toBe("左右分屏");
-    expect(wrapper.get(".layout-icon").attributes("title")).not.toBe("vertical");
+    await wrapper.get(".layout-icon").trigger("focus");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe("左右分屏");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).not.toBe("vertical");
   });
 
   test("type icon is no longer rendered for any session type", () => {

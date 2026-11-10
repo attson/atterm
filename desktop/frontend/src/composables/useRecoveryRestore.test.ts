@@ -13,6 +13,7 @@ vi.mock("../lib/api", () => ({
   listShells: vi.fn(),
   newSession: vi.fn(),
   newSshSessionByID: vi.fn(),
+  restoreSessionInputHistory: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe("useRecoveryRestore", () => {
@@ -87,6 +88,7 @@ describe("useRecoveryRestore", () => {
 
     expect(pauseRecoverySnapshot).toHaveBeenCalledTimes(1);
     expect(api.newSession).not.toHaveBeenCalled();
+    expect(api.restoreSessionInputHistory).not.toHaveBeenCalled();
     expect(tabs.value[0].panes[0]).toMatchObject({
       sessionId: "remote-1",
       remote: true,
@@ -171,6 +173,13 @@ describe("useRecoveryRestore", () => {
     expect(tabs.value.map((t) => t.panes[0].sessionId)).toEqual(["new-1", "new-2"]);
     expect(localList.value.map((s) => s.id)).toEqual(["new-1", "new-2"]);
     expect([...pendingLocalIds].sort()).toEqual(["new-1", "new-2"]);
+    expect(api.restoreSessionInputHistory).not.toHaveBeenCalled();
+    expect(api.newSession).toHaveBeenCalledWith(expect.objectContaining({
+      input_history_from_session_id: "old-1",
+    }));
+    expect(api.newSession).toHaveBeenCalledWith(expect.objectContaining({
+      input_history_from_session_id: "old-2",
+    }));
     expect(gotoTab).toHaveBeenCalledWith("tab-2");
     expect(pins.flushNow).toHaveBeenCalledOnce();
   });
@@ -240,5 +249,42 @@ describe("useRecoveryRestore", () => {
     });
     expect(pendingLocalIds).toEqual(new Set(["live-local"]));
     expect(pins.rename).not.toHaveBeenCalled();
+    expect(api.restoreSessionInputHistory).not.toHaveBeenCalled();
+  });
+
+  it("carries persisted input history into a reconnected saved SSH session", async () => {
+    const tabs = ref<Tab[]>([]);
+    const restore = useRecoveryRestore({
+      tabs,
+      localList: ref<SessionInfo[]>([]),
+      localHostID: ref("local-host"),
+      pendingLocalIds: new Set(),
+      pins: makePins(),
+      hasLocalPty: true,
+      newId: () => "restored-ssh-tab",
+      gotoTab: vi.fn(),
+      startNewTab: vi.fn(),
+      predictCellDims: () => ({ cols: 80, rows: 24 }),
+    });
+    const picks: RecoveryTabSnapshot[] = [{
+      id: "saved-ssh-tab",
+      layout: "single",
+      active_pane_idx: 0,
+      col_ratio: 0.5,
+      row_ratio: 0.5,
+      panes: [{
+        slot: 0,
+        remote: false,
+        session_id: "old-ssh",
+        shell: "ssh",
+        ssh_host_id: "saved-host",
+      }],
+    }];
+
+    await restore.onRecoveryRestore(picks);
+
+    expect(api.newSshSessionByID).toHaveBeenCalledWith("saved-host");
+    expect(api.restoreSessionInputHistory).toHaveBeenCalledWith("old-ssh", "new-ssh");
+    expect(tabs.value[0].panes[0].sessionId).toBe("new-ssh");
   });
 });

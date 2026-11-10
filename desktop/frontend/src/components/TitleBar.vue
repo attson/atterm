@@ -166,7 +166,7 @@ function onTitleDblClick() {
     <div
       class="window-title"
       data-testid="titlebar-current-title"
-      :title="currentTitle || ''"
+      v-tooltip="currentTitle || ''"
       @dblclick.self="onTitleDblClick"
     >{{ currentTitle || '' }}</div>
     <div class="status">
@@ -184,7 +184,7 @@ function onTitleDblClick() {
       class="e2ee-off-chip"
       role="status"
       data-testid="titlebar-e2ee-off"
-      :title="e2eeChipTitle"
+      v-tooltip="e2eeChipTitle"
     >
       <span class="chip-icon" aria-hidden="true">⚠</span>
       <span>{{ e2eeChipText }}</span>

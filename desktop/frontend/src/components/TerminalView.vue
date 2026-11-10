@@ -7,7 +7,7 @@ import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "xterm-addon-webgl";
 import { SearchAddon } from "xterm-addon-search";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-import { SessionConnection, type ConnectionHandlers, type DirectFallbackReason, type SessionFSConnection, type SessionRouteDiagnostics, type Status } from "../lib/connection";
+import { SessionConnection, SessionInputHistoryError, type ConnectionHandlers, type DirectFallbackReason, type SessionFSConnection, type SessionInputHistoryResult, type SessionRouteDiagnostics, type Status } from "../lib/connection";
 import { PeerSessionConnection } from "../lib/peerSessionConnection";
 import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
@@ -72,7 +72,8 @@ import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import ServicePreviewSwitcher from "./ServicePreviewSwitcher.vue";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
-import { Cloud } from "lucide-vue-next";
+import SessionInputHistoryPanel from "./SessionInputHistoryPanel.vue";
+import { Cloud, History } from "lucide-vue-next";
 import { createPromptDraftTracker, isCodexOrClaudeCommand, isPromptDraftInputData } from "../lib/promptDraft";
 import { promptSuggestionBottomOffset } from "../lib/promptSuggestions";
 import {
@@ -313,7 +314,75 @@ const previewTargetHostOptions: SelectOption[] = [
 const previewPortInput = ref<HTMLInputElement | null>(null);
 const previewTarget = computed(() => `#service-preview-controls-${props.sessionId}`);
 const routeIndicatorTarget = computed(() => `#session-route-indicator-${props.sessionId}`);
+const inputHistoryTarget = computed(() => `#session-input-history-controls-${props.sessionId}`);
 const previewDraftKey = computed(() => `atterm.service-preview.${props.sessionId}`);
+const inputHistoryOpen = ref(false);
+const inputHistoryLoading = ref(false);
+const inputHistoryResult = ref<SessionInputHistoryResult | null>(null);
+const inputHistoryError = ref<"locked" | "failed" | null>(null);
+const inputHistoryTriggerRef = ref<HTMLButtonElement | null>(null);
+const inputHistoryPanelRef = ref<HTMLElement | null>(null);
+let inputHistoryRequestGeneration = 0;
+
+async function loadInputHistory(): Promise<void> {
+  const generation = ++inputHistoryRequestGeneration;
+  inputHistoryLoading.value = true;
+  inputHistoryResult.value = null;
+  inputHistoryError.value = null;
+  try {
+    let result: SessionInputHistoryResult;
+    if (props.isLocalSession) {
+      const getInputHistory = platform.sessions.getInputHistory;
+      if (!getInputHistory) throw new Error("local session input history is unavailable");
+      result = await getInputHistory(props.sessionId);
+    } else {
+      if (!(conn instanceof SessionConnection)) throw new Error("remote session input history is unavailable");
+      result = await conn.requestInputHistory();
+    }
+    if (generation !== inputHistoryRequestGeneration || !inputHistoryOpen.value || !isAlive) return;
+    inputHistoryResult.value = result;
+  } catch (error) {
+    if (generation !== inputHistoryRequestGeneration || !inputHistoryOpen.value || !isAlive) return;
+    inputHistoryError.value = error instanceof SessionInputHistoryError && error.code === "history_locked"
+      ? "locked"
+      : "failed";
+  } finally {
+    if (generation === inputHistoryRequestGeneration && inputHistoryOpen.value && isAlive) {
+      inputHistoryLoading.value = false;
+    }
+  }
+}
+
+function closeInputHistory(): void {
+  inputHistoryRequestGeneration++;
+  inputHistoryOpen.value = false;
+  inputHistoryLoading.value = false;
+}
+
+function toggleInputHistory(): void {
+  if (inputHistoryOpen.value) {
+    closeInputHistory();
+    return;
+  }
+  inputHistoryOpen.value = true;
+  void loadInputHistory();
+}
+
+function onInputHistoryDocumentPointerDown(event: PointerEvent): void {
+  if (!inputHistoryOpen.value) return;
+  const target = event.target as Node | null;
+  if (target && inputHistoryTriggerRef.value?.contains(target)) return;
+  if (target && inputHistoryPanelRef.value?.contains(target)) return;
+  closeInputHistory();
+}
+
+function onInputHistoryDocumentKeyDown(event: KeyboardEvent): void {
+  if (!inputHistoryOpen.value || event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeInputHistory();
+  inputHistoryTriggerRef.value?.focus();
+}
 
 function loadPreviewDraft(): void {
   try {
@@ -2898,7 +2967,9 @@ onMounted(async () => {
   }
   document.addEventListener("mousedown", onDocumentMouseDown);
   document.addEventListener("pointerdown", onDocumentPointerDown, { capture: true });
+  document.addEventListener("pointerdown", onInputHistoryDocumentPointerDown, true);
   document.addEventListener("keydown", onDocumentKeyDown);
+  document.addEventListener("keydown", onInputHistoryDocumentKeyDown);
   // Hotkey handler is a capture-phase listener so it preempts xterm's own
   // keyboard input — the user expects Alt+1 to fire the template, not type "1".
   document.addEventListener("keydown", onTemplateHotkey, true);
@@ -2952,7 +3023,9 @@ onBeforeUnmount(() => {
   setServicePreviewActive(props.sessionId, false);
   document.removeEventListener("mousedown", onDocumentMouseDown);
   document.removeEventListener("pointerdown", onDocumentPointerDown, { capture: true } as EventListenerOptions);
+  document.removeEventListener("pointerdown", onInputHistoryDocumentPointerDown, true);
   document.removeEventListener("keydown", onDocumentKeyDown);
+  document.removeEventListener("keydown", onInputHistoryDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
   window.removeEventListener("atterm:open-service-preview", onServicePreviewRequest);
   document.removeEventListener("atterm:open-prompt-history", onPromptHistoryRequest);
@@ -3174,7 +3247,7 @@ watch(
           <div v-for="(mapping, index) in previewExtraMappings" :key="index" class="service-preview-mapping-row">
             <input v-model="mapping.port" type="text" inputmode="numeric" pattern="[0-9]*" :aria-label="t('terminal.preview.additionalPort')" />
             <input v-model="mapping.pathPrefix" type="text" placeholder="/api" :aria-label="t('terminal.preview.pathPrefix')" />
-            <button type="button" class="preview-action" :title="t('terminal.preview.removeMapping')" :aria-label="t('terminal.preview.removeMapping')" @click="previewExtraMappings.splice(index, 1)">×</button>
+            <button type="button" class="preview-action" v-tooltip="t('terminal.preview.removeMapping')" :aria-label="t('terminal.preview.removeMapping')" @click="previewExtraMappings.splice(index, 1)">×</button>
           </div>
           <div class="service-preview-form-actions">
             <button v-if="canConfigurePreviewMappings && previewExtraMappings.length < 7" type="button" class="preview-add-mapping" @click="previewExtraMappings.push({ port: '', pathPrefix: '/api' })">＋ {{ t('terminal.preview.addMapping') }}</button>
@@ -3187,6 +3260,33 @@ watch(
         </form>
       </div>
     </Teleport>
+    <Teleport defer :to="inputHistoryTarget">
+      <button
+        ref="inputHistoryTriggerRef"
+        type="button"
+        class="session-input-history-trigger"
+        data-test="session-input-history-trigger"
+        :class="{ active: inputHistoryOpen }"
+        v-tooltip="t('terminal.inputHistory.open')"
+        :aria-label="t('terminal.inputHistory.open')"
+        :aria-expanded="inputHistoryOpen"
+        @mousedown.stop
+        @click.stop="toggleInputHistory"
+      >
+        <History :size="15" aria-hidden="true" />
+      </button>
+    </Teleport>
+    <div v-if="inputHistoryOpen" ref="inputHistoryPanelRef" class="session-input-history-panel-host">
+      <SessionInputHistoryPanel
+        v-if="inputHistoryOpen"
+        :loading="inputHistoryLoading"
+        :items="inputHistoryResult?.items ?? []"
+        :truncated="inputHistoryResult?.truncated ?? false"
+        :error="inputHistoryError"
+        @close="closeInputHistory"
+        @retry="loadInputHistory"
+      />
+    </div>
     <TerminalSelectionPopover
       :visible="selectionPopover.visible"
       :x="selectionPopover.x"
@@ -3235,7 +3335,7 @@ watch(
       <span
         class="session-route-indicator"
         :class="`route-${routeDiagnostics.route}`"
-        :title="routeDiagnosticsTitle"
+        v-tooltip="routeDiagnosticsTitle"
         data-testid="session-route-indicator"
       >{{ routeLabel }}</span>
     </Teleport>
@@ -3259,7 +3359,7 @@ watch(
           type="button"
           class="prompt-suggestion"
           :class="{ selected: index === promptSuggestionState.selectedIndex }"
-          :title="candidate.text"
+          v-tooltip="candidate.text"
           :aria-label="candidate.text"
           :aria-selected="index === promptSuggestionState.selectedIndex"
           role="option"
@@ -3327,7 +3427,7 @@ watch(
         :key="tpl.id"
         class="template-btn"
         :data-testid="`template-btn-${tpl.id}`"
-        :title="tpl.hotkey || ''"
+        v-tooltip="tpl.hotkey || ''"
         tabindex="-1"
         @touchstart="onKeyboardControlTouchStart"
         @touchmove="onKeyboardControlTouchMove"
@@ -3363,7 +3463,7 @@ watch(
         class="aux-key-btn keyboard-toggle-btn"
         data-testid="terminal-hide-keyboard"
         tabindex="-1"
-        :title="softKeyboardCollapsed ? 'Show keyboard' : 'Hide keyboard'"
+        v-tooltip="softKeyboardCollapsed ? 'Show keyboard' : 'Hide keyboard'"
         @touchstart.prevent.stop="onAuxKeyboardControlTouchStart"
         @touchmove="onKeyboardControlTouchMove"
         @touchcancel="onKeyboardControlTouchCancel"
@@ -3564,6 +3664,30 @@ watch(
   gap: 6px;
   padding: 0;
   pointer-events: auto;
+}
+:global(.session-input-history-trigger) {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  background: rgba(13, 17, 23, 0.88);
+  cursor: pointer;
+  pointer-events: auto;
+}
+:global(.session-input-history-trigger:hover),
+:global(.session-input-history-trigger:focus-visible),
+:global(.session-input-history-trigger.active) {
+  color: var(--fg);
+  border-color: var(--accent);
+  outline: none;
+}
+.session-input-history-panel-host {
+  display: contents;
 }
 /* The add-port form is always a popover panel anchored under the controls,
    whether opened from the switcher (previews exist) or as the first preview. */

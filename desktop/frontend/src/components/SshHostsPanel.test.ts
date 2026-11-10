@@ -1059,8 +1059,9 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     const marker = wrapper.find('[data-test="ssh-host-proxy-p3"]');
     expect(marker.text()).toContain("ProxyCommand");
     expect(marker.text()).not.toContain("bastion");
-    expect(marker.attributes("title")).toContain("ProxyCommand");
-    expect(marker.attributes("title")).not.toContain("jump host");
+    await marker.trigger("focus");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("ProxyCommand");
+    expect(document.querySelector('[role="tooltip"]')?.textContent).not.toContain("jump host");
     const btn = wrapper.find('[data-test="ssh-connect-p3"]');
     expect((btn.element as HTMLButtonElement).disabled).toBe(true);
     await wrapper.find('[data-test="ssh-host-card-p3"]').trigger("dblclick");

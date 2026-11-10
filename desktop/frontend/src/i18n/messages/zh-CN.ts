@@ -1228,7 +1228,6 @@ export const zhCN = {
           timeZone: "统计时区",
           reportingZone: "日界线：{zone}",
           displayZone: "显示：{zone}",
-          coverage: "从 {date} 起可按所选时区精确汇总；更早历史仅保留 UTC 兼容数据。",
           outRate: "出站速率",
           inRate: "入站速率",
           peakRate: "出入站峰值速率",

@@ -196,7 +196,7 @@ export function createPromptHistoryBrowser(options: PromptHistoryBrowserOptions)
 
   function handleKey(key: string): PromptHistoryBrowserAction {
     if (loaded.length === 0) return { handled: false }
-    if (key === 'ArrowUp') {
+    if (key === 'ArrowDown') {
       if (selected + 1 < loaded.length) {
         selected++
         publishView()
@@ -206,7 +206,7 @@ export function createPromptHistoryBrowser(options: PromptHistoryBrowserOptions)
       }
       return { handled: true }
     }
-    if (key === 'ArrowDown') {
+    if (key === 'ArrowUp') {
       if (pendingOlderMoves > 0) pendingOlderMoves--
       else if (selected > 0) {
         selected--

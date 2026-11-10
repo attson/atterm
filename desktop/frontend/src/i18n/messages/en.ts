@@ -1261,7 +1261,6 @@ export const en = {
           timeZone: "Reporting timezone",
           reportingZone: "Day: {zone}",
           displayZone: "Display: {zone}",
-          coverage: "Timezone-accurate totals are available from {date}; older history remains available through UTC-compatible data.",
           outRate: "Outbound rate",
           inRate: "Inbound rate",
           peakRate: "Peak combined rate",

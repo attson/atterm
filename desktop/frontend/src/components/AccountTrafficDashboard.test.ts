@@ -16,6 +16,7 @@ vi.mock('@shared/api/me', () => ({ getMeTraffic: vi.fn() }))
 
 import { getMeTraffic } from '@shared/api/me'
 import AccountTrafficDashboard from './AccountTrafficDashboard.vue'
+import source from './AccountTrafficDashboard.vue?raw'
 
 const getMeTrafficMock = getMeTraffic as unknown as ReturnType<typeof vi.fn>
 let platform: ReturnType<typeof createFakePlatform>
@@ -44,6 +45,16 @@ afterEach(() => {
 })
 
 describe('AccountTrafficDashboard', () => {
+  it('uses the project dropdown instead of a native select', () => {
+    expect(source).toContain('<SelectDropdown')
+    expect(source).not.toContain('<select')
+  })
+
+  it('does not show the timezone coverage compatibility notice', () => {
+    expect(source).not.toContain('coverage-note')
+    expect(source).not.toContain('traffic.time.coverage')
+  })
+
   it('loads and renders Relay and P2P account totals', async () => {
     const wrapper = mount(AccountTrafficDashboard)
     await flushPromises()
@@ -119,7 +130,13 @@ describe('AccountTrafficDashboard', () => {
     await flushPromises()
     expect(getMeTrafficMock).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), undefined, 'Asia/Shanghai')
 
-    await wrapper.get('.timezone-select select').setValue('America/Los_Angeles')
+    const timeZoneTrigger = wrapper.get('.timezone-select [data-testid="select-trigger"]')
+    expect(timeZoneTrigger.attributes('aria-label')).toBe('settings.account.traffic.time.timeZone')
+    await timeZoneTrigger.trigger('click')
+    const losAngeles = wrapper.findAll('.timezone-select [data-testid="select-option"]')
+      .find((option) => option.text() === 'America/Los_Angeles')
+    expect(losAngeles).toBeDefined()
+    await losAngeles!.trigger('click')
     await flushPromises()
     expect(setTimeZone).toHaveBeenCalledWith('America/Los_Angeles')
     expect(getMeTrafficMock).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), undefined, 'America/Los_Angeles')

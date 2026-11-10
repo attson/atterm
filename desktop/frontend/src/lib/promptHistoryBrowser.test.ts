@@ -98,7 +98,7 @@ describe('prompt history browser', () => {
     vi.useRealTimers()
   })
 
-  it('moves toward older records across five-row pages without wrapping', async () => {
+  it('moves down toward older records and up toward newer records without wrapping', async () => {
     const queryPage = vi.fn()
       .mockResolvedValueOnce({
         items: ['one', 'two', 'three', 'four', 'five'].map((text, index) => ({ text, last_used_at: 500 - index })),
@@ -118,18 +118,19 @@ describe('prompt history browser', () => {
     browser.open({ text: '', trusted: true }, true)
     await vi.waitFor(() => expect(state.candidates).toHaveLength(5))
 
-    expect(browser.handleKey('ArrowDown')).toEqual({ handled: true })
-    for (let index = 0; index < 5; index++) browser.handleKey('ArrowUp')
+    expect(browser.handleKey('ArrowUp')).toEqual({ handled: true })
+    expect(state.selectedIndex).toBe(0)
+    for (let index = 0; index < 5; index++) browser.handleKey('ArrowDown')
     await vi.waitFor(() => expect(state.rangeStart).toBe(5))
     expect(queryPage).toHaveBeenLastCalledWith('', 'older', 5)
     expect(state.candidates.map((item) => item.text)).toEqual(['six', 'seven'])
     expect(state.selectedIndex).toBe(0)
 
-    browser.handleKey('ArrowUp')
-    browser.handleKey('ArrowUp')
+    browser.handleKey('ArrowDown')
+    browser.handleKey('ArrowDown')
     expect(state.selectedIndex).toBe(1)
-    browser.handleKey('ArrowDown')
-    browser.handleKey('ArrowDown')
+    browser.handleKey('ArrowUp')
+    browser.handleKey('ArrowUp')
     expect(state.rangeStart).toBe(0)
     expect(state.selectedIndex).toBe(4)
     expect(browser.handleKey('Tab')).toEqual({ handled: true, suffix: 'five' })

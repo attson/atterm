@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Activity, ArrowDownRight, ArrowUpRight, Gauge, Minus, Network, Radio, RotateCw } from "lucide-vue-next";
 import TrafficTimeControls from "./TrafficTimeControls.vue";
 import TrafficTimeChart from "./TrafficTimeChart.vue";
+import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import { useTrafficWindow } from "../composables/useTrafficWindow";
 import { getMeTraffic } from "@shared/api/me";
 import type { AdminTrafficRow, MeTrafficResponse } from "@shared/api/types";
@@ -260,10 +261,12 @@ function linePoints(values: number[]): string {
   return values.map((value, index) => `${34 + (index / count) * 932},${204 - (value / chartMax.value) * 168}`).join(" ");
 }
 
-const timeZoneOptions = computed(() => {
+const timeZoneOptions = computed<SelectOption[]>(() => {
   const common = [systemTimeZone(), "UTC", "Asia/Shanghai", "Asia/Tokyo", "Asia/Kathmandu", "Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles"];
   const all = (Intl as unknown as { supportedValuesOf?: (key: "timeZone") => string[] }).supportedValuesOf?.("timeZone") ?? common;
-  return [...new Set([reportingTimeZone.value, ...common, ...all])].filter(isValidTimeZone);
+  return [...new Set([reportingTimeZone.value, ...common, ...all])]
+    .filter(isValidTimeZone)
+    .map((zone) => ({ value: zone, label: zone }));
 });
 
 async function loadReportingTimeZone(): Promise<boolean> {
@@ -277,8 +280,7 @@ async function loadReportingTimeZone(): Promise<boolean> {
   return false;
 }
 
-function changeReportingTimeZone(event: Event): void {
-  const next = (event.target as HTMLSelectElement).value;
+function changeReportingTimeZone(next: string): void {
   if (!isValidTimeZone(next)) return;
   reportingTimeZone.value = next;
   date.value = dateInTimeZone(Date.now(), next);
@@ -306,7 +308,16 @@ watch(() => props.relayConnected, (connected) => {
     <div class="traffic-heading">
       <div><h3>{{ t("settings.account.traffic.title") }}</h3><p v-if="mode === 'summary'">{{ t("settings.account.traffic.period", { days: rangeDays }) }}</p></div>
       <div class="traffic-actions">
-        <label class="timezone-select"><span>{{ t("settings.account.traffic.time.timeZone") }}</span><select :value="reportingTimeZone" @change="changeReportingTimeZone"><option v-for="zone in timeZoneOptions" :key="zone" :value="zone">{{ zone }}</option></select></label>
+        <div class="timezone-select">
+          <span>{{ t("settings.account.traffic.time.timeZone") }}</span>
+          <SelectDropdown
+            class="timezone-dropdown"
+            :model-value="reportingTimeZone"
+            :options="timeZoneOptions"
+            :aria-label="t('settings.account.traffic.time.timeZone')"
+            @update:model-value="changeReportingTimeZone"
+          />
+        </div>
         <div v-if="mode === 'summary'" class="segmented" role="group" :aria-label="t('settings.account.traffic.range')">
           <button v-for="days in [7, 30, 90]" :key="days" type="button" :class="{ active: rangeDays === days }" :data-testid="`traffic-range-${days}`" @click="setRange(days)">{{ days }}{{ t("settings.account.traffic.dayUnit") }}</button>
         </div>
@@ -325,7 +336,6 @@ watch(() => props.relayConnected, (connected) => {
     </div>
 
     <TrafficTimeControls v-if="relayConnected" v-model:mode="mode" v-model:minutes="minutes" v-model:date="date" v-model:granularity="granularity" v-model:hour="hour" :auto-refresh="autoRefresh" :now="now" :updated-at="traffic?.updated_at" :failed="error || partialError" :reporting-time-zone="reportingTimeZone" />
-    <p v-if="traffic?.local_coverage_from && range.from < dateInTimeZone(traffic.local_coverage_from, reportingTimeZone)" class="coverage-note" role="status">{{ t("settings.account.traffic.time.coverage", { date: dateInTimeZone(traffic.local_coverage_from, reportingTimeZone) }) }}</p>
     <p v-if="error && !traffic" class="traffic-state error" role="alert">{{ t("settings.account.traffic.loadFailed") }}<button type="button" @click="load">{{ t("settings.account.traffic.retry") }}</button></p>
     <div v-else-if="loading && !traffic && !peerTraffic" class="traffic-state">{{ t("common.loading") }}</div>
     <template v-else>
@@ -416,8 +426,8 @@ watch(() => props.relayConnected, (connected) => {
 .panel-head h4 { margin: 2px 0 0; color: var(--fg); font-size: 13px; font-weight: 650; }
 .traffic-actions { display: flex; align-items: center; gap: 6px; }
 .timezone-select { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-dim); font-size: 11px; }
-.timezone-select select { height: 30px; max-width: 190px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); padding: 0 7px; }
-.coverage-note { margin: 0; color: var(--warn, #d29922); font-size: 11px; }
+.timezone-dropdown { width: 190px; }
+.timezone-dropdown :deep(.option-label) { overflow-wrap: anywhere; }
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .segmented button { min-width: 40px; height: 28px; padding: 0 8px; border: 0; border-right: 1px solid var(--border); background: transparent; color: var(--fg-dim); cursor: pointer; font-size: 11px; white-space: nowrap; }
 .segmented button:last-child { border-right: 0; }

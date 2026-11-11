@@ -210,10 +210,16 @@ func (a *App) dialJumpHops(ctx context.Context, h SSHHost, accepted acceptedHost
 	if err != nil {
 		return nil, err
 	}
+	if h.Proxy != nil && len(hops) > 0 {
+		return nil, fmt.Errorf("network proxy combined with jump hosts is unsupported")
+	}
 	// Every hop is vetted before the first dial, for the same reason the cycle
 	// and depth checks are: a hop that cannot be used must not be discovered
 	// after the hops in front of it have really logged in.
 	for i, hop := range hops {
+		if hop.Proxy != nil && i > 0 {
+			return nil, fmt.Errorf("network proxy on a later jump hop is unsupported")
+		}
 		// A hop carrying a ProxyCommand is a machine atterm refuses to dial at
 		// all, in those words, the moment the user clicks it themselves
 		// (hostRunsProxyCommand). Dialling its HostName:Port because somebody
@@ -221,7 +227,7 @@ func (a *App) dialJumpHops(ctx context.Context, h SSHHost, accepted acceptedHost
 		// place the user cannot see it happening. This check lives here rather
 		// than at the gate on purpose: §5.4 keeps the gate to exactly two call
 		// sites, and this is not a gate — it is the chain refusing to build.
-		if hop.ProxyCommand != "" {
+		if hop.ProxyCommand != "" && !isNativeProxy(hop) {
 			return nil, jumpProxyCommandError(hop, i+1)
 		}
 		// A hop that is saved but has no stored credential is the other way to
@@ -285,6 +291,10 @@ func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *ssh
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	proxy, err := sshProxyForHost(h)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := sshclient.DialConn(ctx, sshclient.Config{
 		Host: h.Host, Port: h.Port, User: h.User,
 		Auth:      auth,
@@ -292,6 +302,7 @@ func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *ssh
 		Timeout:   jumpDialTimeout,
 		Keepalive: jumpKeepalive,
 		Via:       via,
+		Proxy:     proxy,
 	})
 	if err != nil {
 		if unknown != nil {
@@ -441,6 +452,16 @@ func splitProxyJump(v string) []string {
 // otherwise falls back to matching on the name alone — which is still a saved
 // host, never a fabricated one.
 func findJumpHost(elem string, hosts []SSHHost) (SSHHost, bool) {
+	// Imported chains bind exact saved IDs, so duplicate display names cannot
+	// redirect a hop or send its credential to another saved endpoint.
+	if strings.HasPrefix(elem, "atterm-id:") {
+		for _, h := range hosts {
+			if h.ID == strings.TrimPrefix(elem, "atterm-id:") {
+				return h, true
+			}
+		}
+		return SSHHost{}, false
+	}
 	name, port := jumpElementNameAndPort(elem)
 	if name == "" {
 		return SSHHost{}, false

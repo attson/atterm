@@ -26,6 +26,8 @@ import (
 	"github.com/attson/atterm/internal/peertraffic"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/sshclient"
 	"github.com/google/uuid"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -133,8 +135,9 @@ type SSHConnectReq struct {
 	// host record the user saved. NewSshSession is a bound method the
 	// frontend can call with any request it likes, and a marshalled field
 	// here would make "type this into that machine" part of that surface.
-	StartupCommand string `json:"-"`
-	StartupDelayMs int    `json:"-"`
+	StartupCommand string                 `json:"-"`
+	StartupDelayMs int                    `json:"-"`
+	NetworkProxy   *sshclient.ProxyConfig `json:"-"`
 }
 
 // acceptedHostKey is the (host, fingerprint) pair the user agreed to, in the
@@ -278,6 +281,7 @@ type App struct {
 	cfgStore      *configStore
 	logger        *loggingManager
 	promptHistory *PromptHistoryStore
+	termiusImport atomic.Pointer[termiusImportState]
 
 	mu               sync.Mutex
 	uplink           *uplink
@@ -1703,9 +1707,45 @@ func (a *App) SetPinnedSessionIds(ids []string) error {
 	})
 }
 
-// MarkSessionsSeen marks sessions as seen on the relay. If all is true, all
-// sessions are marked seen regardless of the ids slice.
+// MarkSessionsSeen writes read receipts to the relay that owns each session's
+// list. Local receipts must not depend on a remote relay being configured.
 func (a *App) MarkSessionsSeen(ids []string, all bool) error {
+	remoteIDs := ids
+	if h := a.host; h != nil && h.server != nil && h.store != nil {
+		var localIDs []string
+		remoteIDs = nil
+		if all {
+			h.server.Registry().ForEach(func(s *session.Session) bool {
+				if s.OwnerUserID == h.adminUserID {
+					localIDs = append(localIDs, s.ID.String())
+				}
+				return true
+			})
+		} else {
+			for _, raw := range ids {
+				id, err := uuid.Parse(raw)
+				if err == nil {
+					if s, ok := h.server.Registry().Get(id); ok && s.OwnerUserID == h.adminUserID {
+						localIDs = append(localIDs, s.ID.String())
+						continue
+					}
+				}
+				remoteIDs = append(remoteIDs, raw)
+			}
+		}
+		if len(localIDs) > 0 {
+			if err := h.store.SetSeen(context.Background(), h.adminUserID, localIDs, time.Now().Unix()); err != nil {
+				return fmt.Errorf("mark local sessions seen: %w", err)
+			}
+			h.server.Registry().NotifyChange()
+		}
+		if !all && len(remoteIDs) == 0 {
+			return nil
+		}
+		if all && (a.cfgStore == nil || a.cfgStore.Get().RelayURL == "" || a.cfgStore.Get().RelaySessionToken == "") {
+			return nil
+		}
+	}
 	if a.cfgStore == nil {
 		return fmt.Errorf("config store not ready")
 	}
@@ -1715,7 +1755,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	}
 	baseHTTP := relayHTTPBase(cfg.RelayURL)
 	body, err := json.Marshal(map[string]any{
-		"session_ids": ids,
+		"session_ids": remoteIDs,
 		"all":         all,
 	})
 	if err != nil {

@@ -7,8 +7,10 @@ require (
 	github.com/bytemare/ksf v0.1.0
 	github.com/bytemare/opaque v0.10.0
 	github.com/creack/pty v1.1.24
+	github.com/danieljoos/wincred v1.2.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/godbus/dbus/v5 v5.2.2
+	github.com/golang/snappy v0.0.4
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/mdns v1.0.6
 	github.com/jackc/pgx/v5 v5.7.5
@@ -48,7 +50,6 @@ require (
 	github.com/bytemare/crypto v0.4.3 // indirect
 	github.com/bytemare/hash v0.1.5 // indirect
 	github.com/bytemare/hash2curve v0.1.3 // indirect
-	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

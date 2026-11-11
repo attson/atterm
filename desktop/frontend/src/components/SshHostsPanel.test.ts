@@ -44,6 +44,8 @@ vi.mock("../lib/api", () => ({
 // skip-reason assertions in particular have to keep matching real words.
 beforeEach(() => {
   resetI18nForTest();
+  localStorage.removeItem("atterm.ssh.tunnels.layout");
+  localStorage.removeItem("atterm.ssh.tunnels.sort");
   listSSHHosts.mockReset().mockResolvedValue([]);
   addSSHHost.mockReset();
   updateSSHHost.mockReset();
@@ -71,14 +73,17 @@ describe("SshHostsPanel", () => {
     expect(wrapper.text()).toContain("box");
   });
 
-  it("点击某主机连接触发 newSshSessionByID 并 emit connected", async () => {
+  it("单击主机不连接，双击触发 newSshSessionByID 并 emit connected", async () => {
     listSSHHosts.mockResolvedValueOnce([
       { id: "1", host: "h", user: "u", auth_kind: "password", alias: "box" },
     ]);
     newSshSessionByID.mockResolvedValueOnce({ session_id: "s1" });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-1"]').trigger("click");
+    expect(newSshSessionByID).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-test="ssh-connect-1"]').exists()).toBe(false);
+    await wrapper.find('[data-test="ssh-host-card-1"]').trigger("dblclick");
     await flushPromises();
     expect(newSshSessionByID).toHaveBeenCalledWith("1", { host: "", fingerprint: "" });
     expect(wrapper.emitted("connected")?.[0]).toEqual(["s1"]);
@@ -185,6 +190,35 @@ describe("SshHostsPanel", () => {
   });
 });
 
+describe("SshHostsPanel 分组层级", () => {
+  it("只显示当前层子分组和直属主机，支持逐级返回和同名子分组隔离", async () => {
+    const host = (id: string, group_path: string[]) => ({ id, alias: id, host: "localhost", user: "root", auth_kind: "password", group_path });
+    listSSHHosts.mockResolvedValue([
+      host("root", []), host("parent", ["公司"]), host("nested", ["公司", "Jumps"]),
+      host("deep", ["公司", "Jumps", "机房"]), host("other", ["个人", "Jumps"]),
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    const cards = () => wrapper.findAll('[data-test^="ssh-host-card-"]').map((c) => c.find(".card-label").text());
+    expect(cards()).toEqual(["root"]);
+    expect(wrapper.find('[data-test="ssh-tag-filter-Jumps"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="ssh-tag-filter-公司"] .group-count').text()).toBe("3 hosts");
+    await wrapper.find('[data-test="ssh-tag-filter-公司"]').trigger("click");
+    expect(cards()).toEqual(["parent"]);
+    await wrapper.find('[data-test="ssh-tag-filter-Jumps"]').trigger("click");
+    expect(cards()).toEqual(["nested"]);
+    expect(wrapper.find('[data-test="ssh-tag-filter-机房"]').exists()).toBe(true);
+    await wrapper.find('[data-test="ssh-tag-filter-机房"]').trigger("click");
+    expect(cards()).toEqual(["deep"]);
+    await wrapper.find('[data-test="ssh-group-ancestor-0"]').trigger("click");
+    expect(cards()).toEqual(["parent"]);
+    await wrapper.find('[data-test="ssh-tag-filter-clear"]').trigger("click");
+    await wrapper.find('[data-test="ssh-search"]').setValue("nested");
+    expect(cards()).toEqual(["nested"]);
+    wrapper.unmount();
+  });
+});
+
 describe("SshHostsPanel 主机多 tag", () => {
   const WEB = {
     id: "1", host: "10.0.0.1", user: "root", port: "22",
@@ -216,12 +250,13 @@ describe("SshHostsPanel 主机多 tag", () => {
     expect(wrapper.find('[data-test="ssh-host-tag-1-web"]').exists()).toBe(true);
   });
 
-  it("过滤条列出所有在用的 tag,去重且排序", async () => {
+  it("分组卡片列出去重排序的标签及主机数量", async () => {
     const wrapper = await mountWith([WEB, DB]);
     const bar = wrapper.find('[data-test="ssh-tag-filter-bar"]');
     expect(bar.exists()).toBe(true);
-    const labels = bar.findAll('[data-test^="ssh-tag-filter-"]').map((b) => b.text());
+    const labels = bar.findAll(".group-name").map((b) => b.text());
     expect(labels).toEqual(["db", "prod", "web"]);
+    expect(bar.findAll(".group-count").map((b) => b.text())).toEqual(["1 hosts", "2 hosts", "1 hosts"]);
   });
 
   it("没有任何 tag 时不渲染过滤条", async () => {
@@ -236,30 +271,31 @@ describe("SshHostsPanel 主机多 tag", () => {
     expect(visibleAliases(wrapper)).toEqual(["web-1"]);
   });
 
-  it("选中多个 tag 时按 AND 收窄", async () => {
+  it("返回全部主机后可以进入另一个分组", async () => {
     const wrapper = await mountWith([WEB, DB, LOOSE]);
     await wrapper.find('[data-test="ssh-tag-filter-prod"]').trigger("click");
     await wrapper.vm.$nextTick();
     expect(visibleAliases(wrapper)).toEqual(["web-1", "db-1"]);
+    await wrapper.find('[data-test="ssh-tag-filter-clear"]').trigger("click");
     await wrapper.find('[data-test="ssh-tag-filter-db"]').trigger("click");
     await wrapper.vm.$nextTick();
     expect(visibleAliases(wrapper)).toEqual(["db-1"]);
   });
 
-  it("再点一次已选中的 tag 取消它", async () => {
+  it("分组面包屑返回全部主机", async () => {
     const wrapper = await mountWith([WEB, DB, LOOSE]);
     await wrapper.find('[data-test="ssh-tag-filter-web"]').trigger("click");
-    await wrapper.find('[data-test="ssh-tag-filter-web"]').trigger("click");
+    await wrapper.find('[data-test="ssh-tag-filter-clear"]').trigger("click");
     await wrapper.vm.$nextTick();
     expect(visibleAliases(wrapper)).toEqual(["web-1", "db-1", "loose"]);
   });
 
-  it("选中的 tag 带 on 标记", async () => {
+  it("进入分组后隐藏分组入口并展示面包屑", async () => {
     const wrapper = await mountWith([WEB, DB]);
     await wrapper.find('[data-test="ssh-tag-filter-web"]').trigger("click");
-    await wrapper.vm.$nextTick();
-    expect(wrapper.find('[data-test="ssh-tag-filter-web"]').classes()).toContain("on");
-    expect(wrapper.find('[data-test="ssh-tag-filter-prod"]').classes()).not.toContain("on");
+    expect(wrapper.find('[data-test="ssh-tag-filter-bar"]').exists()).toBe(false);
+    expect(wrapper.find(".host-breadcrumb").text()).toContain("web");
+    expect(wrapper.find(".host-section-title").text()).toContain("Hosts");
   });
 
   it("Clear 清空全部 tag 选择", async () => {
@@ -345,13 +381,14 @@ describe("SshHostsPanel 主机多 tag", () => {
     expect(wrapper.findAll('[data-test^="ssh-add-tag-chip-"]')).toHaveLength(1);
   });
 
-  it("过滤后某个 tag 被清空时列表显示空态", async () => {
+  it("分组内搜索无结果时显示空态并保留返回入口", async () => {
     const wrapper = await mountWith([WEB, DB]);
     await wrapper.find('[data-test="ssh-tag-filter-web"]').trigger("click");
-    await wrapper.find('[data-test="ssh-tag-filter-db"]').trigger("click");
-    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-search"]').setValue("db-1");
     expect(visibleAliases(wrapper)).toEqual([]);
     expect(wrapper.find('[data-test="ssh-hosts-no-match"]').exists()).toBe(true);
+    await wrapper.find('[data-test="ssh-tag-filter-clear"]').trigger("click");
+    expect(visibleAliases(wrapper)).toEqual(["db-1"]);
   });
 });
 
@@ -706,7 +743,8 @@ describe("SshHostsPanel 私钥文件导入", () => {
 
 // Open the ssh_config import drawer on a freshly mounted panel.
 async function openConfigImportDrawer(wrapper: ReturnType<typeof mount>) {
-  await wrapper.find('[data-test="ssh-config-import-open"]').trigger("click");
+  await wrapper.get('[data-test="ssh-import-open"]').trigger("click");
+  await wrapper.get('[data-test="session-row-menu-item-ssh-config"]').trigger("click");
   await flushPromises();
   await wrapper.vm.$nextTick();
 }
@@ -996,15 +1034,26 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     expect(marker.exists()).toBe(true);
     expect(marker.text()).toContain("bastion");
     expect(marker.text()).not.toContain("not directly connectable");
-    const btn = wrapper.find('[data-test="ssh-connect-p1"]');
-    expect((btn.element as HTMLButtonElement).disabled).toBe(false);
-    await btn.trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-p1"]').trigger("dblclick");
     await flushPromises();
     expect(newSshSessionByID).toHaveBeenCalledWith("p1", { host: "", fingerprint: "" });
     expect(wrapper.emitted("connected")?.[0]).toEqual(["s3"]);
   });
 
-  it("proxy_command 主机仍然被拒,Connect 禁用且不会发起连接", async () => {
+  it("原生代理保留可连接标记，跳板按 ID 显示名称", async () => {
+    listSSHHosts.mockResolvedValue([
+      { ...PROXIED, proxy_jump: undefined, proxy_command: 'atterm:native-proxy:v1', proxy: { kind: 'http', host: 'localhost', port: '8080' } },
+      { ...PROXIED, id: 'target', alias: 'target', proxy_jump: 'atterm-id:p1' },
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    expect(wrapper.get('[data-test="ssh-host-proxy-p1"]').text()).toContain('HTTP · localhost:8080');
+    expect(wrapper.get('[data-test="ssh-host-proxy-p1"]').classes()).not.toContain('blocked');
+    expect(wrapper.get('[data-test="ssh-host-proxy-target"]').text()).toContain(PROXIED.alias);
+    expect(wrapper.get('[data-test="ssh-host-proxy-target"]').text()).not.toContain('atterm-id:');
+    wrapper.unmount();
+  });
+  it("proxy_command 主机双击仍然被拒,不会发起连接", async () => {
     listSSHHosts.mockResolvedValue([
       {
         id: "pc1", alias: "corky", host: "10.0.0.7", user: "root", auth_kind: "password",
@@ -1013,10 +1062,7 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     ]);
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    const btn = wrapper.find('[data-test="ssh-connect-pc1"]');
-    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
-    // Double-click bypasses the disabled button, so the guard has to live in
-    // connect() too — a ProxyCommand host must never be dialled.
+    // Every entry point must refuse unsupported ProxyCommand routes.
     await wrapper.find('[data-test="ssh-host-card-pc1"]').trigger("dblclick");
     await flushPromises();
     expect(newSshSessionByID).not.toHaveBeenCalled();
@@ -1062,8 +1108,6 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     await marker.trigger("focus");
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain("ProxyCommand");
     expect(document.querySelector('[role="tooltip"]')?.textContent).not.toContain("jump host");
-    const btn = wrapper.find('[data-test="ssh-connect-p3"]');
-    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
     await wrapper.find('[data-test="ssh-host-card-p3"]').trigger("dblclick");
     await flushPromises();
     expect(newSshSessionByID).not.toHaveBeenCalled();
@@ -1096,7 +1140,7 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
     expect(wrapper.find('[data-test="ssh-host-proxy-n1"]').exists()).toBe(false);
-    await wrapper.find('[data-test="ssh-connect-n1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-n1"]').trigger("dblclick");
     await flushPromises();
     expect(newSshSessionByID).toHaveBeenCalledWith("n1", { host: "", fingerprint: "" });
   });
@@ -1125,7 +1169,7 @@ describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
     newSshSessionByID.mockRejectedValueOnce(hostKeyError());
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-db1"]').trigger("dblclick");
     await flushPromises();
     const tofu = wrapper.find('[data-test="ssh-host-tofu"]');
     expect(tofu.exists()).toBe(true);
@@ -1144,7 +1188,7 @@ describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
       .mockResolvedValueOnce({ session_id: "s7" });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-db1"]').trigger("dblclick");
     await flushPromises();
     await wrapper.find('[data-test="ssh-host-accept-hostkey"]').trigger("click");
     await flushPromises();
@@ -1170,7 +1214,7 @@ describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
     );
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-db1"]').trigger("dblclick");
     await flushPromises();
     const text = wrapper.find('[data-test="ssh-host-tofu"]').text();
     expect(text).toContain("bastion-b");
@@ -1187,7 +1231,7 @@ describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
     );
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-db1"]').trigger("dblclick");
     await flushPromises();
     const text = wrapper.find('[data-test="ssh-host-tofu"]').text();
     expect(text).toContain("db-1");
@@ -1206,7 +1250,7 @@ describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
       .mockRejectedValueOnce(hostKeyError({ Host: "10.0.0.2", Fingerprint: "SHA256:two", HopIndex: 2, HopName: "bastion-b" }));
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-db1"]').trigger("dblclick");
     await flushPromises();
     expect(wrapper.find('[data-test="ssh-host-tofu"]').text()).toContain("bastion-a");
     await wrapper.find('[data-test="ssh-host-accept-hostkey"]').trigger("click");
@@ -1226,7 +1270,7 @@ describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
     newSshSessionByID.mockRejectedValueOnce(hostKeyError());
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-db1"]').trigger("dblclick");
     await flushPromises();
     await wrapper.find('[data-test="ssh-host-reject-hostkey"]').trigger("click");
     await flushPromises();
@@ -1242,7 +1286,7 @@ describe("SshHostsPanel 未知主机指纹（TOFU）", () => {
     newSshSessionByID.mockRejectedValueOnce(hostKeyError({ Host: "" }));
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
-    await wrapper.find('[data-test="ssh-connect-db1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-host-card-db1"]').trigger("dblclick");
     await flushPromises();
     expect(wrapper.find('[data-test="ssh-host-tofu"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="ssh-hosts-error"]').exists()).toBe(true);
@@ -1426,6 +1470,69 @@ describe("SshHostsPanel 活跃隧道面板", () => {
     await wrapper.vm.$nextTick();
   }
 
+  it("页签统计所有已保存规则，卡片省略本地类型并保留其他类型", async () => {
+    const wrapper = await mountPanel([
+      { ...FWD_HOST, forwards: [
+        { ...PG_RULE, note: "Database" },
+        { ...PG_RULE, id: "remote", kind: "remote", note: "Remote database" },
+      ] },
+      { ...FWD_HOST, id: "h2", forwards: [{ id: "socks", kind: "dynamic", bind_port: "1080" }] },
+      { id: "empty", host: "localhost", user: "root", auth_kind: "password" },
+    ]);
+    await openTunnels(wrapper);
+    expect(wrapper.get('[data-test="ssh-tab-tunnels"] .tab-count').text()).toBe("3");
+    const local = wrapper.get('[data-test="ssh-tunnel-row-h1-f1"]');
+    expect(local.find(".fwd-kind").exists()).toBe(false);
+    expect(local.get(".fwd-note").text()).toBe("Database");
+    expect(local.get(".fwd-route").text()).toContain("→ box →");
+    const grid = wrapper.get('[data-test="ssh-tunnel-grid"]');
+    expect(grid.findAll(":scope > .fwd-card")).toHaveLength(3);
+    expect(wrapper.find(".fwd-host-head").exists()).toBe(false);
+    expect(wrapper.get('[data-test="ssh-tunnel-row-h1-remote"] .fwd-kind').text()).toBe("Remote");
+    const dynamic = wrapper.get('[data-test="ssh-tunnel-row-h2-socks"]');
+    expect(dynamic.get(".fwd-kind").text()).toBe("Dynamic");
+    expect(dynamic.get(".fwd-note").text()).not.toBe("");
+    wrapper.unmount();
+  });
+
+  it("隧道搜索叠加排序、切换列表并记住偏好，操作仍指向正确规则", async () => {
+    const wrapper = await mountPanel([{ ...FWD_HOST, forwards: [
+      { ...PG_RULE, note: "Zulu database" },
+      { ...PG_RULE, id: "f2", note: "Alpha cache", target_host: "redis.internal" },
+    ] }]);
+    await openTunnels(wrapper);
+    const names = () => wrapper.findAll('[data-test^="ssh-tunnel-row-"] .fwd-note').map((el) => el.text());
+    const select = async (id: string, label: string) => {
+      const dropdown = wrapper.get(`[data-test="${id}"]`);
+      await dropdown.get("button").trigger("click");
+      const option = dropdown.findAll('[role="option"]').find((el) => el.text() === label);
+      expect(option).toBeDefined();
+      await option!.trigger("click");
+    };
+    await select("ssh-tunnel-sort", "Name A–Z");
+    expect(names()).toEqual(["Alpha cache", "Zulu database"]);
+    await select("ssh-tunnel-layout", "List");
+    expect(wrapper.get('[data-test="ssh-tunnel-grid"]').classes()).toContain("tunnel-list");
+    expect(localStorage.getItem("atterm.ssh.tunnels.layout")).toBe("list");
+    expect(localStorage.getItem("atterm.ssh.tunnels.sort")).toBe("name-asc");
+    await wrapper.get('[data-test="ssh-tunnel-search"]').setValue("box redis.internal");
+    expect(names()).toEqual(["Alpha cache"]);
+    expect(wrapper.get('[data-test="ssh-tab-tunnels"] .tab-count').text()).toBe("2");
+    await wrapper.get('[data-test="ssh-tunnel-row-h1-f2"]').trigger("dblclick");
+    await flushPromises();
+    expect(startForward).toHaveBeenCalledWith("h1", "f2", undefined);
+    await wrapper.get('[data-test="ssh-tunnel-search"]').setValue("no-such-tunnel");
+    expect(wrapper.find('[data-test="ssh-tunnels-no-match"]').exists()).toBe(true);
+    await wrapper.get('[data-test="ssh-tunnels-no-match"] button').trigger("click");
+    expect(names()).toHaveLength(2);
+    wrapper.unmount();
+    const reopened = await mountPanel([FWD_HOST]);
+    await openTunnels(reopened);
+    expect(reopened.get('[data-test="ssh-tunnel-grid"]').classes()).toContain("tunnel-list");
+    expect(reopened.get('[data-test="ssh-tunnel-sort"] button').text()).toContain("Name A–Z");
+    reopened.unmount();
+  });
+
   it("没有任何规则时显示空态", async () => {
     const wrapper = await mountPanel([
       { id: "n1", host: "10.0.0.1", user: "root", auth_kind: "password" },
@@ -1439,6 +1546,9 @@ describe("SshHostsPanel 活跃隧道面板", () => {
     await openTunnels(wrapper);
     const row = wrapper.find('[data-test="ssh-tunnel-row-h1-f1"]');
     expect(row.exists()).toBe(true);
+    expect(wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').exists()).toBe(false);
+    await row.trigger("click");
+    expect(startForward).not.toHaveBeenCalled();
     expect(wrapper.find('[data-test="ssh-tunnel-state-h1-f1"]').text()).toContain("Not started");
     listActiveForwards.mockResolvedValue([
       {
@@ -1446,12 +1556,119 @@ describe("SshHostsPanel 活跃隧道面板", () => {
         target: "db.internal:5432", conns: 0, started_at: 1, running: true, error: "",
       },
     ]);
-    await wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-tunnel-row-h1-f1"]').trigger("dblclick");
     await flushPromises();
-    expect(startForward).toHaveBeenCalledWith("h1", "f1");
+    expect(startForward).toHaveBeenCalledWith("h1", "f1", undefined);
     expect(wrapper.find('[data-test="ssh-tunnel-state-h1-f1"]').text()).toContain("Running");
   });
 
+
+  it.each(["h1", "h2"])("隧道独立显示连接中并允许并行启动（第二条主机 %s）", async (secondHostID) => {
+    const second = { ...PG_RULE, id: "f2" };
+    const hosts = secondHostID === "h1"
+      ? [{ ...FWD_HOST, forwards: [PG_RULE, second] }]
+      : [FWD_HOST, { ...FWD_HOST, id: "h2", forwards: [second] }];
+    const wrapper = await mountPanel(hosts);
+    await openTunnels(wrapper);
+    let finishFirst!: () => void;
+    let failSecond!: (reason: Error) => void;
+    startForward
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { failSecond = reject; }));
+    const firstRow = wrapper.get('[data-test="ssh-tunnel-row-h1-f1"]');
+    await firstRow.trigger("dblclick");
+    expect(wrapper.get('[data-test="ssh-tunnel-state-h1-f1"]').text()).toBe("Connecting…");
+    await firstRow.trigger("dblclick");
+    expect(startForward).toHaveBeenCalledTimes(1);
+    await wrapper.get(`[data-test="ssh-tunnel-row-${secondHostID}-f2"]`).trigger("dblclick");
+    expect(startForward).toHaveBeenCalledTimes(2);
+    expect(wrapper.get(`[data-test="ssh-tunnel-state-${secondHostID}-f2"]`).text()).toBe("Connecting…");
+    failSecond(new Error("connection refused"));
+    await flushPromises();
+    expect(wrapper.get(`[data-test="ssh-tunnel-state-${secondHostID}-f2"]`).text()).toBe("Not started");
+    expect(wrapper.get('[data-test="ssh-tunnel-state-h1-f1"]').text()).toBe("Connecting…");
+    finishFirst();
+    await flushPromises();
+    expect(wrapper.get('[data-test="ssh-tunnel-state-h1-f1"]').text()).toBe("Not started");
+    wrapper.unmount();
+  });
+
+  it("一条隧道连接中时仍能停止另一条运行中的隧道", async () => {
+    listActiveForwards.mockResolvedValue([{
+      host_id: "h2", rule_id: "f1", kind: "local", listen_addr: "127.0.0.1:5432",
+      target: "db:5432", conns: 0, started_at: 1, running: true, error: "",
+    }]);
+    const wrapper = await mountPanel([FWD_HOST, { ...FWD_HOST, id: "h2" }]);
+    await openTunnels(wrapper);
+    let finish!: () => void;
+    startForward.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await wrapper.get('[data-test="ssh-tunnel-row-h1-f1"]').trigger("dblclick");
+    const stop = wrapper.get('[data-test="ssh-tunnel-stop-h2-f1"]');
+    expect(stop.attributes("disabled")).toBeUndefined();
+    await stop.trigger("click");
+    await flushPromises();
+    expect(stopForward).toHaveBeenCalledWith("h2", "f1");
+    expect(wrapper.get('[data-test="ssh-tunnel-state-h1-f1"]').text()).toBe("Connecting…");
+    finish();
+    await flushPromises();
+    wrapper.unmount();
+  });
+
+  it("并行隧道的指纹确认依次展示，成功连接不清除其他待确认项", async () => {
+    const wrapper = await mountPanel([FWD_HOST, { ...FWD_HOST, id: "h2" }, { ...FWD_HOST, id: "h3" }]);
+    await openTunnels(wrapper);
+    startForward
+      .mockRejectedValueOnce({ Host: "first:22", Fingerprint: "SHA256:first" })
+      .mockRejectedValueOnce({ Host: "second:22", Fingerprint: "SHA256:second" });
+    await wrapper.get('[data-test="ssh-tunnel-row-h1-f1"]').trigger("dblclick");
+    await wrapper.get('[data-test="ssh-tunnel-row-h2-f1"]').trigger("dblclick");
+    await flushPromises();
+    expect(wrapper.get('[data-test="ssh-host-tofu"]').text()).toContain("first:22");
+    expect(wrapper.get('[data-test="ssh-tunnel-state-h2-f1"]').text()).toBe("Confirm fingerprint");
+    await wrapper.get('[data-test="ssh-tunnel-row-h3-f1"]').trigger("dblclick");
+    await flushPromises();
+    expect(wrapper.get('[data-test="ssh-host-tofu"]').text()).toContain("first:22");
+    await wrapper.get('[data-test="ssh-host-accept-hostkey"]').trigger("click");
+    await flushPromises();
+    expect(startForward).toHaveBeenLastCalledWith("h1", "f1", { host: "first:22", fingerprint: "SHA256:first" });
+    expect(wrapper.get('[data-test="ssh-host-tofu"]').text()).toContain("second:22");
+    await wrapper.get('[data-test="ssh-host-reject-hostkey"]').trigger("click");
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("隧道逐跳确认指纹后重试原规则，不创建终端", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    startForward
+      .mockRejectedValueOnce({ Host: "bastion:2222", Fingerprint: "SHA256:jump", HopIndex: 1, HopName: "Bastion" })
+      .mockRejectedValueOnce({ Host: "db:22", Fingerprint: "SHA256:target", HopIndex: 2, HopName: FWD_HOST.alias });
+    await wrapper.find('[data-test="ssh-tunnel-row-h1-f1"]').trigger("dblclick");
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').text()).toContain("bastion:2222");
+    await wrapper.find('[data-test="ssh-host-accept-hostkey"]').trigger("click");
+    await flushPromises();
+    expect(startForward).toHaveBeenLastCalledWith("h1", "f1", { host: "bastion:2222", fingerprint: "SHA256:jump" });
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').text()).toContain("SHA256:target");
+    await wrapper.find('[data-test="ssh-host-accept-hostkey"]').trigger("click");
+    await flushPromises();
+    expect(startForward).toHaveBeenLastCalledWith("h1", "f1", { host: "db:22", fingerprint: "SHA256:target" });
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').exists()).toBe(false);
+    expect(newSshSessionByID).not.toHaveBeenCalled();
+    expect(wrapper.emitted("connected")).toBeUndefined();
+  });
+
+  it("取消隧道指纹确认不会重试", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    startForward.mockRejectedValueOnce({ Host: "db:22", Fingerprint: "SHA256:target" });
+    await wrapper.find('[data-test="ssh-tunnel-row-h1-f1"]').trigger("dblclick");
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-host-reject-hostkey"]').trigger("click");
+    await flushPromises();
+    expect(startForward).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-test="ssh-host-tofu"]').exists()).toBe(false);
+  });
   it("运行中的隧道显示真实监听地址与目标,并给出停止按钮", async () => {
     listActiveForwards.mockResolvedValue([
       {
@@ -1465,6 +1682,9 @@ describe("SshHostsPanel 活跃隧道面板", () => {
     expect(row.text()).toContain("127.0.0.1:54321");
     expect(row.text()).toContain("db.internal:5432");
     expect(row.text()).toContain("3");
+    await row.trigger("dblclick");
+    await flushPromises();
+    expect(startForward).not.toHaveBeenCalled();
     expect(wrapper.find('[data-test="ssh-tunnel-stop-h1-f1"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').exists()).toBe(false);
     await wrapper.find('[data-test="ssh-tunnel-stop-h1-f1"]').trigger("click");
@@ -1492,16 +1712,16 @@ describe("SshHostsPanel 活跃隧道面板", () => {
     const err = wrapper.find('[data-test="ssh-tunnel-error-h1-f1"]');
     expect(err.exists()).toBe(true);
     expect(err.text()).toContain("keepalive failed");
-    // A dead tunnel offers a restart, not a stop.
+    // A dead tunnel can be restarted by double-click and has no stop action.
     expect(wrapper.find('[data-test="ssh-tunnel-stop-h1-f1"]').exists()).toBe(false);
-    expect(wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').exists()).toBe(false);
   });
 
-  it("启动失败时把后端的原因显示出来", async () => {
+  it("键盘 Enter 启动失败时显示后端原因", async () => {
     startForward.mockRejectedValueOnce(new Error("local port 5432 is already in use (cannot bind 127.0.0.1:5432)"));
     const wrapper = await mountPanel([FWD_HOST]);
     await openTunnels(wrapper);
-    await wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').trigger("click");
+    await wrapper.find('[data-test="ssh-tunnel-row-h1-f1"]').trigger("keydown", { key: "Enter" });
     await flushPromises();
     expect(wrapper.find('[data-test="ssh-hosts-error"]').text()).toContain("already in use");
   });
@@ -1510,32 +1730,30 @@ describe("SshHostsPanel 活跃隧道面板", () => {
   // them. Item 27 routes a ProxyJump host through the chain builder on the
   // tunnel path too, so the button has to work — a greyed button here would be
   // the UI refusing something the backend now does.
-  it("带 proxy_jump 的主机启动按钮可用,并真的调用 StartForward", async () => {
+  it("带 proxy_jump 的主机可以双击启动隧道,并真的调用 StartForward", async () => {
     const wrapper = await mountPanel([{ ...FWD_HOST, id: "p1", proxy_jump: "bastion" }]);
     await openTunnels(wrapper);
-    const btn = wrapper.find('[data-test="ssh-tunnel-start-p1-f1"]');
-    expect((btn.element as HTMLButtonElement).disabled).toBe(false);
+    const card = wrapper.find('[data-test="ssh-tunnel-row-p1-f1"]');
     // The chain is still worth showing before starting a tunnel through it,
     // but as a route, not as a refusal.
     expect(wrapper.find('[data-test="ssh-tunnel-proxy-p1"]').text()).toContain("bastion");
     expect(wrapper.find('[data-test="ssh-tunnel-proxy-reason-p1"]').exists()).toBe(false);
-    await btn.trigger("click");
+    await card.trigger("dblclick");
     await flushPromises();
-    expect(startForward).toHaveBeenCalledWith("p1", "f1");
+    expect(startForward).toHaveBeenCalledWith("p1", "f1", undefined);
   });
 
   // ProxyCommand is still never executed, on either path.
-  it("带 proxy_command 的主机启动按钮仍然禁用,并写明原因", async () => {
+  it("带 proxy_command 的主机双击仍不启动,并写明原因", async () => {
     const wrapper = await mountPanel([
       { ...FWD_HOST, id: "pc1", proxy_command: "corkscrew proxy 8080 %h %p" },
     ]);
     await openTunnels(wrapper);
-    const btn = wrapper.find('[data-test="ssh-tunnel-start-pc1-f1"]');
-    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
+    const card = wrapper.find('[data-test="ssh-tunnel-row-pc1-f1"]');
     const reason = wrapper.find('[data-test="ssh-tunnel-proxy-reason-pc1"]');
     expect(reason.exists()).toBe(true);
     expect(reason.text()).toContain("ProxyCommand");
-    await btn.trigger("click");
+    await card.trigger("dblclick");
     await flushPromises();
     expect(startForward).not.toHaveBeenCalled();
   });
@@ -1627,7 +1845,7 @@ describe("SshHostsPanel 隧道抽屉", () => {
 
     const [payload] = updateSSHHost.mock.calls[0] as [{ forwards?: RuleLike[] }];
     const created = payload.forwards?.[1];
-    expect(startForward).toHaveBeenCalledWith("h1", created?.id);
+    expect(startForward).toHaveBeenCalledWith("h1", created?.id, undefined);
   });
 
   it("目标未填完时保存按钮不可用,动态转发则不要求目标", async () => {

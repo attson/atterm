@@ -460,9 +460,8 @@ func startEchoTarget(t *testing.T) (host, port string) {
 	return h, p
 }
 
-// writeKnownHostsFor pre-trusts the test server's host key. Tunnels never
-// prompt for TOFU (there is no dialog behind a StartForward call), so the key
-// has to already be in known_hosts — the same file the terminal path writes.
+// writeKnownHostsFor pre-trusts the test server so forwarding tests can focus
+// on transport behavior rather than host-key confirmation.
 func writeKnownHostsFor(t *testing.T, addr string, pub ssh.PublicKey) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "known_hosts")
@@ -1917,4 +1916,63 @@ func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+func TestStartForwardWithHostKeyScopedConfirmation(t *testing.T) {
+	echoHost, echoPort := startEchoTarget(t)
+	bastion := startForwardingSSHTestServerAs(t, "bastion-user", "bastion-pw")
+	target := startForwardingSSHTestServerAs(t, "target-user", "target-pw")
+	a := newJumpTestApp(t)
+	t.Cleanup(func() { a.tunnels.stopAll() })
+	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
+	targetHost, targetPort, _ := net.SplitHostPort(target.addr)
+	h, err := a.AddSSHHost(SSHHost{
+		Alias: "db", Host: targetHost, Port: targetPort, User: "target-user", AuthKind: "password",
+		ProxyJump: "bastion", Forwards: []ForwardRule{localRule("r1", echoHost, echoPort)},
+	}, sshCredential{Password: "target-pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkUnknown := func(accepted AcceptedHostKey, addr string, hop int) *HostKeyUnknownError {
+		t.Helper()
+		err := a.StartForwardWithHostKey(h.ID, "r1", accepted)
+		var unknown *HostKeyUnknownError
+		if !errors.As(err, &unknown) || unknown.Host != addr || unknown.HopIndex != hop {
+			t.Fatalf("expected unknown key on %s hop %d, got %v", addr, hop, err)
+		}
+		if got := a.ListActiveForwards(); len(got) != 0 {
+			t.Fatalf("failed start left a tunnel: %+v", got)
+		}
+		return unknown
+	}
+	first := checkUnknown(AcceptedHostKey{}, bastion.addr, 1)
+	checkUnknown(AcceptedHostKey{Host: target.addr, Fingerprint: first.Fingerprint}, bastion.addr, 1)
+	checkUnknown(AcceptedHostKey{Host: first.Host, Fingerprint: "SHA256:wrong"}, bastion.addr, 1)
+	second := checkUnknown(AcceptedHostKey{Host: first.Host, Fingerprint: first.Fingerprint}, target.addr, 2)
+	if err := a.StartForwardWithHostKey(h.ID, "r1", AcceptedHostKey{Host: second.Host, Fingerprint: second.Fingerprint}); err != nil {
+		t.Fatal(err)
+	}
+	active := a.ListActiveForwards()
+	if len(active) != 1 || !active[0].Running {
+		t.Fatalf("expected running tunnel, got %+v", active)
+	}
+	c, err := net.Dial("tcp", active[0].ListenAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	echoThrough(t, c, "confirmed tunnel")
+	if err := a.StopForward(h.ID, "r1"); err != nil {
+		t.Fatal(err)
+	}
+	// A supplied acceptance must not override an existing, different key.
+	wrong := knownhosts.Line([]string{knownhosts.Normalize(bastion.addr)}, bastion.hostPub) + "\n" + knownhosts.Line([]string{knownhosts.Normalize(target.addr)}, bastion.hostPub)
+	if err := os.WriteFile(a.sshKnownHostsPath, []byte(wrong+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err = a.StartForwardWithHostKey(h.ID, "r1", AcceptedHostKey{Host: target.addr, Fingerprint: ssh.FingerprintSHA256(target.hostPub)})
+	var unknown *HostKeyUnknownError
+	if err == nil || errors.As(err, &unknown) {
+		t.Fatalf("changed key must fail without a TOFU prompt, got %v", err)
+	}
 }

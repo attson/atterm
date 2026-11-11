@@ -55,6 +55,10 @@ type forwardTestServer struct {
 	// listens on 127.0.0.1, so DestAddr alone cannot say *which* server this
 	// one was asked to reach.
 	directTargets []string
+	// refusedDirectTargets lets refusal-path tests inject the SSH boundary
+	// deterministically instead of releasing an ephemeral port that another
+	// concurrent listener can reclaim before the request arrives.
+	refusedDirectTargets map[string]struct{}
 
 	// authAttempts records every username/password pair presented to this
 	// server, accepted or not. It is what makes "the bastion was dialled with
@@ -78,6 +82,15 @@ func (s *forwardTestServer) directDestAddrs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.directTargets...)
+}
+
+func (s *forwardTestServer) refuseDirectTarget(target string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refusedDirectTargets == nil {
+		s.refusedDirectTargets = make(map[string]struct{})
+	}
+	s.refusedDirectTargets[target] = struct{}{}
 }
 
 // authCredentials returns every "user:password" this server was offered.
@@ -246,7 +259,12 @@ func (s *forwardTestServer) serve(nc net.Conn, cfg *ssh.ServerConfig) {
 			s.mu.Lock()
 			s.directDests = append(s.directDests, p.DestAddr)
 			s.directTargets = append(s.directTargets, target)
+			_, refuseTarget := s.refusedDirectTargets[target]
 			s.mu.Unlock()
+			if refuseTarget {
+				_ = newCh.Reject(ssh.ConnectionFailed, "dial "+target+": connection refused")
+				continue
+			}
 			tc, err := net.DialTimeout("tcp", target, 2*time.Second)
 			if err != nil {
 				// Exactly what a real sshd does when the target refuses:
@@ -1212,15 +1230,9 @@ func TestStopForwardCutsEstablishedDynamicConnections(t *testing.T) {
 // It must fail that one request and leave the tunnel serving.
 func TestDynamicForwardSurvivesARefusedTarget(t *testing.T) {
 	targetHost, targetPort := startEchoTarget(t)
-	// A port that was bound and then released, so nothing is listening on it.
-	dead, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadAddr := dead.Addr().String()
-	_ = dead.Close()
-
 	srv := startForwardingSSHTestServer(t)
+	deadAddr := "refused.invalid:65535"
+	srv.refuseDirectTarget(deadAddr)
 	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
 	if err := a.StartForward(h.ID, "r1"); err != nil {
 		t.Fatalf("StartForward: %v", err)

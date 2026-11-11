@@ -2504,3 +2504,24 @@ export namespace main {
 	}
 
 }
+
+export namespace sshclient {
+	export class ProxyConfig {
+	    Kind: string;
+	    Host: string;
+	    Port: string;
+	    Username: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ProxyConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Kind = source["Kind"];
+	        this.Host = source["Host"];
+	        this.Port = source["Port"];
+	        this.Username = source["Username"];
+	    }
+	}
+}

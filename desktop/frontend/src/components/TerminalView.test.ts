@@ -111,7 +111,7 @@ describe("TerminalView desktop prompt history suggestions", () => {
     expect(source).toMatch(/promptSuggestionController\.handleKey\(e\.key\)/);
     expect(source).toMatch(/if \(action\.handled\)[\s\S]*?return false/);
     expect(source).toMatch(/sendPromptSuggestionSuffix\(action\.suffix\)/);
-    expect(source).toMatch(/conn\?\.sendInput\(suffix\)/);
+    expect(source).toMatch(/terminalInputSender\.send\(suffix\)/);
     expect(source).not.toMatch(/sendPromptSuggestionSuffix[\s\S]{0,300}sendInput\([^)]*\\r/);
   });
 
@@ -159,19 +159,38 @@ describe("TerminalView async mount lifecycle", () => {
   test("does not attach after an async mount resumes on an unmounted view", () => {
     expect(source).toContain("let isAlive = true;");
     expect(source).toMatch(/await ensureTerm\(\);\s*if \(!isAlive\) return;/);
-    expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;\s*if \(props\.active\) startConnection\(\)/);
+    expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;/);
+    expect(source).toMatch(/if \(props\.active\) \{[\s\S]*?scheduleTerminalResumeAfterReveal\(/);
     expect(source).toMatch(/onBeforeUnmount\(\(\) => \{\s*isAlive = false;/);
   });
 
   test("suspends hidden tab connections while keeping the xterm component mounted", () => {
-    expect(source).toMatch(/if \(props\.active\) startConnection\(\)/);
+    expect(source).toContain("scheduleTerminalActivation");
     expect(source).toMatch(
-      /watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?if \(isActive\)[\s\S]*?conn\.attach\(\)[\s\S]*?else startConnection\(\)[\s\S]*?conn\?\.suspend\(\)/,
+      /watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?if \(isActive\)[\s\S]*?scheduleTerminalResumeAfterReveal\([\s\S]*?cancelTerminalResume\(\);[\s\S]*?conn\?\.suspend\(\)/,
     );
   });
 
   test("does not create a second websocket if activation races async mount completion", () => {
-    expect(source).toMatch(/function startConnection\(\) \{[\s\S]*?if \(conn\) \{[\s\S]*?conn\.attach\(\);[\s\S]*?return;[\s\S]*?\}/);
+    expect(source).toMatch(/function ensureConnection\(\)[\s\S]*?if \(conn\) return conn;/);
+    expect(source).toMatch(/function startConnection\(\) \{[\s\S]*?ensureConnection\(\)[\s\S]*?connection\.attach\(\)/);
+  });
+
+  test("creates the connection before delayed activation so early input has a queue target", () => {
+    const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
+    expect(mountedBody).not.toBeNull();
+    expect(mountedBody![0]).toMatch(
+      /if \(props\.active\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
+    );
+
+    const activeWatch = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
+    expect(activeWatch).not.toBeNull();
+    expect(activeWatch![0]).toMatch(
+      /if \(isActive\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
+    );
+    expect(source).toContain("createDeferredInputSender");
+    expect(source).toMatch(/focusCoalescer\s*=\s*createFocusReportCoalescer\(\{ send: terminalInputSender\.send \}\)/);
+    expect(source).toMatch(/terminalInputSender\.setTarget\(\(text\) => conn\?\.sendInput\(text\)\)/);
   });
 
   test("checks liveness inside ensureTerm after each async dependency", () => {
@@ -251,25 +270,23 @@ describe("TerminalView fit geometry", () => {
 });
 
 describe("TerminalView reveal redraw", () => {
-  test("redraws a previously hidden terminal after its tab becomes active", () => {
+  test("redraws a previously hidden terminal before its connection resumes", () => {
     const helperBody = source.match(/function\s+redrawTerminalAfterReveal\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
     expect(helperBody).not.toBeNull();
     // Viewer dimensions still come from META; revealing a tab must not bypass
     // applyViewerSize with an unconditional FitAddon call.
     expect(helperBody![0]).toMatch(/applyViewerSize\(\);[\s\S]*?term\.refresh\(0, term\.rows - 1\)/);
 
-    const activeWatch = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
-    expect(activeWatch).not.toBeNull();
-    expect(activeWatch![0]).toMatch(
-      /nextTick\([\s\S]*?requestAnimationFrame\([\s\S]*?redrawTerminalAfterReveal\(\)/,
-    );
+    const scheduleBody = source.match(/function scheduleTerminalResumeAfterReveal[\s\S]*?\n\}/);
+    expect(scheduleBody).not.toBeNull();
+    expect(scheduleBody![0]).toMatch(/scheduleTerminalActivation\([\s\S]*?reveal\(\)[\s\S]*?startConnection\(\)/);
   });
 
-  test("redraws a newly mounted remote viewer after its initial layout settles", () => {
+  test("keeps the two-frame layout settle when initially mounting a viewer", () => {
     const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
     expect(mountedBody).not.toBeNull();
     expect(mountedBody![0]).toMatch(
-      /requestAnimationFrame\([\s\S]*?safeFit\(\);[\s\S]*?requestAnimationFrame\([\s\S]*?redrawTerminalAfterReveal\(\)/,
+      /scheduleTerminalResumeAfterReveal\(\(\) => safeFit\(\), \(\) => redrawTerminalAfterReveal\(\)\)/,
     );
   });
 });
@@ -291,7 +308,7 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toContain('@pointerup="sendAuxPointer(key.seq, $event)"');
     expect(source).toMatch(/function\s+sendAuxPointer\s*\(\s*seq:\s*string,\s*event:\s*PointerEvent\s*\)/);
     expect(source).toMatch(/shouldSendShortcutPointer\(event\)/);
-    expect(source).toMatch(/conn\?\.sendInput\(seq\)/);
+    expect(source).toMatch(/terminalInputSender\.send\(seq\)/);
     expect(source).toMatch(/if\s*\(\s*keyboardWanted\.value\s*\)\s*focusTerminalIfDriver\(\)/);
     expect(source).toMatch(/const\s+auxKeysCanSend\s*=\s*computed/);
     expect(source).toContain(':disabled="!auxKeysCanSend"');
@@ -377,7 +394,7 @@ describe("TerminalView web auxiliary keys", () => {
     expect(touchSendBody).not.toBeNull();
     expect(touchSendBody![0]).toMatch(/onKeyboardControlTouchEnd\(event,\s*\(\)\s*=>\s*\{/);
     expect(touchSendBody![0]).toMatch(/lastShortcutTouchActionAt\s*=\s*Date\.now\(\)/);
-    expect(touchSendBody![0]).toMatch(/conn\?\.sendInput\(seq\)/);
+    expect(touchSendBody![0]).toMatch(/terminalInputSender\.send\(seq\)/);
   });
 
   test("renders a local keyboard toggle button that does not send terminal input", () => {
@@ -767,7 +784,7 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toMatch(/navigator\.clipboard\?\.readText\?\.\(\)/);
     expect(source).toMatch(/data-testid="terminal-paste-confirm-panel"/);
     expect(source).toMatch(/data-testid="terminal-paste-confirm"/);
-    expect(source).toMatch(/conn\?\.sendInput\(pasteConfirmText\.value\)/);
+    expect(source).toMatch(/terminalInputSender\.send\(pasteConfirmText\.value\)/);
     expect(source).toMatch(/@click="onKeyboardControlClick\(openPasteConfirm\)"/);
   });
 
@@ -790,7 +807,7 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toMatch(/function\s+onImeInput\s*\(\s*event:\s*InputEvent\s*\)/);
     expect(source).toContain('event.inputType !== "insertText"');
     expect(source).toContain("event.isComposing");
-    expect(source).toMatch(/conn\?\.sendInput\(data\)/);
+    expect(source).toMatch(/terminalInputSender\.send\(data\)/);
     expect(source).toContain("stopImmediatePropagation()");
     expect(source).toContain('addEventListener("input", onImeInput');
     expect(source).toContain('removeEventListener("input", onImeInput');
@@ -804,7 +821,7 @@ describe("TerminalView web auxiliary keys", () => {
     );
     expect(handler).toContain("if (isDesktopImeTakeover()) return");
     expect(handler.indexOf("isDesktopImeTakeover()")).toBeLessThan(handler.indexOf('event.inputType !== "insertText"'));
-    expect(desktopSender.match(/conn\?\.sendInput\(payload\)/g)).toHaveLength(1);
+    expect(desktopSender.match(/terminalInputSender\.send\(payload\)/g)).toHaveLength(1);
     expect(desktopSender).not.toContain("focusCoalescer?.handle(payload)");
     expect(source).toMatch(/function\s+onDesktopImeInput[\s\S]*?event\.target\s*!==\s*imeInputTarget[\s\S]*?desktopImeInputPayload\(event,\s*\{[\s\S]*?event\.stopPropagation\(\)[\s\S]*?pendingDesktopImeInputs\.push/);
     expect(source).toContain("desktopImeInputMatchesKeydown");

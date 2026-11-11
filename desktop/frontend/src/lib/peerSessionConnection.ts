@@ -65,6 +65,8 @@ interface PeerHandoverAttempt {
   diagnostics: DirectTransportDiagnostics | null
   startedAt: number
   promoted: boolean
+  recoverDriverIfVacant: boolean
+  driverMeta: { id: string; name: string } | null
 }
 
 const defaultDirectFailbackCooldownMs = 30_000
@@ -106,6 +108,10 @@ export class PeerSessionConnection {
   private pendingInputs: string[] = []
   private pendingResize: { cols: number; rows: number } | null = null
   private pendingDriverClaim = false
+  private driverConfirmed = false
+  private isDriverRole = false
+  private recoverDriverIfVacant = false
+  private recoverDriverVacant = false
   private pendingFSRequests = new Map<string, {
     generation: number
     resolve: (response: FSResponse) => void
@@ -180,13 +186,15 @@ export class PeerSessionConnection {
   }
 
   sendInput(value: string): void {
-    if (!this.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(value)))) {
+    if (!this.driverConfirmed || !this.isDriverRole ||
+        !this.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(value)))) {
       this.pendingInputs.push(value)
     }
   }
 
   sendResize(cols: number, rows: number): void {
-    if (this.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))) {
+    if (this.driverConfirmed && this.isDriverRole &&
+        this.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))) {
       this.pendingResize = null
     } else {
       this.pendingResize = { cols, rows }
@@ -355,6 +363,9 @@ export class PeerSessionConnection {
   private start(): void {
     const generation = ++this.generation
     this.fallbackPending = false
+    this.recoverDriverIfVacant = this.recoverDriverIfVacant || this.isDriverRole
+    this.recoverDriverVacant = false
+    this.driverConfirmed = false
     this.authenticated = false
     this.ready = false
     this.diagnostics = null
@@ -389,7 +400,7 @@ export class PeerSessionConnection {
             this.lastFailureReason = undefined
             this.handlers.onStatus?.('attached')
             this.emitRoute(this.connectedRoute())
-            this.flush()
+            this.reconcileDriverAuthority()
             if (this.route === 'quick_tunnel') this.scheduleDirectFailback()
           },
           onDiagnostics: (diagnostics) => {
@@ -408,7 +419,7 @@ export class PeerSessionConnection {
     }
   }
 
-  private handleFrame(frame: Frame): void {
+  private handleFrame(frame: Frame, handover?: PeerHandoverAttempt): void {
     if (frame.type === TYPE.SESSION_CREATED) {
       this.handleSessionCreated(frame)
       return
@@ -427,13 +438,15 @@ export class PeerSessionConnection {
     }
     if (frame.type === TYPE.META) {
       const meta = JSON.parse(decodeText(frame.payload)) as Record<string, unknown>
-      this.handlers.onMeta?.(meta)
+      try {
+        this.handlers.onMeta?.(meta)
+      } catch {
+        /* isolate UI metadata rendering from Peer authority state */
+      }
       const driverID = String(meta.driver_client_id ?? '')
       const driverName = String(meta.driver_client_name ?? '')
-      if (driverID !== this.currentDriverClientID) {
-        this.currentDriverClientID = driverID
-        this.handlers.onDriverChange?.(driverID, driverID !== '' && driverID === this.clientID, driverName)
-      }
+      if (handover) handover.driverMeta = { id: driverID, name: driverName }
+      else this.applyDriverAuthority(driverID, driverName)
       return
     }
     if (frame.type === TYPE.CLOSE) {
@@ -592,13 +605,57 @@ export class PeerSessionConnection {
     }
   }
 
-  private flush(): void {
+  private reconcileDriverAuthority(): void {
     if (!this.transport || !this.ready) return
     if (this.pendingDriverClaim) {
       const payload = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }))
       if (!this.transport.sendFrame(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload))) return
       this.pendingDriverClaim = false
+      this.recoverDriverIfVacant = false
+      this.recoverDriverVacant = false
     }
+    if (this.recoverDriverIfVacant && this.recoverDriverVacant) {
+      this.recoverDriverIfVacant = false
+      this.recoverDriverVacant = false
+      this.claimDriver()
+      return
+    }
+    if (!this.driverConfirmed) return
+    this.flushPendingDriverWrites()
+  }
+
+  private applyDriverAuthority(driverID: string, driverName: string): void {
+    const isMe = driverID !== '' && driverID === this.clientID
+    // META carries the logical client ID, while the host grants driver to a
+    // concrete subscriber. A replacement transport can therefore replay our
+    // own ID even though its WithoutAutoDrive subscriber is still a viewer.
+    // Reclaim on the new transport and wait for a post-claim META before writes.
+    if ((this.recoverDriverIfVacant && (driverID === '' || isMe)) ||
+        (this.pendingDriverClaim && isMe)) {
+      this.driverConfirmed = false
+      if (this.recoverDriverIfVacant) this.recoverDriverVacant = true
+      this.reconcileDriverAuthority()
+      return
+    }
+    this.driverConfirmed = true
+    if (this.recoverDriverIfVacant) {
+      this.recoverDriverIfVacant = false
+      this.recoverDriverVacant = false
+    }
+    this.isDriverRole = isMe
+    if (driverID !== this.currentDriverClientID) {
+      this.currentDriverClientID = driverID
+      try {
+        this.handlers.onDriverChange?.(driverID, isMe, driverName)
+      } catch {
+        /* isolate UI role rendering from Peer authority state */
+      }
+    }
+    this.reconcileDriverAuthority()
+  }
+
+  private flushPendingDriverWrites(): void {
+    if (!this.transport || !this.ready || !this.driverConfirmed || !this.isDriverRole || this.handover) return
     if (this.pendingResize) {
       const resize = this.pendingResize
       if (!this.transport.sendFrame(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(resize.cols, resize.rows)))) return
@@ -631,6 +688,9 @@ export class PeerSessionConnection {
     this.rejectPendingServiceOpens(new Error('service preview failed: Peer route changed'))
     this.retiredFSRequestIDs.clear()
     const wasActive = this.ready
+    this.recoverDriverIfVacant = this.recoverDriverIfVacant || this.isDriverRole
+    this.recoverDriverVacant = false
+    this.driverConfirmed = false
     this.authenticated = false
     this.ready = false
     this.lastFailureReason = directFallbackReason(error, wasActive)
@@ -773,6 +833,8 @@ export class PeerSessionConnection {
       diagnostics: null,
       startedAt: performance.now(),
       promoted: false,
+      recoverDriverIfVacant: this.isDriverRole,
+      driverMeta: null,
     }
     try {
       transport = this.options.transportFactory({
@@ -788,7 +850,7 @@ export class PeerSessionConnection {
           },
           onFrame: (bytes) => {
             if (!this.isHandoverCurrent(attempt)) return
-            this.handleFrame(decodeFrame(bytes))
+            this.handleFrame(decodeFrame(bytes), attempt.promoted ? undefined : attempt)
           },
           onReady: (replayedSeq) => {
             if (!this.isHandoverCurrent(attempt)) return
@@ -837,6 +899,11 @@ export class PeerSessionConnection {
     this.transport = attempt.transport
     this.route = 'direct'
     this.authenticated = true
+    this.ready = false
+    this.driverConfirmed = false
+    this.recoverDriverIfVacant = attempt.recoverDriverIfVacant
+    this.recoverDriverVacant = false
+    if (attempt.driverMeta) this.applyDriverAuthority(attempt.driverMeta.id, attempt.driverMeta.name)
     this.ready = true
     this.lastSeq = replayedSeq
     this.reconnectAttempts = 0
@@ -847,7 +914,7 @@ export class PeerSessionConnection {
     this.handlers.onStatus?.('attached')
     this.emitRoute('direct')
     previous?.close()
-    this.flush()
+    this.reconcileDriverAuthority()
   }
 
   private failHandover(attempt: PeerHandoverAttempt, error: Error): void {
@@ -903,6 +970,9 @@ export class PeerSessionConnection {
     this.handover = null
     const transport = this.transport
     this.transport = null
+    this.recoverDriverIfVacant = this.recoverDriverIfVacant || this.isDriverRole
+    this.recoverDriverVacant = false
+    this.driverConfirmed = false
     this.authenticated = false
     this.ready = false
     handover?.transport.close()

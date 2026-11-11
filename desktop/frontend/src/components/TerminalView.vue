@@ -14,6 +14,7 @@ import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { createReplayInputGuard } from "../lib/replayInputGuard";
 import { createTerminalWriteQueue, type TerminalWriteQueue } from "../lib/terminalWriteQueue";
+import { scheduleTerminalActivation } from "../lib/terminalActivation";
 import { copyTerminalSelection, copyTextToClipboard, isTerminalCopyShortcut, type ClipboardWriter } from "../lib/terminalCopy";
 import { resolveTerminalFontFamily } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
@@ -38,6 +39,7 @@ import { GetPasteboardFileURLs } from "../../wailsjs/go/main/App";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { isMac } from "../lib/modKey";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
+import { createDeferredInputSender } from "../lib/deferredInputSender";
 import {
   desktopImeInputMatchesKeydown,
   desktopImeInputPayload,
@@ -444,6 +446,7 @@ const searchFocusSeq = ref(0);
 const searchResultIndex = ref(-1);
 const searchResultCount = ref(0);
 let conn: SessionConnection | PeerSessionConnection | null = null;
+const terminalInputSender = createDeferredInputSender();
 let pluginInputSender: ((text: string) => void) | null = null;
 let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
@@ -519,7 +522,7 @@ function refreshPromptSuggestions(): void {
 
 function sendPromptSuggestionSuffix(suffix: string): void {
   if (!suffix || !conn || !promptSuggestionActive.value) return;
-  conn?.sendInput(suffix);
+  terminalInputSender.send(suffix);
   try {
     promptDraftTracker.feed(suffix);
     refreshPromptSuggestions();
@@ -1469,7 +1472,7 @@ function noteDesktopAcceptedKeydown(event: KeyboardEvent): void {
 
 function sendDesktopImePayload(payload: string): void {
   if (!auxKeysCanSend.value) return;
-  conn?.sendInput(payload);
+  terminalInputSender.send(payload);
   term?.scrollToBottom();
   if (promptSuggestionActive.value) {
     try {
@@ -1529,7 +1532,7 @@ function onImeInput(event: InputEvent) {
   if (!data) return;
   if (!auxKeysCanSend.value) return;
   event.stopImmediatePropagation();
-  conn?.sendInput(data);
+  terminalInputSender.send(data);
   const target = event.target as HTMLTextAreaElement | null;
   if (target && "value" in target) target.value = "";
 }
@@ -1913,7 +1916,7 @@ function onSelectionSend() {
   selectionPopover.value.sending = true;
   try {
     const payload = prepareSendPayload(term.getSelection());
-    if (payload) conn.sendInput(payload);
+    if (payload) terminalInputSender.send(payload);
   } finally {
     selectionPopover.value.sending = false;
     exitSelection();
@@ -2180,7 +2183,7 @@ function onMenuSend() {
   if (!term || !conn) return;
   const payload = prepareSendPayload(term.getSelection());
   if (payload === null) return;
-  conn.sendInput(payload);
+  terminalInputSender.send(payload);
 }
 
 function onMenuClear() {
@@ -2501,7 +2504,7 @@ async function ensureTerm() {
   imeInputTarget?.addEventListener("focus", onImeFocus);
   imeInputTarget?.addEventListener("blur", onImeBlur);
   safeFit();
-  focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
+  focusCoalescer = createFocusReportCoalescer({ send: terminalInputSender.send });
   // xterm emits both user input and replies generated while parsing escape
   // sequences. The unified custom key handler above marks only keydowns xterm
   // actually accepts; editable IME commits are recognized from their payload.
@@ -2655,12 +2658,9 @@ watch(
   },
 );
 
-function startConnection() {
-  if (!term) return;
-  if (conn) {
-    conn.attach();
-    return;
-  }
+function ensureConnection(): SessionConnection | PeerSessionConnection | null {
+  if (!term) return null;
+  if (conn) return conn;
   const handlers: ConnectionHandlers = {
     onOutput: (data) => terminalWriteQueue?.write(data),
     onClose: (info) => {
@@ -2708,7 +2708,7 @@ function startConnection() {
     const factory = platform.peer?.createSessionTransport;
     if (!factory) {
       status.value = "error";
-      return;
+      return null;
     }
     conn = markRaw(
       new PeerSessionConnection(props.sessionId, handlers, {
@@ -2722,7 +2722,7 @@ function startConnection() {
   } else {
     if (!props.endpoint) {
       status.value = "error";
-      return;
+      return null;
     }
     conn = markRaw(
       new SessionConnection(props.endpoint, props.sessionId, handlers, {
@@ -2734,13 +2734,13 @@ function startConnection() {
       }),
     );
   }
-  conn.attach();
+  terminalInputSender.setTarget((text) => conn?.sendInput(text));
   pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins
   // (Quick Input) can pipe text through this same driver connection.
   // A fresh SessionConnection would attach as a viewer and have its
   // IN frames dropped by the relay.
-  pluginInputSender = (text: string) => conn?.sendInput(text);
+  pluginInputSender = terminalInputSender.send;
   pluginInputSenders?.set(props.sessionId, pluginInputSender);
   // Skip the no-op RESIZE if our fit landed on the same size the relay
   // already knows about. Net effect: locally-spawned shells (PTY born at
@@ -2755,10 +2755,16 @@ function startConnection() {
     conn.sendResize(term.cols, term.rows);
     lastResizeSent.value = { cols: term.cols, rows: term.rows };
   }
+  return conn;
+}
+
+function startConnection() {
+  const connection = ensureConnection();
+  if (connection) connection.attach();
 }
 
 // Templates + confirm-panel + hotkeys + wheel-scroll live in
-// useQuickTemplates. The send() closure below wraps conn?.sendInput so
+// useQuickTemplates. The send() closure below uses the same deferred sender so
 // the composable stays session-transport agnostic; the two-call split
 // for text + CR lives inside sendTemplate (see [[feedback_template_send_split_cr]]).
 const {
@@ -2774,7 +2780,7 @@ const {
   onTemplateBarWheel,
   reload: reloadQuickTemplates,
 } = useQuickTemplates({
-  send: (text) => conn?.sendInput(text),
+  send: terminalInputSender.send,
   confirmRequired: computed(
     () => !(platform.caps.wailsBindings || platform.caps.localPty),
   ),
@@ -2785,7 +2791,7 @@ const {
 function sendAuxPointer(seq: string, event: PointerEvent) {
   if (!shouldSendShortcutPointer(event)) return;
   if (!auxKeysCanSend.value) return;
-  conn?.sendInput(seq);
+  terminalInputSender.send(seq);
   if (keyboardWanted.value) focusTerminalIfDriver();
 }
 
@@ -2793,7 +2799,7 @@ function sendAuxTouch(seq: string, event: TouchEvent) {
   onKeyboardControlTouchEnd(event, () => {
     if (!auxKeysCanSend.value) return;
     lastShortcutTouchActionAt = Date.now();
-    conn?.sendInput(seq);
+    terminalInputSender.send(seq);
     if (keyboardWanted.value) focusTerminalIfDriver();
   });
 }
@@ -2816,7 +2822,7 @@ function closePasteConfirm() {
 
 function confirmMobilePaste() {
   if (!auxKeysCanSend.value || !pasteConfirmText.value) return;
-  conn?.sendInput(pasteConfirmText.value);
+  terminalInputSender.send(pasteConfirmText.value);
   closePasteConfirm();
 }
 
@@ -2942,6 +2948,34 @@ function onServicePreviewRequest(event: Event): void {
 
 watch([previewPortText, previewTargetHost, previewExtraMappings], savePreviewDraft, { deep: true });
 
+let cancelPendingTerminalResume: (() => void) | null = null;
+
+function cancelTerminalResume(): void {
+  cancelPendingTerminalResume?.();
+  cancelPendingTerminalResume = null;
+}
+
+function scheduleTerminalResumeAfterReveal(
+  reveal: () => void,
+  settle: () => void = () => undefined,
+): void {
+  cancelTerminalResume();
+  nextTick(() => {
+    if (!isAlive || !props.active) return;
+    cancelPendingTerminalResume = scheduleTerminalActivation(
+      () => {
+        if (isAlive && props.active) reveal();
+      },
+      () => {
+        cancelPendingTerminalResume = null;
+        if (!isAlive || !props.active) return;
+        settle();
+        startConnection();
+      },
+    );
+  });
+}
+
 onMounted(async () => {
   loadPreviewDraft();
   window.addEventListener("atterm:open-service-preview", onServicePreviewRequest);
@@ -2958,7 +2992,6 @@ onMounted(async () => {
     /* fall back to default */
   }
   if (!isAlive) return;
-  if (props.active) startConnection();
   reloadShortcutBars();
   templatesOff = platform.events.on("quickTemplates:changed", reloadShortcutBars);
   shortcutsOff = platform.events.on("mobile:shortcutsChanged", reloadShortcutBars);
@@ -2988,22 +3021,17 @@ onMounted(async () => {
   // Hotkey handler is a capture-phase listener so it preempts xterm's own
   // keyboard input — the user expects Alt+1 to fire the template, not type "1".
   document.addEventListener("keydown", onTemplateHotkey, true);
-  // Re-fit on the next two animation frames. Layout for the cell may not
-  // be fully resolved at term.open() time — getComputedStyle('height') on
-  // the absolute+inset:0 .term sometimes still reads "auto" right after
-  // mount, which makes FitAddon return NaN and bail. By the time we get a
-  // second rAF the layout has definitely settled.
-  requestAnimationFrame(() => {
-    if (!isAlive) return;
-    safeFit();
-    requestAnimationFrame(() => {
-      if (isAlive) redrawTerminalAfterReveal();
-    });
-  });
+  // Keep the existing two-frame layout settle, but do not start replay until
+  // the blank/cached terminal has had a chance to paint.
+  if (props.active) {
+    ensureConnection();
+    scheduleTerminalResumeAfterReveal(() => safeFit(), () => redrawTerminalAfterReveal());
+  }
 });
 
 onBeforeUnmount(() => {
   isAlive = false;
+  cancelTerminalResume();
   void stopAllPreviews();
   if (desktopImeInputFlushTimer !== null) {
     window.clearTimeout(desktopImeInputFlushTimer);
@@ -3100,23 +3128,18 @@ watch(
   () => props.active,
   (isActive) => {
     if (isActive) {
-      if (conn) conn.attach();
-      else startConnection();
-      // Tab just gained focus — refocus xterm after Vue reveals the v-show
-      // subtree, then redraw on the next frame after layout is measurable.
-      // A redraw is required even when the fitted dimensions did not change:
-      // WebGL can otherwise leave a previously-hidden remote terminal black
-      // until an unrelated window resize invalidates its canvas.
-      nextTick(() => {
+      // Let Vue reveal the v-show subtree and paint the cached terminal before
+      // replaying output. Otherwise a busy session can consume the first frame
+      // in xterm's parser and make the tab click itself appear stuck.
+      ensureConnection();
+      scheduleTerminalResumeAfterReveal(() => {
         focusTerminalForPaneActivation();
-        requestAnimationFrame(() => {
-          if (!isAlive || !props.active) return;
-          // redrawTerminalAfterReveal also reconciles a driver's PTY size via
-          // applyViewerSize; viewers remain locked to META dimensions.
-          redrawTerminalAfterReveal();
-        });
+        // This also reconciles a driver's PTY size via applyViewerSize;
+        // viewers remain locked to META dimensions.
+        redrawTerminalAfterReveal();
       });
     } else {
+      cancelTerminalResume();
       conn?.suspend();
       closeContextMenu();
     }

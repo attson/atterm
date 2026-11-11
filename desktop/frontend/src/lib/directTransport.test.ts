@@ -89,4 +89,19 @@ describe('direct route handover', () => {
     tracker.activateDirect(generation)
     expect(tracker.inputRoute()).toBe(DirectRoute.Direct)
   })
+
+  it('keeps the active Relay generation after an aborted direct attempt', () => {
+    const tracker = new DirectRouteTracker()
+    const relayGeneration = tracker.generation
+    const firstDirectGeneration = tracker.beginDirect()
+    tracker.beginDirectReplay(firstDirectGeneration)
+
+    tracker.abortDirect(firstDirectGeneration)
+
+    expect(tracker.acceptsRoute(relayGeneration, DirectRoute.Relay)).toBe(true)
+    const nextDirectGeneration = tracker.beginDirect()
+    expect(nextDirectGeneration).not.toBe(firstDirectGeneration)
+    expect(tracker.acceptsRoute(relayGeneration, DirectRoute.Relay)).toBe(true)
+    expect(tracker.acceptsRoute(firstDirectGeneration, DirectRoute.Direct)).toBe(false)
+  })
 })

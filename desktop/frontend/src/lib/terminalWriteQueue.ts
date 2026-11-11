@@ -1,6 +1,6 @@
 // xterm checks its 12 ms parser budget only between write calls. Relay replay
 // chunks are about 16 KiB, so split them without adding another timer/queue.
-export const DEFAULT_TERMINAL_WRITE_CHUNK_BYTES = 4 * 1024;
+export const DEFAULT_TERMINAL_WRITE_CHUNK_BYTES = 1024;
 
 export type TerminalWriter = {
   write(data: string | Uint8Array, callback?: () => void): void;

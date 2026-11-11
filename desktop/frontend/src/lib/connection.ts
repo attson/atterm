@@ -593,8 +593,9 @@ export class SessionConnection {
   // CONNECTING state). Flushed in ws.onopen right after the ATTACH frame.
   // Only the most recent request is kept; earlier ones are stale.
   private pendingResize: { cols: number; rows: number } | null = null;
-  // Inputs queued while WS was still CONNECTING (e.g. plugin send right after
-  // SessionConnection.attach). Flushed in ws.onopen after ATTACH+RESIZE.
+  // Inputs queued until META authoritatively confirms this subscription is the
+  // driver. A resumed socket can open while another client owns control, so
+  // flushing in onopen would make the relay silently drop those inputs.
   private pendingInputs: string[] = [];
   // clientID identifies this SessionConnection end-to-end. Sent in ATTACH,
   // echoed back in META.driver_client_id when this connection is the driver.
@@ -623,6 +624,7 @@ export class SessionConnection {
   // authoritative and either consumes this intent or permits a vacant reclaim.
   private recoverDriverIfVacant = false;
   private recoverDriverVacant = false;
+  private relayDriverConfirmed = false;
   private pendingFSRequests = new Map<
     string,
     {
@@ -728,6 +730,7 @@ export class SessionConnection {
   suspend(): void {
     if (this.detached) return;
     this.suspended = true;
+    this.relayDriverConfirmed = false;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection suspended"));
     this.rejectPendingServiceOpens(new Error("service preview failed: connection suspended"));
     this.rejectPendingInputHistory(new Error("input history request failed: connection suspended"));
@@ -922,8 +925,11 @@ export class SessionConnection {
       this.pendingInputs.push(s);
       return;
     }
+    if (!this.relayDriverConfirmed || !this.isDriverRole) {
+      this.pendingInputs.push(s);
+      return;
+    }
     if (!this.ws || this.ws.readyState === WebSocket.CONNECTING) {
-      // Queue while the socket is opening; ws.onopen flushes after ATTACH.
       this.pendingInputs.push(s);
       return;
     }
@@ -1006,19 +1012,19 @@ export class SessionConnection {
       }
       return;
     }
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (this.relayDriverConfirmed && this.isDriverRole && this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
       this.pendingResize = null;
       return;
     }
-    // WS not open yet (initial CONNECTING, or mid-reconnect). Stash and
-    // flush in ws.onopen below — otherwise the size we just learned never
-    // reaches the relay and the PTY drifts from xterm's view.
+    // Relay drops a viewer's RESIZE. Keep the latest dimensions until META
+    // confirms this subscription owns the driver role.
     this.pendingResize = { cols, rows };
   }
 
   private openWS(generation: number): void {
-    if (this.detached || this.suspended || !this.route.acceptsRoute(generation, DirectRoute.Relay)) return;
+    if (this.detached || this.suspended || !this.route.useRelayGeneration(generation)) return;
+    this.relayDriverConfirmed = false;
     const auth = webSocketAuth(this.endpoint, "/client");
     let ws: WebSocket;
     try {
@@ -1053,10 +1059,9 @@ export class SessionConnection {
         })
       );
       ws.send(encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload));
-      // Flush any resize that arrived while WS was still CONNECTING. Order
-      // matters: ATTACH first, RESIZE after, so the relay applies the size
-      // to the right session subscription.
-      if (this.route.inputRoute() === DirectRoute.Relay) this.flushPendingRelayWrites(ws);
+      // A reconnect-time explicit claim may go out after ATTACH. RESIZE and
+      // input wait for authoritative META because Relay drops viewer writes.
+      if (this.route.inputRoute() === DirectRoute.Relay) this.flushPendingRelayControl(ws);
     };
 
     ws.onmessage = (ev: MessageEvent) => {
@@ -1078,6 +1083,7 @@ export class SessionConnection {
     ws.onclose = (e?: CloseEvent) => {
       if (this.ws !== ws) return;
       this.ws = null;
+      this.relayDriverConfirmed = false;
       this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
       this.rejectPendingServiceOpens(new Error("service preview failed: websocket closed"));
       this.rejectPendingInputHistory(new Error("input history request failed: websocket closed"));
@@ -1174,7 +1180,7 @@ export class SessionConnection {
             this.recoverDriverVacant = false;
             this.claimDriver();
           }
-          if (this.ws?.readyState === WebSocket.OPEN) this.flushPendingRelayWrites(this.ws);
+          if (this.ws?.readyState === WebSocket.OPEN) this.flushPendingRelayControl(this.ws);
         } else {
           this.maybeStartDirect();
         }
@@ -1215,29 +1221,42 @@ export class SessionConnection {
     }
     try {
       this.handlers.onMeta?.(meta);
-      const newDriver = String(meta.driver_client_id ?? "");
-      const newDriverName = String(meta.driver_client_name ?? "");
-      if (route === DirectRoute.Relay && this.recoverDriverIfVacant) {
-        if (newDriver === "") {
-          this.recoverDriverVacant = true;
-          if (this.route.state !== DirectRouteState.RelayReattaching) {
-            this.recoverDriverIfVacant = false;
-            this.recoverDriverVacant = false;
-            this.claimDriver();
-          }
-          return;
-        }
-        this.recoverDriverIfVacant = false;
-        this.recoverDriverVacant = false;
-      }
-      if (newDriver !== this.currentDriverClientID) {
-        this.currentDriverClientID = newDriver;
-        const isMe = newDriver !== "" && newDriver === this.clientID;
-        this.isDriverRole = isMe;
-        this.handlers.onDriverChange?.(newDriver, isMe, newDriverName);
-      }
     } catch {
-      /* isolate UI callbacks and a reconnect-time claim send */
+      /* isolate UI metadata rendering from transport authority state */
+    }
+    const newDriver = String(meta.driver_client_id ?? "");
+    const newDriverName = String(meta.driver_client_name ?? "");
+    if (route === DirectRoute.Relay && this.recoverDriverIfVacant) {
+      if (newDriver === "") {
+        this.relayDriverConfirmed = false;
+        this.recoverDriverVacant = true;
+        if (this.route.state !== DirectRouteState.RelayReattaching) {
+          this.recoverDriverIfVacant = false;
+          this.recoverDriverVacant = false;
+          try {
+            this.claimDriver();
+          } catch {
+            /* isolate a reconnect-time claim send from META processing */
+          }
+        }
+        return;
+      }
+      this.recoverDriverIfVacant = false;
+      this.recoverDriverVacant = false;
+    }
+    const isMe = newDriver !== "" && newDriver === this.clientID;
+    if (route === DirectRoute.Relay) this.relayDriverConfirmed = true;
+    if (newDriver !== this.currentDriverClientID) {
+      this.currentDriverClientID = newDriver;
+      this.isDriverRole = isMe;
+      try {
+        this.handlers.onDriverChange?.(newDriver, isMe, newDriverName);
+      } catch {
+        /* isolate UI role rendering from transport authority state */
+      }
+    }
+    if (route === DirectRoute.Relay && isMe && this.ws?.readyState === WebSocket.OPEN) {
+      this.flushPendingRelayDriverWrites(this.ws);
     }
   }
 
@@ -1370,22 +1389,24 @@ export class SessionConnection {
     }
   }
 
-  private flushPendingRelayWrites(ws: WebSocket): void {
+  private flushPendingRelayControl(ws: WebSocket): void {
     if (this.pendingDriverClaim) {
       const payload = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }));
       ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
       this.pendingDriverClaim = false;
     }
+  }
+
+  private flushPendingRelayDriverWrites(ws: WebSocket): void {
+    if (!this.relayDriverConfirmed || !this.isDriverRole || this.route.inputRoute() !== DirectRoute.Relay) return;
     if (this.pendingResize) {
       const { cols, rows } = this.pendingResize;
       ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
       this.pendingResize = null;
     }
-    if (this.pendingInputs.length > 0) {
-      const queued = this.pendingInputs;
-      this.pendingInputs = [];
-      for (const s of queued) ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
-    }
+    const queued = this.pendingInputs;
+    this.pendingInputs = [];
+    for (const s of queued) ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
   }
 
   private flushPendingDirectWrites(transport: DirectTransport): void {

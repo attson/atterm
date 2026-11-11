@@ -191,6 +191,12 @@ describe("SessionConnection direct route handover", () => {
     expect(reconnectedRelay.sent.map((frame) => decodeFrame(frame).type)).toEqual([
       TYPE.ATTACH,
       TYPE.CLAIM_DRIVER,
+    ]);
+    const attach = JSON.parse(decodeText(decodeFrame(reconnectedRelay.sent[0]).payload)) as { client_id: string };
+    reconnectedRelay.emitJSON(TYPE.META, { driver_client_id: attach.client_id });
+    expect(reconnectedRelay.sent.map((frame) => decodeFrame(frame).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
       TYPE.IN,
     ]);
   });
@@ -266,6 +272,14 @@ describe("SessionConnection direct route handover", () => {
     expect(fallback.sent).toHaveLength(1);
     fallback.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 12 });
 
+    expect(fallback.sent.map((frame) => decodeFrame(frame).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
+    ]);
+    fallback.emitJSON(TYPE.META, {
+      driver_client_id: attach.client_id,
+      driver_client_name: "viewer-device",
+    });
     expect(fallback.sent.map((frame) => decodeFrame(frame).type)).toEqual([
       TYPE.ATTACH,
       TYPE.CLAIM_DRIVER,
@@ -409,6 +423,14 @@ describe("SessionConnection direct route handover", () => {
       fallback.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq });
 
       expect(output).toEqual(expectedOutput);
+      expect(fallback.sent.map((frame) => decodeFrame(frame).type)).toEqual([
+        TYPE.ATTACH,
+        TYPE.CLAIM_DRIVER,
+      ]);
+      fallback.emitJSON(TYPE.META, {
+        driver_client_id: initialAttach.client_id,
+        driver_client_name: "flap-device",
+      });
       expect(countAllInputs(queuedInput)).toBe(1);
       expect(fallback.sent.map((frame) => decodeFrame(frame).type)).toEqual([
         TYPE.ATTACH,
@@ -447,11 +469,15 @@ describe("SessionConnection direct route handover", () => {
     conn.attach();
     const relay = FakeWebSocket.instances[0];
     relay.open();
+    const attach = JSON.parse(decodeText(decodeFrame(relay.sent[0]).payload)) as { client_id: string };
     relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
     directInstances[0].fail("ICE unavailable");
 
     conn.sendInput("relay-input");
     expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(decodeFrame(relay.sent.at(-1)!).type).toBe(TYPE.ATTACH);
+
+    relay.emitJSON(TYPE.META, { driver_client_id: attach.client_id });
     expect(decodeFrame(relay.sent.at(-1)!).type).toBe(TYPE.IN);
     expect(decodeText(decodeFrame(relay.sent.at(-1)!).payload)).toBe("relay-input");
   });

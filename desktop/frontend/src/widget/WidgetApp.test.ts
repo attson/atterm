@@ -55,10 +55,12 @@ describe("WidgetApp", () => {
     }));
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
     vi.mocked(widgetBridge.resize).mockClear();
+    vi.mocked(widgetBridge.resize).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("actively shrinks the native window after restoring collapsed state", async () => {
@@ -120,6 +122,62 @@ describe("WidgetApp", () => {
     expect(w.find(".rows").exists()).toBe(true);
     expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(140);
+  });
+
+  it("expands and resizes a collapsed widget before revealing its context menu", async () => {
+    let finishResize!: () => void;
+    const resizeDone = new Promise<void>((resolve) => {
+      finishResize = resolve;
+    });
+    vi.mocked(widgetBridge.resize).mockReturnValueOnce(resizeDone);
+
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+    vi.mocked(widgetBridge.setCollapsed).mockClear();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const isMenu = this.classList.contains("menu");
+      const top = isMenu ? 46 : 0;
+      const height = isMenu ? 154 : 90;
+      return {
+        width: isMenu ? 130 : 252,
+        height,
+        top,
+        right: 252,
+        bottom: top + height,
+        left: isMenu ? 114 : 0,
+        x: isMenu ? 114 : 0,
+        y: top,
+        toJSON: () => ({}),
+      };
+    });
+
+    await w.get(".widget-window").trigger("contextmenu");
+    await w.vm.$nextTick();
+
+    expect(w.find(".rows").exists()).toBe(true);
+    expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(200);
+    expect(w.get(".menu").classes()).toContain("measuring");
+
+    // Expanding queued a card remeasure. It must remain menu-aware instead of
+    // shrinking the native window back to the shorter card on the next frame.
+    await flushAnimationFrames();
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(200);
+
+    finishResize();
+    await resizeDone;
+    await vi.waitFor(() => {
+      expect(w.get(".menu").classes()).not.toContain("measuring");
+    });
+
+    window.dispatchEvent(new MouseEvent("click"));
+    await w.vm.$nextTick();
+    await flushAnimationFrames();
+
+    expect(w.find(".menu").exists()).toBe(false);
+    expect(w.find(".rows").exists()).toBe(true);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(90);
   });
 
   it("renders the shared running state icon for running rows", async () => {

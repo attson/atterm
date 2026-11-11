@@ -34,6 +34,7 @@ const EMPTY: WidgetState = {
 
 /** Measured to size the OS window; see widgetBridge.resize. */
 const cardEl = ref<HTMLElement | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
 let cardObserver: ResizeObserver | null = null;
 let resizeFrame: number | null = null;
 let unmounted = false;
@@ -42,6 +43,7 @@ const state = ref<WidgetState>(EMPTY);
 const collapsed = ref(false);
 const peeking = ref(false);
 const menuOpen = ref(false);
+const menuVisible = ref(false);
 const mutedUntil = ref(0);
 
 /** Auto-peek timer id, so a newer attention event replaces the older one. */
@@ -61,15 +63,30 @@ const muted = computed(() => mutedUntil.value * 1000 > nowMs.value);
 /** Rows are visible when expanded, or while a hover/auto peek is open. */
 const showRows = computed(() => !collapsed.value || peeking.value);
 
-function reportCardHeight(height: number) {
+function reportWidgetHeight(height: number): Promise<void> {
   const rounded = Math.ceil(height);
-  if (rounded > 0) widgetBridge.resize(rounded);
+  if (rounded <= 0) return Promise.resolve();
+  return widgetBridge.resize(rounded);
 }
 
-function resizeToRenderedCard() {
+function resizeToRenderedCard(): Promise<void> {
   const card = cardEl.value;
-  if (!card) return;
-  reportCardHeight(card.getBoundingClientRect().height);
+  if (!card) return Promise.resolve();
+  return reportWidgetHeight(card.getBoundingClientRect().height);
+}
+
+function resizeToFitMenu(): Promise<void> {
+  const card = cardEl.value;
+  const menu = menuEl.value;
+  if (!card || !menu) return Promise.resolve();
+  const cardRect = card.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  return reportWidgetHeight(Math.max(cardRect.height, menuRect.bottom - cardRect.top));
+}
+
+function resizeToRenderedWidget(): Promise<void> {
+  if (menuOpen.value && menuEl.value) return resizeToFitMenu();
+  return resizeToRenderedCard();
 }
 
 /**
@@ -86,7 +103,7 @@ function scheduleCardResize() {
     if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
     resizeFrame = window.requestAnimationFrame(() => {
       resizeFrame = null;
-      resizeToRenderedCard();
+      void resizeToRenderedWidget();
     });
   });
 }
@@ -199,17 +216,17 @@ function muteFor(minutes: number) {
   const until = Math.floor(Date.now() / 1000) + minutes * 60;
   mutedUntil.value = until;
   widgetBridge.mute(until);
-  menuOpen.value = false;
+  closeMenu();
 }
 
 function unmute() {
   mutedUntil.value = 0;
   widgetBridge.mute(0);
-  menuOpen.value = false;
+  closeMenu();
 }
 
 function toggleAiOnly() {
-  menuOpen.value = false;
+  closeMenu();
   // Optimistic only in the menu's checkmark sense — the authoritative value
   // comes back on the next pushed snapshot, since the filter is applied by
   // the projection in the main app.
@@ -217,17 +234,32 @@ function toggleAiOnly() {
 }
 
 function hideWidget() {
-  menuOpen.value = false;
+  closeMenu();
   widgetBridge.hide();
 }
 
-function openMenu(e: MouseEvent) {
+async function openMenu(e: MouseEvent) {
   e.preventDefault();
+
+  // A collapsed native window is only as tall as the header, so an absolute
+  // menu is clipped by the OS window regardless of its CSS z-index. Expand and
+  // measure both layers and resize the native window before revealing the menu.
+  if (collapsed.value) {
+    toggleCollapsed();
+  }
   menuOpen.value = true;
+  menuVisible.value = false;
+  await nextTick();
+  if (unmounted || !menuOpen.value) return;
+  await resizeToFitMenu();
+  if (!unmounted && menuOpen.value) menuVisible.value = true;
 }
 
 function closeMenu() {
+  if (!menuOpen.value) return;
   menuOpen.value = false;
+  menuVisible.value = false;
+  scheduleCardResize();
 }
 
 onMounted(() => {
@@ -240,8 +272,8 @@ onMounted(() => {
   // covers collapse, expand, peek and row-count changes with one mechanism,
   // so neither side has to enumerate those states.
   if (cardEl.value) {
-    cardObserver = new ResizeObserver((entries) => {
-      reportCardHeight(entries[0].borderBoxSize?.[0]?.blockSize ?? entries[0].contentRect.height);
+    cardObserver = new ResizeObserver(() => {
+      void resizeToRenderedWidget();
     });
     cardObserver.observe(cardEl.value);
   }
@@ -277,79 +309,86 @@ onUnmounted(() => {
 
 <template>
   <div
-    ref="cardEl"
-    class="widget-window"
+    class="widget-shell"
     @contextmenu="openMenu"
     @mouseenter="onPeekEnter"
     @mouseleave="onPeekLeave"
   >
-    <header class="widget-header" @click="toggleCollapsed">
-      <div class="sprite-wrap">
-        <WidgetSprite :mood="state.mood" :muted="muted" :size="36" />
-        <span
-          v-if="state.unreadCount > 0"
-          class="badge"
-          data-test="widget-unread-badge"
-        >{{ state.unreadCount }}</span>
-      </div>
-      <div class="meta">
-        <div class="headline">{{ state.headline }}</div>
-        <div v-if="state.subline" class="subline">{{ state.subline }}</div>
-      </div>
-      <span v-if="muted" class="muted-flag" v-tooltip="'已静音'">zZ</span>
-    </header>
+    <div ref="cardEl" class="widget-window">
+      <header class="widget-header" @click="toggleCollapsed">
+        <div class="sprite-wrap">
+          <WidgetSprite :mood="state.mood" :muted="muted" :size="36" />
+          <span
+            v-if="state.unreadCount > 0"
+            class="badge"
+            data-test="widget-unread-badge"
+          >{{ state.unreadCount }}</span>
+        </div>
+        <div class="meta">
+          <div class="headline">{{ state.headline }}</div>
+          <div v-if="state.subline" class="subline">{{ state.subline }}</div>
+        </div>
+        <span v-if="muted" class="muted-flag" v-tooltip="'已静音'">zZ</span>
+      </header>
 
-    <div v-if="showRows" class="rows">
-      <div class="divider" />
-      <button
-        v-for="row in state.rows"
-        :key="row.sessionId"
-        class="row"
-        :class="{
-          done: row.state === 'idle',
-          unread: row.unread,
-          highlighted: highlightedIds.has(row.sessionId),
-          'hl-failed': row.state === 'failed',
-        }"
-        :style="row.unread ? { '--unread-c': stateColor(row.taskState) } : undefined"
-        type="button"
-        @click.stop="activate(row.sessionId)"
-      >
-        <span class="row-state">
-          <TaskStateIcon
-            :preset="presets.iconOnly"
-            :state="row.taskState"
-            :unread="row.unread"
-            :size="12"
-          />
-        </span>
-        <span class="row-text">
-          <span class="row-title">
-            <span v-if="row.remoteHost" class="host">{{ row.remoteHost }} ·</span>
-            {{ row.title }}
-          </span>
-          <span v-if="row.subtitle" class="row-sub">{{ row.subtitle }}</span>
-        </span>
-        <span
-          v-if="row.kind || row.lastOutputAt > 0"
-          class="row-tail"
-          :class="{ 'time-only': !row.kind }"
-          data-test="widget-row-tail"
+      <div v-if="showRows" class="rows">
+        <div class="divider" />
+        <button
+          v-for="row in state.rows"
+          :key="row.sessionId"
+          class="row"
+          :class="{
+            done: row.state === 'idle',
+            unread: row.unread,
+            highlighted: highlightedIds.has(row.sessionId),
+            'hl-failed': row.state === 'failed',
+          }"
+          :style="row.unread ? { '--unread-c': stateColor(row.taskState) } : undefined"
+          type="button"
+          @click.stop="activate(row.sessionId)"
         >
-          <span v-if="row.kind" class="kind">{{ row.kind }}</span>
-          <LastOutputIndicator
-            :last-output-at="row.lastOutputAt"
-            :task-state="row.taskState"
-            :now-ms="nowMs"
-          />
-        </span>
-      </button>
+          <span class="row-state">
+            <TaskStateIcon
+              :preset="presets.iconOnly"
+              :state="row.taskState"
+              :unread="row.unread"
+              :size="12"
+            />
+          </span>
+          <span class="row-text">
+            <span class="row-title">
+              <span v-if="row.remoteHost" class="host">{{ row.remoteHost }} ·</span>
+              {{ row.title }}
+            </span>
+            <span v-if="row.subtitle" class="row-sub">{{ row.subtitle }}</span>
+          </span>
+          <span
+            v-if="row.kind || row.lastOutputAt > 0"
+            class="row-tail"
+            :class="{ 'time-only': !row.kind }"
+            data-test="widget-row-tail"
+          >
+            <span v-if="row.kind" class="kind">{{ row.kind }}</span>
+            <LastOutputIndicator
+              :last-output-at="row.lastOutputAt"
+              :task-state="row.taskState"
+              :now-ms="nowMs"
+            />
+          </span>
+        </button>
 
-      <div v-if="state.rows.length === 0" class="empty">没有活跃会话</div>
-      <div v-if="state.overflowCount > 0" class="overflow">还有 {{ state.overflowCount }} 个…</div>
+        <div v-if="state.rows.length === 0" class="empty">没有活跃会话</div>
+        <div v-if="state.overflowCount > 0" class="overflow">还有 {{ state.overflowCount }} 个…</div>
+      </div>
     </div>
 
-    <div v-if="menuOpen" class="menu" @click.stop>
+    <div
+      v-if="menuOpen"
+      ref="menuEl"
+      class="menu"
+      :class="{ measuring: !menuVisible }"
+      @click.stop
+    >
       <button type="button" @click="toggleCollapsed(); closeMenu()">
         {{ collapsed ? "展开" : "折叠" }}
       </button>
@@ -371,19 +410,23 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.widget-shell {
+  position: relative;
+  width: 252px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: none;
+}
+
 .widget-window {
   /* The OS window is transparent; this card is the only thing that paints.
      No box-shadow here: the window is non-opaque, so each platform derives a
      drop shadow from this card's alpha. A CSS shadow would both double that
      up and get clipped at the window edge. */
-  position: relative;
   width: 252px;
   border-radius: 12px;
   background: rgba(13, 17, 23, 0.94);
   border: 1px solid #30363d;
   overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  user-select: none;
 }
 
 .widget-header {
@@ -635,6 +678,10 @@ onUnmounted(() => {
   border: 1px solid #30363d;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
   --wails-draggable: no-drag;
+}
+
+.menu.measuring {
+  visibility: hidden;
 }
 
 .menu button {

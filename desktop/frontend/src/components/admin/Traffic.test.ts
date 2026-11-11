@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { NMessageProvider, NSelect } from 'naive-ui'
 import { h } from 'vue'
@@ -9,6 +9,10 @@ vi.mock('@shared/api/admin', () => ({
   getTrafficStats: vi.fn(),
   getAdminHealth: vi.fn(),
 }))
+vi.mock('../../lib/timeZone', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/timeZone')>()
+  return { ...actual, systemTimeZone: () => 'UTC' }
+})
 
 import Traffic from './Traffic.vue'
 import { getAdminHealth, getTrafficStats } from '@shared/api/admin'
@@ -33,6 +37,8 @@ function currentRows(): AdminTrafficRow[] {
 
 describe('Traffic', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-11T12:00:00Z'))
     getTrafficStatsMock.mockReset()
     getAdminHealthMock.mockReset()
     getTrafficStatsMock.mockResolvedValue({ view: 'detail', bucket: 'day', from: '', to: '', rows: currentRows() })
@@ -51,6 +57,10 @@ describe('Traffic', () => {
       direct_bytes_avoided: 0,
       generated_at: new Date().toISOString(),
     })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   test('loads one daily detail dataset and renders platform and user scopes', async () => {

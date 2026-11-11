@@ -44,15 +44,17 @@ function methods(): WidgetBridgeMethods | null {
   return widgetWindow().go?.main?.WidgetBridge ?? null;
 }
 
-/**
- * Every call is fire-and-forget and swallows rejections on purpose: a failed
- * window resize must never break rendering, and there is no user-meaningful
- * recovery for "the IPC call didn't land".
- */
+/** Most calls are fire-and-forget and swallow rejections on purpose. */
 function call(fn: (m: WidgetBridgeMethods) => Promise<void>): void {
   const m = methods();
   if (!m) return;
   void fn(m).catch(() => {});
+}
+
+function callAndWait(fn: (m: WidgetBridgeMethods) => Promise<void>): Promise<void> {
+  const m = methods();
+  if (!m) return Promise.resolve();
+  return fn(m).catch(() => {});
 }
 
 export const widgetBridge = {
@@ -75,14 +77,14 @@ export const widgetBridge = {
     call((m) => m.SetCollapsed(collapsed));
   },
   /**
-   * Report the rendered card height so the OS window matches it exactly.
+   * Report the rendered widget height so the OS window matches it exactly.
    * The window used to use hardcoded heights, which clipped the card's bottom
    * edge (rounded corner included) whenever the guess was short — and any
    * constant is wrong for most states, since height varies with row count,
    * font and locale.
    */
-  resize(height: number): void {
-    call((m) => m.Resize(height));
+  resize(height: number): Promise<void> {
+    return callAndWait((m) => m.Resize(height));
   },
   reportPosition(): void {
     call((m) => m.ReportPosition());

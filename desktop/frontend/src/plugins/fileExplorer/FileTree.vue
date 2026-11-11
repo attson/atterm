@@ -344,6 +344,7 @@ function deleteButtons(mode: "trash" | "hard") {
 }
 
 const rootNodes = ref<TreeNode[]>([]);
+let rootReady: Promise<void> = Promise.resolve();
 const selectedPath = ref<string>("");
 const searchResults = ref<Array<FileNameSearchResult | FileContentSearchResult>>([]);
 const searchLoading = ref(false);
@@ -356,6 +357,8 @@ let disposed = false;
 let generation = 0;
 let searchGeneration = 0;
 let offDirChanged: () => void = () => {};
+let revealedHiddenPaths = new Set<string>();
+let revealScope: { fs: FileSystemBridge; root: string } | null = null;
 
 const normalizedSearchQuery = computed(() => (props.searchQuery ?? "").trim());
 
@@ -418,7 +421,11 @@ async function loadDir(fs: FileSystemBridge, path: string, showHidden: boolean):
   const entries = listing.entries as DirEntry[];
   noteTruncation(path, listing.truncated, entries.length, listing.total);
   return entries
-    .filter((e) => showHidden || !e.name.startsWith("."))
+    .filter((e) =>
+      showHidden
+      || !e.name.startsWith(".")
+      || revealedHiddenPaths.has(joinPath(path, e.name)),
+    )
     .map((e) => ({
       path: joinPath(path, e.name),
       name: e.name,
@@ -580,12 +587,16 @@ function startGeneration() {
   const fs = props.fs;
   const root = props.root;
   const showHidden = props.showHidden;
+  if (showHidden || revealScope?.fs !== fs || revealScope.root !== root) {
+    revealedHiddenPaths = new Set();
+    revealScope = null;
+  }
   const request = generation;
   rootNodes.value = [];
   offDirChanged = fs.onDirChanged((dir) => {
     void refreshChanged(fs, root, showHidden, request, dir).catch(() => {});
   });
-  void refreshRoot(fs, root, showHidden, request).catch(() => {});
+  rootReady = refreshRoot(fs, root, showHidden, request).catch(() => {});
 }
 
 watch(() => [props.root, props.fs, props.showHidden, props.sortMode], startGeneration);
@@ -808,6 +819,17 @@ function ancestorChain(root: string, path: string): string[] {
   return dirs;
 }
 
+function samePaths(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && Array.from(a).every((path) => b.has(path));
+}
+
+function hiddenPathsForReveal(root: string, path: string): Set<string> {
+  return new Set(
+    [...ancestorChain(root, path), path]
+      .filter((candidate) => baseName(candidate).startsWith(".")),
+  );
+}
+
 /**
  * Expand every ancestor directory of `path` (lazily loading children via
  * toggle) and select it. Returns true only when `path` is an existing *file*
@@ -815,9 +837,30 @@ function ancestorChain(root: string, path: string): string[] {
  * a path outside the root.
  */
 async function revealPath(path: string): Promise<boolean> {
-  const base = props.root.endsWith("/") ? props.root.slice(0, -1) : props.root;
+  // A reveal can arrive in the same tick that the plugin mounts or reloads
+  // its root. Searching an empty interim tree would drop a valid request.
+  // If the generation changes while waiting, follow the replacement load.
+  while (!disposed) {
+    const ready = rootReady;
+    const request = generation;
+    await ready;
+    if (ready === rootReady && request === generation) break;
+  }
+  if (disposed) return false;
+  const fs = props.fs;
+  const root = props.root;
+  const showHidden = props.showHidden;
+  const request = generation;
+  const base = root.endsWith("/") ? root.slice(0, -1) : root;
   if (path !== base && !path.startsWith(base + "/")) return false;
-  for (const dir of ancestorChain(props.root, path)) {
+  const nextRevealedHiddenPaths = showHidden ? new Set<string>() : hiddenPathsForReveal(root, path);
+  if (!samePaths(revealedHiddenPaths, nextRevealedHiddenPaths)) {
+    revealedHiddenPaths = nextRevealedHiddenPaths;
+    revealScope = nextRevealedHiddenPaths.size > 0 ? { fs, root } : null;
+    await refreshRoot(fs, root, showHidden, request);
+    if (!isCurrent(fs, root, showHidden, request)) return false;
+  }
+  for (const dir of ancestorChain(root, path)) {
     const node = findNode(rootNodes.value, dir);
     if (!node) return false;
     if (!node.expanded) await toggle(node);

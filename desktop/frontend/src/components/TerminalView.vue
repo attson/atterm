@@ -46,7 +46,15 @@ import {
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
 import { useTerminalImagePreview } from "../composables/useTerminalImagePreview";
-import { linkSegmentsAtBufferRow, shouldActivateLink, normalizeForOpen, type BufferLike, type LinkMatch } from "../lib/terminalLinks";
+import {
+  isPathWithinRoot,
+  linkSegmentsAtBufferRow,
+  normalizeForOpen,
+  resolvePathForReveal,
+  shouldActivateLink,
+  type BufferLike,
+  type LinkMatch,
+} from "../lib/terminalLinks";
 import { cellCoordsAt, readXtermCellSize } from "../lib/terminalCellCoords";
 import { wordBoundaryAt } from "../lib/wordBoundary";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
@@ -94,6 +102,7 @@ const props = withDefaults(
     sessionLabel?: string;
     sessionType?: string;
     currentCommand?: string;
+    currentCwd?: string;
     // The PTY's known size at the time of attach (from SessionInfo).
     // When this matches the local xterm's fit dimensions, we skip the
     // initial RESIZE so cross-attached remote shells don't see a
@@ -143,6 +152,10 @@ const props = withDefaults(
     }),
   }
 );
+
+// The attached session's META stream is authoritative once it reports cwd.
+// LIST_RESP travels on a separate socket and can lag or reconnect independently.
+const liveCwd = ref<string>();
 
 const emit = defineEmits<{
   (e: "toast", message: string): void;
@@ -1995,30 +2008,31 @@ async function onMenuOpenLink() {
   await openLinkMatch(hit);
 }
 
-// Resolve a detected path/file match to an absolute local path, or null when a
-// ~/ path can't be resolved (no cached home).
-function localPathFromMatch(hit: LinkMatch): string | null {
-  const raw = hit.text;
-  if (hit.kind === "file") return raw.startsWith("file://") ? raw.slice("file://".length) : raw;
-  if (raw.startsWith("/")) return raw;
-  if (raw.startsWith("~/") || raw === "~/") {
-    if (!cachedHomeDir) return null;
-    const home = cachedHomeDir.replace(/\/+$/, "");
-    return home + raw.slice(1);
-  }
-  return null;
-}
-
 async function openLinkMatch(hit: LinkMatch) {
-  // Local file/path links reveal in the file explorer instead of opening an
-  // external app; http(s) links still go to the browser.
+  // Keep the built-in explorer rooted at the session cwd. A local target
+  // outside that tree belongs in the OS file manager; remote targets must
+  // stay in the remote explorer because the local OS cannot resolve them.
   if (hit.kind === "path" || hit.kind === "file") {
-    const abs = localPathFromMatch(hit);
-    if (abs) {
-      fileRevealStore.request(abs);
+    const cwd = liveCwd.value ?? props.currentCwd;
+    const abs = resolvePathForReveal(hit, cachedHomeDir, cwd);
+    if (!abs) {
+      const key = hit.text.startsWith("~/")
+        ? "terminal.link.openFailedNoHome"
+        : "terminal.link.openFailed";
+      emit("toast", t(key));
       return;
     }
-    // ~/ with no cached home: fall through to the file:// error path below.
+    if (props.isLocalSession && platform.pluginHost && !isPathWithinRoot(abs, cwd)) {
+      try {
+        await platform.pluginHost.fs.revealInOS(abs);
+      } catch (err) {
+        logWarn("term", "reveal in OS failed", { path: abs, error: errText(err) });
+        emit("toast", t("terminal.link.openFailed"));
+      }
+      return;
+    }
+    fileRevealStore.request(abs);
+    return;
   }
   const url = normalizeForOpen(hit, cachedHomeDir);
   if (!url) {
@@ -2673,6 +2687,7 @@ function startConnection() {
     onMeta: (meta) => {
       if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
       if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
+      if (typeof meta?.cwd === "string") liveCwd.value = meta.cwd;
       applyViewerSize();
     },
     onDriverChange: (_driverID, isMe, driverName) => {

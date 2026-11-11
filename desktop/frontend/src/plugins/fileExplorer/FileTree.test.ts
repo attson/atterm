@@ -605,6 +605,26 @@ describe("FileTree — revealPath", () => {
     }
   });
 
+  it("waits for the root listing before resolving a reveal", async () => {
+    let resolveRoot!: (entries: Array<{ name: string; isDir: boolean }>) => void;
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/proj") {
+        return new Promise((resolve) => { resolveRoot = resolve; });
+      }
+      if (path === "/proj/src") return Promise.resolve([{ name: "app.ts", isDir: false }]);
+      return Promise.resolve([]);
+    });
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+
+    const reveal = (w.vm as unknown as { revealPath(path: string): Promise<boolean> })
+      .revealPath("/proj/src/app.ts");
+    resolveRoot([{ name: "src", isDir: true }]);
+
+    await expect(reveal).resolves.toBe(true);
+    await flushPromises();
+    expect(w.get('.node[data-path="/proj/src/app.ts"]').classes()).toContain("selected");
+  });
+
   it("returns false for a directory path", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();
@@ -624,6 +644,60 @@ describe("FileTree — revealPath", () => {
     await flushPromises();
     const isFile = await (w.vm as any).revealPath("/proj/src/missing.ts");
     expect(isFile).toBe(false);
+  });
+
+  it("temporarily reveals a requested hidden file without changing the hidden-files setting", async () => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/proj") {
+        return [
+          { name: ".env", isDir: false },
+          { name: ".git", isDir: true },
+          { name: "README.md", isDir: false },
+        ];
+      }
+      return [];
+    });
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+
+    expect(w.find('.node[data-path="/proj/.env"]').exists()).toBe(false);
+    const isFile = await (w.vm as any).revealPath("/proj/.env");
+    await flushPromises();
+
+    expect(isFile).toBe(true);
+    expect(w.get('.node[data-path="/proj/.env"]').classes()).toContain("selected");
+    expect(w.find('.node[data-path="/proj/.git"]').exists()).toBe(false);
+    expect(w.emitted("toggle-show-hidden")).toBeUndefined();
+  });
+
+  it("reveals a file through hidden ancestors while keeping unrelated hidden entries filtered", async () => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/proj") {
+        return [
+          { name: ".config", isDir: true },
+          { name: ".git", isDir: true },
+          { name: "README.md", isDir: false },
+        ];
+      }
+      if (path === "/proj/.config") {
+        return [
+          { name: "settings.json", isDir: false },
+          { name: ".secret", isDir: false },
+        ];
+      }
+      return [];
+    });
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+
+    const isFile = await (w.vm as any).revealPath("/proj/.config/settings.json");
+    await flushPromises();
+
+    expect(isFile).toBe(true);
+    expect(w.get('.node[data-path="/proj/.config/settings.json"]').classes()).toContain("selected");
+    expect(w.find('.node[data-path="/proj/.config/.secret"]').exists()).toBe(false);
+    expect(w.find('.node[data-path="/proj/.git"]').exists()).toBe(false);
+    expect(w.emitted("toggle-show-hidden")).toBeUndefined();
   });
 });
 

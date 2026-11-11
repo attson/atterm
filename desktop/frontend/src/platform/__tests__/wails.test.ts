@@ -109,6 +109,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
   UnwatchDir: vi.fn().mockResolvedValue(undefined),
   ReadFile: vi.fn().mockResolvedValue({ path: '/x', data: [], isBinary: false }),
   FileMeta: vi.fn().mockResolvedValue({ path: '/x', size: 0, modTime: 0, isDir: false, exists: true }),
+  RevealInOS: vi.fn().mockResolvedValue(undefined),
 }))
 
 import { createWailsPlatform } from '../wails'
@@ -145,7 +146,7 @@ import {
   StopPeerNativeDirect,
   StopPeerQuickTunnel,
 } from '../../../wailsjs/go/main/App'
-import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
+import { ListDir, ReadFile, RevealInOS } from '../../../wailsjs/go/main/PluginFS'
 import {
   fetchRelayMe,
   showNotification,
@@ -562,5 +563,11 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.pluginHost!.fs.readFile('/tmp/x')
     expect(ReadFile).toHaveBeenCalledWith('/tmp/x')
+  })
+
+  it('pluginHost.fs.revealInOS delegates to PluginFS.RevealInOS', async () => {
+    const p = createWailsPlatform()
+    await p.pluginHost!.fs.revealInOS('/tmp/x')
+    expect(RevealInOS).toHaveBeenCalledWith('/tmp/x')
   })
 })

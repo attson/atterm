@@ -8,6 +8,7 @@ require (
 	github.com/bytemare/opaque v0.10.0
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/mdns v1.0.6
 	github.com/jackc/pgx/v5 v5.7.5
@@ -50,7 +51,6 @@ require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

@@ -1570,6 +1570,8 @@ export const zhCN = {
       sortModified: "修改时间",
       sortSize: "大小",
       collapseAll: "折叠全部目录",
+      hideTree: "隐藏目录树",
+      showTree: "展开目录树",
       moreActions: "更多文件操作",
       upload: "上传文件",
       closeSearch: "关闭搜索",

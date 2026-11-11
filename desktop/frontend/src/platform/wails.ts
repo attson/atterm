@@ -71,6 +71,7 @@ import {
   UnwatchDir,
   ReadFile,
   FileMeta,
+  RevealInOS,
   OpenExternal,
   WriteFile,
   CreateFile,
@@ -409,6 +410,7 @@ export function createWailsPlatform(): Platform {
         unwatchDir: UnwatchDir,
         readFile: ReadFile as (path: string, maxBytes?: number) => Promise<import('./types').FileContent>,
         fileMeta: FileMeta as (path: string) => Promise<import('./types').FileMetaInfo>,
+        revealInOS: (path: string) => RevealInOS(path),
         openExternal: (path: string) => OpenExternal(path),
         assetUrlFor: (path: string) => {
           // base64 URL encoding (RFC 4648 §5), matches Go's base64.URLEncoding.

@@ -3,10 +3,12 @@ import { mount } from "@vue/test-utils";
 import PaneGrid from "./PaneGrid.vue";
 import source from "./PaneGrid.vue?raw";
 import type { Tab } from "../lib/types";
+import type { SessionInfo } from "../lib/connection";
 
 vi.mock("./TerminalView.vue", () => ({
   default: {
     name: "TerminalView",
+    props: ["currentCwd"],
     template: "<div />",
   },
 }));
@@ -17,6 +19,40 @@ describe("PaneGrid terminal identity", () => {
     expect(source).toMatch(/return pane\.sessionId \?\? `empty-\$\{idx\}`/);
     expect(source).toContain(':key="paneKey(pane, idx)"');
     expect(source).not.toContain(':key="idx"');
+  });
+
+  test("forwards the session cwd to the terminal", () => {
+    const tab: Tab = {
+      id: "tab-1",
+      layout: "single",
+      activePaneIdx: 0,
+      panes: [{ sessionId: "session-1", remote: false }],
+      colRatio: 0.5,
+      rowRatio: 0.5,
+    };
+    const info: SessionInfo = {
+      id: "session-1",
+      command: "zsh",
+      cwd: "/work/atterm",
+      title: "",
+      cols: 80,
+      rows: 24,
+      started_at: 0,
+    };
+    const wrapper = mount(PaneGrid, {
+      props: {
+        tab,
+        endpointFor: () => ({ url: "ws://127.0.0.1:1", session_token: "token" }),
+        sessionInfoFor: () => info,
+        active: true,
+        terminalTheme: {},
+        commandNotifyThresholdSec: 10,
+      },
+    });
+
+    expect(wrapper.findComponent({ name: "TerminalView" }).props("currentCwd")).toBe(
+      "/work/atterm",
+    );
   });
 });
 

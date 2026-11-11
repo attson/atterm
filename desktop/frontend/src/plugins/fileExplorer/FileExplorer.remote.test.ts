@@ -3,8 +3,11 @@ import { computed, ref, shallowRef } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import FileExplorer from "./FileExplorer.vue";
+import source from "./FileExplorer.vue?raw";
+import SelectDropdown from "../../components/SelectDropdown.vue";
 import { __setPlatformForTests } from "../../platform";
 import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
+import { useFileRevealStore } from "./fileReveal";
 import type { SessionConnection } from "../../lib/connection";
 import type { PluginContext } from "../types";
 
@@ -19,6 +22,14 @@ describe("FileExplorer filesystem bridge", () => {
 
   afterEach(() => {
     __setPlatformForTests(null);
+  });
+
+  it("uses the project dropdown with a compact file-explorer theme", () => {
+    expect(source).toContain("import SelectDropdown");
+    expect(source).toContain("<SelectDropdown");
+    expect(source).not.toContain("<select");
+    expect(source).toMatch(/\.sort-select :deep\(\.trigger\)\s*\{[^}]*height:\s*24px;/s);
+    expect(source).toMatch(/\.sort-select :deep\(\.menu\)\s*\{[^}]*background:\s*var\(--ed-editor-bg/s);
   });
 
   it("uses the active remote connection to render the remote directory", async () => {
@@ -45,6 +56,14 @@ describe("FileExplorer filesystem bridge", () => {
 
     const wrapper = mount(FileExplorer, { props: { context } });
     await flushPromises();
+
+    const sortDropdown = wrapper.getComponent(SelectDropdown);
+    expect(sortDropdown.props("modelValue")).toBe("name");
+    expect(sortDropdown.props("options")).toEqual([
+      { value: "name", label: "Name" },
+      { value: "modified", label: "Modified" },
+      { value: "size", label: "Size" },
+    ]);
 
     expect(sendFSRequest).toHaveBeenCalledWith({ op: "list_dir", path: "/remote/project" });
     expect(platform.pluginHost!.fs.listDir).not.toHaveBeenCalled();
@@ -92,6 +111,44 @@ describe("FileExplorer filesystem bridge", () => {
     expect(wrapper.find(".tree-scroll").text()).toContain("README.md");
   });
 
+  it("waits for the initial tree load before revealing a terminal file link", async () => {
+    const target = "/home/attson/Music/demo.mp4";
+    let resolveRoot!: (entries: Array<{ name: string; isDir: boolean }>) => void;
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/home/attson") {
+        return new Promise((resolve) => { resolveRoot = resolve; });
+      }
+      if (path === "/home/attson/Music") {
+        return Promise.resolve([{ name: "demo.mp4", isDir: false }]);
+      }
+      return Promise.resolve([]);
+    });
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/home/attson"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+    const revealStore = useFileRevealStore();
+    revealStore.request(target);
+
+    const wrapper = mount(FileExplorer, { props: { context } });
+    await Promise.resolve();
+    expect(revealStore.pending).toBe(target);
+
+    resolveRoot([{ name: "Music", isDir: true }]);
+    await flushPromises();
+
+    expect(revealStore.pending).toBeNull();
+    expect(wrapper.get(`.node[data-path="${target}"]`).classes()).toContain("selected");
+    expect(wrapper.text()).toContain("demo.mp4");
+  });
+
   it("keeps both directory tree and editor mounted after opening a file", async () => {
     (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockResolvedValue([
       { name: "README.md", isDir: false },
@@ -118,6 +175,39 @@ describe("FileExplorer filesystem bridge", () => {
     expect(wrapper.find(".tree-pane").exists()).toBe(true);
     expect(wrapper.find(".editor-pane").exists()).toBe(true);
     expect(wrapper.find('[data-test="file-explorer-back"]').exists()).toBe(false);
+  });
+
+  it("hides and restores the directory tree without unmounting it", async () => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: "README.md", isDir: false },
+    ]);
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/local"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+    const wrapper = mount(FileExplorer, { props: { context }, attachTo: document.body });
+    await flushPromises();
+
+    const tree = wrapper.get(".tree-pane");
+    expect(tree.isVisible()).toBe(true);
+    await wrapper.get('[data-test="hide-file-tree"]').trigger("click");
+    expect(tree.isVisible()).toBe(false);
+    expect(wrapper.find(".divider").exists()).toBe(false);
+    expect(wrapper.get('[data-test="show-file-tree"]').attributes("aria-label")).toBe("Show directory tree");
+
+    await wrapper.get('[data-test="show-file-tree"]').trigger("click");
+    expect(tree.isVisible()).toBe(true);
+    expect(wrapper.find('[data-test="show-file-tree"]').exists()).toBe(false);
+    expect(wrapper.find(".divider").exists()).toBe(true);
+    expect(wrapper.find('.node[data-path="/local/README.md"]').exists()).toBe(true);
+    wrapper.unmount();
   });
 
   it("rebinds a remote bridge when its connection is replaced for the same session", async () => {

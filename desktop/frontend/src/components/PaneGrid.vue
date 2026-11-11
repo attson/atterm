@@ -233,6 +233,7 @@ function requestServicePreview(pane: Pane): void {
           :session-label="extractSessionLabel(sessionInfoFor(pane))"
           :session-type="sessionInfoFor(pane)?.type"
           :current-command="sessionInfoFor(pane)?.current_command"
+          :current-cwd="sessionInfoFor(pane)?.cwd"
           :avoid-top-right-badge="pane.remote || (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
           :theme="terminalTheme"
           :is-local-session="!pane.remote"

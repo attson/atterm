@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -203,10 +205,143 @@ func TestFileMeta(t *testing.T) {
 	}
 }
 
-func TestRevealInOSRefusesForbidden(t *testing.T) {
+func TestResolveRevealPathAllowsExistingPathOutsideFileExplorerRoots(t *testing.T) {
 	fs, _ := makeFS(t)
-	if err := fs.RevealInOS(t.TempDir()); err == nil {
-		t.Fatal("expected refusal")
+	outside := t.TempDir()
+	path := filepath.Join(outside, "system.desktop")
+	if err := os.WriteFile(path, []byte("desktop entry"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.resolve(path); !errors.Is(err, ErrPathForbidden) {
+		t.Fatalf("file explorer resolve error = %v, want ErrPathForbidden", err)
+	}
+	got, err := resolveRevealPath(path)
+	if err != nil {
+		t.Fatalf("resolveRevealPath() error = %v", err)
+	}
+	want, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("resolveRevealPath() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveRevealPathRejectsRelativeAndMissingPaths(t *testing.T) {
+	if _, err := resolveRevealPath("relative/path"); !errors.Is(err, ErrPathRelative) {
+		t.Fatalf("relative path error = %v, want ErrPathRelative", err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := resolveRevealPath(missing); err == nil {
+		t.Fatal("expected missing path to be rejected")
+	}
+}
+
+func TestRevealPathInOSUsesFileManagerShowItemsOnLinux(t *testing.T) {
+	const path = "/usr/share/applications/google-chrome.desktop"
+	shown := ""
+	err := revealPathInOS(
+		"linux",
+		"COSMIC",
+		path,
+		func(got string) error {
+			shown = got
+			return nil
+		},
+		func(string) (string, error) {
+			t.Fatal("fallback command lookup should not run")
+			return "", nil
+		},
+		func(*exec.Cmd) error {
+			t.Fatal("fallback command should not start")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("revealPathInOS() error = %v", err)
+	}
+	if shown != path {
+		t.Fatalf("shown path = %q, want %q", shown, path)
+	}
+}
+
+func TestRevealPathInOSFallsBackWhenShowItemsIsUnavailable(t *testing.T) {
+	const path = "/home/me/Music/demo.mp4"
+	var started []string
+	err := revealPathInOS(
+		"linux",
+		"COSMIC",
+		path,
+		func(string) error { return errors.New("service unavailable") },
+		func(name string) (string, error) {
+			if name != "cosmic-files" {
+				t.Fatalf("lookPath name = %q", name)
+			}
+			return "/usr/bin/cosmic-files", nil
+		},
+		func(cmd *exec.Cmd) error {
+			started = append([]string(nil), cmd.Args...)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("revealPathInOS() error = %v", err)
+	}
+	want := []string{"/usr/bin/cosmic-files", "/home/me/Music"}
+	if fmt.Sprint(started) != fmt.Sprint(want) {
+		t.Fatalf("started args = %v, want %v", started, want)
+	}
+}
+
+func TestFileManagerURI(t *testing.T) {
+	got := fileManagerURI("/tmp/a file.desktop")
+	want := "file:///tmp/a%20file.desktop"
+	if got != want {
+		t.Fatalf("fileManagerURI() = %q, want %q", got, want)
+	}
+}
+
+func TestRevealInOSCommandUsesCosmicFilesOnCOSMIC(t *testing.T) {
+	cmd := revealInOSCommand(
+		"linux",
+		"COSMIC",
+		"/home/me/.local/share/applications/browser.desktop",
+		func(name string) (string, error) {
+			if name != "cosmic-files" {
+				t.Fatalf("lookPath name = %q", name)
+			}
+			return "/usr/bin/cosmic-files", nil
+		},
+	)
+	want := []string{"/usr/bin/cosmic-files", "/home/me/.local/share/applications"}
+	if fmt.Sprint(cmd.Args) != fmt.Sprint(want) {
+		t.Fatalf("args = %v, want %v", cmd.Args, want)
+	}
+}
+
+func TestRevealInOSCommandFallsBackToXDGOpen(t *testing.T) {
+	cmd := revealInOSCommand(
+		"linux",
+		"COSMIC:Wayland",
+		"/home/me/Music/demo.mp4",
+		func(string) (string, error) { return "", errors.New("not installed") },
+	)
+	want := []string{"xdg-open", "/home/me/Music"}
+	if fmt.Sprint(cmd.Args) != fmt.Sprint(want) {
+		t.Fatalf("args = %v, want %v", cmd.Args, want)
+	}
+}
+
+func TestRevealInOSCommandKeepsNativePlatformVerbs(t *testing.T) {
+	lookPath := func(string) (string, error) { return "", errors.New("unused") }
+	mac := revealInOSCommand("darwin", "", "/Users/me/file.txt", lookPath)
+	if got, want := fmt.Sprint(mac.Args), "[open -R /Users/me/file.txt]"; got != want {
+		t.Fatalf("mac args = %s, want %s", got, want)
+	}
+	windows := revealInOSCommand("windows", "", `C:\\Users\\me\\file.txt`, lookPath)
+	if got, want := fmt.Sprint(windows.Args), `[explorer /select,C:\\Users\\me\\file.txt]`; got != want {
+		t.Fatalf("windows args = %s, want %s", got, want)
 	}
 }
 

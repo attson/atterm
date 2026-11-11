@@ -1603,6 +1603,8 @@ export const en = {
       sortModified: "Modified",
       sortSize: "Size",
       collapseAll: "Collapse all folders",
+      hideTree: "Hide directory tree",
+      showTree: "Show directory tree",
       moreActions: "More file actions",
       upload: "Upload file",
       closeSearch: "Close search",

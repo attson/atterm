@@ -18,6 +18,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const tabsEl = ref<HTMLElement | null>(null);
 const menu = ref<{ x: number; y: number; idx: number } | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 function openMenu(event: MouseEvent, idx: number) {
@@ -47,6 +48,14 @@ function basename(p: string): string {
   return i === -1 ? p : p.slice(i + 1);
 }
 
+function onTabsWheel(event: WheelEvent) {
+  const el = tabsEl.value;
+  if (!el || el.scrollWidth <= el.clientWidth) return;
+  if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  el.scrollLeft += event.deltaY;
+  event.preventDefault();
+}
+
 const activeHasDualMode = computed(() => {
   const i = props.activeIdx;
   if (i < 0 || i >= props.tabs.length) return false;
@@ -55,7 +64,7 @@ const activeHasDualMode = computed(() => {
 </script>
 
 <template>
-  <div class="file-tabs">
+  <div ref="tabsEl" class="file-tabs" @wheel="onTabsWheel">
     <div
       v-for="(t, i) in props.tabs"
       :key="t.path"
@@ -98,9 +107,17 @@ const activeHasDualMode = computed(() => {
   display: flex;
   flex-direction: row;
   overflow-x: auto;
+  min-height: 29px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   background: var(--ed-tab-bg, #2d333b);
   border-bottom: 1px solid var(--ed-border, #444c56);
   flex: 0 0 auto;
+}
+.file-tabs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 .tab {
   display: flex;

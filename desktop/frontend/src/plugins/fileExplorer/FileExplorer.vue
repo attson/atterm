@@ -1,7 +1,18 @@
 <script lang="ts" setup>
 import { errText, logWarn } from "../../lib/log";
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
-import { ChevronsDownUp, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Upload } from "lucide-vue-next";
+import {
+  ChevronsDownUp,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pin,
+  PinOff,
+  RefreshCw,
+  Search,
+  Upload,
+} from "lucide-vue-next";
+import SelectDropdown, { type SelectOption } from "../../components/SelectDropdown.vue";
 import { usePlatform } from "../../platform";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
@@ -93,6 +104,7 @@ const pathEditing = ref(false);
 const pathInputRef = ref<HTMLInputElement | null>(null);
 const headerMenuOpen = ref(false);
 const searchOpen = ref(false);
+const treeHidden = ref(false);
 
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
 const fs = shallowRef<FileSystemBridge | null>(null);
@@ -102,6 +114,11 @@ const fileSearchMode = ref<"name" | "content">("name");
 const searchCaseSensitive = ref(false);
 const searchRegex = ref(false);
 const sortMode = ref<"name" | "modified" | "size">("name");
+const sortOptions = computed<SelectOption[]>(() => [
+  { value: "name", label: t("plugins.fileExplorer.sortName") },
+  { value: "modified", label: t("plugins.fileExplorer.sortModified") },
+  { value: "size", label: t("plugins.fileExplorer.sortSize") },
+]);
 
 watch(
   () => [bridgeOwner.value.identity, bridgeOwner.value.connection] as const,
@@ -236,7 +253,8 @@ watch(
     if (isFile) {
       tabsState.value = openPath(tabsState.value, p, "persistent");
     }
-    fileRevealStore.consume();
+    // Do not clear a newer request that arrived while the tree was expanding.
+    if (fileRevealStore.pending === p) fileRevealStore.consume();
   },
   { immediate: true },
 );
@@ -386,7 +404,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
     @click="onExplorerClick"
   >
     <div class="fe-body" ref="bodyRef">
-      <div class="tree-pane" :style="{ width: (innerRatio * 100) + '%' }">
+      <div v-show="!treeHidden" class="tree-pane" :style="{ width: (innerRatio * 100) + '%' }">
         <header class="fe-header">
           <button
             v-if="!pathEditing"
@@ -423,6 +441,14 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :aria-label="t('plugins.fileExplorer.collapseAll')"
             @click="fileTreeRef?.collapseAll()"
           ><ChevronsDownUp :size="14" :stroke-width="1.5" /></button>
+          <button
+            class="toolbar-btn"
+            type="button"
+            data-test="hide-file-tree"
+            v-tooltip="t('plugins.fileExplorer.hideTree')"
+            :aria-label="t('plugins.fileExplorer.hideTree')"
+            @click="treeHidden = true"
+          ><PanelLeftClose :size="14" :stroke-width="1.5" /></button>
           <div class="header-menu-shell">
             <button
               class="toolbar-btn"
@@ -463,11 +489,13 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         </div>
         <div class="tree-toolbar">
           <span>{{ t("plugins.fileExplorer.sortBy") }}</span>
-          <select v-model="sortMode" data-test="file-sort-mode">
-            <option value="name">{{ t("plugins.fileExplorer.sortName") }}</option>
-            <option value="modified">{{ t("plugins.fileExplorer.sortModified") }}</option>
-            <option value="size">{{ t("plugins.fileExplorer.sortSize") }}</option>
-          </select>
+          <SelectDropdown
+            v-model="sortMode"
+            class="sort-select"
+            data-test="file-sort-mode"
+            :options="sortOptions"
+            :aria-label="t('plugins.fileExplorer.sortBy')"
+          />
         </div>
         <div class="tree-scroll">
           <FileTree
@@ -489,7 +517,17 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
           <div v-else class="placeholder">{{ t("plugins.fileExplorer.noActivePane") }}</div>
         </div>
       </div>
-      <div class="divider" @mousedown="onDividerDown" />
+      <div v-if="treeHidden" class="tree-restore-rail">
+        <button
+          class="toolbar-btn tree-restore-btn"
+          type="button"
+          data-test="show-file-tree"
+          v-tooltip="t('plugins.fileExplorer.showTree')"
+          :aria-label="t('plugins.fileExplorer.showTree')"
+          @click="treeHidden = false"
+        ><PanelLeftOpen :size="15" :stroke-width="1.5" /></button>
+      </div>
+      <div v-else class="divider" @mousedown="onDividerDown" />
       <div class="editor-pane">
         <FileTabs
           :tabs="tabsState.tabs"
@@ -677,7 +715,48 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   font-size: 10px;
 }
 .tree-toolbar span { flex: 1 1 auto; }
-.tree-toolbar select { max-width: 100px; border: 1px solid var(--ed-border, #444c56); border-radius: 3px; background: var(--ed-editor-bg, #22272e); color: var(--ed-row-fg, #adbac7); font: inherit; }
+.sort-select {
+  flex: 0 1 100px;
+  min-width: 72px;
+}
+.sort-select :deep(.trigger) {
+  height: 24px;
+  padding: 0 7px;
+  border-color: var(--ed-border, #444c56);
+  border-radius: 3px;
+  background: var(--ed-editor-bg, #22272e);
+  color: var(--ed-row-fg, #adbac7);
+  font: inherit;
+}
+.sort-select :deep(.trigger:hover:not(:disabled)) {
+  border-color: var(--ed-tab-active-bar, #539bf5);
+}
+.sort-select :deep(.trigger:focus-visible) {
+  box-shadow: 0 0 0 1px var(--ed-tab-active-bar, #539bf5);
+}
+.sort-select :deep(.trigger::after) {
+  color: var(--ed-chevron, rgba(173, 186, 199, 0.7));
+}
+.sort-select :deep(.menu) {
+  top: calc(100% + 2px);
+  padding: 2px 0;
+  border-color: var(--ed-border, #444c56);
+  border-radius: 3px;
+  background: var(--ed-editor-bg, #22272e);
+}
+.sort-select :deep(.option) {
+  padding: 5px 7px;
+}
+.sort-select :deep(.option-label) {
+  color: var(--ed-row-fg, #adbac7);
+  font-size: 11px;
+}
+.sort-select :deep(.option-highlight) {
+  background: var(--ed-row-hover, rgba(173, 186, 199, 0.1));
+}
+.sort-select :deep(.option-selected::before) {
+  background: var(--ed-tab-active-bar, #539bf5);
+}
 
 .fe-body { flex: 1 1 auto; display: flex; min-height: 0; }
 .tree-pane {
@@ -702,6 +781,22 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
   border: 2px solid var(--ed-tree-bg, #2d333b);
 }
 .tree-scroll::-webkit-scrollbar-thumb:hover { background: var(--ed-chevron, rgba(173, 186, 199, 0.3)); }
+
+.tree-restore-rail {
+  display: flex;
+  flex: 0 0 28px;
+  justify-content: center;
+  box-sizing: border-box;
+  padding-top: 7px;
+  border-right: 1px solid var(--ed-border, #444c56);
+  background: var(--ed-tree-header-bg, #22272e);
+}
+.tree-restore-btn {
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
 
 .divider {
   width: 4px;

@@ -16,17 +16,24 @@ export interface LinkMatch {
 // (e.g. Wikipedia titles) while still dropping a stray sentence-end `)`.
 const URL_RE = /\b(https?|file):\/\/[^\s\x00-\x1f]+/g;
 
-// Absolute path: starts at start-of-line or after a delimiter char, with '/'
-// or '~/'; body chars exclude whitespace + control. We capture the leading
-// delimiter in group 1 instead of using a lookbehind: older WebKit (e.g. the
-// Safari shipped with macOS 12) rejects lookbehind with "Invalid regular
-// expression: invalid group specifier name", which throws at module-eval time
-// and blanks the whole app. detectLinks() strips group 1 back off so the
-// reported span still excludes the delimiter. The leading anchor keeps us from
-// treating 12/24 as a path (digit before slash is neither ^ nor a delimiter).
-const PATH_RE = /(^|[\s(){}\[\]<>"'`])(~\/|\/)([^\s\x00-\x1f]*)/g;
+// Path candidates start at the line boundary or after a delimiter. Capturing
+// the delimiter avoids lookbehind, which older WebKit rejects at module load.
+// Classification below keeps this token sweep conservative for bare relative
+// paths while still accepting explicit ./ and ../ forms.
+const PATH_TOKEN_RE = /(^|[\s(){}\[\]<>"'`])([^\s\x00-\x1f]+)/g;
 
-const TRAILING_TRIM = new Set([".", ",", ";", ":", "!", "?", '"', "'"]);
+const TRAILING_TRIM = new Set([
+  ".", ",", ";", ":", "!", "?", '"', "'",
+  "\u3002", "\uff0c", "\uff1b", "\uff1a", "\uff01", "\uff1f",
+  "\u201d", "\u2019", "\u300d", "\u300f",
+]);
+
+const BALANCED_CLOSERS: Record<string, string> = {
+  ")": "(",
+  "]": "[",
+  "\uff09": "\uff08",
+  "\u3011": "\u3010",
+};
 
 function trimTrailing(text: string): string {
   let end = text.length;
@@ -36,8 +43,8 @@ function trimTrailing(text: string): string {
       end--;
       continue;
     }
-    if (ch === ")" || ch === "]") {
-      const open = ch === ")" ? "(" : "[";
+    const open = BALANCED_CLOSERS[ch];
+    if (open) {
       const opens = countChar(text.slice(0, end - 1), open);
       const closes = countChar(text.slice(0, end - 1), ch);
       if (opens <= closes) {
@@ -54,6 +61,26 @@ function countChar(s: string, ch: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) if (s[i] === ch) n++;
   return n;
+}
+
+function isPathCandidate(text: string): boolean {
+  if (
+    text.startsWith("/") ||
+    text.startsWith("~/") ||
+    text.startsWith("./") ||
+    text.startsWith("../")
+  ) {
+    return true;
+  }
+  if (!text.includes("/") || text.includes("://")) return false;
+
+  const segments = text.split("/").filter(Boolean);
+  if (segments.length < 2 || segments.every((segment) => /^\d+$/.test(segment))) {
+    return false;
+  }
+  const last = segments[segments.length - 1];
+  const slashCount = countChar(text, "/");
+  return slashCount >= 2 || (last.includes(".") && last !== "." && last !== "..");
 }
 
 export function detectLinks(line: string | null | undefined): LinkMatch[] {
@@ -75,14 +102,14 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
     });
   }
 
-  PATH_RE.lastIndex = 0;
-  while ((m = PATH_RE.exec(line)) !== null) {
+  PATH_TOKEN_RE.lastIndex = 0;
+  while ((m = PATH_TOKEN_RE.exec(line)) !== null) {
     // Group 1 is the consumed leading delimiter (empty at start-of-line);
     // drop it so start/text describe just the path itself.
     const lead = m[1];
-    const raw = m[0].slice(lead.length);
+    const raw = m[2];
     const trimmed = trimTrailing(raw);
-    if (!trimmed) continue;
+    if (!trimmed || !isPathCandidate(trimmed)) continue;
     const start = m.index + lead.length;
     const end = start + trimmed.length;
     // Skip if this overlaps with any URL match already produced.
@@ -199,6 +226,47 @@ export function normalizeForOpen(
     return `file://${home}${t.slice(1)}`;
   }
   return `file://${t}`;
+}
+
+/** Resolve a terminal path to the absolute path consumed by file reveal. */
+export function resolvePathForReveal(
+  match: LinkMatch,
+  homeDir: string | undefined,
+  cwd: string | undefined,
+): string | null {
+  if (match.kind === "http") return null;
+  const raw = match.text;
+  if (match.kind === "file") {
+    return raw.startsWith("file://") ? raw.slice("file://".length) : raw;
+  }
+  if (raw.startsWith("/")) return raw;
+  if (raw.startsWith("~/") || raw === "~/") {
+    if (!homeDir) return null;
+    return homeDir.replace(/\/+$/, "") + raw.slice(1);
+  }
+  if (!cwd?.startsWith("/")) return null;
+  return normalizeAbsolutePath(`${cwd}/${raw}`);
+}
+
+/** True when path is the root itself or one of its descendants. */
+export function isPathWithinRoot(path: string, root: string | null | undefined): boolean {
+  if (!path.startsWith("/") || !root?.startsWith("/")) return false;
+  const normalizedRoot = root === "/" ? "/" : root.replace(/\/+$/, "");
+  if (normalizedRoot === "/") return true;
+  return path === normalizedRoot || path.startsWith(`${normalizedRoot}/`);
+}
+
+function normalizeAbsolutePath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return `/${parts.join("/")}`;
 }
 
 /** A buffer line that also reports xterm's soft-wrap flag. */

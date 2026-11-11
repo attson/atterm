@@ -1,8 +1,10 @@
 package main
 
 // PluginFS exposes a small, read-only filesystem API to the desktop webview
-// for the File Explorer plugin. Every method runs every path argument through
-// resolve() before any I/O.
+// for the File Explorer plugin. Methods that read filesystem contents run
+// every path argument through resolve() before any I/O. RevealInOS only asks
+// the local OS file manager to display an existing absolute path, so it does
+// not grant the webview read access to that path.
 //
 // SECURITY (red-line #11): This binding group is local-only. It MUST NOT be
 // reachable from uplink/relay code under any circumstance. The CI check at
@@ -11,11 +13,16 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	stdruntime "runtime"
+	"strings"
+	"time"
 
+	"github.com/godbus/dbus/v5"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -50,25 +57,106 @@ func (p *PluginFS) FileMeta(path string) (FileMetaInfo, error) {
 //
 //	open -R <path>
 //
-// On Linux:
+// On Linux, first use the standard org.freedesktop.FileManager1.ShowItems
+// D-Bus method to select the file. If that interface is unavailable, COSMIC
+// falls back to:
 //
-//	xdg-open <dir-of-path>      (no per-platform "reveal selecting" verb)
+//	cosmic-files <dir-of-path>
+//
+// Other Linux desktops fall back to xdg-open on the parent directory.
 //
 // On Windows:
 //
 //	explorer /select,<path>
 func (p *PluginFS) RevealInOS(path string) error {
-	resolved, err := p.resolve(path)
+	resolved, err := resolveRevealPath(path)
 	if err != nil {
 		return err
 	}
-	switch stdruntime.GOOS {
+	return revealPathInOS(
+		stdruntime.GOOS,
+		os.Getenv("XDG_CURRENT_DESKTOP"),
+		resolved,
+		showItemInFileManager,
+		exec.LookPath,
+		func(cmd *exec.Cmd) error { return cmd.Start() },
+	)
+}
+
+func resolveRevealPath(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", ErrPathRelative
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("plugin_fs: resolve reveal path: %w", err)
+	}
+	return resolved, nil
+}
+
+func revealPathInOS(
+	goos string,
+	desktop string,
+	resolved string,
+	showItem func(string) error,
+	lookPath func(string) (string, error),
+	start func(*exec.Cmd) error,
+) error {
+	if goos == "linux" {
+		if err := showItem(resolved); err == nil {
+			return nil
+		}
+	}
+	return start(revealInOSCommand(goos, desktop, resolved, lookPath))
+}
+
+func showItemInFileManager(path string) error {
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		return fmt.Errorf("connect to session bus: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	object := conn.Object(
+		"org.freedesktop.FileManager1",
+		dbus.ObjectPath("/org/freedesktop/FileManager1"),
+	)
+	call := object.CallWithContext(
+		ctx,
+		"org.freedesktop.FileManager1.ShowItems",
+		0,
+		[]string{fileManagerURI(path)},
+		"",
+	)
+	if call.Err != nil {
+		return fmt.Errorf("show item in file manager: %w", call.Err)
+	}
+	return nil
+}
+
+func fileManagerURI(path string) string {
+	return (&url.URL{Scheme: "file", Path: path}).String()
+}
+
+func revealInOSCommand(
+	goos string,
+	desktop string,
+	resolved string,
+	lookPath func(string) (string, error),
+) *exec.Cmd {
+	switch goos {
 	case "darwin":
-		return exec.Command("open", "-R", resolved).Start()
+		return exec.Command("open", "-R", resolved)
 	case "windows":
-		return exec.Command("explorer", "/select,"+resolved).Start()
+		return exec.Command("explorer", "/select,"+resolved)
 	default:
-		return exec.Command("xdg-open", filepath.Dir(resolved)).Start()
+		dir := filepath.Dir(resolved)
+		if strings.Contains(strings.ToUpper(desktop), "COSMIC") {
+			if binary, err := lookPath("cosmic-files"); err == nil {
+				return exec.Command(binary, dir)
+			}
+		}
+		return exec.Command("xdg-open", dir)
 	}
 }
 

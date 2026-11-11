@@ -7,6 +7,8 @@ import {
   mapBufferLineCells,
   mapWrappedLogicalLine,
   normalizeForOpen,
+  isPathWithinRoot,
+  resolvePathForReveal,
   type BufferLineLike,
   type LinkMatch,
 } from "./terminalLinks";
@@ -77,6 +79,28 @@ describe("detectLinks — URL schemes", () => {
 });
 
 describe("detectLinks — trailing punctuation", () => {
+  it("strips a Markdown closing paren before CJK sentence punctuation", () => {
+    const line = "已发布 v0.6.41 (https://github.com/attson/atterm/releases/tag/v0.6.41)。";
+    const url = "https://github.com/attson/atterm/releases/tag/v0.6.41";
+    expect(detectLinks(line)).toEqual([
+      { start: line.indexOf(url), end: line.indexOf(url) + url.length, text: url, kind: "http" },
+    ]);
+  });
+
+  it.each(["，", "；", "：", "！", "？", "”", "’", "」", "』"])(
+    "strips CJK trailing punctuation %s",
+    (suffix) => {
+      expect(detectLinks(`https://x.test${suffix}`)[0]?.text).toBe("https://x.test");
+    },
+  );
+
+  it.each([
+    ["（", "）"],
+    ["【", "】"],
+  ])("strips an outer CJK bracket pair %s%s", (open, close) => {
+    expect(detectLinks(`${open}https://x.test${close}`)[0]?.text).toBe("https://x.test");
+  });
+
   it("strips trailing period", () => {
     expect(detectLinks("Visit https://x.test.")).toEqual([
       { start: 6, end: 20, text: "https://x.test", kind: "http" },
@@ -142,8 +166,16 @@ describe("detectLinks — paths", () => {
     ]);
   });
 
-  it("does NOT match relative paths", () => {
-    expect(detectLinks("see ./foo and src/main.go")).toEqual([]);
+  it("matches explicit and file-like relative paths", () => {
+    const got = detectLinks(
+      "open desktop/frontend/src/lib/terminalLinks.ts then ./src/main.ts and ../docs/README.md",
+    );
+    expect(got.map((m) => m.text)).toEqual([
+      "desktop/frontend/src/lib/terminalLinks.ts",
+      "./src/main.ts",
+      "../docs/README.md",
+    ]);
+    expect(got.every((m) => m.kind === "path")).toBe(true);
   });
 
   it("does NOT match shorthand ~user", () => {
@@ -152,6 +184,17 @@ describe("detectLinks — paths", () => {
 
   it("does NOT match numeric expressions like 12/24", () => {
     expect(detectLinks("date 12/24/2025")).toEqual([]);
+  });
+
+  it("does not treat ordinary slash text as a path", () => {
+    expect(detectLinks("choose read/write mode")).toEqual([]);
+  });
+
+  it("does not duplicate a relative-looking path inside a URL", () => {
+    const got = detectLinks("see https://x.test/src/main.ts");
+    expect(got).toEqual([
+      { start: 4, end: 30, text: "https://x.test/src/main.ts", kind: "http" },
+    ]);
   });
 
   it("strips trailing punct on paths too", () => {
@@ -195,6 +238,81 @@ describe("normalizeForOpen", () => {
 
   it("strips trailing slash from homeDir before joining", () => {
     expect(normalizeForOpen(home, "/Users/me/")).toBe("file:///Users/me/Projects/foo");
+  });
+});
+
+describe("resolvePathForReveal", () => {
+  it("resolves relative paths against the session cwd", () => {
+    const relative: LinkMatch = {
+      start: 0,
+      end: 45,
+      text: "desktop/frontend/src/lib/terminalLinks.ts",
+      kind: "path",
+    };
+    expect(resolvePathForReveal(relative, "/Users/me", "/work/atterm")).toBe(
+      "/work/atterm/desktop/frontend/src/lib/terminalLinks.ts",
+    );
+  });
+
+  it("normalizes dot segments without escaping above root", () => {
+    const match = (text: string): LinkMatch => ({
+      start: 0,
+      end: text.length,
+      text,
+      kind: "path",
+    });
+    expect(resolvePathForReveal(match("./src/main.ts"), "", "/work/app")).toBe(
+      "/work/app/src/main.ts",
+    );
+    expect(resolvePathForReveal(match("../docs/README.md"), "", "/work/app")).toBe(
+      "/work/docs/README.md",
+    );
+    expect(resolvePathForReveal(match("../../../etc/hosts"), "", "/work")).toBe(
+      "/etc/hosts",
+    );
+  });
+
+  it("requires an absolute cwd for relative paths", () => {
+    const relative: LinkMatch = { start: 0, end: 11, text: "src/main.ts", kind: "path" };
+    expect(resolvePathForReveal(relative, "", "")).toBeNull();
+    expect(resolvePathForReveal(relative, "", "work/app")).toBeNull();
+  });
+
+  it("preserves existing absolute, home, and file URI resolution", () => {
+    const pathMatch = (text: string): LinkMatch => ({
+      start: 0,
+      end: text.length,
+      text,
+      kind: "path",
+    });
+    const fileMatch: LinkMatch = {
+      start: 0,
+      end: 17,
+      text: "file:///tmp/x.log",
+      kind: "file",
+    };
+    expect(resolvePathForReveal(pathMatch("/usr/local"), "/Users/me", "/work")).toBe("/usr/local");
+    expect(resolvePathForReveal(pathMatch("~/Projects/foo"), "/Users/me", "/work")).toBe(
+      "/Users/me/Projects/foo",
+    );
+    expect(resolvePathForReveal(fileMatch, "/Users/me", "/work")).toBe("/tmp/x.log");
+  });
+});
+
+describe("isPathWithinRoot", () => {
+  it("accepts the root itself and descendants", () => {
+    expect(isPathWithinRoot("/work/app", "/work/app")).toBe(true);
+    expect(isPathWithinRoot("/work/app/src/main.ts", "/work/app/")).toBe(true);
+    expect(isPathWithinRoot("/work/app2/main.ts", "/work/app")).toBe(false);
+  });
+
+  it("treats the filesystem root as containing every absolute path", () => {
+    expect(isPathWithinRoot("/etc/hosts", "/")).toBe(true);
+  });
+
+  it("rejects missing or relative roots", () => {
+    expect(isPathWithinRoot("/etc/hosts", undefined)).toBe(false);
+    expect(isPathWithinRoot("/etc/hosts", "work/app")).toBe(false);
   });
 });
 

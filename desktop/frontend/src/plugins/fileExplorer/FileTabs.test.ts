@@ -63,4 +63,18 @@ describe("FileTabs", () => {
     const w = mount(FileTabs, { props: { tabs: mdTabs, activeIdx: 0, viewMode: "render" } });
     expect(w.find(".view-toggle").exists()).toBe(true);
   });
+
+  it("uses the vertical wheel to scroll an overflowing tab strip horizontally", async () => {
+    const w = mount(FileTabs, { props: { tabs, activeIdx: 0, viewMode: "code" } });
+    const strip = w.get<HTMLElement>(".file-tabs");
+    Object.defineProperties(strip.element, {
+      clientWidth: { configurable: true, value: 100 },
+      scrollWidth: { configurable: true, value: 400 },
+    });
+    strip.element.scrollLeft = 0;
+
+    await strip.trigger("wheel", { deltaY: 48, deltaX: 0 });
+
+    expect(strip.element.scrollLeft).toBe(48);
+  });
 });

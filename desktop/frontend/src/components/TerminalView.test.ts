@@ -947,8 +947,16 @@ describe("TerminalView link provider wiring", () => {
 
   test("routes local file paths to the file reveal store, http to external URL", () => {
     expect(source).toContain("useFileRevealStore");
+    expect(source).toContain("resolvePathForReveal(hit, cachedHomeDir, cwd)");
+    expect(source).toContain("isPathWithinRoot(abs, cwd)");
+    expect(source).toContain("platform.pluginHost.fs.revealInOS(abs)");
     expect(source).toContain("fileRevealStore.request(abs)");
     expect(source).toContain("platform.system.openExternalURL(url)");
+  });
+
+  test("prefers cwd from the attached META stream over the independently refreshed session list", () => {
+    expect(source).toContain('if (typeof meta?.cwd === "string") liveCwd.value = meta.cwd');
+    expect(source).toContain("liveCwd.value ?? props.currentCwd");
   });
 
   test("disposes link provider in onBeforeUnmount", () => {

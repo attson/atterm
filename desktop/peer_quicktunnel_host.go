@@ -120,8 +120,6 @@ type peerHostAttempt struct {
 	streamCancel      context.CancelFunc
 	remoteFS          *remoteFS
 	fsPool            *fsWorkerPool
-	sessionCreate     *sessionCreateHandler
-	sessionCreateOut  chan proto.Frame
 	services          map[uuid.UUID]*peerServiceHost
 	leaseKey          peerHostRouteLeaseKey
 	leaseHeld         bool
@@ -632,10 +630,6 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	peerFS.driverClientID = a.host.host.DriverClientID
 	fsOut := make(chan proto.Frame, fsRequestsPerSession+1)
 	fsPool := newFSWorkerPool(streamCtx, fsOut, proto.RemotePermissionFull, peerFS, fsRequestsPerSession)
-	createOut := make(chan proto.Frame, 2)
-	createHandler := newSessionCreateHandler(streamCtx, createOut, a.host.host, currentPermission)
-	createHandler.limit = 1
-	createHandler.authorize = a.sessionCreateAuthorized
 	a.mu.Lock()
 	if a.closed || a.sub != nil || a.channel != nil {
 		a.mu.Unlock()
@@ -653,8 +647,6 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	a.streamCancel = cancel
 	a.remoteFS = peerFS
 	a.fsPool = fsPool
-	a.sessionCreate = createHandler
-	a.sessionCreateOut = createOut
 	a.remotePeerID = remotePeerID
 	a.leaseKey = leaseKey
 	previous, claimed := a.host.app.claimPeerHostRouteLease(leaseKey, replacedAttempt, a)
@@ -668,8 +660,6 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 		a.streamCancel = nil
 		a.remoteFS = nil
 		a.fsPool = nil
-		a.sessionCreate = nil
-		a.sessionCreateOut = nil
 		a.remotePeerID = ""
 		a.leaseKey = peerHostRouteLeaseKey{}
 		a.starting = false
@@ -685,7 +675,6 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 	attached = true
 	go a.stream(streamCtx, channel, sub, replayToSeq)
 	go a.streamFilesystem(streamCtx, channel, peerFS, fsOut)
-	go a.streamSessionCreates(streamCtx, channel, createOut)
 	go a.watchAuthorization(streamCtx)
 	if previous != nil && previous != a {
 		previous.removeSelf()
@@ -813,7 +802,7 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 		case proto.TypeFSRequest:
 			return a.handleFilesystemRequest(frame)
 		case proto.TypeSessionCreate:
-			return a.handleSessionCreate(frame)
+			return a.handleSessionCreate(ctx, frame)
 		case proto.TypeServiceOpen:
 			return a.handleServiceOpen(ctx, frame)
 		case proto.TypeServiceClose:
@@ -843,14 +832,14 @@ func (a *peerHostAttempt) handleRecord(ctx context.Context, kind peertransport.R
 	}
 }
 
-func (a *peerHostAttempt) handleSessionCreate(frame proto.Frame) error {
+func (a *peerHostAttempt) handleSessionCreate(ctx context.Context, frame proto.Frame) error {
 	if len(frame.Payload) == 0 || len(frame.Payload) > maxPeerSessionCreatePayloadBytes {
 		return errors.New("invalid Peer session create request")
 	}
 	a.mu.Lock()
-	handler := a.sessionCreate
+	channel := a.channel
 	a.mu.Unlock()
-	if handler == nil || !a.sessionCreateAuthorized() {
+	if channel == nil || !a.sessionCreateAuthorized() {
 		return errors.New("Peer session create requires control permission")
 	}
 	var request proto.SessionCreatePayload
@@ -862,8 +851,8 @@ func (a *peerHostAttempt) handleSessionCreate(frame proto.Frame) error {
 		request.HostID == "" || request.HostID != a.host.host.hostID {
 		return errors.New("invalid Peer session create request")
 	}
-	handler.submit(request)
-	return nil
+	response := retiredSessionCreateFrame(request.RequestID)
+	return channel.SendConfigMessage(ctx, peertransport.RecordSessionCreated, response.Payload)
 }
 
 func (a *peerHostAttempt) sessionCreateAuthorized() bool {
@@ -877,30 +866,6 @@ func (a *peerHostAttempt) sessionCreateAuthorized() bool {
 	permission, err := a.host.currentPermission(remoteMembership, a.sessionID)
 	return err == nil && permissionRankName(permission) >= permissionRankName(proto.RemotePermissionControl) &&
 		permissionRankName(grantedPermission) >= permissionRankName(proto.RemotePermissionControl)
-}
-
-func (a *peerHostAttempt) streamSessionCreates(ctx context.Context, channel peerQuickTunnelChannel, responses <-chan proto.Frame) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case frame, open := <-responses:
-			if !open {
-				return
-			}
-			if !a.sessionCreateAuthorized() {
-				return
-			}
-			a.mu.Lock()
-			currentChannel := a.channel
-			a.mu.Unlock()
-			if frame.Type != proto.TypeSessionCreated || currentChannel != channel ||
-				channel.SendFrame(ctx, proto.Marshal(frame)) != nil {
-				a.removeSelf()
-				return
-			}
-		}
-	}
 }
 
 func (a *peerHostAttempt) handleFilesystemRequest(frame proto.Frame) error {
@@ -1095,8 +1060,6 @@ func (a *peerHostAttempt) close(closeSignal bool) {
 		a.streamCancel = nil
 		a.remoteFS = nil
 		a.fsPool = nil
-		a.sessionCreate = nil
-		a.sessionCreateOut = nil
 		a.services = nil
 		a.sub = nil
 		a.subscribedSession = nil

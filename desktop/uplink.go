@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -82,13 +83,6 @@ type uplink struct {
 	// in for a filesystem slow enough to matter, which is how the read
 	// loop's liveness under a slow FS is asserted.
 	fsExec func(uuid.UUID, proto.FSRequestPayload) proto.Frame
-
-	// sessionCreateExec, when non-nil, replaces the session-create
-	// handler's underlying relayHost.NewSession call. Nil in production;
-	// tests use it the same way fsExec stands in for a slow filesystem —
-	// to hold a create "in flight" deterministically and prove the read
-	// loop stays live while a slow PTY fork is still running.
-	sessionCreateExec func(ctx context.Context, req NewSessionReq) (uuid.UUID, error)
 
 	// allowInsecure mirrors RelayConfig.AllowInsecureRelay: when true the
 	// uplink's WebSocket dial skips TLS certificate verification so it can
@@ -223,13 +217,6 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	// session on this uplink.
 	fsPool := newFSWorkerPool(connCtx, out, u.rawRemotePermission, remoteFS, fsRequestsPerSession)
 
-	// Session-create work runs on its own handler, off the read loop, for
-	// the same reason fsPool does: forking a PTY is not instant, and this
-	// loop also carries every session's keystrokes.
-	sessionCreate := newSessionCreateHandler(connCtx, out, u.host, u.rawRemotePermission)
-	if u.sessionCreateExec != nil {
-		sessionCreate.newSession = u.sessionCreateExec
-	}
 	serviceHosts := newServiceHostManager(connCtx, u.relayURL, u.token, u.allowInsecure, u.accountKey, out, u.rawRemotePermission)
 	defer serviceHosts.close()
 
@@ -496,17 +483,18 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			}
 		case proto.TypeSessionCreate:
 			var req proto.SessionCreatePayload
-			if err := json.Unmarshal(f.Payload, &req); err != nil || req.RequestID == "" {
-				// Can't even address a reply without a request_id — the
-				// relay already validates this before forwarding (redline:
-				// don't duplicate that check), so seeing it here means a
-				// malformed frame, not a legitimate request. Log and drop
-				// rather than guess at a request_id to answer.
+			decoder := json.NewDecoder(bytes.NewReader(f.Payload))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&req); err != nil || decoder.Decode(&struct{}{}) != io.EOF || req.RequestID == "" {
+				// Without a valid request id the legacy requester cannot correlate a response.
 				logWarn("uplink", "session_create decode failed or missing request_id: %v", err)
 				continue
 			}
-			logDebug("uplink", "session_create_recv request_id=%s profile_id=%s", req.RequestID, req.ProfileID)
-			sessionCreate.submit(req)
+			select {
+			case out <- retiredSessionCreateFrame(req.RequestID):
+			case <-connCtx.Done():
+				return connCtx.Err()
+			}
 		case proto.TypeServiceOpen:
 			serviceHosts.submit(f)
 		case proto.TypeClaimDriver:

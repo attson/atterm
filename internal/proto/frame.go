@@ -56,16 +56,10 @@ const (
 	TypeFSResponse    Type = 0x39 // desktop uplink -> relay -> requester client
 	TypeFSEvent       Type = 0x3a // desktop uplink -> relay -> requester client
 
-	// TypeSessionCreate/TypeSessionCreated let a mobile client (which cannot
-	// fork a PTY of its own) ask a desktop to open one from a saved profile.
-	// Routing is by host, not by session: a create request has no session id
-	// yet, so it can't ride sess.SendInbound the way FS_REQUEST does. It
-	// carries host_id instead and the relay routes it to whichever uplink
-	// announced that host (AnnouncePayload.HostID is present even when the
-	// host has zero sessions, so this works before any session exists). This
-	// pair is new, not a change to any existing frame's payload (red line 4);
-	// an older peer that doesn't recognize 0x3b/0x3c ignores the frame rather
-	// than erroring. See spec 2026-08-21-mobile-profiles-hosts §3.
+	// TypeSessionCreate/TypeSessionCreated are compatibility tombstones for
+	// retired remote Profile creation. Keep 0x3b/0x3c and the released payload
+	// shapes reserved so old clients receive a correlated feature_removed reply.
+	// The relay still routes by host and returns responses only to the requester.
 	TypeSessionCreate  Type = 0x3b // client -> relay -> desktop uplink
 	TypeSessionCreated Type = 0x3c // desktop uplink -> relay -> requester client
 
@@ -350,13 +344,9 @@ type FSEventPayload struct {
 	Event   string `json:"event"`
 }
 
-// SessionCreatePayload is the JSON body of a TypeSessionCreate frame: a
-// mobile client asking a specific desktop to fork a session from one of its
-// own profiles.
-//
-// The phone sends a profile ID, never a profile body — the desktop resolves
-// it from its own config, so a phone can only choose among recipes the
-// desktop already has, never inject a new startup_cmd. See spec §3.
+// SessionCreatePayload preserves the released request shape for retired remote
+// Profile creation. Hosts reject valid legacy requests with feature_removed;
+// no request may create a session or fall back to a default shell.
 type SessionCreatePayload struct {
 	// RequestID ties the eventual SessionCreatedPayload back to the one
 	// client that asked, exactly as FSRequestPayload.RequestID does for
@@ -368,8 +358,7 @@ type SessionCreatePayload struct {
 	// (that's the thing being created), so it dispatches by
 	// AnnouncePayload.HostID to the uplink that owns this host instead.
 	HostID string `json:"host_id"`
-	// ProfileID names one of the desktop's own saved profiles. Never a
-	// profile body — see the type doc comment.
+	// ProfileID is retained only for decoding requests from released clients.
 	ProfileID string `json:"profile_id"`
 }
 
@@ -382,20 +371,13 @@ type SessionCreatedPayload struct {
 	// this response to the one client that asked.
 	RequestID string `json:"request_id"`
 	OK        bool   `json:"ok"`
-	// SessionID is set when OK is true; the phone attaches to it through the
-	// existing ATTACH path, as if the session had appeared on its own.
+	// SessionID is retained for old responses; retired hosts always leave it empty.
 	SessionID string `json:"session_id,omitempty"`
-	// Error is set when OK is false. Known values: "unknown_profile" (no
-	// such profile_id in the target desktop's config), "permission_denied"
-	// (insufficient remote_permission on the desktop, or a read-only relay
-	// scope), "request_in_flight" (this client already has an unanswered
-	// TypeSessionCreate — see sessionCreateRouter.hasOutstandingRequest),
-	// "duplicate_request_id", "unknown_host_id", "invalid_request",
-	// "upstream_unavailable" (the target uplink isn't connected),
-	// "session_create_busy" (the desktop's own concurrency bound is
-	// saturated), or the desktop's own NewSession failure message passed
-	// through unchanged (may name a local path — see
-	// session_create_handler.go's comment on that one exception).
+	// Error is set when OK is false. Retired hosts return "feature_removed".
+	// Relay routing and released hosts may also return "unknown_profile",
+	// "permission_denied", "request_in_flight", "duplicate_request_id",
+	// "unknown_host_id", "invalid_request", "upstream_unavailable",
+	// "session_create_busy", or a legacy host's session-creation error.
 	Error string `json:"error,omitempty"`
 }
 

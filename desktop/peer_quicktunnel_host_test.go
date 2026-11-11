@@ -467,80 +467,52 @@ func TestPeerHostPasteRejectsDowngradeMalformedOversizedAndStaleLease(t *testing
 	}
 }
 
-func TestPeerHostSessionCreateRequiresControlAndUsesLocalProfile(t *testing.T) {
-	for _, tc := range []struct {
-		permission peerproto.Permission
-		allowed    bool
-	}{
-		{permission: peerproto.PermissionView},
-		{permission: peerproto.PermissionControl, allowed: true},
-		{permission: peerproto.PermissionFull, allowed: true},
-	} {
-		t.Run(string(tc.permission), func(t *testing.T) {
-			fixture := newPeerQuickTunnelFixture(t, tc.permission)
-			cfg := fixture.host.cfg.Get()
-			cfg.Profiles = []SessionProfile{{ID: "peer-profile", Name: "Peer profile", Shell: "/bin/sh"}}
-			if err := fixture.host.cfg.Set(cfg); err != nil {
-				t.Fatal(err)
-			}
+func TestPeerHostSessionCreateReturnsFeatureRemovedRequiresControl(t *testing.T) {
+	for _, permission := range []peerproto.Permission{peerproto.PermissionView, peerproto.PermissionControl, peerproto.PermissionFull} {
+		t.Run(string(permission), func(t *testing.T) {
+			fixture := newPeerQuickTunnelFixture(t, permission)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
-			attempt := &peerHostAttempt{
-				host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
-				permission: string(tc.permission), clientInstanceID: "create-client",
-			}
+			attempt := &peerHostAttempt{host: fixture.peerHost.runtime, sessionID: fixture.session.ID, permission: string(permission), clientInstanceID: "create-client"}
 			attempt.remove = func() { attempt.close(true) }
 			if err := attempt.start(ctx, channel); err != nil {
 				t.Fatal(err)
 			}
 			defer attempt.close(true)
-
-			createdID := uuid.MustParse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
-			called := make(chan NewSessionReq, 1)
-			attempt.mu.Lock()
-			attempt.sessionCreate.newSession = func(_ context.Context, req NewSessionReq) (uuid.UUID, error) {
-				called <- req
-				return createdID, nil
-			}
-			attempt.mu.Unlock()
-			payload, _ := json.Marshal(proto.SessionCreatePayload{
-				RequestID: "peer-create", HostID: fixture.host.hostID, ProfileID: "peer-profile",
-			})
-			err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
-				Type: proto.TypeSessionCreate, SessionID: fixture.session.ID, Payload: payload,
-			}))
-			if !tc.allowed {
+			payload, _ := json.Marshal(proto.SessionCreatePayload{RequestID: "peer-create", HostID: fixture.host.hostID, ProfileID: "missing"})
+			err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{Type: proto.TypeSessionCreate, SessionID: fixture.session.ID, Payload: payload}))
+			if permission == peerproto.PermissionView {
 				if err == nil {
 					t.Fatal("view-only Peer route accepted session create")
 				}
-				select {
-				case req := <-called:
-					t.Fatalf("view-only route forked session %+v", req)
-				case <-time.After(20 * time.Millisecond):
+				channel.mu.Lock()
+				defer channel.mu.Unlock()
+				for _, kind := range channel.configs {
+					if kind == peertransport.RecordSessionCreated {
+						t.Fatal("view-only route emitted session-created response")
+					}
 				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("session create: %v", err)
-			}
-			select {
-			case req := <-called:
-				if req.ProfileID != "peer-profile" || req.Cwd != "" || len(req.Args) != 0 {
-					t.Fatalf("local fork request = %+v", req)
+			} else {
+				if err != nil {
+					t.Fatal(err)
 				}
-			case <-time.After(time.Second):
-				t.Fatal("session create did not reach local host")
+				response := waitForControlSessionCreated(t, channel, "peer-create")
+				if response.RequestID != "peer-create" || response.OK || response.SessionID != "" || response.Error != "feature_removed" {
+					t.Fatalf("response=%+v", response)
+				}
 			}
-			response, ok := waitForPeerSessionCreated(t, channel, "peer-create", true)
-			if !ok || !response.OK || response.SessionID != createdID.String() {
-				t.Fatalf("session create response = %+v ok=%v", response, ok)
+			if got := len(fixture.host.server.Registry().List()); got != 1 {
+				t.Fatalf("registry grew to %d sessions", got)
+			}
+			if got := len(fixture.host.Snapshot()); got != 1 {
+				t.Fatalf("snapshot grew to %d sessions", got)
 			}
 		})
 	}
 }
 
-func TestPeerHostSessionCreateRejectsInvalidRequestsAndReportsUnknownProfile(t *testing.T) {
+func TestPeerHostSessionCreateRejectsInvalidRequestsAndRetiresUnknownProfile(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -564,6 +536,9 @@ func TestPeerHostSessionCreateRejectsInvalidRequestsAndReportsUnknownProfile(t *
 		[]byte("{"),
 		[]byte(`{"request_id":"extra","host_id":"` + fixture.host.hostID + `","profile_id":"missing","cwd":"/tmp"}`),
 		[]byte(`{"request_id":"wrong-host","host_id":"other","profile_id":"missing"}`),
+		[]byte(`{"host_id":"` + fixture.host.hostID + `","profile_id":"missing"}`),
+		[]byte(`{"request_id":"missing-profile","host_id":"` + fixture.host.hostID + `"}`),
+		append(append([]byte(nil), valid...), []byte(` {}`)...),
 	}
 	for index, payload := range invalid {
 		err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
@@ -573,31 +548,38 @@ func TestPeerHostSessionCreateRejectsInvalidRequestsAndReportsUnknownProfile(t *
 			t.Fatalf("invalid request %d (%d bytes) was accepted", index, len(payload))
 		}
 	}
+	channel.mu.Lock()
+	for _, kind := range channel.configs {
+		if kind == peertransport.RecordSessionCreated {
+			t.Error("malformed request emitted a session-created response")
+		}
+	}
+	channel.mu.Unlock()
+
 	if err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
 		Type: proto.TypeSessionCreate, SessionID: fixture.session.ID, Payload: valid,
 	})); err != nil {
 		t.Fatal(err)
 	}
-	response, ok := waitForPeerSessionCreated(t, channel, "unknown-profile", true)
-	if !ok || response.OK || response.Error != sessionCreateErrUnknownProfile {
-		t.Fatalf("unknown profile response = %+v ok=%v", response, ok)
+	response := waitForControlSessionCreated(t, channel, "unknown-profile")
+	if response.OK || response.SessionID != "" || response.Error != "feature_removed" {
+		t.Fatalf("retired response = %+v", response)
 	}
+	if got := len(fixture.host.server.Registry().List()); got != 1 {
+		t.Fatalf("registry grew to %d sessions", got)
+	}
+	if got := len(fixture.host.Snapshot()); got != 1 {
+		t.Fatalf("snapshot grew to %d sessions", got)
+	}
+
 }
 
-func TestPeerHostSessionCreateBusyAndDropsLateResponses(t *testing.T) {
+func TestPeerHostSessionCreateRejectsSupersededRouteAndPermissionDowngrade(t *testing.T) {
 	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
-	cfg := fixture.host.cfg.Get()
-	cfg.Profiles = []SessionProfile{{ID: "peer-profile", Name: "Peer profile", Shell: "/bin/sh"}}
-	if err := fixture.host.cfg.Set(cfg); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	start := func(channel *peerNativeTestChannel) *peerHostAttempt {
-		attempt := &peerHostAttempt{
-			host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
-			permission: proto.RemotePermissionControl, clientInstanceID: "stable-create-client",
-		}
+		attempt := &peerHostAttempt{host: fixture.peerHost.runtime, sessionID: fixture.session.ID, permission: proto.RemotePermissionControl, clientInstanceID: "stable-create-client"}
 		attempt.remove = func() { attempt.close(true) }
 		if err := attempt.start(ctx, channel); err != nil {
 			t.Fatal(err)
@@ -606,122 +588,30 @@ func TestPeerHostSessionCreateBusyAndDropsLateResponses(t *testing.T) {
 	}
 	oldChannel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
 	old := start(oldChannel)
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	old.mu.Lock()
-	old.sessionCreate.newSession = func(context.Context, NewSessionReq) (uuid.UUID, error) {
-		started <- struct{}{}
-		<-release
-		return uuid.MustParse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), nil
-	}
-	old.mu.Unlock()
-	request := func(requestID string) []byte {
-		payload, _ := json.Marshal(proto.SessionCreatePayload{
-			RequestID: requestID, HostID: fixture.host.hostID, ProfileID: "peer-profile",
-		})
-		return proto.Marshal(proto.Frame{Type: proto.TypeSessionCreate, SessionID: fixture.session.ID, Payload: payload})
-	}
-	if err := old.handleRecord(ctx, peertransport.RecordFrame, request("slow-create")); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("slow session create did not start")
-	}
-	if err := old.handleRecord(ctx, peertransport.RecordFrame, request("busy-create")); err != nil {
-		t.Fatal(err)
-	}
-	busy, ok := waitForPeerSessionCreated(t, oldChannel, "busy-create", true)
-	if !ok || busy.OK || busy.Error != sessionCreateErrBusy {
-		t.Fatalf("busy response = %+v ok=%v", busy, ok)
-	}
-
+	defer old.close(true)
 	replacementChannel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
 	replacement := start(replacementChannel)
 	defer replacement.close(true)
-	close(release)
-	if response, ok := waitForPeerSessionCreated(t, oldChannel, "slow-create", false); ok {
-		t.Fatalf("superseded route received late response %+v", response)
-	}
-}
-
-func TestPeerHostSessionCreateDropsResponseAfterOwnerPermissionDowngrade(t *testing.T) {
-	fixture := newPeerQuickTunnelFixture(t, peerproto.PermissionControl)
-	cfg := fixture.host.cfg.Get()
-	cfg.Profiles = []SessionProfile{{ID: "peer-profile", Name: "Peer profile", Shell: "/bin/sh"}}
-	if err := fixture.host.cfg.Set(cfg); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	channel := &peerNativeTestChannel{remoteMembership: fixture.clientMembership}
-	attempt := &peerHostAttempt{
-		host: fixture.peerHost.runtime, sessionID: fixture.session.ID,
-		permission: proto.RemotePermissionControl, clientInstanceID: "downgrade-create-client",
-	}
-	attempt.remove = func() { attempt.close(true) }
-	if err := attempt.start(ctx, channel); err != nil {
-		t.Fatal(err)
-	}
-	defer attempt.close(true)
-	started := make(chan struct{})
-	release := make(chan struct{})
-	attempt.mu.Lock()
-	attempt.sessionCreate.newSession = func(context.Context, NewSessionReq) (uuid.UUID, error) {
-		close(started)
-		<-release
-		return uuid.MustParse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), nil
-	}
-	attempt.mu.Unlock()
-	payload, _ := json.Marshal(proto.SessionCreatePayload{
-		RequestID: "downgraded-create", HostID: fixture.host.hostID, ProfileID: "peer-profile",
-	})
-	if err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
-		Type: proto.TypeSessionCreate, SessionID: fixture.session.ID, Payload: payload,
-	})); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("session create did not start")
+	payload, _ := json.Marshal(proto.SessionCreatePayload{RequestID: "retired", HostID: fixture.host.hostID, ProfileID: "missing"})
+	raw := proto.Marshal(proto.Frame{Type: proto.TypeSessionCreate, SessionID: fixture.session.ID, Payload: payload})
+	if err := old.handleRecord(ctx, peertransport.RecordFrame, raw); err == nil {
+		t.Fatal("superseded route accepted create")
 	}
 	fixture.app.cfgStore.mu.Lock()
 	fixture.app.cfgStore.cfg.RemotePermission = proto.RemotePermissionView
 	fixture.app.cfgStore.mu.Unlock()
-	close(release)
-	if response, ok := waitForPeerSessionCreated(t, channel, "downgraded-create", false); ok {
-		t.Fatalf("permission downgrade leaked late response %+v", response)
+	if err := replacement.handleRecord(ctx, peertransport.RecordFrame, raw); err == nil {
+		t.Fatal("downgraded route accepted create")
 	}
-}
-
-func waitForPeerSessionCreated(t *testing.T, channel *peerNativeTestChannel, requestID string, required bool) (proto.SessionCreatedPayload, bool) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	if !required {
-		deadline = time.Now().Add(100 * time.Millisecond)
-	}
-	for time.Now().Before(deadline) {
+	for _, channel := range []*peerNativeTestChannel{oldChannel, replacementChannel} {
 		channel.mu.Lock()
-		frames := append([][]byte(nil), channel.frames...)
-		channel.mu.Unlock()
-		for _, raw := range frames {
-			frame, err := proto.Unmarshal(raw)
-			if err != nil || frame.Type != proto.TypeSessionCreated {
-				continue
-			}
-			var response proto.SessionCreatedPayload
-			if err := json.Unmarshal(frame.Payload, &response); err == nil && response.RequestID == requestID {
-				return response, true
+		for _, kind := range channel.configs {
+			if kind == peertransport.RecordSessionCreated {
+				t.Error("unauthorized route emitted session-created response")
 			}
 		}
-		time.Sleep(time.Millisecond)
+		channel.mu.Unlock()
 	}
-	if required {
-		t.Fatalf("session create response %q was not sent", requestID)
-	}
-	return proto.SessionCreatedPayload{}, false
 }
 
 func TestPeerHostFilesystemRequiresFullPermissionAndInjectsClientIdentity(t *testing.T) {

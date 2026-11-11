@@ -881,7 +881,8 @@ export interface AppBindings {
   // ExportConfig mirrors ExportDiagnostics's cancel semantics: opens a
   // native save dialog and returns the path written to, or ("", nil) when
   // the user dismissed the dialog without picking a path -- not an error.
-  ExportConfig(includeLocalEnv: boolean): Promise<string>;
+  // The boolean is retained as an ignored IPC compatibility argument.
+  ExportConfig(compatibility: boolean): Promise<string>;
   // PreviewConfigImport parses jsonText and reports what applying it WOULD
   // change, without writing anything -- see desktop/config_import.go's doc
   // comment. Rejects for a parse error or an export version this build

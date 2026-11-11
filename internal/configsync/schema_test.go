@@ -10,6 +10,7 @@ import (
 func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 	valid := map[string]string{
 		"locale_preference":                ` "zh-CN" `,
+		"traffic_time_zone":                `"Asia/Kathmandu"`,
 		"quick_templates":                  `[{"text":"yes","label":"Yes","id":"one"}]`,
 		"notifications_enabled":            `true`,
 		"ai_notifications_only":            `false`,
@@ -45,6 +46,7 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 
 	invalid := map[string]string{
 		"locale_preference":                `12`,
+		"traffic_time_zone":                `12`,
 		"quick_templates":                  `[{"id":"dup","label":"a","text":"a"},{"id":"dup","label":"b","text":"b"}]`,
 		"notifications_enabled":            `"true"`,
 		"command_notify_threshold_seconds": `1.5`,
@@ -78,7 +80,7 @@ func TestNormalizeRelayValueHasSemanticStableHashInput(t *testing.T) {
 
 func TestRelayKeySpecsSeparatePortableAndVaultCollections(t *testing.T) {
 	profiles, ok := RelaySpec("profiles_encrypted")
-	if !ok || profiles.Mode != RelaySealedBundle {
+	if !ok || !profiles.Retired || profiles.Mode != RelaySealedBundle {
 		t.Fatalf("profiles spec=%+v ok=%v", profiles, ok)
 	}
 	if !reflect.DeepEqual(profiles.Collections, []string{CollectionProfiles, CollectionProfileConfig, CollectionProfileEnv}) ||

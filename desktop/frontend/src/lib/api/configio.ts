@@ -14,6 +14,7 @@ import type { ImportChange, ImportPreview, ImportReport } from "./_bindings";
 export type { ImportChange, ImportPreview, ImportReport } from "./_bindings";
 
 // Opens a native save dialog for the current configuration.
+// The boolean passed to Wails is an ignored IPC compatibility argument.
 // Resolves to "" (not a rejection) when the user dismisses the dialog.
 export function exportConfig(): Promise<string> {
   return bindings().ExportConfig(false);

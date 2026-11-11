@@ -82,7 +82,9 @@ func TestRelayQuickTemplatesRoundTripIndependentRecords(t *testing.T) {
 	}
 }
 
-func TestSealedRelayCodecMustSeparatePortableAndVaultRecords(t *testing.T) {
+// Retired namespaces remain valid for generic replica compatibility. Desktop
+// omits their codecs and excludes them before active materialization.
+func TestRetiredSealedRelaySchemaStillSeparatesPortableAndVaultRecords(t *testing.T) {
 	codec := &fakeSealedRelayCodec{decoded: map[string][]PlainRecord{
 		"profiles_encrypted": {
 			{Collection: CollectionProfiles, RecordID: "profile-1", KeyClass: KeyClassSync, Position: legacyPosition(0), Value: json.RawMessage(`{"id":"profile-1","name":"Work"}`)},

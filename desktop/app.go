@@ -1516,7 +1516,7 @@ func (a *App) SetProfiles(profiles []SessionProfile) error {
 			return fmt.Errorf("profiles[%q]: name must be non-empty", id)
 		}
 	}
-	return a.updatePref("profiles_encrypted", func(cfg *appConfig) error {
+	return a.updatePref("", func(cfg *appConfig) error {
 		cfg.Profiles = profiles
 		// Structural guarantee, not a caller's responsibility: if this write
 		// removes the profile DefaultProfileID currently names, the default
@@ -1540,12 +1540,9 @@ func (a *App) GetDefaultProfileID() string {
 	return a.cfgStore.Get().DefaultProfileID
 }
 
-// SetDefaultProfileID persists the default profile choice. Marked dirty
-// under the same "profiles_encrypted" key as SetProfiles — the default
-// selection is part of the same user-facing "profiles" preference, wired
-// into the actual sync payload by Task 3.
+// SetDefaultProfileID persists the legacy local default profile choice.
 func (a *App) SetDefaultProfileID(id string) error {
-	return a.updatePref("profiles_encrypted", func(cfg *appConfig) error {
+	return a.updatePref("", func(cfg *appConfig) error {
 		cfg.DefaultProfileID = id
 		return nil
 	})
@@ -2229,12 +2226,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.TerminalScrollback != 0
 		case "shortcut_bindings":
 			return len(c.ShortcutBindings) > 0
-		case "profiles_encrypted":
-			return len(c.Profiles) > 0
 		case "ssh_hosts_encrypted":
-			// Missing until now, while its sibling profiles_encrypted was
-			// present — which is exactly the accident the comment above
-			// describes. Without this case, a machine that already has SSH
+			// Without this case, a machine that already has SSH
 			// hosts marks them "never customized" on first login, so
 			// SeedFromLocal never flags them and they are never uploaded;
 			// and because their local stamp stays 0, a relay already holding

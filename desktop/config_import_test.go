@@ -75,7 +75,7 @@ func TestPreviewConfigImport_ChangesNothing(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 
-	export, err := a.BuildConfigExport(true)
+	export, err := a.BuildConfigExport()
 	if err != nil {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
@@ -91,14 +91,6 @@ func TestPreviewConfigImport_ChangesNothing(t *testing.T) {
 	})
 	rawHosts, _ := json.Marshal(hostsPayload)
 	export.Preferences["ssh_hosts"] = rawHosts
-
-	var profilesPayload profilesExportPayload
-	if err := json.Unmarshal(export.Preferences["profiles"], &profilesPayload); err != nil {
-		t.Fatalf("unmarshal profiles: %v", err)
-	}
-	profilesPayload.Profiles[0].Name = "renamed-default"
-	rawProfiles, _ := json.Marshal(profilesPayload)
-	export.Preferences["profiles"] = rawProfiles
 
 	export.Preferences["terminal_theme"], _ = json.Marshal("light")
 
@@ -192,19 +184,14 @@ func TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal(t *testing.T) {
 			{ID: "k3", Name: "new-key", KeyType: "rsa"},      // new ID -> add
 		},
 	}
-	fileProfiles := profilesExportPayload{Profiles: []SessionProfile{
-		{ID: "p1", Name: "default"},           // same ID, identical -> unchanged
-		{ID: "p4", Name: "brand-new-profile"}, // new ID -> add
-	}}
+
 	rawHosts, _ := json.Marshal(fileHosts)
-	rawProfiles, _ := json.Marshal(fileProfiles)
 	export := ConfigExport{
 		Version:    configExportVersion,
 		ExportedAt: "2026-08-21T00:00:00Z",
 		AppVersion: "0.4.0",
 		Preferences: map[string]json.RawMessage{
 			"ssh_hosts": rawHosts,
-			"profiles":  rawProfiles,
 		},
 	}
 	data, err := json.Marshal(export)
@@ -237,12 +224,6 @@ func TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal(t *testing.T) {
 	if got := byKey["ssh_key:k3"].Action; got != "add" {
 		t.Errorf(`Changes["ssh_key:k3"].Action = %q, want "add"`, got)
 	}
-	if got := byKey["profile:p1"].Action; got != "unchanged" {
-		t.Errorf(`Changes["profile:p1"].Action = %q, want "unchanged"`, got)
-	}
-	if got := byKey["profile:p4"].Action; got != "add" {
-		t.Errorf(`Changes["profile:p4"].Action = %q, want "add"`, got)
-	}
 
 	// The explicit "kept" assertion: h2, k2 and p2 exist locally, are
 	// absent from the file, and must not appear in Changes under any key
@@ -255,9 +236,6 @@ func TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal(t *testing.T) {
 		if c.Key == "ssh_key:k2" {
 			t.Fatalf("local-only key k2 (absent from file) produced a change entry: %+v — it must be silently kept, not touched", c)
 		}
-		if c.Key == "profile:p2" {
-			t.Fatalf("local-only profile p2 (absent from file) produced a change entry: %+v — it must be silently kept, not touched", c)
-		}
 	}
 
 	// And the store itself: still exactly what it was, h2/k2/p2 included.
@@ -267,9 +245,6 @@ func TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal(t *testing.T) {
 	}
 	if len(got.SSHKeys) != 2 || got.SSHKeys[1].ID != "k2" {
 		t.Fatalf("SSHKeys after Preview = %+v, want k2 still present untouched", got.SSHKeys)
-	}
-	if len(got.Profiles) != 2 || got.Profiles[1].ID != "p2" {
-		t.Fatalf("Profiles after Preview = %+v, want p2 still present untouched", got.Profiles)
 	}
 }
 
@@ -326,7 +301,7 @@ func TestPreviewConfigImport_WhitespacePaddedIDStillMatchesLocal(t *testing.T) {
 func TestKnownImportKeys_MatchesSyncedKeys(t *testing.T) {
 	want := map[string]bool{"ssh_hosts": true, "profiles": true}
 	for _, k := range prefssync.SyncedKeys() {
-		if k == "ssh_hosts_encrypted" || k == "profiles_encrypted" {
+		if k == "ssh_hosts_encrypted" {
 			continue
 		}
 		want[k] = true
@@ -349,7 +324,7 @@ func TestKnownImportKeys_MatchesSyncedKeys(t *testing.T) {
 // previewProfiles, never through scalarPrefTarget.
 func TestScalarPrefTarget_HandlesEverySyncedScalarKey(t *testing.T) {
 	for _, k := range prefssync.SyncedKeys() {
-		if k == "ssh_hosts_encrypted" || k == "profiles_encrypted" {
+		if k == "ssh_hosts_encrypted" {
 			continue
 		}
 		if scalarPrefTarget(k) == nil {
@@ -376,19 +351,12 @@ func TestPreviewConfigImport_MalformedEntrySkippedRestContinues(t *testing.T) {
 			{"id": "kgood", "name": "good-key"}
 		]
 	}`)
-	rawProfiles := json.RawMessage(`{
-		"profiles": [
-			{"id": "pbad", "name": ""},
-			{"id": "pgood", "name": "Good Profile"}
-		]
-	}`)
 	export := ConfigExport{
 		Version:    configExportVersion,
 		ExportedAt: "2026-08-21T00:00:00Z",
 		AppVersion: "0.4.0",
 		Preferences: map[string]json.RawMessage{
 			"ssh_hosts": rawHosts,
-			"profiles":  rawProfiles,
 		},
 	}
 	data, err := json.Marshal(export)
@@ -401,8 +369,8 @@ func TestPreviewConfigImport_MalformedEntrySkippedRestContinues(t *testing.T) {
 		t.Fatalf("PreviewConfigImport: %v", err)
 	}
 
-	if len(preview.Skipped) != 3 {
-		t.Fatalf("preview.Skipped = %v, want 3 entries (bad host, bad key, bad profile)", preview.Skipped)
+	if len(preview.Skipped) != 2 {
+		t.Fatalf("preview.Skipped = %v, want 2 entries (bad host, bad key)", preview.Skipped)
 	}
 
 	byKey := make(map[string]ImportChange, len(preview.Changes))
@@ -414,9 +382,6 @@ func TestPreviewConfigImport_MalformedEntrySkippedRestContinues(t *testing.T) {
 	}
 	if got := byKey["ssh_key:kgood"].Action; got != "add" {
 		t.Errorf(`Changes["ssh_key:kgood"].Action = %q, want "add"`, got)
-	}
-	if got := byKey["profile:pgood"].Action; got != "add" {
-		t.Errorf(`Changes["profile:pgood"].Action = %q, want "add"`, got)
 	}
 	if _, ok := byKey["ssh_host:"]; ok {
 		t.Fatal("malformed host (missing id) produced a change entry; it must be skipped, not applied")
@@ -538,13 +503,7 @@ func TestPreviewConfigImport_Deterministic(t *testing.T) {
 		{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"},   // unchanged
 		{ID: "h3", Host: "three.example.com", User: "root", AuthKind: "password"}, // add
 	}})
-	rawProfiles, _ := json.Marshal(profilesExportPayload{
-		Profiles: []SessionProfile{
-			{ID: "p1", Name: "default"},           // unchanged
-			{ID: "p4", Name: "brand-new-profile"}, // add
-		},
-		DefaultProfileID: "p1", // unchanged
-	})
+
 	export := ConfigExport{
 		Version:    configExportVersion,
 		ExportedAt: "2026-08-21T00:00:00Z",
@@ -552,7 +511,6 @@ func TestPreviewConfigImport_Deterministic(t *testing.T) {
 		Preferences: map[string]json.RawMessage{
 			"locale_preference": json.RawMessage(`"zh-CN"`),
 			"terminal_theme":    json.RawMessage(`"nord"`),
-			"profiles":          rawProfiles,
 			"ssh_hosts":         rawHosts,
 		},
 	}
@@ -563,9 +521,6 @@ func TestPreviewConfigImport_Deterministic(t *testing.T) {
 
 	wantKeys := []string{
 		"locale_preference",
-		"profile:p1",
-		"profile:p4",
-		"profiles:default_profile_id",
 		"ssh_host:h1",
 		"ssh_host:h3",
 		"terminal_theme",
@@ -627,104 +582,6 @@ func TestPreviewConfigImport_EmptyPreviewNeverMarshalsNull(t *testing.T) {
 	want := `{"changes":[],"skipped":[]}`
 	if string(out) != want {
 		t.Fatalf("empty ImportPreview marshaled as %s, want %s", out, want)
-	}
-}
-
-// TestPreviewConfigImport_ProfileEnvPreservedWhenLocalOnly pins MAJOR 2: the
-// default export (includeLocalEnv=false, BuildConfigExport's stripUnsyncedEnv)
-// strips Env from any SyncEnv==false profile before it ever leaves the
-// machine. Comparing that stripped file entry against the local profile
-// verbatim would report "replace" for exactly the profiles holding
-// local-only data (e.g. secrets in env vars) — implying Preview would wipe
-// them, when in fact mergeProfiles/ApplyConfigImport carries the local Env
-// forward untouched for SyncEnv==false profiles. Preview must predict that
-// outcome, not the raw file diff: same name/shell/etc, Env stripped from
-// the file, SyncEnv==false -> "unchanged".
-func TestPreviewConfigImport_ProfileEnvPreservedWhenLocalOnly(t *testing.T) {
-	a := newImportTestApp(t)
-	cfg := a.cfgStore.Get()
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: false, Env: map[string]string{"TOKEN": "secret-local-value"}},
-	}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-
-	export, err := a.BuildConfigExport(false) // includeLocalEnv=false: default, strips Env for SyncEnv==false profiles
-	if err != nil {
-		t.Fatalf("BuildConfigExport: %v", err)
-	}
-	data, err := json.Marshal(export)
-	if err != nil {
-		t.Fatalf("marshal export: %v", err)
-	}
-
-	preview, err := a.PreviewConfigImport(string(data))
-	if err != nil {
-		t.Fatalf("PreviewConfigImport: %v", err)
-	}
-	var got *ImportChange
-	for i := range preview.Changes {
-		if preview.Changes[i].Key == "profile:p1" {
-			got = &preview.Changes[i]
-		}
-	}
-	if got == nil {
-		t.Fatal("no ImportChange for profile:p1")
-	}
-	if got.Action != "unchanged" {
-		t.Fatalf(`profile:p1 Action = %q, Detail = %q, want "unchanged" — stripped Env on a SyncEnv==false profile must not be reported as a data-losing replace`, got.Action, got.Detail)
-	}
-}
-
-// TestPreviewConfigImport_ProfileEnvReplaceWhenGenuinelyDifferent is the
-// companion to the test above: when the incoming Env for a SyncEnv==false
-// profile is not merely absent but genuinely different from local (e.g. the
-// export was taken with includeLocalEnv=true from a different machine),
-// Preview must still report "replace" and name "env" in Detail — the
-// MAJOR 2 fix narrows the false positive, it does not silence real diffs.
-func TestPreviewConfigImport_ProfileEnvReplaceWhenGenuinelyDifferent(t *testing.T) {
-	a := newImportTestApp(t)
-	cfg := a.cfgStore.Get()
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: false, Env: map[string]string{"TOKEN": "local-value"}},
-	}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-
-	rawProfiles, _ := json.Marshal(profilesExportPayload{Profiles: []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: false, Env: map[string]string{"TOKEN": "different-value-from-another-machine"}},
-	}})
-	export := ConfigExport{
-		Version:     configExportVersion,
-		ExportedAt:  "2026-08-21T00:00:00Z",
-		AppVersion:  "0.4.0",
-		Preferences: map[string]json.RawMessage{"profiles": rawProfiles},
-	}
-	data, err := json.Marshal(export)
-	if err != nil {
-		t.Fatalf("marshal export: %v", err)
-	}
-
-	preview, err := a.PreviewConfigImport(string(data))
-	if err != nil {
-		t.Fatalf("PreviewConfigImport: %v", err)
-	}
-	var got *ImportChange
-	for i := range preview.Changes {
-		if preview.Changes[i].Key == "profile:p1" {
-			got = &preview.Changes[i]
-		}
-	}
-	if got == nil {
-		t.Fatal("no ImportChange for profile:p1")
-	}
-	if got.Action != "replace" {
-		t.Fatalf(`profile:p1 Action = %q, want "replace" (Env genuinely differs)`, got.Action)
-	}
-	if !strings.Contains(got.Detail, "env") {
-		t.Fatalf("profile:p1 Detail = %q, want it to name \"env\" as a differing field", got.Detail)
 	}
 }
 
@@ -925,12 +782,8 @@ func TestApplyConfigImport_WritesThroughSettersMarksDirty(t *testing.T) {
 	fileHosts := sshHostsExportPayload{Hosts: []SSHHost{
 		{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"},
 	}}
-	fileProfiles := profilesExportPayload{
-		Profiles:         []SessionProfile{{ID: "p1", Name: "default"}},
-		DefaultProfileID: "p1",
-	}
+
 	rawHosts, _ := json.Marshal(fileHosts)
-	rawProfiles, _ := json.Marshal(fileProfiles)
 	jsonText := mustMarshalExport(t, ConfigExport{
 		Version:    configExportVersion,
 		ExportedAt: "2026-08-21T00:00:00Z",
@@ -938,7 +791,6 @@ func TestApplyConfigImport_WritesThroughSettersMarksDirty(t *testing.T) {
 		Preferences: map[string]json.RawMessage{
 			"terminal_theme": json.RawMessage(`"nord"`),
 			"ssh_hosts":      rawHosts,
-			"profiles":       rawProfiles,
 		},
 	})
 
@@ -966,12 +818,6 @@ func TestApplyConfigImport_WritesThroughSettersMarksDirty(t *testing.T) {
 		t.Fatalf("PrefsMeta[%q].Dirty = false after ApplyConfigImport, want true -- markSSHHostsDirty must run", "ssh_hosts_encrypted")
 	}
 
-	if len(cfg.Profiles) != 1 || cfg.Profiles[0].ID != "p1" || cfg.DefaultProfileID != "p1" {
-		t.Fatalf("cfg.Profiles/DefaultProfileID = %+v/%q, want [p1]/p1", cfg.Profiles, cfg.DefaultProfileID)
-	}
-	if m := cfg.PrefsMeta["profiles_encrypted"]; !m.Dirty {
-		t.Fatalf("PrefsMeta[%q].Dirty = false after ApplyConfigImport, want true -- SetProfiles/SetDefaultProfileID must mark it dirty", "profiles_encrypted")
-	}
 }
 
 // TestApplyConfigImport_ReparsesRawTextSameInputSameDecisions pins brief
@@ -995,20 +841,8 @@ func TestApplyConfigImport_ReparsesRawTextSameInputSameDecisions(t *testing.T) {
 			{ID: "h1", Host: "one.example.com", User: "deploy", AuthKind: "password"}, // replace
 			{ID: "h2", Host: "two.example.com", User: "root", AuthKind: "password"},   // add
 		}})
-		rawProfiles, _ := json.Marshal(profilesExportPayload{Profiles: []SessionProfile{
-			{ID: "p1", Name: "default"},   // unchanged
-			{ID: "p2", Name: "brand-new"}, // add
-		}})
-		jsonText := mustMarshalExport(t, ConfigExport{
-			Version:    configExportVersion,
-			ExportedAt: "2026-08-21T00:00:00Z",
-			AppVersion: "0.4.0",
-			Preferences: map[string]json.RawMessage{
-				"locale_preference": json.RawMessage(`"zh-CN"`),
-				"ssh_hosts":         rawHosts,
-				"profiles":          rawProfiles,
-			},
-		})
+
+		jsonText := mustMarshalExport(t, ConfigExport{Version: configExportVersion, Preferences: map[string]json.RawMessage{"locale_preference": json.RawMessage(`"zh-CN"`), "ssh_hosts": rawHosts}})
 		return jsonText, a
 	}
 
@@ -1114,12 +948,8 @@ func TestApplyConfigImport_CoalescesIntoOnePush(t *testing.T) {
 	fileHosts := sshHostsExportPayload{Hosts: []SSHHost{
 		{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"},
 	}}
-	fileProfiles := profilesExportPayload{
-		Profiles:         []SessionProfile{{ID: "p1", Name: "default"}},
-		DefaultProfileID: "p1",
-	}
+
 	rawHosts, _ := json.Marshal(fileHosts)
-	rawProfiles, _ := json.Marshal(fileProfiles)
 	jsonText := mustMarshalExport(t, ConfigExport{
 		Version:    configExportVersion,
 		ExportedAt: "2026-08-21T00:00:00Z",
@@ -1130,7 +960,6 @@ func TestApplyConfigImport_CoalescesIntoOnePush(t *testing.T) {
 			"notifications_enabled": json.RawMessage(`true`),
 			"ai_notifications_only": json.RawMessage(`true`),
 			"ssh_hosts":             rawHosts,
-			"profiles":              rawProfiles,
 		},
 	})
 
@@ -1200,19 +1029,14 @@ func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 			{ID: "k3", Name: "brand-new-key"},      // add
 		},
 	}
-	fileProfiles := profilesExportPayload{Profiles: []SessionProfile{
-		{ID: "p1", Name: "default"},           // unchanged
-		{ID: "p4", Name: "brand-new-profile"}, // add
-	}}
+
 	rawHosts, _ := json.Marshal(fileHosts)
-	rawProfiles, _ := json.Marshal(fileProfiles)
 	jsonText := mustMarshalExport(t, ConfigExport{
 		Version:    configExportVersion,
 		ExportedAt: "2026-08-21T00:00:00Z",
 		AppVersion: "0.4.0",
 		Preferences: map[string]json.RawMessage{
 			"ssh_hosts": rawHosts,
-			"profiles":  rawProfiles,
 		},
 	})
 
@@ -1231,9 +1055,6 @@ func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 	}
 	if len(cfg.SSHKeys) != 3 {
 		t.Fatalf("len(cfg.SSHKeys) = %d, want 3 (k1 replaced in place, k2 kept, k3 added): %+v", len(cfg.SSHKeys), cfg.SSHKeys)
-	}
-	if len(cfg.Profiles) != 3 {
-		t.Fatalf("len(cfg.Profiles) = %d, want 3 (p1 unchanged, p2 kept, p4 added): %+v", len(cfg.Profiles), cfg.Profiles)
 	}
 
 	hostsByID := make(map[string]SSHHost, len(cfg.SSHHosts))
@@ -1264,54 +1085,6 @@ func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 		t.Fatal("new key k3 not added")
 	}
 
-	profilesByID := make(map[string]SessionProfile, len(cfg.Profiles))
-	for _, p := range cfg.Profiles {
-		profilesByID[p.ID] = p
-	}
-	if p, ok := profilesByID["p2"]; !ok || p.Name != "staging" {
-		t.Fatalf("local-only profile p2 missing or changed after apply: %+v", profilesByID)
-	}
-	if _, ok := profilesByID["p4"]; !ok {
-		t.Fatal("new profile p4 not added")
-	}
-}
-
-// TestApplyConfigImport_ProfileEnvPreservedWhenLocalOnly is the Apply-side
-// companion to the Preview test of the same name: a SyncEnv==false
-// profile's local Env must survive an apply whose file entry has no Env at
-// all (the ordinary shape of an includeLocalEnv=false export), because
-// ApplyConfigImport routes profiles through mergeProfiles exactly like the
-// real cross-device pull path does.
-func TestApplyConfigImport_ProfileEnvPreservedWhenLocalOnly(t *testing.T) {
-	a, _ := newApplyTestApp(t)
-	cfg := a.cfgStore.Get()
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: false, Env: map[string]string{"TOKEN": "secret-local-value"}},
-	}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-
-	export, err := a.BuildConfigExport(false) // includeLocalEnv=false strips Env for SyncEnv==false profiles
-	if err != nil {
-		t.Fatalf("BuildConfigExport: %v", err)
-	}
-	// Give Preview/Apply something else to do too, so this isn't a no-op
-	// import that happens to leave Env alone because nothing ran at all.
-	export.Preferences["terminal_theme"], _ = json.Marshal("daylight")
-	jsonText := mustMarshalExport(t, export)
-
-	if _, err := a.ApplyConfigImport(jsonText); err != nil {
-		t.Fatalf("ApplyConfigImport: %v", err)
-	}
-
-	got := a.cfgStore.Get()
-	if len(got.Profiles) != 1 {
-		t.Fatalf("Profiles = %+v, want exactly 1", got.Profiles)
-	}
-	if got.Profiles[0].Env["TOKEN"] != "secret-local-value" {
-		t.Fatalf("p1.Env = %+v, want TOKEN=secret-local-value preserved (SyncEnv==false, file carried no Env)", got.Profiles[0].Env)
-	}
 }
 
 // TestApplyConfigImport_InvalidDefaultShellSkippedNeverPartiallyWrites is
@@ -1448,71 +1221,6 @@ func TestApplyConfigImport_InvalidScalarSkippedRestApplied(t *testing.T) {
 	}
 }
 
-// TestApplyConfigImport_ProfileMergedViaMergeProfilesRealSemantics pins
-// MAJOR 3 at exactly the shape reviewer round 1 hand-verified. Apply's
-// profile path must use mergeProfiles's REAL rule (profiles.go:226,
-// "len(in.Env) == 0" triggers Env preservation, unconditional on SyncEnv)
-// and not Preview's narrower profileMergeCandidate approximation
-// ("len(incoming.Env) == 0 && !incoming.SyncEnv", used only to classify
-// add/replace/unchanged for the UI). Every Apply-side profile test that
-// existed before this one used a SyncEnv==false profile, where the two
-// rules happen to agree — deleting the mergeProfiles call outright
-// (merged := incoming instead of merged := mergeProfiles(...)) does not
-// fail any of them. This scenario is SyncEnv==true on both sides, the file
-// entry carries no Env at all and a genuinely different Shell:
-// mergeProfiles preserves local Env regardless (its rule never looks at
-// SyncEnv); profileMergeCandidate would not (its rule requires
-// !incoming.SyncEnv). Only a caller that actually merges through
-// mergeProfiles produces the reviewer's verified outcome: Shell=/bin/bash
-// (from the file), Env={TOKEN:local} (preserved from local).
-//
-// The file's profilesExportPayload is hand-built here rather than produced
-// via BuildConfigExport: BuildConfigExport's includeLocalEnv=false path
-// only strips Env through stripUnsyncedEnv (profiles.go:47), which itself
-// only clears Env for SyncEnv==false profiles. A SyncEnv==true profile's
-// Env is never stripped by export, so this exact file shape (SyncEnv:true,
-// no Env) cannot arise from a normal export call — it is constructed
-// directly here, as if it arrived from some other machine that genuinely
-// never set Env for this profile.
-func TestApplyConfigImport_ProfileMergedViaMergeProfilesRealSemantics(t *testing.T) {
-	a, _ := newApplyTestApp(t)
-	cfg := a.cfgStore.Get()
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: true, Env: map[string]string{"TOKEN": "local"}},
-	}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-
-	rawProfiles, _ := json.Marshal(profilesExportPayload{Profiles: []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/bash", SyncEnv: true}, // no Env at all, Shell genuinely changed
-	}})
-	jsonText := mustMarshalExport(t, ConfigExport{
-		Version:    configExportVersion,
-		ExportedAt: "2026-08-21T00:00:00Z",
-		AppVersion: "0.4.0",
-		Preferences: map[string]json.RawMessage{
-			"profiles": rawProfiles,
-		},
-	})
-
-	if _, err := a.ApplyConfigImport(jsonText); err != nil {
-		t.Fatalf("ApplyConfigImport: %v", err)
-	}
-
-	got := a.cfgStore.Get()
-	if len(got.Profiles) != 1 {
-		t.Fatalf("Profiles = %+v, want exactly 1", got.Profiles)
-	}
-	p := got.Profiles[0]
-	if p.Shell != "/bin/bash" {
-		t.Fatalf("p1.Shell = %q, want %q (file's genuinely different value)", p.Shell, "/bin/bash")
-	}
-	if p.Env["TOKEN"] != "local" {
-		t.Fatalf("p1.Env = %+v, want TOKEN=local preserved via mergeProfiles's len(in.Env)==0 rule", p.Env)
-	}
-}
-
 // TestApplyConfigImport_MalformedListEntrySkippedRestApplied pins MAJOR 4:
 // one malformed entry in a list-shaped key (ssh_hosts or profiles) must not
 // stop the rest of that same key's batch from actually landing in the
@@ -1540,19 +1248,12 @@ func TestApplyConfigImport_MalformedListEntrySkippedRestApplied(t *testing.T) {
 			{"id": "kgood", "name": "good-key"}
 		]
 	}`)
-	rawProfiles := json.RawMessage(`{
-		"profiles": [
-			{"id": "pbad", "name": ""},
-			{"id": "pgood", "name": "Good Profile"}
-		]
-	}`)
 	jsonText := mustMarshalExport(t, ConfigExport{
 		Version:    configExportVersion,
 		ExportedAt: "2026-08-21T00:00:00Z",
 		AppVersion: "0.4.0",
 		Preferences: map[string]json.RawMessage{
 			"ssh_hosts": rawHosts,
-			"profiles":  rawProfiles,
 		},
 	})
 
@@ -1560,8 +1261,8 @@ func TestApplyConfigImport_MalformedListEntrySkippedRestApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyConfigImport: %v", err)
 	}
-	if len(report.Skipped) != 3 {
-		t.Fatalf("report.Skipped = %v, want 3 entries (bad host, bad key, bad profile)", report.Skipped)
+	if len(report.Skipped) != 2 {
+		t.Fatalf("report.Skipped = %v, want 2 entries (bad host, bad key)", report.Skipped)
 	}
 
 	cfg := a.cfgStore.Get()
@@ -1571,9 +1272,6 @@ func TestApplyConfigImport_MalformedListEntrySkippedRestApplied(t *testing.T) {
 	}
 	if len(cfg.SSHKeys) != 1 || cfg.SSHKeys[0].ID != "kgood" {
 		t.Fatalf("cfg.SSHKeys = %+v, want exactly [kgood] (bad key must not block it)", cfg.SSHKeys)
-	}
-	if len(cfg.Profiles) != 1 || cfg.Profiles[0].ID != "pgood" {
-		t.Fatalf("cfg.Profiles = %+v, want exactly [pgood] (bad profile must not block it)", cfg.Profiles)
 	}
 }
 
@@ -1620,135 +1318,6 @@ func TestApplyScalarPref_ReturnsTheSettersRefusal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "theme") {
 		t.Fatalf("error = %q, want it to name the offending setting", err)
-	}
-}
-
-// TestApplyConfigImport_ProfileImportSyncEnvTravelsWithPreservedEnv pins the
-// whole-branch-review MAJOR 1 fix at the reviewer's own reproduction:
-// machine A's profile p1 is SyncEnv:true with no Env of its own (the
-// ordinary shape for a profile whose source machine never set that var).
-// Machine B's same-ID p1 is SyncEnv:false with a real secret in Env. B
-// imports A's file. mergeProfiles preserves B's local Env (file carried
-// none), and before this fix nothing kept SyncEnv in lock-step with it, so
-// the merged profile ended up SyncEnv:true (from the file) with B's secret
-// Env still attached -- a combination that could never have been reached by
-// any local edit, because SetSessionProfiles's own SyncEnv toggle always
-// clears Env in the same call. B's very next export with the default
-// includeLocalEnv=false would then ship that secret in a plaintext file,
-// because stripUnsyncedEnv only strips SyncEnv==false profiles. This test
-// pins both halves: the merged record's SyncEnv must stay false (B's own
-// choice), and a follow-up BuildConfigExport(false) must not contain the
-// secret anywhere in its output.
-func TestApplyConfigImport_ProfileImportSyncEnvTravelsWithPreservedEnv(t *testing.T) {
-	a, _ := newApplyTestApp(t)
-	cfg := a.cfgStore.Get()
-	const secret = "sk-super-secret-value"
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/zsh", SyncEnv: false, Env: map[string]string{"OPENAI_API_KEY": secret}},
-	}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-
-	// Machine A's file: same profile ID, SyncEnv:true, no Env at all, and a
-	// genuinely different Shell so "profile:p1" actually shows up as a
-	// replace (otherwise this would be a no-op import that proves nothing).
-	rawProfiles, _ := json.Marshal(profilesExportPayload{Profiles: []SessionProfile{
-		{ID: "p1", Name: "default", Shell: "/bin/bash", SyncEnv: true},
-	}})
-	jsonText := mustMarshalExport(t, ConfigExport{
-		Version:    configExportVersion,
-		ExportedAt: "2026-08-21T00:00:00Z",
-		AppVersion: "0.4.0",
-		Preferences: map[string]json.RawMessage{
-			"profiles": rawProfiles,
-		},
-	})
-
-	if _, err := a.ApplyConfigImport(jsonText); err != nil {
-		t.Fatalf("ApplyConfigImport: %v", err)
-	}
-
-	got := a.cfgStore.Get()
-	if len(got.Profiles) != 1 {
-		t.Fatalf("Profiles = %+v, want exactly 1", got.Profiles)
-	}
-	p := got.Profiles[0]
-	if p.Shell != "/bin/bash" {
-		t.Fatalf("p1.Shell = %q, want %q (file's genuinely different value should still land)", p.Shell, "/bin/bash")
-	}
-	if p.SyncEnv {
-		t.Fatalf("p1.SyncEnv = true after import, want false (B's local choice) — the incoming file's SyncEnv must not travel without its own Env")
-	}
-	if p.Env["OPENAI_API_KEY"] != secret {
-		t.Fatalf("p1.Env = %+v, want OPENAI_API_KEY=%s preserved", p.Env, secret)
-	}
-
-	export, err := a.BuildConfigExport(false) // default includeLocalEnv=false
-	if err != nil {
-		t.Fatalf("BuildConfigExport: %v", err)
-	}
-	exportBytes, err := json.Marshal(export)
-	if err != nil {
-		t.Fatalf("marshal export: %v", err)
-	}
-	if strings.Contains(string(exportBytes), secret) {
-		t.Fatalf("plaintext export contains the secret env value; SyncEnv must have been promoted to true by the import\nexport: %s", exportBytes)
-	}
-}
-
-// TestApplyConfigImport_UnresolvableDefaultProfileIDKeepsLocalDefault pins
-// the whole-branch-review MAJOR 2 fix: a file's default_profile_id that
-// does not name any profile present in the post-merge result (e.g. the file
-// was hand-edited, or its referenced profile got skipped upstream) must
-// leave the local default untouched and say so by name in report.Skipped —
-// never silently clear it via SetDefaultProfileID(""). Before this fix,
-// resolveDefaultProfileID("") was passed straight to SetDefaultProfileID,
-// wiping the local default while report.Applied still claimed the replace
-// Preview had promised.
-func TestApplyConfigImport_UnresolvableDefaultProfileIDKeepsLocalDefault(t *testing.T) {
-	a, _ := newApplyTestApp(t)
-	cfg := a.cfgStore.Get()
-	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "default"}}
-	cfg.DefaultProfileID = "p1"
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-
-	rawProfiles, _ := json.Marshal(profilesExportPayload{
-		Profiles:         []SessionProfile{{ID: "p1", Name: "default"}}, // unchanged, just to have a valid payload
-		DefaultProfileID: "pBad",                                        // never present locally or in the file's own profile list
-	})
-	jsonText := mustMarshalExport(t, ConfigExport{
-		Version:    configExportVersion,
-		ExportedAt: "2026-08-21T00:00:00Z",
-		AppVersion: "0.4.0",
-		Preferences: map[string]json.RawMessage{
-			"profiles": rawProfiles,
-		},
-	})
-
-	report, err := a.ApplyConfigImport(jsonText)
-	if err != nil {
-		t.Fatalf("ApplyConfigImport: %v", err)
-	}
-
-	if got := a.cfgStore.Get().DefaultProfileID; got != "p1" {
-		t.Fatalf("cfg.DefaultProfileID = %q after unresolvable import, want unchanged %q", got, "p1")
-	}
-	for _, c := range report.Applied {
-		if c.Key == "profiles:default_profile_id" {
-			t.Fatalf("report.Applied contains profiles:default_profile_id = %+v, but the write never happened -- report must not claim it", c)
-		}
-	}
-	found := false
-	for _, s := range report.Skipped {
-		if strings.Contains(s, "profiles:default_profile_id") && strings.Contains(s, "pBad") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("report.Skipped = %v, want an entry naming profiles:default_profile_id and the unresolved id %q", report.Skipped, "pBad")
 	}
 }
 
@@ -1959,5 +1528,37 @@ func TestHostDetail_NamesTheTargetNotJustTheAlias(t *testing.T) {
 	}
 	if !strings.Contains(after, "root") {
 		t.Fatalf("hostDetail = %q, want it to name the user — a replace that changes only the user also rebinds the credential", after)
+	}
+}
+
+func TestApplyConfigImport_RetiredProfilesSkippedRestApplied(t *testing.T) {
+	a, _ := newApplyTestApp(t)
+	jsonText := mustMarshalExport(t, ConfigExport{
+		Version: configExportVersion,
+		Preferences: map[string]json.RawMessage{
+			"profiles":       json.RawMessage(`{"profiles":[{"id":"retired","name":"Old"}]}`),
+			"terminal_theme": json.RawMessage(`"nord"`),
+		},
+	})
+	preview, err := a.PreviewConfigImport(jsonText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Skipped) != 1 || preview.Skipped[0] != "profiles: retired preference" {
+		t.Fatalf("preview=%+v", preview)
+	}
+	report, err := a.ApplyConfigImport(jsonText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Skipped) != 1 || report.Skipped[0] != "profiles: retired preference" {
+		t.Fatalf("report=%+v", report)
+	}
+	if len(report.Applied) != 1 || report.Applied[0].Key != "terminal_theme" {
+		t.Fatalf("applied=%+v", report.Applied)
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.TerminalTheme != "nord" || len(cfg.Profiles) != 0 {
+		t.Fatalf("theme=%q profiles=%+v", cfg.TerminalTheme, cfg.Profiles)
 	}
 }

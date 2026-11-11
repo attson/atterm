@@ -50,10 +50,11 @@ func (r *peerConfigReplica) projectLocalConfig(base appConfig) (appConfig, []err
 	projected := detachMaps(base)
 	var errs []error
 	for _, spec := range configsync.RelayKeySpecs() {
+		if spec.Retired {
+			continue
+		}
 		var err error
 		switch spec.Key {
-		case "profiles_encrypted":
-			err = r.projectProfiles(&projected)
 		case "ssh_hosts_encrypted":
 			err = r.projectSSHMetadata(&projected)
 		default:
@@ -98,73 +99,6 @@ func (r *peerConfigReplica) projectPortableKey(projected *appConfig, spec config
 	if !handled {
 		return fmt.Errorf("portable key is unsupported")
 	}
-	return nil
-}
-
-func (r *peerConfigReplica) projectProfiles(projected *appConfig) error {
-	records, found, err := r.openLocalProjectionRecords([]string{
-		configsync.CollectionProfiles,
-		configsync.CollectionProfileConfig,
-		configsync.CollectionProfileEnv,
-	})
-	if err != nil || !found {
-		return err
-	}
-	var profiles []positionedProfile
-	environments := make(map[string]map[string]string)
-	defaultID := ""
-	for _, record := range records {
-		switch record.Collection {
-		case configsync.CollectionProfiles:
-			var profile SessionProfile
-			if err := json.Unmarshal(record.Value, &profile); err != nil {
-				return err
-			}
-			profiles = append(profiles, positionedProfile{position: record.Position, profile: profile})
-		case configsync.CollectionProfileEnv:
-			var environment profileEnvRecord
-			if err := json.Unmarshal(record.Value, &environment); err != nil {
-				return err
-			}
-			environments[record.RecordID] = cloneStringMap(environment.Env)
-		case configsync.CollectionProfileConfig:
-			var config profileConfigRecord
-			if err := json.Unmarshal(record.Value, &config); err != nil {
-				return err
-			}
-			defaultID = config.DefaultProfileID
-		}
-	}
-	sort.Slice(profiles, func(i, j int) bool {
-		return orderedBefore(profiles[i].position, profiles[i].profile.ID, profiles[j].position, profiles[j].profile.ID)
-	})
-	localByID := make(map[string]SessionProfile, len(projected.Profiles))
-	for _, profile := range projected.Profiles {
-		localByID[profile.ID] = profile
-	}
-	_, canOpenVault := r.keys[configsync.KeyClassVault]
-	incoming := make([]SessionProfile, 0, len(profiles))
-	for _, positioned := range profiles {
-		profile := positioned.profile
-		local, hasLocal := localByID[profile.ID]
-		if !profile.SyncEnv || !canOpenVault {
-			if hasLocal {
-				profile.Env = cloneStringMap(local.Env)
-			} else {
-				profile.Env = nil
-			}
-		} else if environment, ok := environments[profile.ID]; ok {
-			profile.Env = environment
-		} else {
-			// With vault access, absence means the canonical env record was
-			// deleted rather than merely hidden by this device's capability.
-			profile.Env = nil
-		}
-		incoming = append(incoming, profile)
-	}
-	incoming = filterValidProfiles(incoming)
-	projected.Profiles = incoming
-	projected.DefaultProfileID = resolveDefaultProfileID(defaultID, incoming)
 	return nil
 }
 

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -154,7 +156,8 @@ func TestRelayHostRecordsExecutedShellCommandsInSessionHistory(t *testing.T) {
 
 func TestRelayHostRestoresPersistedInputHistoryBeforeNewSessionReturns(t *testing.T) {
 	host := newTestRelayHost(t)
-	store, err := newSessionInputHistoryStore(t.TempDir(), time.Now)
+	testHome := os.Getenv("HOME")
+	store, err := newSessionInputHistoryStore(filepath.Join(testHome, "input-history"), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +173,7 @@ func TestRelayHostRestoresPersistedInputHistoryBeforeNewSessionReturns(t *testin
 
 	currentID, err := host.NewSession(context.Background(), NewSessionReq{
 		Command:                   "/bin/cat",
-		Cwd:                       t.TempDir(),
+		Cwd:                       testHome,
 		Cols:                      80,
 		Rows:                      24,
 		Recovered:                 true,

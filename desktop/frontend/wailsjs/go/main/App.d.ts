@@ -19,7 +19,7 @@ export function BeginFeishuPair():Promise<string>;
 
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;
 
-export function BuildConfigExport(arg1:boolean):Promise<main.ConfigExport>;
+export function BuildConfigExport():Promise<main.ConfigExport>;
 
 export function CancelDownload():Promise<void>;
 
@@ -40,8 +40,6 @@ export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 export function CreatePeerConnectionBundle(arg1:string):Promise<string>;
 
 export function CreatePeerInvitations(arg1:main.CreatePeerInvitationsReq):Promise<Array<main.PeerInvitation>>;
-
-export function CreatePeerSessionWithProfile(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function CreatePeerSpace():Promise<main.PeerSpaceStatus>;
 
@@ -82,8 +80,6 @@ export function GetClipboardPastePayload():Promise<main.ClipboardPastePayload>;
 export function GetCommandNotifyThresholdSeconds():Promise<number>;
 
 export function GetDebugLoggingConfig():Promise<main.DebugLoggingConfig>;
-
-export function GetDefaultProfileID():Promise<string>;
 
 export function GetDefaultShell():Promise<string>;
 
@@ -138,8 +134,6 @@ export function GetPeerTrafficInTimeZone(arg1:string,arg2:string,arg3:string):Pr
 export function GetPinnedSessionIds():Promise<Array<string>>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;
-
-export function GetProfiles():Promise<Array<main.SessionProfile>>;
 
 export function GetPromptHistoryStatus():Promise<main.PromptHistoryStatus>;
 
@@ -212,8 +206,6 @@ export function JoinPeerSpace(arg1:main.JoinPeerSpaceReq):Promise<main.PeerSpace
 export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
-
-export function ListPeerHosts():Promise<Array<main.PeerHostDescriptor>>;
 
 export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
 
@@ -333,8 +325,6 @@ export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
 
 export function SetDebugLoggingConfig(arg1:main.DebugLoggingConfig):Promise<void>;
 
-export function SetDefaultProfileID(arg1:string):Promise<void>;
-
 export function SetDefaultShell(arg1:string):Promise<void>;
 
 export function SetDirectP2PEnabled(arg1:boolean):Promise<void>;
@@ -362,8 +352,6 @@ export function SetPeerRendezvousConfig(arg1:main.SetPeerRendezvousConfigReq):Pr
 export function SetPinnedSessionIds(arg1:Array<string>):Promise<void>;
 
 export function SetPluginConfig(arg1:main.PluginConfig):Promise<void>;
-
-export function SetProfiles(arg1:Array<main.SessionProfile>):Promise<void>;
 
 export function SetPromptHistoryEnabled(arg1:boolean):Promise<void>;
 

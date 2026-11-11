@@ -161,7 +161,7 @@ func TestBuildConfigExport_HostsAndKeysUnderUnsealedNames(t *testing.T) {
 		t.Fatalf("export bytes contain the transport-detail suffix _encrypted: %s", data)
 	}
 	if _, bad := export.Preferences["profiles_encrypted"]; bad {
-		t.Fatal(`Preferences contains "profiles_encrypted"; export must use the unsealed name`)
+		t.Fatal(`Preferences contains retired "profiles_encrypted"`)
 	}
 }
 
@@ -225,7 +225,6 @@ func TestBuildConfigExport_PreferencesNeverContainNull(t *testing.T) {
 	a := newExportTestApp(t)
 	cfg := a.cfgStore.Get()
 	cfg.QuickTemplates = []QuickTemplate{{ID: "t1", Label: "n", Text: "echo hi"}}
-	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "default"}}
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -389,8 +388,9 @@ func TestExportConfig_WriteFailurePropagates(t *testing.T) {
 func TestBuildConfigExportExcludesRetiredProfiles(t *testing.T) {
 	a := newExportTestApp(t)
 	cfg := a.cfgStore.Get()
-	cfg.Profiles = []SessionProfile{{ID: "old", Name: "Old", SyncEnv: true, Env: map[string]string{"TOKEN": "legacy-secret"}}}
-	cfg.DefaultProfileID = "old"
+	if err := json.Unmarshal([]byte(`{"profiles":[{"id":"old","name":"Old","sync_env":true,"env":{"TOKEN":"legacy-secret"}}],"default_profile_id":"old"}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatal(err)
 	}

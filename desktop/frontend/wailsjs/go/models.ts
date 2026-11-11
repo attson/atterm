@@ -858,7 +858,6 @@ export namespace main {
 	    cols?: number;
 	    rows?: number;
 	    recovered?: boolean;
-	    profile_id?: string;
 	    ai_kind?: string;
 	    initial_ai_session_id?: string;
 	    initial_ai_command_line?: string;
@@ -876,7 +875,6 @@ export namespace main {
 	        this.cols = source["cols"];
 	        this.rows = source["rows"];
 	        this.recovered = source["recovered"];
-	        this.profile_id = source["profile_id"];
 	        this.ai_kind = source["ai_kind"];
 	        this.initial_ai_session_id = source["initial_ai_session_id"];
 	        this.initial_ai_command_line = source["initial_ai_command_line"];
@@ -1023,22 +1021,6 @@ export namespace main {
 	        this.bundle_expires_at = source["bundle_expires_at"];
 	        this.route_kind = source["route_kind"];
 	        this.route_url = source["route_url"];
-	    }
-	}
-	export class PeerHostDescriptor {
-	    id: string;
-	    name: string;
-	    permission: string;
-
-	    static createFrom(source: any = {}) {
-	        return new PeerHostDescriptor(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.permission = source["permission"];
 	    }
 	}
 	export class PeerInvitation {
@@ -2107,30 +2089,6 @@ export namespace main {
 		    }
 		    return a;
 		}
-	}
-	export class SessionProfile {
-	    id: string;
-	    name: string;
-	    shell?: string;
-	    cwd?: string;
-	    startup_cmd?: string;
-	    env?: Record<string, string>;
-	    sync_env?: boolean;
-
-	    static createFrom(source: any = {}) {
-	        return new SessionProfile(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.shell = source["shell"];
-	        this.cwd = source["cwd"];
-	        this.startup_cmd = source["startup_cmd"];
-	        this.env = source["env"];
-	        this.sync_env = source["sync_env"];
-	    }
 	}
 	export class SetPeerLANConfigReq {
 	    lan_only: boolean;

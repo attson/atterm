@@ -67,11 +67,6 @@ func TestUplinkSessionCreateReturnsFeatureRemovedWithoutSessionGrowth(t *testing
 	})
 
 	host := newTestRelayHost(t)
-	cfg := host.cfg.Get()
-	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "P1"}}
-	if err := host.cfg.Set(cfg); err != nil {
-		t.Fatal(err)
-	}
 	sess := session.New(sessionID, proto.SessionInfo{ID: sessionID.String(), Cols: 80, Rows: 24})
 	if _, err := host.server.Registry().Add(sess); err != nil {
 		t.Fatalf("registry add: %v", err)

@@ -279,13 +279,8 @@ func TestCreatePeerSpaceBootstrapsPortableConfigOnce(t *testing.T) {
 	app.cfgStore = &configStore{cfg: appConfig{
 		TerminalTheme:  "nord",
 		QuickTemplates: []QuickTemplate{{ID: "template-1", Label: "Build", Text: "go test ./..."}},
-		Profiles: []SessionProfile{
-			{ID: "profile-local", Name: "Local env", Env: map[string]string{"LOCAL_ONLY": "secret"}},
-			{ID: "profile-shared", Name: "Shared env", SyncEnv: true, Env: map[string]string{"SHARED": "yes"}},
-		},
-		DefaultProfileID: "profile-shared",
-		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Production", Host: "example.com", User: "alice", AuthKind: "key", KeyID: "key-1"}},
-		SSHKeys:          []SSHKey{{ID: "key-1", Name: "Primary", KeyType: "ED25519"}},
+		SSHHosts:       []SSHHost{{ID: "host-1", Alias: "Production", Host: "example.com", User: "alice", AuthKind: "key", KeyID: "key-1"}},
+		SSHKeys:        []SSHKey{{ID: "key-1", Name: "Primary", KeyType: "ED25519"}},
 	}}
 	if err := sshCredentialSlot("host-1").Save(sshCredential{Password: "must-not-sync"}); err != nil {
 		t.Fatal(err)
@@ -341,11 +336,6 @@ func TestPeerConfigReplicaAppendsOnlyChangedLocalRecords(t *testing.T) {
 	cfg := appConfig{
 		TerminalTheme:    "nord",
 		TerminalFontSize: 17,
-		Profiles: []SessionProfile{{
-			ID: "profile-1", Name: "Shared", SyncEnv: true,
-			Env: map[string]string{"TOKEN": "shared"},
-		}},
-		DefaultProfileID: "profile-1",
 		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Before", Host: "example.com", User: "alice"}},
 	}
 	app.cfgStore = &configStore{cfg: cfg}
@@ -631,13 +621,8 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 		TerminalTheme:        "nord",
 		NotificationsEnabled: &enabled,
 		QuickTemplates:       []QuickTemplate{{ID: "template-1", Label: "Build", Text: "go test ./..."}},
-		Profiles: []SessionProfile{
-			{ID: "profile-local-env", Name: "Local env", Env: map[string]string{"LOCAL": "creator"}},
-			{ID: "profile-shared-env", Name: "Shared env", SyncEnv: true, Env: map[string]string{"SHARED": "canonical"}},
-		},
-		DefaultProfileID: "profile-shared-env",
-		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Canonical", Host: "example.com", User: "alice", KeyID: "key-1"}},
-		SSHKeys:          []SSHKey{{ID: "key-1", Name: "Canonical key", KeyType: "ED25519"}},
+		SSHHosts:             []SSHHost{{ID: "host-1", Alias: "Canonical", Host: "example.com", User: "alice", KeyID: "key-1"}},
+		SSHKeys:              []SSHKey{{ID: "key-1", Name: "Canonical key", KeyType: "ED25519"}},
 	}
 	app.cfgStore = &configStore{cfg: cfg}
 	if _, err := app.CreatePeerSpace(); err != nil {
@@ -662,14 +647,8 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 		TerminalTheme:        "light",
 		NotificationsEnabled: &disabled,
 		QuickTemplates:       []QuickTemplate{{ID: "old", Label: "Old", Text: "old"}},
-		Profiles: []SessionProfile{
-			{ID: "profile-local-env", Name: "Old local", Env: map[string]string{"LOCAL": "device"}},
-			{ID: "profile-shared-env", Name: "Old shared", SyncEnv: true, Env: map[string]string{"SHARED": "stale"}},
-			{ID: "local-only", Name: "Pending import", Env: map[string]string{"ONLY": "here"}},
-		},
-		DefaultProfileID: "local-only",
-		SSHHosts:         []SSHHost{{ID: "old-host", Alias: "Old", Host: "old.example.com"}},
-		SSHKeys:          []SSHKey{{ID: "old-key", Name: "Old key"}},
+		SSHHosts:             []SSHHost{{ID: "old-host", Alias: "Old", Host: "old.example.com"}},
+		SSHKeys:              []SSHKey{{ID: "old-key", Name: "Old key"}},
 	}
 	projected, projectionErrors := runtime.projectLocalConfig(base)
 	if len(projectionErrors) != 0 {
@@ -685,7 +664,7 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 	if err != nil || credential.Password != "local-secret" {
 		t.Fatalf("projection changed SSH credential=%+v err=%v", credential, err)
 	}
-	if base.TerminalTheme != "light" || base.Profiles[0].Env["LOCAL"] != "device" {
+	if base.TerminalTheme != "light" || base.SSHHosts[0].Alias != "Old" {
 		t.Fatal("projection mutated its base snapshot")
 	}
 
@@ -694,8 +673,8 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 	if len(projectionErrors) != 0 {
 		t.Fatalf("project without vault capability: %v", projectionErrors)
 	}
-	if withoutVault.Profiles[1].Env["SHARED"] != "stale" {
-		t.Fatalf("projection without vault capability replaced local env: %+v", withoutVault.Profiles[1].Env)
+	if withoutVault.TerminalTheme != "nord" || len(withoutVault.SSHHosts) != 1 || withoutVault.SSHHosts[0].Alias != "Canonical" {
+		t.Fatalf("projection without vault capability lost portable metadata: %+v", withoutVault)
 	}
 }
 
@@ -711,12 +690,7 @@ func TestPendingPeerConfigIsWriteOnceCapabilityGatedAndMergeOnly(t *testing.T) {
 	pendingConfig := appConfig{
 		TerminalTheme:  "local-theme",
 		QuickTemplates: []QuickTemplate{{ID: "local-template", Label: "Local", Text: "local"}},
-		Profiles: []SessionProfile{{
-			ID: "local-profile", Name: "Local profile", SyncEnv: true,
-			Env: map[string]string{"TOKEN": "pending-local-secret"},
-		}},
-		DefaultProfileID: "local-profile",
-		SSHHosts:         []SSHHost{{ID: "local-host", Alias: "Local host", Host: "local.example.com"}},
+		SSHHosts:       []SSHHost{{ID: "local-host", Alias: "Local host", Host: "local.example.com"}},
 	}
 	count, captured, err := app.peerSpace.capturePendingPeerConfig(pendingConfig)
 	if err != nil || !captured || count != 3 {
@@ -731,7 +705,7 @@ func TestPendingPeerConfigIsWriteOnceCapabilityGatedAndMergeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(disk, []byte("pending-local-secret")) || bytes.Contains(disk, []byte("local-theme")) {
+	if bytes.Contains(disk, []byte("local.example.com")) || bytes.Contains(disk, []byte("local-theme")) {
 		t.Fatal("pending local config was written outside the encrypted Peer store")
 	}
 	if repeatedCount, repeatedCapture, err := app.peerSpace.capturePendingPeerConfig(pendingConfig); err != nil || repeatedCapture || repeatedCount != count {

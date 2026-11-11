@@ -48,9 +48,9 @@ func assertStoreUnchanged(t *testing.T, a *App, before []byte) {
 
 // TestPreviewConfigImport_ChangesNothing is the load-bearing test for this
 // task (brief bullet 1): it seeds a config with values in every category
-// PreviewConfigImport touches — scalar prefs, ssh hosts/keys, profiles — so
+// PreviewConfigImport touches — scalar prefs and ssh hosts/keys — so
 // there is something for every code path to accidentally write, exports it,
-// mutates the export text (different values, a brand-new host/profile,
+// mutates the export text (different values, a brand-new host,
 // dropped entries) so Preview has real add/replace work to compute, and
 // compares the WHOLE store's serialized bytes before and after. A Preview
 // that quietly wrote even one field would fail this, whether or not a human
@@ -66,11 +66,6 @@ func TestPreviewConfigImport_ChangesNothing(t *testing.T) {
 		{ID: "h2", Host: "two.example.com", User: "root", AuthKind: "password"},
 	}
 	cfg.SSHKeys = []SSHKey{{ID: "k1", Name: "prod-key", KeyType: "rsa"}}
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default"},
-		{ID: "p2", Name: "staging"},
-	}
-	cfg.DefaultProfileID = "p1"
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -80,7 +75,7 @@ func TestPreviewConfigImport_ChangesNothing(t *testing.T) {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
 	// Give Preview real work: change h1, add a brand-new host h3, drop h2
-	// from the file, change terminal_theme, and rename p1.
+	// from the file, change terminal_theme.
 	var hostsPayload sshHostsExportPayload
 	if err := json.Unmarshal(export.Preferences["ssh_hosts"], &hostsPayload); err != nil {
 		t.Fatalf("unmarshal ssh_hosts: %v", err)
@@ -149,7 +144,7 @@ func TestPreviewConfigImport_RejectsUnknownVersion(t *testing.T) {
 
 // TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal pins brief bullet
 // 2 in full: same ID -> replace, new ID -> add, and — the explicit
-// assertion the brief calls out by name — a local host/key/profile present
+// assertion the brief calls out by name — a local host/key present
 // ONLY locally (absent from the file) produces NO change entry at all. That
 // silence is what makes import non-destructive: nothing in Changes ever
 // suggests removing it, so applying only Changes could never wipe it. Keys
@@ -165,10 +160,6 @@ func TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal(t *testing.T) {
 	cfg.SSHKeys = []SSHKey{
 		{ID: "k1", Name: "prod-key", KeyType: "rsa"},
 		{ID: "k2", Name: "staging-key", KeyType: "ed25519"}, // local-only, kept
-	}
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default"},
-		{ID: "p2", Name: "staging"}, // local-only, kept
 	}
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -288,8 +279,8 @@ func TestPreviewConfigImport_WhitespacePaddedIDStillMatchesLocal(t *testing.T) {
 }
 
 // TestKnownImportKeys_MatchesSyncedKeys pins MAJOR 1: knownImportKeys() is
-// derived from prefssync.SyncedKeys() (minus the two sealed names, which
-// are re-homed under their unsealed file names "ssh_hosts"/"profiles"), not
+// derived from prefssync.SyncedKeys() (mapping ssh_hosts_encrypted to
+// ssh_hosts and retaining profiles only to report it as retired), not
 // a second hand-copied list that could silently drift from the sync
 // engine's own key set — e.g. a future synced key added to sync.go but
 // never added to a copy-pasted list here, which would then be silently
@@ -320,8 +311,7 @@ func TestKnownImportKeys_MatchesSyncedKeys(t *testing.T) {
 // A synced key present in SyncedKeys() but missing from this switch would
 // pass the "known" gate and then fail unmarshaling (or worse, silently
 // unmarshal into the wrong shape) with no test catching the gap. ssh_hosts
-// and profiles are excluded: they route through previewSSHHosts /
-// previewProfiles, never through scalarPrefTarget.
+// is excluded: it routes through previewSSHHosts, never scalarPrefTarget.
 func TestScalarPrefTarget_HandlesEverySyncedScalarKey(t *testing.T) {
 	for _, k := range prefssync.SyncedKeys() {
 		if k == "ssh_hosts_encrypted" {
@@ -335,7 +325,7 @@ func TestScalarPrefTarget_HandlesEverySyncedScalarKey(t *testing.T) {
 
 // TestPreviewConfigImport_MalformedEntrySkippedRestContinues pins brief
 // bullet 4: one malformed host (missing id) is skipped and counted; the
-// well-formed host, key and profile in the same file still produce changes.
+// well-formed host and key in the same file still produce changes.
 // Same rule prefssync.Engine.Pull applies per key (sync.go's Pull comment):
 // one bad entry must not take the rest of the import down with it.
 func TestPreviewConfigImport_MalformedEntrySkippedRestContinues(t *testing.T) {
@@ -493,8 +483,6 @@ func TestPreviewConfigImport_Deterministic(t *testing.T) {
 	a := newImportTestApp(t)
 	cfg := a.cfgStore.Get()
 	cfg.SSHHosts = []SSHHost{{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"}}
-	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "default"}}
-	cfg.DefaultProfileID = "p1"
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -770,7 +758,7 @@ func mustMarshalExport(t *testing.T, export ConfigExport) string {
 
 // TestApplyConfigImport_WritesThroughSettersMarksDirty pins spec §4 /
 // brief bullet 1 directly: every category ApplyConfigImport can write
-// (a scalar pref, an ssh host, a profile + its default) ends up in the
+// (a scalar pref or an ssh host) ends up in the
 // store AND with its sync key's PrefsMeta marked Dirty. Writing straight to
 // cfgStore (bypassing the setters) would change the store's value while
 // leaving Dirty false forever -- see
@@ -833,7 +821,6 @@ func TestApplyConfigImport_ReparsesRawTextSameInputSameDecisions(t *testing.T) {
 		a, _ := newApplyTestApp(t)
 		cfg := a.cfgStore.Get()
 		cfg.SSHHosts = []SSHHost{{ID: "h1", Host: "one.example.com", User: "root", AuthKind: "password"}}
-		cfg.Profiles = []SessionProfile{{ID: "p1", Name: "default"}}
 		if err := a.cfgStore.Set(cfg); err != nil {
 			t.Fatalf("Set: %v", err)
 		}
@@ -907,7 +894,7 @@ func TestApplyConfigImport_ReparsesRawTextSameInputSameDecisions(t *testing.T) {
 
 // TestApplyConfigImport_CoalescesIntoOnePush pins brief bullet 3 / spec §4's
 // coalescing half directly: ApplyConfigImport touches several distinct
-// synced keys (several scalar prefs, an ssh host, a profile+default) in one
+// synced keys (several scalar prefs and an ssh host) in one
 // call, each through its own setter -- and relies on enqueueSync's existing
 // coalescing (prefs_sync_loop.go) to collapse that burst into at most one
 // extra push round trip, rather than pushing once per key or implementing
@@ -988,7 +975,7 @@ func TestApplyConfigImport_CoalescesIntoOnePush(t *testing.T) {
 
 // TestApplyConfigImport_LocalOnlyKept mirrors
 // TestPreviewConfigImport_MergeByID_AddReplaceAndKeepLocal for the write
-// side: a host/key/profile that exists only locally (absent from the file)
+// side: a host/key that exists only locally (absent from the file)
 // must survive ApplyConfigImport untouched -- Preview reports no change for
 // it (nothing in Changes even names it), and Apply, driven off exactly
 // those Changes, has no path that could delete it.
@@ -1010,10 +997,6 @@ func TestApplyConfigImport_LocalOnlyKept(t *testing.T) {
 	cfg.SSHKeys = []SSHKey{
 		{ID: "k1", Name: "laptop-key"},
 		{ID: "k2", Name: "old-key"}, // local-only
-	}
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "default"},
-		{ID: "p2", Name: "staging"}, // local-only
 	}
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -1222,14 +1205,13 @@ func TestApplyConfigImport_InvalidScalarSkippedRestApplied(t *testing.T) {
 }
 
 // TestApplyConfigImport_MalformedListEntrySkippedRestApplied pins MAJOR 4:
-// one malformed entry in a list-shaped key (ssh_hosts or profiles) must not
+// one malformed entry in ssh_hosts must not
 // stop the rest of that same key's batch from actually landing in the
 // store. Mirrors TestPreviewConfigImport_MalformedEntrySkippedRestContinues's
 // fixture, but asserts against a.cfgStore.Get() after Apply rather than
-// against preview.Changes — proving applySSHHostsImport/applyProfilesImport
-// themselves keep going past a batch validateSSHHostsPayload/
-// validateProfilesPayload already trimmed, not just that Preview classified
-// it correctly. A mutation that aborts either function's whole key on any
+// against preview.Changes — proving applySSHHostsImport keeps going past
+// a batch validateSSHHostsPayload already trimmed, not just that Preview
+// classified it correctly. A mutation that aborts the function's whole key on any
 // skipped entry (e.g. bailing out right after the validate call whenever it
 // returned a non-empty skipped slice) would leave every good entry in this
 // same batch unwritten while still passing every test that existed before
@@ -1466,7 +1448,7 @@ func TestValidateScalarPrefValue_RejectsNullCursorBlink(t *testing.T) {
 
 // A keyring clear that fails must be REPORTED, not returned. By the time the
 // clear runs, the host records are already written and already pushed to every
-// other device, so aborting bought nothing — it left profiles and scalar prefs
+// other device, so aborting bought nothing — it left scalar prefs
 // unapplied with both report lists empty, which is the "a config that is
 // neither the file nor the original" outcome this feature spent a review round
 // eliminating. The user still has to learn the credential is now attached to
@@ -1558,7 +1540,7 @@ func TestApplyConfigImport_RetiredProfilesSkippedRestApplied(t *testing.T) {
 		t.Fatalf("applied=%+v", report.Applied)
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.TerminalTheme != "nord" || len(cfg.Profiles) != 0 {
-		t.Fatalf("theme=%q profiles=%+v", cfg.TerminalTheme, cfg.Profiles)
+	if cfg.TerminalTheme != "nord" {
+		t.Fatalf("theme=%q", cfg.TerminalTheme)
 	}
 }

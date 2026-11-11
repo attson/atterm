@@ -346,7 +346,6 @@ func TestIsPrefCustomizedNamesEverySyncedKey(t *testing.T) {
 		TerminalScrollback:            9000,
 		DefaultShell:                  "/bin/zsh",
 		ShortcutBindings:              map[string]string{"tab.new": "Mod+KeyP"},
-		Profiles:                      []SessionProfile{{ID: "p", Name: "P"}},
 		SSHHosts:                      []SSHHost{{ID: "h", Host: "e.com", User: "u"}},
 	}
 	isCustom := isPrefCustomized(cfg)

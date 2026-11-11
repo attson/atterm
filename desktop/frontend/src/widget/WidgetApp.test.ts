@@ -1,4 +1,4 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WidgetApp from "./WidgetApp.vue";
 import { widgetBridge } from "./bridge";
@@ -126,6 +126,7 @@ describe("WidgetApp", () => {
   });
 
   it("expands and resizes a collapsed widget before revealing its context menu", async () => {
+    const viewportHeight = vi.spyOn(window, "innerHeight", "get").mockReturnValue(90);
     let finishResize!: () => void;
     const resizeDone = new Promise<void>((resolve) => {
       finishResize = resolve;
@@ -168,6 +169,12 @@ describe("WidgetApp", () => {
 
     finishResize();
     await resizeDone;
+    await flushPromises();
+
+    expect(w.get(".menu").classes()).toContain("measuring");
+
+    viewportHeight.mockReturnValue(200);
+    window.dispatchEvent(new Event("resize"));
     await vi.waitFor(() => {
       expect(w.get(".menu").classes()).not.toContain("measuring");
     });

@@ -17,17 +17,17 @@ import (
 
 // Companion window geometry, in logical pixels.
 //
-// Only the width is fixed. The height is reported by the frontend from the
-// rendered card (WidgetApp.vue's ResizeObserver → Resize) rather than hardcoded
-// here: it depends on the row count, the font, and the locale's line
-// wrapping, so any constant is wrong for most states. Hardcoding it clipped
-// the card's bottom edge — rounded corner included — whenever the guess came
-// in under the real height.
+// Both dimensions are reported by the frontend from the rendered card
+// (WidgetApp.vue's ResizeObserver → Resize). The normal width is fixed, while
+// the minimized shape shrinks to one icon; height depends on row count, font,
+// and locale. Hardcoding either dimension leaves a transparent native window
+// intercepting clicks outside the visible card.
 //
 // widgetHeightInitial is only the pre-measurement size, chosen to be close
 // enough that the first frame does not visibly jump.
 const (
 	widgetWidth         = 252
+	widgetMinWidth      = 56
 	widgetHeightInitial = 172
 	// widgetMaxHeight bounds what the frontend can ask for, so a rendering bug
 	// cannot grow an always-on-top window over the whole screen.
@@ -47,6 +47,7 @@ type WidgetBridge struct {
 
 	mu        sync.Mutex
 	collapsed bool
+	minimized bool
 	// ready flips once the webview has mounted and subscribed to events.
 	//
 	// Wails events emitted before that are dropped, and the parent writes both
@@ -178,6 +179,7 @@ func (p *WidgetBridge) Ready() {
 func (p *WidgetBridge) applyBootstrap(boot widgetBootstrap) {
 	p.mu.Lock()
 	p.collapsed = boot.Collapsed
+	p.minimized = boot.Minimized
 	p.mu.Unlock()
 
 	if boot.X >= 0 || boot.Y >= 0 {
@@ -224,12 +226,12 @@ func (p *WidgetBridge) placeBottomRight() {
 	wailsruntime.WindowSetPosition(p.ctx, x, y)
 }
 
-// Resize sets the window to the height the frontend measured for the rendered
-// card. Called from a ResizeObserver, so it fires for collapse, expand, peek,
-// and any row-count change without Go having to model those states.
-func (p *WidgetBridge) Resize(height int) {
-	h := clampWidgetHeight(height)
-	if h == 0 {
+// Resize sets the window to the dimensions the frontend measured for the
+// rendered card. Called from a ResizeObserver, so it covers minimize, collapse,
+// expand, peek, and row-count changes without Go modeling those states.
+func (p *WidgetBridge) Resize(width, height int) {
+	w, h := clampWidgetSize(width, height)
+	if w == 0 || h == 0 {
 		return
 	}
 	// Info rather than Debug: the widget branches out of main() before any
@@ -237,21 +239,27 @@ func (p *WidgetBridge) Resize(height int) {
 	// geometry is otherwise unobservable from outside the process (no
 	// titlebar to read, and screen-capture APIs need permissions a terminal
 	// usually lacks), and this only fires on collapse/expand and row-count
-	// changes.
-	logInfo("widget", "resize to %dx%d (requested %d)", widgetWidth, h, height)
-	wailsruntime.WindowSetSize(p.ctx, widgetWidth, h)
+	// changes, including the minimized width transition.
+	logInfo("widget", "resize to %dx%d (requested %dx%d)", w, h, width, height)
+	wailsruntime.WindowSetSize(p.ctx, w, h)
 }
 
-// clampWidgetHeight returns the height to apply, or 0 for "ignore this value".
-// Split out from Resize so the policy is testable without a live window.
-func clampWidgetHeight(height int) int {
-	if height <= 0 {
-		return 0
+// clampWidgetSize returns the dimensions to apply, or (0, 0) when either value
+// is invalid. Split out from Resize so the policy is testable without a window.
+func clampWidgetSize(width, height int) (int, int) {
+	if width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	if width < widgetMinWidth {
+		width = widgetMinWidth
+	}
+	if width > widgetWidth {
+		width = widgetWidth
 	}
 	if height > widgetMaxHeight {
-		return widgetMaxHeight
+		height = widgetMaxHeight
 	}
-	return height
+	return width, height
 }
 
 // emit writes one child→parent event.
@@ -277,6 +285,15 @@ func (p *WidgetBridge) SetCollapsed(collapsed bool) {
 	p.collapsed = collapsed
 	p.mu.Unlock()
 	p.emit(widgetEvent{Type: "collapse", Collapsed: collapsed})
+}
+
+// SetMinimized persists the icon-only shape via the parent. Collapsed is kept
+// separately so restoring returns to whichever panel shape the user left.
+func (p *WidgetBridge) SetMinimized(minimized bool) {
+	p.mu.Lock()
+	p.minimized = minimized
+	p.mu.Unlock()
+	p.emit(widgetEvent{Type: "minimize", Minimized: minimized})
 }
 
 // ReportPosition persists the window position after a drag.
@@ -356,7 +373,7 @@ func newWidgetWindowOptions(assets fs.FS, bridge *WidgetBridge) *options.App {
 		// cannot be used for a window whose height follows rendered content.
 		// The widget entry disables Wails' edge-resize gesture instead.
 		DisableResize: false,
-		MinWidth:      widgetWidth,
+		MinWidth:      widgetMinWidth,
 		MaxWidth:      widgetWidth,
 		MinHeight:     1,
 		MaxHeight:     widgetMaxHeight,

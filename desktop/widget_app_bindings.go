@@ -12,6 +12,7 @@ func (a *App) StartWidget() error {
 	cfg := a.cfgStore.Get()
 	return a.widget.Start(widgetBootstrap{
 		Collapsed: cfg.Plugins.Widget.Collapsed,
+		Minimized: cfg.Plugins.Widget.Minimized,
 		X:         cfg.Plugins.Widget.WindowX,
 		Y:         cfg.Plugins.Widget.WindowY,
 		Locale:    cfg.LocalePreferenceOrDefault(),
@@ -57,6 +58,8 @@ func (a *App) handleWidgetEvent(ev widgetEvent) {
 		}
 	case "collapse":
 		a.mutateWidgetConfig(func(p *WidgetConfig) { p.Collapsed = ev.Collapsed })
+	case "minimize":
+		a.mutateWidgetConfig(func(p *WidgetConfig) { p.Minimized = ev.Minimized })
 	case "move":
 		a.mutateWidgetConfig(func(p *WidgetConfig) {
 			p.WindowX = ev.X

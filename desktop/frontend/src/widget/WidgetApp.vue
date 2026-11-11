@@ -9,8 +9,8 @@ import type { WidgetSessionRow, WidgetState } from "../lib/widgetState";
 
 /**
  * The companion window (layout A): widget + summary header, then one row per
- * session. Collapsing hides the rows but keeps the header, so a folded widget
- * still answers "does anything need me?".
+ * session. Collapsing hides the rows but keeps the header; minimizing keeps
+ * only the status icon and preserves the previous expanded/collapsed shape.
  *
  * This component owns no data. Snapshots arrive from the main app over a pipe
  * (see desktop/widget_process.go); user intent goes back the same way.
@@ -41,6 +41,7 @@ let unmounted = false;
 
 const state = ref<WidgetState>(EMPTY);
 const collapsed = ref(false);
+const minimized = ref(false);
 const peeking = ref(false);
 const menuOpen = ref(false);
 const menuVisible = ref(false);
@@ -61,18 +62,20 @@ const nowMs = ref(Date.now());
 const muted = computed(() => mutedUntil.value * 1000 > nowMs.value);
 
 /** Rows are visible when expanded, or while a hover/auto peek is open. */
-const showRows = computed(() => !collapsed.value || peeking.value);
+const showRows = computed(() => !minimized.value && (!collapsed.value || peeking.value));
 
-function reportWidgetHeight(height: number): Promise<void> {
-  const rounded = Math.ceil(height);
-  if (rounded <= 0) return Promise.resolve();
-  return widgetBridge.resize(rounded);
+function reportWidgetSize(width: number, height: number): Promise<void> {
+  const roundedWidth = Math.ceil(width);
+  const roundedHeight = Math.ceil(height);
+  if (roundedWidth <= 0 || roundedHeight <= 0) return Promise.resolve();
+  return widgetBridge.resize(roundedWidth, roundedHeight);
 }
 
 function resizeToRenderedCard(): Promise<void> {
   const card = cardEl.value;
   if (!card) return Promise.resolve();
-  return reportWidgetHeight(card.getBoundingClientRect().height);
+  const rect = card.getBoundingClientRect();
+  return reportWidgetSize(rect.width, rect.height);
 }
 
 function resizeToFitMenu(): Promise<void> {
@@ -81,7 +84,7 @@ function resizeToFitMenu(): Promise<void> {
   if (!card || !menu) return Promise.resolve();
   const cardRect = card.getBoundingClientRect();
   const menuRect = menu.getBoundingClientRect();
-  return reportWidgetHeight(Math.max(cardRect.height, menuRect.bottom - cardRect.top));
+  return reportWidgetSize(cardRect.width, Math.max(cardRect.height, menuRect.bottom - cardRect.top));
 }
 
 function resizeToRenderedWidget(): Promise<void> {
@@ -108,9 +111,9 @@ function scheduleCardResize() {
   });
 }
 
-// All ways of revealing or hiding the rows converge here: persisted collapse,
-// manual collapse/expand, hover peek and the timed attention peek.
-watch(showRows, scheduleCardResize);
+// All ways of revealing or hiding the rows converge here: minimize, persisted
+// collapse, manual collapse/expand, hover peek and the timed attention peek.
+watch([showRows, minimized], scheduleCardResize);
 
 /**
  * Attention ids carried by the previous snapshot, or null before the first one
@@ -149,7 +152,7 @@ function applyState(next: WidgetState) {
 
   // Track the cooldown only for escalations we would otherwise act on, so a
   // widget the user is already looking at does not silently burn it.
-  if (!collapsed.value || muted.value) return;
+  if (minimized.value || !collapsed.value || muted.value) return;
 
   const now = Date.now();
   const fresh = escalatedIds.filter((id) => now - (lastPeekAt.get(id) ?? -Infinity) >= PEEK_COOLDOWN_MS);
@@ -161,8 +164,8 @@ function applyState(next: WidgetState) {
   if (fresh.length === 0) return;
 
   // If the widget is folded away, open it briefly so a collapsed widget can
-  // still raise its hand — then fold back so it does not silently become a
-  // permanent panel.
+  // still raise its hand, then fold back. Minimized mode returned above: the
+  // explicit icon-only choice is never overridden by attention state.
   for (const id of fresh) {
     lastPeekAt.set(id, now);
     highlightedIds.value.add(id);
@@ -192,12 +195,26 @@ function toggleCollapsed() {
   widgetBridge.setCollapsed(collapsed.value);
 }
 
+function restoreMinimized() {
+  if (!minimized.value) return;
+  minimized.value = false;
+  widgetBridge.setMinimized(false);
+}
+
+function onHeaderClick() {
+  if (minimized.value) {
+    restoreMinimized();
+    return;
+  }
+  toggleCollapsed();
+}
+
 // Peek tracks the pointer over the WHOLE card, not just the header: opening
 // the list on header-hover and closing it on header-leave meant moving the
 // pointer down onto a session row instantly collapsed the list out from under
 // it, so the rows could never actually be clicked.
 function onPeekEnter() {
-  if (!collapsed.value || autoPeekTimer !== null) return;
+  if (minimized.value || !collapsed.value || autoPeekTimer !== null) return;
   peeking.value = true;
 }
 
@@ -206,6 +223,22 @@ function onPeekLeave() {
   // must not cut the 3s attention window short.
   if (!collapsed.value || autoPeekTimer !== null) return;
   peeking.value = false;
+}
+
+let menuOpenedFromCollapsed = false;
+
+function minimizeWidget() {
+  // Opening a menu from the collapsed card expands it so the native window can
+  // fit the menu. Restore that prior shape before persisting icon-only mode.
+  if (menuOpenedFromCollapsed && !collapsed.value) {
+    collapsed.value = true;
+    widgetBridge.setCollapsed(true);
+  }
+  peeking.value = false;
+  highlightedIds.value = new Set();
+  minimized.value = true;
+  widgetBridge.setMinimized(true);
+  closeMenu();
 }
 
 function activate(sessionId: string) {
@@ -240,10 +273,12 @@ function hideWidget() {
 
 async function openMenu(e: MouseEvent) {
   e.preventDefault();
+  if (minimized.value) return;
 
   // A collapsed native window is only as tall as the header, so an absolute
   // menu is clipped by the OS window regardless of its CSS z-index. Expand and
   // measure both layers and resize the native window before revealing the menu.
+  menuOpenedFromCollapsed = collapsed.value;
   if (collapsed.value) {
     toggleCollapsed();
   }
@@ -259,12 +294,14 @@ function closeMenu() {
   if (!menuOpen.value) return;
   menuOpen.value = false;
   menuVisible.value = false;
+  menuOpenedFromCollapsed = false;
   scheduleCardResize();
 }
 
 onMounted(() => {
   onWidgetBootstrap((boot) => {
     collapsed.value = boot.collapsed;
+    minimized.value = boot.minimized;
   });
   onWidgetState(applyState);
 
@@ -310,12 +347,13 @@ onUnmounted(() => {
 <template>
   <div
     class="widget-shell"
+    :class="{ minimized }"
     @contextmenu="openMenu"
     @mouseenter="onPeekEnter"
     @mouseleave="onPeekLeave"
   >
-    <div ref="cardEl" class="widget-window">
-      <header class="widget-header" @click="toggleCollapsed">
+    <div ref="cardEl" class="widget-window" :class="{ minimized }" style="box-sizing: border-box">
+      <header class="widget-header" @click="onHeaderClick">
         <div class="sprite-wrap">
           <WidgetSprite :mood="state.mood" :muted="muted" :size="36" />
           <span
@@ -324,11 +362,11 @@ onUnmounted(() => {
             data-test="widget-unread-badge"
           >{{ state.unreadCount }}</span>
         </div>
-        <div class="meta">
+        <div v-if="!minimized" class="meta">
           <div class="headline">{{ state.headline }}</div>
           <div v-if="state.subline" class="subline">{{ state.subline }}</div>
         </div>
-        <span v-if="muted" class="muted-flag" v-tooltip="'已静音'">zZ</span>
+        <span v-if="muted && !minimized" class="muted-flag" v-tooltip="'已静音'">zZ</span>
       </header>
 
       <div v-if="showRows" class="rows">
@@ -383,7 +421,7 @@ onUnmounted(() => {
     </div>
 
     <div
-      v-if="menuOpen"
+      v-if="menuOpen && !minimized"
       ref="menuEl"
       class="menu"
       :class="{ measuring: !menuVisible }"
@@ -391,6 +429,9 @@ onUnmounted(() => {
     >
       <button type="button" @click="toggleCollapsed(); closeMenu()">
         {{ collapsed ? "展开" : "折叠" }}
+      </button>
+      <button data-test="widget-minimize" type="button" @click="minimizeWidget">
+        最小化
       </button>
       <template v-if="muted">
         <button type="button" @click="unmute">取消静音</button>
@@ -417,6 +458,10 @@ onUnmounted(() => {
   user-select: none;
 }
 
+.widget-shell.minimized {
+  width: 56px;
+}
+
 .widget-window {
   /* The OS window is transparent; this card is the only thing that paints.
      No box-shadow here: the window is non-opaque, so each platform derives a
@@ -429,6 +474,10 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+.widget-window.minimized {
+  width: 56px;
+}
+
 .widget-header {
   display: flex;
   align-items: center;
@@ -438,6 +487,10 @@ onUnmounted(() => {
   /* Wails frameless drag (same mechanism as TitleBar.vue). Rows opt out below
      so clicking a session never drags the window instead of activating it. */
   --wails-draggable: drag;
+}
+
+.widget-window.minimized .widget-header {
+  padding: 9px;
 }
 
 .sprite-wrap {

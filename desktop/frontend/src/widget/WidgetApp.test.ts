@@ -5,7 +5,7 @@ import { widgetBridge } from "./bridge";
 import type { WidgetState } from "../lib/widgetState";
 
 let stateHandler: ((state: WidgetState) => void) | null = null;
-let bootstrapHandler: ((boot: { collapsed: boolean; x: number; y: number; locale: string }) => void) | null = null;
+let bootstrapHandler: ((boot: { collapsed: boolean; minimized?: boolean; x: number; y: number; locale: string }) => void) | null = null;
 
 vi.mock("./bridge", () => ({
   onWidgetBootstrap: vi.fn((cb) => {
@@ -23,6 +23,7 @@ vi.mock("./bridge", () => ({
     resize: vi.fn(),
     setAiOnly: vi.fn(),
     setCollapsed: vi.fn(),
+    setMinimized: vi.fn(),
   },
 }));
 
@@ -86,7 +87,7 @@ describe("WidgetApp", () => {
     await flushAnimationFrames();
 
     expect(w.find(".rows").exists()).toBe(false);
-    expect(widgetBridge.resize).toHaveBeenLastCalledWith(60);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 60);
   });
 
   it("remeasures the rendered card after manual collapse and expansion", async () => {
@@ -114,14 +115,14 @@ describe("WidgetApp", () => {
 
     expect(w.find(".rows").exists()).toBe(false);
     expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(true);
-    expect(widgetBridge.resize).toHaveBeenLastCalledWith(60);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 60);
 
     await w.get(".widget-header").trigger("click");
     await flushAnimationFrames();
 
     expect(w.find(".rows").exists()).toBe(true);
     expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
-    expect(widgetBridge.resize).toHaveBeenLastCalledWith(140);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 140);
   });
 
   it("expands and resizes a collapsed widget before revealing its context menu", async () => {
@@ -157,13 +158,13 @@ describe("WidgetApp", () => {
 
     expect(w.find(".rows").exists()).toBe(true);
     expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
-    expect(widgetBridge.resize).toHaveBeenLastCalledWith(200);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 200);
     expect(w.get(".menu").classes()).toContain("measuring");
 
     // Expanding queued a card remeasure. It must remain menu-aware instead of
     // shrinking the native window back to the shorter card on the next frame.
     await flushAnimationFrames();
-    expect(widgetBridge.resize).toHaveBeenLastCalledWith(200);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 200);
 
     finishResize();
     await resizeDone;
@@ -177,7 +178,102 @@ describe("WidgetApp", () => {
 
     expect(w.find(".menu").exists()).toBe(false);
     expect(w.find(".rows").exists()).toBe(true);
-    expect(widgetBridge.resize).toHaveBeenLastCalledWith(90);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 90);
+  });
+
+  it("restores a persisted minimized widget as only its icon", async () => {
+    const w = mount(WidgetApp);
+    const card = w.get<HTMLElement>(".widget-window").element;
+    vi.spyOn(card, "getBoundingClientRect").mockReturnValue({
+      width: 56,
+      height: 56,
+      top: 0,
+      right: 56,
+      bottom: 56,
+      left: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    bootstrapHandler?.({ collapsed: true, minimized: true, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+    await flushAnimationFrames();
+
+    expect(w.get(".widget-window").classes()).toContain("minimized");
+    expect(w.find(".sprite-wrap").exists()).toBe(true);
+    expect(w.find(".meta").exists()).toBe(false);
+    expect(w.find(".rows").exists()).toBe(false);
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(56, 56);
+  });
+
+  it("uses border-box sizing so the compact card fits the native width", async () => {
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, minimized: true, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+
+    expect(getComputedStyle(w.get(".widget-window").element).boxSizing).toBe("border-box");
+  });
+
+  it("minimizes from the menu and restores the previous collapsed shape on click", async () => {
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, minimized: false, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+
+    await w.get(".widget-window").trigger("contextmenu");
+    await w.vm.$nextTick();
+    await w.get('[data-test="widget-minimize"]').trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.get(".widget-window").classes()).toContain("minimized");
+    expect(w.find(".meta").exists()).toBe(false);
+
+    await w.get(".widget-header").trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.get(".widget-window").classes()).not.toContain("minimized");
+    expect(w.find(".meta").exists()).toBe(true);
+    expect(w.find(".rows").exists()).toBe(false);
+  });
+
+  it("does not auto-peek while minimized", async () => {
+    vi.useFakeTimers();
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, minimized: true, x: 0, y: 0, locale: "zh-CN" });
+
+    stateHandler?.(stateWithRow("running"));
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+
+    await w.get(".widget-header").trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.find(".rows").exists()).toBe(false);
+    expect(w.find(".row.highlighted").exists()).toBe(false);
+  });
+
+  it("restores an expanded widget to its visible rows", async () => {
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: false, minimized: true, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+
+    await w.get(".widget-header").trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.find(".meta").exists()).toBe(true);
+    expect(w.find(".rows").exists()).toBe(true);
+  });
+
+  it("ignores hover peek while minimized", async () => {
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, minimized: true, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+
+    await w.get(".widget-shell").trigger("mouseenter");
+    await w.get(".widget-header").trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.find(".rows").exists()).toBe(false);
   });
 
   it("renders the shared running state icon for running rows", async () => {

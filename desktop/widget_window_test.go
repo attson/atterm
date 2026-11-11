@@ -74,46 +74,42 @@ func TestWidgetGeometryIsSelfConsistent(t *testing.T) {
 	}
 }
 
-func TestWidgetWindowOptionsAllowContentDrivenHeight(t *testing.T) {
+func TestWidgetWindowOptionsAllowContentDrivenSize(t *testing.T) {
 	opts := newWidgetWindowOptions(fstest.MapFS{}, NewWidgetBridge())
 
 	if opts.DisableResize {
 		t.Fatal("DisableResize locks GTK min/max to the startup size and rejects content-driven resizing")
 	}
-	if opts.MinWidth != widgetWidth || opts.MaxWidth != widgetWidth {
-		t.Fatalf("widget width constraints = %d..%d, want %d..%d", opts.MinWidth, opts.MaxWidth, widgetWidth, widgetWidth)
+	if opts.MinWidth != 56 || opts.MaxWidth != widgetWidth {
+		t.Fatalf("widget width constraints = %d..%d, want %d..%d", opts.MinWidth, opts.MaxWidth, 56, widgetWidth)
 	}
 	if opts.MinHeight != 1 || opts.MaxHeight != widgetMaxHeight {
 		t.Fatalf("widget height constraints = %d..%d, want 1..%d", opts.MinHeight, opts.MaxHeight, widgetMaxHeight)
 	}
 }
 
-// The window height is reported by the frontend (ResizeObserver on the
-// rendered card) rather than hardcoded, because it varies with row count,
-// font and locale — a constant clipped the card's bottom edge. Go's only job
-// is to reject values that would be nonsense.
-func TestWidgetResizeHeightBounds(t *testing.T) {
+// The window dimensions are reported by the frontend (ResizeObserver on the
+// rendered card). Width changes for icon-only mode and height changes with
+// content; Go only clamps the frontend request to sane bounds.
+func TestWidgetResizeBounds(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		in     int
-		accept bool
+		name          string
+		width, height int
+		wantW, wantH  int
 	}{
-		{"zero is ignored", 0, false},
-		{"negative is ignored", -12, false},
-		{"a real card height passes", 60, true},
-		{"the cap itself passes", widgetMaxHeight, true},
-		{"beyond the cap is clamped, not rejected", widgetMaxHeight + 500, true},
+		{"zero width is ignored", 0, 60, 0, 0},
+		{"zero height is ignored", widgetWidth, 0, 0, 0},
+		{"negative height is ignored", widgetWidth, -12, 0, 0},
+		{"icon width passes", widgetMinWidth, widgetMinWidth, widgetMinWidth, widgetMinWidth},
+		{"undersized width is clamped", 20, 60, widgetMinWidth, 60},
+		{"normal card passes", widgetWidth, 60, widgetWidth, 60},
+		{"oversized width is clamped", widgetWidth + 100, 60, widgetWidth, 60},
+		{"oversized height is clamped", widgetWidth, widgetMaxHeight + 500, widgetWidth, widgetMaxHeight},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := clampWidgetHeight(tc.in)
-			if !tc.accept {
-				if got != 0 {
-					t.Fatalf("height %d should be ignored, got %d", tc.in, got)
-				}
-				return
-			}
-			if got <= 0 || got > widgetMaxHeight {
-				t.Fatalf("height %d resolved to %d, outside (0, %d]", tc.in, got, widgetMaxHeight)
+			gotW, gotH := clampWidgetSize(tc.width, tc.height)
+			if gotW != tc.wantW || gotH != tc.wantH {
+				t.Fatalf("size %dx%d resolved to %dx%d, want %dx%d", tc.width, tc.height, gotW, gotH, tc.wantW, tc.wantH)
 			}
 		})
 	}

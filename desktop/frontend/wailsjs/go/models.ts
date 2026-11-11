@@ -1344,6 +1344,7 @@ export namespace main {
 	    enabled: boolean;
 	    aiOnly: boolean;
 	    collapsed: boolean;
+	    minimized: boolean;
 	    windowX: number;
 	    windowY: number;
 	    mutedUntilUnix: number;
@@ -1357,6 +1358,7 @@ export namespace main {
 	        this.enabled = source["enabled"];
 	        this.aiOnly = source["aiOnly"];
 	        this.collapsed = source["collapsed"];
+	        this.minimized = source["minimized"];
 	        this.windowX = source["windowX"];
 	        this.windowY = source["windowY"];
 	        this.mutedUntilUnix = source["mutedUntilUnix"];

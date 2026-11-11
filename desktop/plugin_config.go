@@ -30,6 +30,9 @@ type WidgetConfig struct {
 	AIOnly bool `json:"aiOnly"`
 	// Collapsed hides the session list, leaving only the widget + summary header.
 	Collapsed bool `json:"collapsed"`
+	// Minimized hides the summary header as well, leaving only the status icon.
+	// Collapsed remains untouched so restoring returns to the previous shape.
+	Minimized bool `json:"minimized"`
 	// WindowX / WindowY are the last dragged screen position in logical
 	// pixels. Both -1 means "never positioned" — the widget window then places
 	// itself at the bottom-right of the primary display on first show.

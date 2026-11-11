@@ -12,6 +12,12 @@
 设计文档保留在 [docs/superpowers/specs/](./superpowers/specs/)，被代码
 注释直接引用，不要动。
 
+### 2026-11-11 · remove-session-profiles
+
+移除 Session Profiles 及 mobile/Peer 基于 Profile 的会话创建；旧请求立即返回 `feature_removed`，已发布标识永久保留兼容。
+
+**Spec**: [2026-11-11-remove-session-profiles-design.md](./superpowers/specs/2026-11-11-remove-session-profiles-design.md) · **Plan**: [2026-11-11-remove-session-profiles.md](./superpowers/plans/2026-11-11-remove-session-profiles.md)
+
 ### 2026-08-03 · ssh-sync-slice3
 
 SSH 主机清单 + 凭据整体用 account_key seal 后走 prefssync 跨端同步

@@ -450,17 +450,15 @@ Quick Tunnel WSS 使用同一 codec，WSS 的 service queue 位于 terminal 与 
 每 route 4 个 service、每 service 16 条连接、每端双向累计 512 MiB；owner 每条消息都重验 current
 route/full/driver，降权、driver 丢失、detach 和 route replacement 均关闭 service state。
 
-Peer 远程创建会话复用 `SESSION_CREATE` / `SESSION_CREATED`，并复用 Settings 的 Session Profiles
-界面。renderer 从加密 catalog 中选择同一 `host_id` 下 effective permission 为 `control/full` 的
-可发现 session 作为临时 anchor，依次查询 token-free route capability，优先 Direct、其次 Quick
-Tunnel；连接 ready 后只发送 `{request_id, host_id, profile_id}`，不 claim driver、不发送 terminal
-input，收到一条响应或 30 秒超时即关闭。请求开始后不跨 generation 重试。owner 的
-`peerHostAttempt` 用 anchor session 的 authenticated membership、双方 session scope 和共享 route
-lease 做授权，但只在本地配置中按 `profile_id` 解析 shell/cwd/env/startup command；renderer 无法
-注入这些执行字段。owner 在 worker fork 前与 response 发出前重验权限/lease，每个 attempt 只允许
-一个并发 create，route replacement 或 owner 降权会丢弃旧路迟到响应。当前方案要求目标设备至少
-发布一个可发现 session；支持零会话 host 需要后续独立 control channel，不能把 `host_id` 当成
-session id 或绕过 session-scope 授权。
+Session Profiles 与桌面/mobile/Peer 的 Profile 创建入口已移除。混合版本部署中，Relay
+保留已退休 `SESSION_CREATE` / `SESSION_CREATED`（`0x3b/0x3c`）路由；authenticated Peer
+保留旧 terminal anchor / control-only route 的最小拒绝 responder（record kinds `0x10/0x11`）。
+当前 host 在原有授权边界内对有效旧请求立即返回关联 `request_id` 的 `feature_removed`，
+永不解析 Profile 或 fork。新客户端只发现和 attach 已有远程会话，不发起该旧请求。
+
+旧 `profiles_encrypted` 偏好值仅为旧 batch 兼容由 Relay 接受和存储，当前客户端不读写；
+AAD `0xF1` 与旧 collections `profiles` / `profile_config` / `profile_env` 永久保留为退休标识，
+不进入当前 app-config 投影或执行路径。完整兼容契约见 [protocol.md](./protocol.md#retired-remote-session-create-session_create-0x3b--session_created-0x3c)。
 
 同一 native Peer transport API 接受 `direct`、`lan` 和 `quick_tunnel` route kind，但 renderer 不提供 URL、
 membership token 或任何 Relay/account credential。首次加入成功后，Go 只在内存保留已验签 bundle

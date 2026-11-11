@@ -66,8 +66,8 @@ const (
     TypeFSRequest       Type = 0x38  // client → relay → desktop uplink (remote file explorer)
     TypeFSResponse      Type = 0x39  // desktop uplink → relay → requester client
     TypeFSEvent         Type = 0x3a  // desktop uplink → relay → requester client
-    TypeSessionCreate   Type = 0x3b  // client → relay → desktop uplink
-    TypeSessionCreated  Type = 0x3c  // desktop uplink → relay → requester client
+    TypeSessionCreate   Type = 0x3b  // retired: client → relay → desktop uplink
+    TypeSessionCreated  Type = 0x3c  // retired: desktop uplink → relay → requester client
     TypeServiceOpen     Type = 0x3d  // client → relay → desktop uplink
     TypeServiceOpened   Type = 0x3e  // desktop uplink → relay → requester client
     TypeServiceClose    Type = 0x3f  // client → relay; revoke Preview lease
@@ -474,13 +474,13 @@ Peer route 已由 membership handshake 后的 record layer 端到端加密，不
 
 relay 仍可做 payload 大小限制（信封长度可见），但不再能审计路径。完整设计见 [../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md](../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md)。
 
-### Remote session create (`SESSION_CREATE` 0x3b / `SESSION_CREATED` 0x3c)
+### Retired remote session create (`SESSION_CREATE` 0x3b / `SESSION_CREATED` 0x3c)
 
-远程客户端可以要求目标 desktop 使用目标机本地保存的 Session Profile 创建会话。Relay account
-路径与 authenticated Peer route 复用同一组 payload；请求只引用 Profile，不携带或覆盖
-command、cwd、env、startup command 等执行字段。
+Session Profiles 及桌面/mobile/Peer 的 Profile 远程创建能力已移除；新客户端不发起该请求。
+`0x3b/0x3c` 永久保留为 compatibility tombstone，禁止复用。Relay 保留旧端点间的路由，
+使旧客户端能够收到当前 host 的确定性拒绝；旧 host 之间仍可沿已发布协议交换。
 
-`SESSION_CREATE` payload 是严格 JSON：
+已发布的 `SESSION_CREATE` 严格 JSON payload 保持不变：
 
 ```json
 {
@@ -490,39 +490,30 @@ command、cwd、env、startup command 等执行字段。
 }
 ```
 
-- 三个字段都必须是非空字符串；desktop host 拒绝未知 JSON 字段。Peer route 额外把 encoded
-  payload 限制为 `4 KiB`，`request_id` / `host_id` / `profile_id` 各不超过 256 字节。
-- `host_id` 必须精确等于接收 desktop 的本机 host id。`profile_id` 只作为本地配置 lookup key；
-  找不到时返回 `unknown_profile`，不得退回 default profile。
-- Relay 路径的请求 frame 使用 nil session id，由 relay 按 `host_id` 路由。Peer 没有独立的
-  host control channel，因此请求必须放在目标 host 已发布、当前仍可发现的一条 session route 上，
-  frame header 使用该 **anchor session id**。anchor 只提供 membership/session-scope/route-lease
-  授权与响应路由；新建 session 不继承它的 PTY、driver 或 replay 状态。
-- Peer client 为一次操作建立临时 terminal route，但不 claim driver、不发 `IN`/`RESIZE`；Direct
-  可用时优先 Direct，否则使用当前已验签 Quick Tunnel hint 或本地已验证 Manual LAN route。当前目标 host 至少要有一个可发现
-  session；零会话 host 的创建需要未来独立 host control channel。
-- effective permission 必须是 `control` 或 `full`。owner host 在收请求、worker 真正 fork 前和发
-  response 前分别重验 exact active membership、双方 session scope、owner 当前 policy 与 route
-  lease；每个 authenticated Peer attempt 同时只允许一个创建请求。
+三个字段都必须是非空字符串；当前 host 不解析 `profile_id` 对应的本地配置。
+Relay 请求 frame 使用 nil session id，按 `host_id` 路由。authenticated Peer 路径保留原有
+membership、session scope、owner permission 和 route lease 校验；terminal anchor route 与
+reserved control-only route 都只保留最小拒绝 responder。Peer payload 上限为 `4 KiB`，
+`request_id` / `profile_id` 各不超过 256 字节，`host_id` 必须精确匹配本机；未知字段或无效
+payload 不得触发执行。Relay 路径在可关联请求时沿用 `invalid_request`；无效 Peer 请求拒绝当前 route。
 
-`SESSION_CREATED` payload：
+已发布的 `SESSION_CREATED` 字段为 `request_id`、`ok`、可选 `session_id` 和可选 `error`。
+当前 host 对有效且已授权的旧请求立即返回一次：
 
 ```json
 {
   "request_id": "sc-uuid",
-  "ok": true,
-  "session_id": "new-session-uuid",
-  "error": ""
+  "ok": false,
+  "error": "feature_removed"
 }
 ```
 
-成功时 frame header 与 payload 的 `session_id` 必须同时等于新 session UUID；失败时 frame header
-使用 nil session id，`error` 为稳定错误码或 owner host 的启动错误。稳定码包括
+响应保留原 `request_id`，frame header 使用 nil session id，payload 不含 `session_id`。
+当前 host 永不 fork、查找 Profile 或回退创建 default shell，也不等待旧客户端的 30 秒超时。
+旧成功响应的 header 与 payload `session_id` 同为新 session UUID；保留的旧错误码包括
 `unknown_profile`、`permission_denied`、`session_create_busy`、`request_in_flight`、
-`duplicate_request_id`、`unknown_host_id`、`invalid_request`、`upstream_unavailable` 和 `timeout`。
-客户端在 route handover/close 时取消 pending request，并且发出请求后**不自动重试**：超时可能发生
-在 PTY 已成功 fork 但 response 丢失之后，自动重发会留下重复 shell。新 session 会通过后续 catalog
-刷新出现，成功响应则允许客户端立即按返回 id 打开它。
+`duplicate_request_id`、`unknown_host_id`、`invalid_request`、`upstream_unavailable` 和 `timeout`，
+仅用于解释旧端点或 Relay 路由的响应。
 
 ### Remote Web Preview (`SERVICE_OPEN` 0x3d / `SERVICE_OPENED` 0x3e / `SERVICE_CLOSE` 0x3f)
 
@@ -925,9 +916,15 @@ Relay session 信封的 AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字�
 | `0x3d` `SERVICE_OPEN` | `ServiceOpenPayload.sealed`（base64） | JSON `SealedServiceOpenFields { port, scheme }` |
 | `0x42` `INPUT_HISTORY_RESPONSE` | `InputHistoryResponsePayload.sealed`（base64） | JSON `SealedInputHistoryResponse { request_id, items, truncated }` |
 | `0xF0` （合成，不上 wire） | `ssh_hosts_encrypted` 偏好值 | JSON `sshSyncPayload { hosts, keys }` |
-| `0xF1` （合成，不上 wire） | `profiles_encrypted` 偏好值 | JSON `profilesSyncPayload { profiles, default_profile_id }` |
+| `0xF1` （合成，不上 wire；retired/reserved，禁止复用） | 已退休的 `profiles_encrypted` 偏好值 | 旧 JSON `profilesSyncPayload { profiles, default_profile_id }`；当前客户端不再读写 |
 | `0xF2` （合成，不上 wire） | Peer config payload | `space_id(16B) || 0xF2 || key_class(1B) || epoch(be64) || len16+collection || len16+record_id || len16+op_id` |
 | `0xF3` （合成，不上 wire） | Peer epoch key envelope | `space_id(16B) || 0xF3 || key_class(1B) || epoch(be64) || recipient_peer_id(32B) || recipient_wrap_public_key(65B) || ephemeral_public_key(65B)` |
+
+`profiles_encrypted` 仅为旧批量偏好请求兼容而保留：Relay 可接受并存储其历史 JSON-string
+形态的不透明值，避免拒绝同一 batch 内无关的当前偏好；Relay 不解释内容，当前客户端不拉取或
+上传该 key。旧 config-sync collections `profiles`、`profile_config`、`profile_env` 同样是
+永久退休的兼容标识；通用加密 replica 可保留旧记录，但当前客户端不 bootstrap、emit、project
+或 materialize 它们，且不因旧记录拒绝同批其它有效记录。
 
 **红线**：加新 sealed 帧时**必须**给一个**唯一**的 `frame_type` 字节，并在这张表里增行；不允许复用（[AGENTS.md](../../AGENTS.md) §22）。
 
@@ -1199,8 +1196,8 @@ terminal subscriber lifecycle。
 | `SERVICE` | `0x0d` | 独立 Remote Web Preview multiplex message，不进入 terminal frame |
 | `CATALOG_REQUEST` | `0x0e` | reserved control route 上的 JSON `{v}` 目录请求 |
 | `CATALOG_RESPONSE` | `0x0f` | filtered Peer session catalog，不创建 terminal subscriber |
-| `SESSION_CREATE` | `0x10` | reserved control route 上的 `SessionCreatePayload`，创建后仍不订阅 PTY |
-| `SESSION_CREATED` | `0x11` | 与 request id 绑定的 `SessionCreatedPayload` |
+| `SESSION_CREATE`（retired） | `0x10` | 已退休 create exchange 的 `SessionCreatePayload`；仅兼容拒绝，禁止复用 |
+| `SESSION_CREATED`（retired） | `0x11` | 已退休 create exchange 的关联响应；当前 host 返回 `feature_removed`，禁止复用 |
 
 单个 record plaintext 上限仍是 16 KiB。超过上限的配置消息用独立格式分片：
 
@@ -1310,7 +1307,7 @@ host/client attempt。offer/answer 只经上述 encrypted signal record 交换�
 收到 `wss_ready` 后，同一 WebSocket 切换到 WSS data 模式，复用首次 signaling membership
 handshake 已派生的 traffic key、nonce counter 和 exact remote membership，不再执行第二次
 handshake。此后只接受 `FRAME`..`CONFIG_FRAGMENT`（`0x01..0x0a`）、独立 `SERVICE`（`0x0d`）
-以及 reserved control route 上的 `CATALOG_REQUEST/RESPONSE`、`SESSION_CREATE/CREATED`
+以及 reserved control route 上的 `CATALOG_REQUEST/RESPONSE`、已退休兼容的 `SESSION_CREATE/CREATED`
 （`0x0e..0x11`），
 任何 signaling record 或未知类型都 fail closed。terminal/config 的 fragmentation 与 reassembly 规则和 DataChannel
 完全相同；配置授权仍绑定 handshake 的 exact membership。WSS writer 使用有界队列，在每个
@@ -1540,7 +1537,7 @@ DataChannel 上完成现有
 namespace，不对应 registry 中的 PTY，也不受 membership 的 `allowed_session_ids` 限制；host 仍须
 验证双方是当前 active member，并把握手权限固定为 `view`。control-only attempt 只接受
 `CONFIG_INVENTORY/BATCH/ACK`、`CATALOG_REQUEST/RESPONSE` 和
-`SESSION_CREATE/CREATED` 记录，收到 terminal record 立即关闭，且整个生命周期不调用
+已退休的 `SESSION_CREATE/CREATED` 兼容拒绝记录，收到 terminal record 立即关闭，且整个生命周期不调用
 `Session.Subscribe`。旧客户端会把该 id 当不存在的 terminal session 并安全拒绝。
 
 `catalog_request` 用独立 request UUID 和从 0 开始的 offset 请求目标 host 当前可见的 session。
@@ -1561,8 +1558,8 @@ channel；v1 `catalog_response` 不携带 `ConnectionBundle`。只有用户选�
 `catalog_response_routes` 仅在 offset 0 的第一页增加 `connection_bundle` 与可选 `host_info`，
 后续页必须省略；普通 `catalog_response` 绝不携带这两个扩展字段，以兼容使用严格 JSON decoder
 的旧客户端。`host_info` 是独立于 PTY 数量的 `{id,name,permission}` 描述；只有双方 membership
-均为无 session scope 且实时有效权限至少为 `control` 时才可发布 control/full，否则降为 view，
-客户端不会把它列为可创建会话的目标。host
+均为无 session scope 且实时有效权限至少为 `control` 时才可发布 control/full，否则降为 view。
+这些已发布字段不再用于发起已退休的远程创建请求。host
 每次第一页请求都重新生成由当前 active local membership 签名的无 ticket member reconnect bundle；
 它可包含当前 Quick Tunnel、Rendezvous 与 Manual LAN route 的任意可用组合。该字段与 session metadata
 一起位于 pairwise XChaCha20-Poly1305 信封内，Rendezvous 只能看到不超过 64 KiB 的 ciphertext。
@@ -1575,14 +1572,12 @@ endpoint 都不暴露给 renderer。Quick Tunnel URL/token 不落盘，Manual LA
 channel，也不因 bundle 到达而主动切换 terminal route；只有之后发生上述可恢复 Direct 故障时，
 client 才重新查询 capability 并执行对应 WSS route 的自动 handover。用户仍可在失败界面显式选择重试。
 
-零会话主机的 profile 启动复用上述 control-only route。客户端只发送
-`SessionCreatePayload {request_id,host_id,profile_id}`，主机从自己的配置解析 profile；请求不携带
-shell、cwd、environment 或凭据。主机在 fork 前重新校验 exact active membership、双方无
-`allowed_session_ids` scope、owner policy、目标 host id 与 control/full 权限，并把每条 route 的
-并发创建限制为 1。回复 `SESSION_CREATED` 必须匹配 request id。Direct 优先；只有设备本地已明确
-授权 Quick Tunnel fallback 且 Direct 失败发生在请求开始发送之前，客户端才可改走 encrypted WSS。
-请求一旦开始发送即不得自动重试，避免网络不确定时重复 fork。成功或失败后临时 control route
-立即关闭，全程不创建 PTY subscriber、driver 或 terminal byte stream。
+旧客户端可在零会话主机的上述 control-only route 上发送已退休的
+`SessionCreatePayload {request_id,host_id,profile_id}`。当前 host 仅在重验 exact active
+membership、双方无 `allowed_session_ids` scope、owner policy、目标 host id 与 control/full
+权限后，返回关联的 `SESSION_CREATED {request_id,ok:false,error:"feature_removed"}`；不解析
+Profile、不 fork、不创建 PTY subscriber、driver 或 terminal byte stream。Peer record kinds
+`0x10/0x11` 永久保留，当前客户端没有发起入口。
 
 发送 `open` 后，Rendezvous ACK 为 `queued` 映射 `peer offline`；连接、写入、ACK 超时或 host
 容量问题映射 `service unavailable`；Pion ICE/transport 建链失败映射 `ICE failed`；membership、

@@ -93,10 +93,6 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   ListPeerSessions: vi.fn().mockResolvedValue(JSON.stringify([{
     id: 'peer-session-1', host_id: 'peer-host', remote_permission: 'full',
   }])),
-  ListPeerHosts: vi.fn().mockResolvedValue([{
-    id: 'peer-host', name: 'Peer Desktop', permission: 'control',
-  }]),
-  CreatePeerSessionWithProfile: vi.fn().mockResolvedValue('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'),
   GetPeerSessionRouteStatus: vi.fn().mockResolvedValue({ direct: true, quick_tunnel: true }),
   StartPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
   SendPeerNativeDirectFrame: vi.fn().mockResolvedValue(undefined),
@@ -127,8 +123,6 @@ import {
   JoinPeerSpace,
   ImportPeerConnectionBundle,
   ListPeerSessions,
-  ListPeerHosts,
-  CreatePeerSessionWithProfile,
   GetPeerSessionRouteStatus,
   ListPeerMembers,
   PreviewPeerConnectionBundle,
@@ -486,22 +480,9 @@ describe('createWailsPlatform', () => {
     expect(StopPeerNativeDirect).toHaveBeenCalledOnce()
   })
 
-  it('lists zero-session Peer hosts and delegates host-control creation to Go', async () => {
-    const targetHostID = 'peer-host'
-    const p = createWailsPlatform()
-
-    await expect(p.sessions.listRemoteHosts!()).resolves.toEqual([
-      { id: targetHostID, name: 'Peer Desktop', permission: 'control' },
-    ])
-    expect(ListPeerHosts).toHaveBeenCalledOnce()
-
-    await expect(p.sessions.createSessionWithProfile!(targetHostID, 'profile-a'))
-      .resolves.toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
-    expect(CreatePeerSessionWithProfile).toHaveBeenLastCalledWith(targetHostID, 'profile-a', false)
-
-    localStorage.setItem('atterm.peer.quick-tunnel-fallback-consent', '1')
-    await p.sessions.createSessionWithProfile!(targetHostID, 'profile-b')
-    expect(CreatePeerSessionWithProfile).toHaveBeenLastCalledWith(targetHostID, 'profile-b', true)
+  it('does not expose remote profile creation on Wails', () => {
+    expect(createWailsPlatform().sessions).not.toHaveProperty('createSessionWithProfile')
+    expect(createWailsPlatform().sessions).not.toHaveProperty('listRemoteHosts')
   })
 
   it('peer bridge lists and revokes Peer members independently of Relay sessions', async () => {

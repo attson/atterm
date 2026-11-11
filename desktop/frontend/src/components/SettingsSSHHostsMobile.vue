@@ -10,9 +10,8 @@
 // not add back.
 //
 // Platform gate: `enabled` short-circuits before any localStorage/crypto
-// call and the template's root v-if renders nothing when it's false — same
-// shape as SettingsProfilesMobile.vue's gate (see that file's comment for
-// why: the web build mounts this identical shell too).
+// call and the template's root v-if renders nothing when it's false because
+// the web build mounts this identical shell too.
 import { computed, ref, watch } from "vue";
 import { useI18n } from "../i18n/useI18n";
 import { usePlatform } from "../platform";

@@ -43,8 +43,7 @@ export interface Tab {
 }
 
 // Terminal appearance settings, resolved on the desktop side and drilled
-// down as one object so PaneGrid doesn't grow a prop per setting and
-// per-profile overrides (item 22) only have to swap the source.
+// down as one object so PaneGrid doesn't grow a prop per setting.
 //
 // Task 3's SettingsTerminalAppearance.vue exports a near-identical
 // TerminalAppearanceState, but types cursorStyle as `string` (its ref is

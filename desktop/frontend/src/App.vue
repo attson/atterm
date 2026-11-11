@@ -66,11 +66,10 @@ import {
   setTaskSidebarCollapsed,
   loadRecoverySnapshot,
   getRecoveryDialogEnabled,
-  getProfiles,
   type MarkSessionsSeenOpts,
   type RecoverySnapshot,
 } from "./lib/api";
-import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState, SessionProfile } from "./lib/api";
+import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState } from "./lib/api";
 import { saveRelayConfig, clearRelayConfig } from "@webshared/api/relay-config";
 import type { RemoteSession } from "./platform/types";
 import { type SessionFSConnection, type SessionInfo } from "./lib/connection";
@@ -144,26 +143,6 @@ const directSignalEndpoint = ref<Endpoint | null>(null);
 const preferDirectConnection = ref(false);
 const localHostID = ref<string>("");
 const localHost = ref<string>("");
-
-// Session profiles for the TabBar new-tab/split picker (Task 4). Loaded at
-// boot and refreshed on prefs:changed exactly like refreshTerminalAppearance,
-// et al. — read-only here, never written back (prefs-sync-l1 design doc
-// §7.2; this item's own design doc has no §7.2). Which profile is the
-// default is not needed here: the picker's own "Default profile" option
-// (selectedProfileId === "") already lets the Go side resolve it via
-// resolveSessionProfile, so App.vue doesn't need to know it.
-//
-// prefs:changed only fires after a successful relay Push (markPrefDirtyAndPush
-// in prefs.ts), so a local edit made while signed in but unreachable/paused
-// would never reach this ref until restart. SettingsProfiles.vue also emits
-// "profiles-changed" straight after a successful local persist()/setDefault()
-// — forwarded through SettingsDialog.vue exactly like appearance-changed and
-// bindings-changed — so onProfilesChanged below covers that path.
-const profiles = ref<SessionProfile[]>([]);
-// The picker's current selection. Empty string means "use the default
-// profile, if any" — spawnLocalShell only sends profile_id when non-empty,
-// so Go's resolveSessionProfile falls back to the synced default itself.
-const selectedProfileId = ref<string>("");
 
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
@@ -1149,36 +1128,6 @@ function onCommandNotifyThresholdChanged(seconds: number) {
   commandNotifyThresholdSec.value = seconds;
 }
 
-// Read-only — SettingsProfiles.vue owns all writes. Mirrors
-// refreshTerminalAppearance's role: keep the boot value and every
-// prefs:changed / profiles-changed refresh in sync with what Go has.
-//
-// Also reconciles selectedProfileId: it is never written back by anything
-// else, so a profile deleted locally or (after a pull) on another device
-// would otherwise leave a dead id selected. The <select> would render blank
-// (no matching option) while startNewTab/onSplit kept sending the dead
-// profile_id — which resolveSessionProfile (relay_host.go) treats as "no
-// profile" WITHOUT falling through to the default, silently giving the user
-// a session that matches neither their pick nor their default. Clearing it
-// here falls the picker back to "" (= default profile, if any), which is
-// the more honest state for "the thing you picked no longer exists".
-async function refreshProfiles() {
-  // `?? []` even though GetProfiles now guarantees an array: this is the only
-  // caller that dereferences the result on the next line, and it was shielded
-  // only by the `&&` short-circuit below — a user with a profile selected
-  // would have hit the throw.
-  profiles.value = (await getProfiles()) ?? [];
-  if (selectedProfileId.value && !profiles.value.some((p) => p.id === selectedProfileId.value)) {
-    selectedProfileId.value = "";
-  }
-}
-
-// SettingsProfiles.vue's second refresh path (see the comment on `profiles`
-// above) — same handler shape as onAppearanceChanged/onBindingsChanged.
-function onProfilesChanged() {
-  void refreshProfiles();
-}
-
 function parseHash(): string | null {
   const m = location.hash.match(/^#\/t\/([\w-]+)$/);
   return m ? m[1] : null;
@@ -1214,7 +1163,6 @@ function activeLocalPaneCwd(tab: Tab): string {
 async function spawnLocalShell(
   cwd: string,
   dims: { cols: number; rows: number },
-  profileId?: string,
 ): Promise<string> {
   const shells = await listShells();
   if (shells.length === 0) throw new Error(i18nT("app.noShellsFound"));
@@ -1223,10 +1171,6 @@ async function spawnLocalShell(
     cwd,
     cols: dims.cols,
     rows: dims.rows,
-    // Empty/undefined means "use the default profile, if any" — resolved
-    // entirely on the Go side (relay_host.go resolveSessionProfile). Only
-    // non-empty when the TabBar picker has an explicit selection.
-    ...(profileId ? { profile_id: profileId } : {}),
   });
   // Reflect immediately so PaneGrid finds the endpoint without poll lag.
   // pendingLocalIds keeps this seed alive across an early/stale LIST_RESP
@@ -1254,7 +1198,7 @@ async function startNewTab() {
   errorMsg.value = "";
   try {
     const spawnCwd = currentTab.value ? activeLocalPaneCwd(currentTab.value) : "";
-    const sid = await spawnLocalShell(spawnCwd, predictCellDims("single"), selectedProfileId.value);
+    const sid = await spawnLocalShell(spawnCwd, predictCellDims("single"));
     const id = newId();
     tabs.value.push({
       id,
@@ -1312,17 +1256,6 @@ function onSshConnected(sessionId: string) {
   openSshTab(sessionId);
 }
 
-// Fired by SettingsProfilesMobile (via SettingsDialog's passthrough) after
-// platform.sessions.createSessionWithProfile resolves. Unlike onSshConnected
-// above, this session was forked on a *different* desktop and is announced
-// like any other remote session — openRemoteAsTab is the same path the
-// sidebar and notification taps use to reach a session this device did not
-// create, so there is no separate "just-created" tab-open code path here.
-function onMobileSessionCreated(sessionId: string) {
-  onSettingsClose();
-  openRemoteAsTab(sessionId);
-}
-
 async function onSplit(dir: SplitDir) {
   const t = currentTab.value;
   if (!t) return;
@@ -1347,7 +1280,7 @@ async function onSplit(dir: SplitDir) {
   // there's a SIGWINCH between fork and first prompt that some zsh themes
   // turn into a stray PROMPT_EOL_MARK ('%').
   try {
-    const sid = await spawnLocalShell(spawnCwd, predictCellDims(result.layout), selectedProfileId.value);
+    const sid = await spawnLocalShell(spawnCwd, predictCellDims(result.layout));
     t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
   } catch (e: any) {
     showToast(i18nT("app.splitFailed", { message: e?.message ?? String(e) }));
@@ -1814,7 +1747,6 @@ onMounted(async () => {
     void refreshTerminalTheme();
     void refreshTerminalAppearance();
     void refreshShortcutBindings();
-    void refreshProfiles();
   });
   relayAuthRestoredListenerOff = $platform.events.on('relay:auth-restored', () => {
     void refreshRelayIdentity("", true);
@@ -1891,8 +1823,6 @@ onMounted(async () => {
       await refreshTerminalAppearance();
       bootStage = "refreshShortcutBindings";
       await refreshShortcutBindings();
-      bootStage = "refreshProfiles";
-      await refreshProfiles();
       bootStage = "getEndpoint";
       localEndpoint.value = await getEndpoint();
       bootStage = "getHostInfo";
@@ -2065,8 +1995,6 @@ defineExpose({ me });
       :update-badge="updateBadge"
       :is-admin="isAdmin"
       :admin-open="adminViewOpen"
-      :profiles="profiles"
-      :selected-profile-id="selectedProfileId"
       @activate="gotoTab"
       @detach-session="onDetachSessionToTab"
       @close="requestCloseTab"
@@ -2075,7 +2003,6 @@ defineExpose({ me });
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
       @toggle-admin="adminViewOpen = !adminViewOpen"
-      @select-profile="selectedProfileId = $event"
     />
 
     <StartupFatalPanel v-if="startupFatal" :fatal="startupFatal" @quit="onConfirmQuit" />
@@ -2171,9 +2098,7 @@ defineExpose({ me });
       @appearance-changed="onAppearanceChanged"
       @direct-connection-changed="onDirectConnectionChanged"
       @bindings-changed="onBindingsChanged"
-      @profiles-changed="onProfilesChanged"
       @relay-config-changed="onRelayConfigChanged"
-      @session-created="onMobileSessionCreated"
       @close="onSettingsClose"
     />
     <NewSshDialog

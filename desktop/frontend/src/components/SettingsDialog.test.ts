@@ -160,8 +160,6 @@ import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { createPinia } from "pinia";
 import SettingsDialog from "./SettingsDialog.vue";
 import SettingsGeneral from "./SettingsGeneral.vue";
-import SettingsProfiles from "./SettingsProfiles.vue";
-import SettingsProfilesMobile from "./SettingsProfilesMobile.vue";
 
 const baseProps: { localSessionCount: number; remoteSessionCount: number; terminalThemeId: string; initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" } = { localSessionCount: 0, remoteSessionCount: 0, terminalThemeId: "default" };
 let platform: ReturnType<typeof createFakePlatform>;
@@ -192,7 +190,17 @@ async function switchToTab(w: ReturnType<typeof mount>, label: string) {
 }
 
 describe("SettingsDialog caps gating", () => {
-  it("renders all 12 tabs with full desktop caps (Logging folded into Diagnostics)", () => {
+  it.each([false, true])("does not expose session profile settings with capacitor=%s", (capacitor) => {
+    platform.caps = { ...platform.caps, capacitor };
+    __setPlatformForTests(platform);
+    const wrapper = mountDialog();
+    expect(navLabels(wrapper)).not.toContain("Session profiles");
+    expect(navLabels(wrapper)).not.toContain("Synced profiles");
+    expect(wrapper.find('[data-testid="mobile-profiles-panel"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("renders all 11 tabs with full desktop caps (Logging folded into Diagnostics)", () => {
     const w = mountDialog();
     expect(navLabels(w)).toEqual([
       en.settings.tabs.general,
@@ -202,7 +210,6 @@ describe("SettingsDialog caps gating", () => {
       en.settings.tabs.plugins,
       en.settings.tabs.shortcuts,
       en.settings.templates.tab,
-      en.settings.profiles.tab,
       en.settings.tabs.updates,
       en.settings.diagnostics.tab,
       en.settings.feishu.title,
@@ -262,7 +269,7 @@ describe("SettingsDialog caps gating", () => {
     expect(w.find('[data-testid="configio-panel"]').exists()).toBe(false);
   });
 
-  it("with capacitor-style caps shows General + Task display + Relay + Devices + Templates + Profiles + Diagnostics + Feishu + Received files", () => {
+  it("with capacitor-style caps shows General + Task display + Relay + Devices + Templates + Diagnostics + Feishu + Received files", () => {
     platform.caps = { ...platform.caps, autoUpdate: false, pluginHost: false, fileDialog: false };
     __setPlatformForTests(platform);
     expect(navLabels(mountDialog())).toEqual([
@@ -271,7 +278,6 @@ describe("SettingsDialog caps gating", () => {
       en.settings.tabs.relay,
       en.settings.tabs.devices,
       en.settings.templates.tab,
-      en.settings.profiles.tab,
       en.settings.diagnostics.tab,
       en.settings.feishu.title,
       en.settings.tabs.receivedFiles,
@@ -337,7 +343,7 @@ describe("SettingsDialog caps gating", () => {
     expect(w.find('[data-testid="settings-peer"]').exists()).toBe(true);
   });
 
-  it("hides Relay / Diagnostics / Received files / Feishu / Profiles on non-wails platforms", () => {
+  it("hides Relay / Diagnostics / Received files / Feishu on non-wails platforms", () => {
     platform.caps = { ...platform.caps, wailsBindings: false };
     __setPlatformForTests(platform);
     const labels = navLabels(mountDialog());
@@ -345,7 +351,6 @@ describe("SettingsDialog caps gating", () => {
     expect(labels).not.toContain(en.settings.diagnostics.tab);
     expect(labels).not.toContain(en.settings.tabs.receivedFiles);
     expect(labels).not.toContain(en.settings.feishu.title);
-    expect(labels).not.toContain(en.settings.profiles.tab);
   });
 
   it("falls back to general when initialTab is 'relay' but wailsBindings=false", () => {
@@ -355,34 +360,19 @@ describe("SettingsDialog caps gating", () => {
     expect(w.find(".settings-nav-item.active").text()).toBe(en.settings.tabs.general);
   });
 
-  // The sync status indicator is desktop-only (design doc §6 "No mobile
-  // indicator"): GetSyncStatus/SyncNow are Wails-only, and mobile syncs
-  // prefs over HTTP via a wholly separate path (prefsSync.capacitor.ts).
-  // The two mobile read-only views (SettingsProfilesMobile.vue,
-  // SettingsSSHHostsMobile.vue) each have their own strong test suites, but
-  // nothing before this pinned that they're actually *mounted and reachable*
-  // from SettingsDialog.vue -- deleting their nav buttons and/or their pane
-  // mounts would leave every one of their own tests green (they mount the
-  // component directly) while the feature became unreachable from the phone.
-  // Same shape as the config-export/import pin above. Mounts the real
-  // dialog under capacitor caps, switches to each new tab exactly as a user
-  // would, and looks for each panel by its own data-testid.
-  it("mounts the mobile profiles and mobile SSH hosts panels under capacitor caps", async () => {
+  it("mounts the mobile SSH hosts panel under capacitor caps", async () => {
     platform.caps = { ...platform.caps, capacitor: true };
     __setPlatformForTests(platform);
     const w = mountDialog();
-    await switchToTab(w, en.settings.tabs.mobileProfiles);
-    expect(w.find('[data-testid="mobile-profiles-panel"]').exists()).toBe(true);
     await switchToTab(w, en.settings.tabs.mobileHosts);
     expect(w.find('[data-testid="mobile-hosts-panel"]').exists()).toBe(true);
     w.unmount();
   });
 
-  it("never reaches the mobile profiles/SSH hosts panels when capacitor=false (nav items themselves are hidden)", () => {
+  it("never reaches the mobile SSH hosts panel when capacitor=false (nav items themselves are hidden)", () => {
     platform.caps = { ...platform.caps, capacitor: false };
     __setPlatformForTests(platform);
     const labels = navLabels(mountDialog());
-    expect(labels).not.toContain(en.settings.tabs.mobileProfiles);
     expect(labels).not.toContain(en.settings.tabs.mobileHosts);
   });
 
@@ -441,36 +431,5 @@ describe("SettingsDialog appearance forwarding", () => {
     w.findComponent(SettingsGeneral).vm.$emit("appearance-changed", payload);
     expect(w.emitted("appearance-changed")).toBeTruthy();
     expect(w.emitted("appearance-changed")!.at(-1)![0]).toEqual(payload);
-  });
-});
-
-// Same shape as the appearance-changed forwarding pin above (fix round 1,
-// task 6): SettingsProfilesMobile's session-created emit was wired with an
-// inline arrow (@session-created="(sessionId) => emit('session-created',
-// sessionId)") that nothing asserted on — deleting it left the phone with
-// no signal that a session it just created exists, with the full suite
-// green. Mounts under capacitor caps (the only shape this panel renders
-// under), switches to its tab, and proves both ends: the dialog is
-// listening on the child, and it re-emits exactly what it received.
-describe("SettingsDialog session-created forwarding", () => {
-  it("forwards session-created from desktop Peer profiles", async () => {
-    const w = mountDialog();
-    await switchToTab(w, en.settings.profiles.tab);
-
-    w.findComponent(SettingsProfiles).vm.$emit("session-created", "peer-session-id");
-
-    expect(w.emitted("session-created")!.at(-1)![0]).toEqual("peer-session-id");
-  });
-
-  it("forwards session-created from SettingsProfilesMobile", async () => {
-    platform.caps = { ...platform.caps, capacitor: true };
-    __setPlatformForTests(platform);
-    const w = mountDialog();
-    await switchToTab(w, en.settings.tabs.mobileProfiles);
-
-    w.findComponent(SettingsProfilesMobile).vm.$emit("session-created", "new-session-id");
-
-    expect(w.emitted("session-created")).toBeTruthy();
-    expect(w.emitted("session-created")!.at(-1)![0]).toEqual("new-session-id");
   });
 });

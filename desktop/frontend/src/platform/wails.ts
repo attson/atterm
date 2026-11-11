@@ -57,8 +57,6 @@ import {
   StopPeerQuickTunnel,
   CreatePeerConnectionBundle,
   ListPeerSessions,
-  ListPeerHosts,
-  CreatePeerSessionWithProfile,
   GetPeerSessionRouteStatus,
   StartPeerNativeDirect,
   SendPeerNativeDirectFrame,
@@ -80,7 +78,7 @@ import {
   Mkdir,
   Trash,
 } from '../../wailsjs/go/main/PluginFS'
-import type { Platform, EnvironmentInfo, PeerTrafficRow, RemoteHost, RemoteSession } from './types'
+import type { Platform, EnvironmentInfo, PeerTrafficRow, RemoteSession } from './types'
 import { main as WailsModels } from '../../wailsjs/go/models'
 import { setAccountKeyProvider } from '../lib/account-key'
 import { NativeDirectClientTransport } from '../lib/nativeDirectClient'
@@ -117,19 +115,6 @@ async function listPeerRemoteSessions(): Promise<RemoteSession[]> {
     session_id: session.session_id || (session as unknown as { id?: string }).id || '',
     peer_direct: true,
   }))
-}
-
-async function listPeerRemoteHosts(): Promise<RemoteHost[]> {
-  return (await ListPeerHosts()).map((host) => ({
-    id: host.id,
-    name: host.name || host.id,
-    permission: host.permission as RemoteHost['permission'],
-  }))
-}
-
-async function createPeerSessionWithProfile(hostID: string, profileID: string): Promise<string> {
-  const allowQuickTunnel = localStorage.getItem('atterm.peer.quick-tunnel-fallback-consent') === '1'
-  return CreatePeerSessionWithProfile(hostID, profileID, allowQuickTunnel)
 }
 
 function b64StdToBytes(s: string): Uint8Array {
@@ -204,14 +189,12 @@ export function createWailsPlatform(): Platform {
       listShells: api.listShells,
       listRemoteSessions: listPeerRemoteSessions,
       getInputHistory: api.getSessionInputHistory,
-      listRemoteHosts: listPeerRemoteHosts,
       markSessionsSeen: api.markSessionsSeen,
       getPins: () => api.getPinnedSessionIds(),
       setPins: (ids) => api.setPinnedSessionIds(ids),
       listRelaySessions: api.listRelaySessions,
       revokeRelaySession: api.revokeRelaySession,
       signOutOtherRelaySessions: api.signOutOtherRelaySessions,
-      createSessionWithProfile: createPeerSessionWithProfile,
     },
     servicePreview: {
       supportsMappings: true,

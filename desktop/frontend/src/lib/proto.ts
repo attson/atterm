@@ -26,12 +26,6 @@ export const TYPE = {
   FS_REQUEST: 0x38,
   FS_RESPONSE: 0x39,
   FS_EVENT: 0x3a,
-  // SESSION_CREATE/SESSION_CREATED mirror internal/proto/frame.go's
-  // TypeSessionCreate (0x3b) / TypeSessionCreated (0x3c) — a remote client
-  // asking a specific desktop (by host_id) to fork a session from one of its
-  // own profiles. Relay and authenticated Peer routes share this payload.
-  SESSION_CREATE: 0x3b,
-  SESSION_CREATED: 0x3c,
   SERVICE_OPEN: 0x3d,
   SERVICE_OPENED: 0x3e,
   SERVICE_CLOSE: 0x3f,

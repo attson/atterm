@@ -26,6 +26,17 @@ function out(seq: number, text: string): Uint8Array {
   return encodeFrame(TYPE.OUT, uuidParse(sessionID), payload)
 }
 
+function meta(driverClientID: string, driverClientName = ''): Uint8Array {
+  return encodeFrame(
+    TYPE.META,
+    uuidParse(sessionID),
+    encodeText(JSON.stringify({
+      driver_client_id: driverClientID,
+      driver_client_name: driverClientName,
+    })),
+  )
+}
+
 class FakeTransport implements DirectTransport {
   sent: Uint8Array[] = []
   closed = false
@@ -44,6 +55,86 @@ class FakeTransport implements DirectTransport {
 }
 
 describe('PeerSessionConnection', () => {
+  it('holds resumed resize and input until a manual driver claim is confirmed', () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    const initial = transports[0]
+    const clientID = initial.options.clientInstanceId
+    initial.options.callbacks.onAuthenticated?.()
+    initial.options.callbacks.onFrame(meta(clientID, 'this-device'))
+    initial.options.callbacks.onReady(0)
+
+    connection.suspend()
+    connection.sendResize(132, 41)
+    connection.sendInput('typed-during-reveal')
+    connection.attach()
+    const resumed = transports[1]
+    resumed.options.callbacks.onAuthenticated?.()
+    resumed.options.callbacks.onFrame(meta('other-client', 'phone'))
+    resumed.options.callbacks.onReady(0)
+
+    expect(resumed.sent).toHaveLength(0)
+
+    expect(connection.claimDriver()).toBe(true)
+    resumed.options.callbacks.onFrame(meta(clientID, 'this-device'))
+
+    const sent = resumed.sent.map(decodeFrame)
+    expect(sent.map((frame) => frame.type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+      TYPE.RESIZE,
+      TYPE.IN,
+    ])
+    expect(decodeText(sent[2].payload)).toBe('typed-during-reveal')
+  })
+
+  it('reclaims a previously owned Peer driver only when replay confirms it is vacant', () => {
+    const transports: FakeTransport[] = []
+    const connection = new PeerSessionConnection(sessionID, {}, {
+      transportFactory: (options) => {
+        const transport = new FakeTransport(options)
+        transports.push(transport)
+        return transport
+      },
+    })
+
+    connection.attach()
+    const initial = transports[0]
+    const clientID = initial.options.clientInstanceId
+    initial.options.callbacks.onAuthenticated?.()
+    initial.options.callbacks.onFrame(meta(clientID, 'this-device'))
+    initial.options.callbacks.onReady(0)
+
+    connection.suspend()
+    connection.sendResize(132, 41)
+    connection.sendInput('typed-during-reveal')
+    connection.attach()
+    const resumed = transports[1]
+    resumed.options.callbacks.onAuthenticated?.()
+    resumed.options.callbacks.onFrame(meta(''))
+    resumed.options.callbacks.onReady(0)
+
+    expect(resumed.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+    ])
+
+    resumed.options.callbacks.onFrame(meta(clientID, 'this-device'))
+    const sent = resumed.sent.map(decodeFrame)
+    expect(sent.map((frame) => frame.type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+      TYPE.RESIZE,
+      TYPE.IN,
+    ])
+    expect(decodeText(sent[2].payload)).toBe('typed-during-reveal')
+  })
+
   it('opens and closes Preview over Peer control frames without Relay keys or tickets', async () => {
     const transports: FakeTransport[] = []
     const connection = new PeerSessionConnection(sessionID, {}, {
@@ -350,13 +441,16 @@ describe('PeerSessionConnection', () => {
     })
 
     connection.attach()
+    expect(connection.claimDriver()).toBe(false)
     connection.sendInput('queued')
     expect(transports).toHaveLength(1)
     expect(transports[0].options.accountKey).toBeUndefined()
     transports[0].options.callbacks.onAuthenticated?.()
     transports[0].options.callbacks.onFrame(out(4, 'hello'))
     transports[0].options.callbacks.onFrame(out(4, 'duplicate'))
+    transports[0].options.callbacks.onFrame(meta(''))
     transports[0].options.callbacks.onReady(4)
+    transports[0].options.callbacks.onFrame(meta(transports[0].options.clientInstanceId, 'client-a'))
 
     expect(outputs).toEqual(['hello'])
     expect(statuses).toEqual(['connecting', 'attached'])
@@ -406,6 +500,7 @@ describe('PeerSessionConnection', () => {
     const direct = transports[0]
     direct.options.callbacks.onAuthenticated?.()
     direct.options.callbacks.onFrame(out(8, 'direct-eight'))
+    direct.options.callbacks.onFrame(meta(direct.options.clientInstanceId))
     direct.options.callbacks.onReady(8)
     direct.options.callbacks.onFailure(new Error('rendezvous client: ICE failed'))
     connection.sendInput('during-handover')
@@ -428,7 +523,9 @@ describe('PeerSessionConnection', () => {
     quickTunnel.options.callbacks.onAuthenticated?.()
     quickTunnel.options.callbacks.onFrame(out(8, 'duplicate-eight'))
     quickTunnel.options.callbacks.onFrame(out(9, 'quick-nine'))
+    quickTunnel.options.callbacks.onFrame(meta(''))
     quickTunnel.options.callbacks.onReady(9)
+    quickTunnel.options.callbacks.onFrame(meta(quickTunnel.options.clientInstanceId))
 
     expect(outputs).toEqual(['direct-eight', 'quick-nine'])
     const quickFrames = quickTunnel.sent.map(decodeFrame)
@@ -557,6 +654,7 @@ describe('PeerSessionConnection', () => {
     const quickTunnel = transports[0]
     quickTunnel.options.callbacks.onAuthenticated?.()
     quickTunnel.options.callbacks.onFrame(out(4, 'quick-four'))
+    quickTunnel.options.callbacks.onFrame(meta(quickTunnel.options.clientInstanceId))
     quickTunnel.options.callbacks.onReady(4)
 
     await vi.advanceTimersByTimeAsync(999)
@@ -580,7 +678,14 @@ describe('PeerSessionConnection', () => {
     direct.options.callbacks.onAuthenticated?.()
     direct.options.callbacks.onFrame(out(5, 'duplicate-five'))
     direct.options.callbacks.onFrame(out(6, 'direct-six'))
+    // META identifies the logical client, not the concrete subscriber. The
+    // promoted Direct route must still claim its own WithoutAutoDrive sub.
+    direct.options.callbacks.onFrame(meta(direct.options.clientInstanceId))
     direct.options.callbacks.onReady(6)
+    expect(direct.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+    ])
+    direct.options.callbacks.onFrame(meta(direct.options.clientInstanceId))
 
     expect(outputs).toEqual(['quick-four', 'quick-five', 'direct-six'])
     expect(quickTunnel.closed).toBe(true)
@@ -607,6 +712,7 @@ describe('PeerSessionConnection', () => {
     connection.attach()
     const quickTunnel = transports[0]
     quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onFrame(meta(quickTunnel.options.clientInstanceId))
     quickTunnel.options.callbacks.onReady(0)
     await vi.advanceTimersByTimeAsync(1000)
 
@@ -621,8 +727,13 @@ describe('PeerSessionConnection', () => {
     const replacementQuickTunnel = transports[2]
     expect(replacementQuickTunnel.options.route).toBe('quick_tunnel')
     replacementQuickTunnel.options.callbacks.onAuthenticated?.()
+    replacementQuickTunnel.options.callbacks.onFrame(meta(''))
     replacementQuickTunnel.options.callbacks.onReady(0)
-    expect(replacementQuickTunnel.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([TYPE.IN])
+    replacementQuickTunnel.options.callbacks.onFrame(meta(replacementQuickTunnel.options.clientInstanceId))
+    expect(replacementQuickTunnel.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+      TYPE.IN,
+    ])
 
     await vi.advanceTimersByTimeAsync(1999)
     expect(transports).toHaveLength(3)
@@ -647,6 +758,7 @@ describe('PeerSessionConnection', () => {
     connection.attach()
     const quickTunnel = transports[0]
     quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onFrame(meta(quickTunnel.options.clientInstanceId))
     quickTunnel.options.callbacks.onReady(0)
     await vi.advanceTimersByTimeAsync(1000)
 
@@ -660,8 +772,13 @@ describe('PeerSessionConnection', () => {
     await vi.advanceTimersByTimeAsync(500)
     const replacementQuickTunnel = transports[2]
     replacementQuickTunnel.options.callbacks.onAuthenticated?.()
+    replacementQuickTunnel.options.callbacks.onFrame(meta(''))
     replacementQuickTunnel.options.callbacks.onReady(0)
-    expect(replacementQuickTunnel.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([TYPE.IN])
+    replacementQuickTunnel.options.callbacks.onFrame(meta(replacementQuickTunnel.options.clientInstanceId))
+    expect(replacementQuickTunnel.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+      TYPE.IN,
+    ])
   })
 
   it('lets a ready Direct candidate win when the replaced Quick Tunnel closes first', async () => {
@@ -680,6 +797,7 @@ describe('PeerSessionConnection', () => {
     connection.attach()
     const quickTunnel = transports[0]
     quickTunnel.options.callbacks.onAuthenticated?.()
+    quickTunnel.options.callbacks.onFrame(meta(quickTunnel.options.clientInstanceId))
     quickTunnel.options.callbacks.onReady(3)
     await vi.advanceTimersByTimeAsync(1000)
 
@@ -687,10 +805,15 @@ describe('PeerSessionConnection', () => {
     quickTunnel.options.callbacks.onFailure(new Error('Peer direct host closed route'))
     connection.sendInput('after-old-close')
     direct.options.callbacks.onAuthenticated?.()
+    direct.options.callbacks.onFrame(meta(''))
     direct.options.callbacks.onReady(3)
+    direct.options.callbacks.onFrame(meta(direct.options.clientInstanceId))
 
     expect(transports).toHaveLength(2)
-    expect(direct.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([TYPE.IN])
+    expect(direct.sent.map(decodeFrame).map((frame) => frame.type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+      TYPE.IN,
+    ])
   })
 
   it('ignores a late Direct failback capability result after suspend', async () => {
@@ -709,6 +832,7 @@ describe('PeerSessionConnection', () => {
 
     connection.attach()
     transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onFrame(meta(transports[0].options.clientInstanceId))
     transports[0].options.callbacks.onReady(0)
     await vi.advanceTimersByTimeAsync(1000)
     connection.sendInput('probe-keeps-old-route-live')
@@ -772,9 +896,10 @@ describe('PeerSessionConnection', () => {
     })
 
     connection.attach()
-    transports[0].options.callbacks.onAuthenticated?.()
-    transports[0].options.callbacks.onReady(0)
     const clientInstanceId = transports[0].options.clientInstanceId
+    transports[0].options.callbacks.onAuthenticated?.()
+    transports[0].options.callbacks.onFrame(meta(clientInstanceId))
+    transports[0].options.callbacks.onReady(0)
 
     for (let seq = 1; seq <= 100; seq++) {
       const previous = transports[seq - 1]
@@ -793,6 +918,7 @@ describe('PeerSessionConnection', () => {
       replacement.options.callbacks.onAuthenticated?.()
       replacement.options.callbacks.onFrame(out(seq, `duplicate-${seq}`))
       replacement.options.callbacks.onReady(seq)
+      replacement.options.callbacks.onFrame(meta(clientInstanceId))
 
       const sent = replacement.sent.map(decodeFrame)
       expect(sent.map((frame) => frame.type)).toEqual([
@@ -902,6 +1028,7 @@ describe('PeerSessionConnection', () => {
     let current = transports[0]
     const clientInstanceId = current.options.clientInstanceId
     current.options.callbacks.onAuthenticated?.()
+    current.options.callbacks.onFrame(meta(clientInstanceId))
 
     const replayChunk = 'x'.repeat(2 * 1024)
     const replayFrames = 4096
@@ -935,6 +1062,7 @@ describe('PeerSessionConnection', () => {
       const resumedOutput = `resumed-${cycle}`
       replacement.options.callbacks.onFrame(out(seq, resumedOutput))
       replacement.options.callbacks.onReady(seq)
+      replacement.options.callbacks.onFrame(meta(clientInstanceId))
 
       const sent = replacement.sent.map(decodeFrame)
       expect(sent.map((frame) => frame.type)).toEqual([

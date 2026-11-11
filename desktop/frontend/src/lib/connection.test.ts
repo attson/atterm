@@ -677,11 +677,69 @@ describe("SessionConnection suspend/resume", () => {
     ws2.open();
 
     ws1.onclose?.();
+    const attach = JSON.parse(decodeText(decodeFrame(ws2.sent[0]).payload));
+    const meta = encodeFrame(
+      TYPE.META,
+      uuidParse(sessionId),
+      encodeText(JSON.stringify({ driver_client_id: attach.client_id })),
+    );
+    ws2.onmessage?.({ data: meta.buffer } as MessageEvent);
     conn.sendInput("x");
 
     expect(ws2.sent).toHaveLength(2);
     expect(decodeFrame(ws2.sent[1]).type).toBe(TYPE.IN);
   });
+
+  test("holds input queued before the initial attach until META confirms this client is driver", () => {
+    const conn = new SessionConnection(endpoint, sessionId);
+    conn.sendInput("typed-before-attach");
+    conn.attach();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+
+    expect(ws.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+
+    const attach = JSON.parse(decodeText(decodeFrame(ws.sent[0]).payload));
+    const meta = encodeFrame(
+      TYPE.META,
+      uuidParse(sessionId),
+      encodeText(JSON.stringify({ driver_client_id: attach.client_id })),
+    );
+    ws.onmessage?.({ data: meta.buffer } as MessageEvent);
+
+    expect(ws.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.IN,
+    ]);
+    expect(decodeText(decodeFrame(ws.sent[1]).payload)).toBe("typed-before-attach");
+  });
+
+  test.each(["onMeta", "onDriverChange"] as const)(
+    "flushes confirmed driver input even when the %s UI callback throws",
+    (throwingHandler) => {
+      const conn = new SessionConnection(endpoint, sessionId, {
+        onMeta: throwingHandler === "onMeta" ? () => { throw new Error("UI failed"); } : undefined,
+        onDriverChange: throwingHandler === "onDriverChange" ? () => { throw new Error("UI failed"); } : undefined,
+      });
+      conn.sendInput("still-delivered");
+      conn.attach();
+      const ws = FakeWebSocket.instances[0];
+      ws.open();
+      const attach = JSON.parse(decodeText(decodeFrame(ws.sent[0]).payload));
+
+      const meta = encodeFrame(
+        TYPE.META,
+        uuidParse(sessionId),
+        encodeText(JSON.stringify({ driver_client_id: attach.client_id })),
+      );
+      ws.onmessage?.({ data: meta.buffer } as MessageEvent);
+
+      expect(ws.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([
+        TYPE.ATTACH,
+        TYPE.IN,
+      ]);
+    },
+  );
 });
 
 describe("SessionConnection client_name", () => {
@@ -815,6 +873,60 @@ describe("SessionConnection driver reconciliation across reconnect", () => {
       TYPE.ATTACH,
       TYPE.CLAIM_DRIVER,
     ]);
+  });
+
+  test("holds resumed input until a manual claim is confirmed when another client owns the driver", () => {
+    const { conn, clientID } = attachAsDriver();
+
+    conn.suspend();
+    conn.attach();
+    const resumed = FakeWebSocket.instances[1];
+    resumed.open();
+    conn.sendInput("typed-during-reveal");
+
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+
+    resumed.emitMeta("other-client", "phone");
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+
+    expect(conn.claimDriver()).toBe(true);
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
+    ]);
+
+    resumed.emitMeta(clientID, "this-host");
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
+      TYPE.IN,
+    ]);
+    expect(decodeText(decodeFrame(resumed.sent[2]).payload)).toBe("typed-during-reveal");
+  });
+
+  test("holds resumed resize until a manual claim is confirmed and sends it before input", () => {
+    const { conn, clientID } = attachAsDriver();
+
+    conn.suspend();
+    conn.sendResize(132, 41);
+    conn.sendInput("typed-during-reveal");
+    conn.attach();
+    const resumed = FakeWebSocket.instances[1];
+    resumed.open();
+    resumed.emitMeta("other-client", "phone");
+
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+
+    expect(conn.claimDriver()).toBe(true);
+    resumed.emitMeta(clientID, "this-host");
+
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
+      TYPE.RESIZE,
+      TYPE.IN,
+    ]);
+    expect(decodeText(decodeFrame(resumed.sent[3]).payload)).toBe("typed-during-reveal");
   });
 });
 

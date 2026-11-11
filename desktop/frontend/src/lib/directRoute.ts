@@ -18,6 +18,7 @@ export enum DirectRouteState {
 export class DirectRouteTracker {
   private routeState = DirectRouteState.RelayAttached
   private routeGeneration = 1
+  private relayGeneration = 1
   private lastCommittedSeq: number
   private directStartSeq = 0
   private directObservedSeq = 0
@@ -81,8 +82,18 @@ export class DirectRouteTracker {
     this.requireGeneration(generation)
     if (this.routeState !== DirectRouteState.DirectActive) throw new Error('invalid direct route transition')
     this.routeGeneration++
+    this.relayGeneration = this.routeGeneration
     this.routeState = DirectRouteState.RelayReattaching
     return this.routeGeneration
+  }
+
+  /** Marks a newly opened Relay socket as the live Relay generation. An
+   * aborted direct probe advances routeGeneration while the existing Relay
+   * remains valid, so Relay and direct generations cannot be one field. */
+  useRelayGeneration(generation: number): boolean {
+    if (generation !== this.routeGeneration || this.routeState === DirectRouteState.DirectActive) return false
+    this.relayGeneration = generation
+    return true
   }
 
   relayAttached(generation: number): void {
@@ -105,7 +116,7 @@ export class DirectRouteTracker {
   }
 
   acceptOutput(generation: number, route: DirectRoute, seq: number): boolean {
-    if (generation !== this.routeGeneration || seq <= 0) return false
+    if (!this.acceptsGeneration(generation, route) || seq <= 0) return false
     let allowed = false
     switch (this.routeState) {
       case DirectRouteState.RelayAttached:
@@ -130,7 +141,7 @@ export class DirectRouteTracker {
   }
 
   acceptsRoute(generation: number, route: DirectRoute): boolean {
-    if (generation !== this.routeGeneration) return false
+    if (!this.acceptsGeneration(generation, route)) return false
     switch (this.routeState) {
       case DirectRouteState.RelayAttached:
       case DirectRouteState.DirectConnecting:
@@ -141,6 +152,12 @@ export class DirectRouteTracker {
       case DirectRouteState.DirectActive:
         return route === DirectRoute.Direct
     }
+    return false
+  }
+
+  private acceptsGeneration(generation: number, route: DirectRoute): boolean {
+    if (route === DirectRoute.Relay) return generation === this.relayGeneration
+    if (route === DirectRoute.Direct) return generation === this.routeGeneration
     return false
   }
 

@@ -251,7 +251,7 @@ describe("WidgetApp", () => {
     expect(widgetBridge.setMinimized).not.toHaveBeenCalled();
   });
 
-  it("minimizes from the menu and always restores fully expanded on click", async () => {
+  it("returns to minimized after expanding from minimized", async () => {
     const w = mount(WidgetApp);
     bootstrapHandler?.({ collapsed: true, minimized: false, x: 0, y: 0, locale: "zh-CN" });
     await w.vm.$nextTick();
@@ -272,6 +272,16 @@ describe("WidgetApp", () => {
     expect(w.find(".rows").exists()).toBe(true);
     expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(false);
     expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
+
+    vi.mocked(widgetBridge.setMinimized).mockClear();
+    vi.mocked(widgetBridge.setCollapsed).mockClear();
+    await w.get(".widget-header").trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.get(".widget-window").classes()).toContain("minimized");
+    expect(w.find(".rows").exists()).toBe(false);
+    expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(true);
+    expect(widgetBridge.setCollapsed).not.toHaveBeenCalled();
   });
 
   it("does not auto-peek while minimized", async () => {

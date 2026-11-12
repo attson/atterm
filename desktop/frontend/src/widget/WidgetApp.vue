@@ -46,6 +46,8 @@ const peeking = ref(false);
 const menuOpen = ref(false);
 const menuVisible = ref(false);
 const mutedUntil = ref(0);
+type CompactMode = "collapsed" | "minimized";
+let lastCompactMode: CompactMode = "collapsed";
 
 /** Auto-peek timer id, so a newer attention event replaces the older one. */
 let autoPeekTimer: number | null = null;
@@ -192,12 +194,14 @@ function toggleCollapsed() {
   peeking.value = false;
   highlightedIds.value = new Set();
   collapsed.value = !collapsed.value;
+  lastCompactMode = "collapsed";
   widgetBridge.setCollapsed(collapsed.value);
 }
 
 function restoreMinimized() {
   if (!minimized.value) return;
   minimized.value = false;
+  lastCompactMode = "minimized";
   widgetBridge.setMinimized(false);
   if (collapsed.value) {
     collapsed.value = false;
@@ -208,6 +212,10 @@ function restoreMinimized() {
 function onHeaderClick() {
   if (minimized.value) {
     restoreMinimized();
+    return;
+  }
+  if (!collapsed.value && lastCompactMode === "minimized") {
+    minimizeWidget();
     return;
   }
   toggleCollapsed();
@@ -233,6 +241,7 @@ function minimizeWidget() {
   peeking.value = false;
   highlightedIds.value = new Set();
   minimized.value = true;
+  lastCompactMode = "minimized";
   widgetBridge.setMinimized(true);
   closeMenu();
 }
@@ -293,6 +302,11 @@ onMounted(() => {
   onWidgetBootstrap((boot) => {
     collapsed.value = boot.collapsed;
     minimized.value = boot.minimized;
+    if (boot.minimized) {
+      lastCompactMode = "minimized";
+    } else if (boot.collapsed) {
+      lastCompactMode = "collapsed";
+    }
   });
   onWidgetState(applyState);
 

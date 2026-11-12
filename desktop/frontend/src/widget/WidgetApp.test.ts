@@ -228,30 +228,30 @@ describe("WidgetApp", () => {
     expect(getComputedStyle(w.get(".widget-shell").element).height).toBe("100vh");
   });
 
-  it("toggles between the current shape and icon-only mode on header click", async () => {
+  it("toggles between expanded and status-collapsed shapes on header click", async () => {
     const w = mount(WidgetApp);
     bootstrapHandler?.({ collapsed: false, minimized: false, x: 0, y: 0, locale: "zh-CN" });
     await w.vm.$nextTick();
-    vi.mocked(widgetBridge.setCollapsed).mockClear();
+    vi.mocked(widgetBridge.setMinimized).mockClear();
 
     await w.get(".widget-header").trigger("click");
     await w.vm.$nextTick();
 
-    expect(w.get(".widget-window").classes()).toContain("minimized");
+    expect(w.get(".widget-window").classes()).not.toContain("minimized");
     expect(w.find(".rows").exists()).toBe(false);
-    expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(true);
-    expect(widgetBridge.setCollapsed).not.toHaveBeenCalled();
+    expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(true);
+    expect(widgetBridge.setMinimized).not.toHaveBeenCalled();
 
     await w.get(".widget-header").trigger("click");
     await w.vm.$nextTick();
 
     expect(w.get(".widget-window").classes()).not.toContain("minimized");
     expect(w.find(".rows").exists()).toBe(true);
-    expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(false);
-    expect(widgetBridge.setCollapsed).not.toHaveBeenCalled();
+    expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
+    expect(widgetBridge.setMinimized).not.toHaveBeenCalled();
   });
 
-  it("minimizes from the menu and restores the previous collapsed shape on click", async () => {
+  it("minimizes from the menu and always restores fully expanded on click", async () => {
     const w = mount(WidgetApp);
     bootstrapHandler?.({ collapsed: true, minimized: false, x: 0, y: 0, locale: "zh-CN" });
     await w.vm.$nextTick();
@@ -269,7 +269,9 @@ describe("WidgetApp", () => {
 
     expect(w.get(".widget-window").classes()).not.toContain("minimized");
     expect(w.find(".meta").exists()).toBe(true);
-    expect(w.find(".rows").exists()).toBe(false);
+    expect(w.find(".rows").exists()).toBe(true);
+    expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(false);
+    expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
   });
 
   it("does not auto-peek while minimized", async () => {
@@ -284,7 +286,7 @@ describe("WidgetApp", () => {
     await w.get(".widget-header").trigger("click");
     await w.vm.$nextTick();
 
-    expect(w.find(".rows").exists()).toBe(false);
+    expect(w.find(".rows").exists()).toBe(true);
     expect(w.find(".row.highlighted").exists()).toBe(false);
   });
 
@@ -309,7 +311,8 @@ describe("WidgetApp", () => {
     await w.get(".widget-header").trigger("click");
     await w.vm.$nextTick();
 
-    expect(w.find(".rows").exists()).toBe(false);
+    expect(w.find(".rows").exists()).toBe(true);
+    expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
   });
 
   it("renders the shared running state icon for running rows", async () => {

@@ -199,6 +199,10 @@ function restoreMinimized() {
   if (!minimized.value) return;
   minimized.value = false;
   widgetBridge.setMinimized(false);
+  if (collapsed.value) {
+    collapsed.value = false;
+    widgetBridge.setCollapsed(false);
+  }
 }
 
 function onHeaderClick() {
@@ -206,7 +210,7 @@ function onHeaderClick() {
     restoreMinimized();
     return;
   }
-  minimizeWidget();
+  toggleCollapsed();
 }
 
 // Peek tracks the pointer over the WHOLE card, not just the header: opening

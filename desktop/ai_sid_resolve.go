@@ -423,6 +423,11 @@ var activeCodexResolvers = struct {
 	byCwd map[string]int
 }{byCwd: make(map[string]int)}
 
+var activeCodexBindings = struct {
+	sync.Mutex
+	byCwd map[string]map[string]int
+}{byCwd: make(map[string]map[string]int)}
+
 // registerCodexResolver counts only unresolved SID discovery. Title tracking
 // starts after this registration is released: an already-bound pane must not
 // make every later same-cwd Codex launch look permanently ambiguous.
@@ -450,6 +455,63 @@ func codexResolverCount(cwd string) int {
 	return activeCodexResolvers.byCwd[filepath.Clean(cwd)]
 }
 
+func registerCodexBinding(cwd, sid string) func() {
+	key := filepath.Clean(cwd)
+	activeCodexBindings.Lock()
+	if activeCodexBindings.byCwd[key] == nil {
+		activeCodexBindings.byCwd[key] = make(map[string]int)
+	}
+	activeCodexBindings.byCwd[key][sid]++
+	activeCodexBindings.Unlock()
+	return codexBindingRelease(key, sid)
+}
+
+func holdCodexBinding(ctx context.Context, cwd, sid string) {
+	release := registerCodexBinding(cwd, sid)
+	go func() {
+		<-ctx.Done()
+		release()
+	}()
+}
+
+func tryRegisterCodexBinding(cwd, sid string) (func(), bool) {
+	key := filepath.Clean(cwd)
+	activeCodexBindings.Lock()
+	defer activeCodexBindings.Unlock()
+	if activeCodexBindings.byCwd[key][sid] > 0 {
+		return nil, false
+	}
+	if activeCodexBindings.byCwd[key] == nil {
+		activeCodexBindings.byCwd[key] = make(map[string]int)
+	}
+	activeCodexBindings.byCwd[key][sid] = 1
+	return codexBindingRelease(key, sid), true
+}
+
+func codexBindingRelease(cwd, sid string) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			activeCodexBindings.Lock()
+			bindings := activeCodexBindings.byCwd[cwd]
+			bindings[sid]--
+			if bindings[sid] == 0 {
+				delete(bindings, sid)
+			}
+			if len(bindings) == 0 {
+				delete(activeCodexBindings.byCwd, cwd)
+			}
+			activeCodexBindings.Unlock()
+		})
+	}
+}
+
+func codexBindingClaimed(cwd, sid string) bool {
+	activeCodexBindings.Lock()
+	defer activeCodexBindings.Unlock()
+	return activeCodexBindings.byCwd[filepath.Clean(cwd)][sid] > 0
+}
+
 // startCodexFileResolve first binds Codex to the rollout held open by the PTY's
 // process tree when the OS exposes that relationship. On other platforms it
 // retains the filename heuristic, but only while this is the sole resolver for
@@ -471,10 +533,16 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		logWarn("ai-sid", "mkdir %s: %v — skip codex resolve", dir, err)
 		return
 	}
-	capture := func(sid, path string) {
+	capture := func(sid, path string) bool {
+		release, ok := tryRegisterCodexBinding(cwd, sid)
+		if !ok {
+			return false
+		}
+		defer release()
 		onCapture(sid)
 		unregister()
 		trackCodexUserTitle(ctx, sess, path)
+		return true
 	}
 	before := codexRolloutFileInfos(dir, cwd)
 	deadline := time.Now().Add(codexResolveBudget)
@@ -488,6 +556,9 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		var advanced []string
 		files := codexRolloutFileInfos(dir, cwd)
 		for sid, file := range files {
+			if codexBindingClaimed(cwd, sid) {
+				continue
+			}
 			prev, seen := before[sid]
 			if !seen {
 				fresh = append(fresh, sid)
@@ -498,9 +569,16 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 			}
 		}
 		if codexProcessRolloutLookupSupported && rootPID > 0 {
-			if sid, ok := codexRolloutOwnedByProcess(rootPID, files); ok {
-				capture(sid, files[sid].Path)
-				return
+			available := make(map[string]codexRolloutFileInfo, len(files))
+			for sid, file := range files {
+				if !codexBindingClaimed(cwd, sid) {
+					available[sid] = file
+				}
+			}
+			if sid, ok := codexRolloutOwnedByProcess(rootPID, available); ok {
+				if capture(sid, available[sid].Path) {
+					return
+				}
 			}
 			// Recent Codex releases delegate persistence to the long-lived
 			// app-server daemon, so the rollout fd is no longer guaranteed to sit
@@ -518,15 +596,17 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		switch {
 		case len(fresh) == 1:
 			sid := fresh[0]
-			capture(sid, files[sid].Path)
-			return
+			if capture(sid, files[sid].Path) {
+				return
+			}
 		case len(fresh) >= 2:
 			logWarn("ai-sid", "codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
 			return
 		case len(advanced) == 1:
 			sid := advanced[0]
-			capture(sid, files[sid].Path)
-			return
+			if capture(sid, files[sid].Path) {
+				return
+			}
 		case len(advanced) >= 2:
 			logWarn("ai-sid", "codex resolve ambiguous (%d advanced in %s) — abort", len(advanced), dir)
 			return

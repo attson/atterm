@@ -280,6 +280,35 @@ describe("useTerminalImagePreview", () => {
     f.cleanup();
   });
 
+  it("resolves repeated history placeholders to the image queued before each submission", () => {
+    const now = vi.spyOn(Date, "now");
+    const f = makeFakeTerm([{ text: "" }, { text: "" }]);
+    const preview = useTerminalImagePreview({ term: f.term, sessionId: () => "s" });
+    const first = new Blob(["first"], { type: "image/png" });
+    const second = new Blob(["second"], { type: "image/png" });
+
+    now.mockReturnValue(1_000);
+    terminalImagePreviewBus.queue(first, "first.png", "s");
+    f.setRows([{ text: "[Image #1] same prompt" }, { text: "" }]);
+    f.parse();
+
+    now.mockReturnValue(2_000);
+    f.setCursorY(1);
+    terminalImagePreviewBus.queue(second, "second.png", "s");
+    f.setRows([
+      { text: "[Image #1] same prompt" },
+      { text: "[Image #1] same prompt" },
+    ]);
+    f.parse();
+
+    expect(preview.resolveHistoryImage("[Image #1] same prompt", 1_500, 0)?.file).toBe(first);
+    expect(preview.resolveHistoryImage("[Image #1] same prompt", 2_500, 0)?.file).toBe(second);
+
+    now.mockRestore();
+    preview.dispose();
+    f.cleanup();
+  });
+
   it("binds multiple images on one input line in paste order", () => {
     const f = makeFakeTerm([{ text: "" }]);
     const preview = useTerminalImagePreview({ term: f.term, sessionId: () => "s" });
@@ -407,6 +436,31 @@ describe("useTerminalImagePreview", () => {
     f.markers[0].dispose();
     expect(f.linksAt(1)).toHaveLength(0);
 
+    preview.dispose();
+    f.cleanup();
+  });
+
+  it("retains a bound image for history after its terminal marker expires", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const f = makeFakeTerm([{ text: "" }]);
+    const preview = useTerminalImagePreview({ term: f.term, sessionId: () => "s" });
+    const image = new Blob(["image"], { type: "image/png" });
+
+    terminalImagePreviewBus.queue(image, "history.png", "s");
+    f.setRows([{ text: "[Image #1] explain" }]);
+    f.parse();
+    f.markers[0].dispose();
+    now.mockReturnValue(10_000);
+    f.setRows([{ text: "" }]);
+    f.parse();
+
+    expect(f.linksAt(1)).toHaveLength(0);
+    expect(preview.resolveHistoryImage("[Image #1] explain", 2_000, 0)).toEqual({
+      file: image,
+      name: "history.png",
+    });
+
+    now.mockRestore();
     preview.dispose();
     f.cleanup();
   });

@@ -711,6 +711,9 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		} else {
 			restoredStartKind = ""
 		}
+		if kind == "codex" && initialSID != "" {
+			holdCodexBinding(generationCtx, resolveCwd, initialSID)
+		}
 		resolveMu.Unlock()
 		var codexStreamOnce sync.Once
 		startCodexStream := func(aiSID string, replayExisting bool) {
@@ -803,6 +806,14 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		}
 	}
 	active.applyHookAIIdentity = func(kind, aiSessionID string) {
+		var codexSession *session.Session
+		var codexCwd string
+		if kind == "codex" {
+			if sess, ok := h.server.Registry().Get(id); ok {
+				codexSession = sess
+				codexCwd = sess.Info().Cwd
+			}
+		}
 		resolveMu.Lock()
 		if kind == "" || aiSessionID == "" {
 			logWarn("ai-sid", "ignore hook identity session=%s reason=empty-identity", id)
@@ -830,20 +841,18 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		generationCtx, generationCancel := context.WithCancel(resolveCtx)
 		currentResolveCancel = generationCancel
 		currentAISessionID = aiSessionID
+		if codexCwd != "" {
+			holdCodexBinding(generationCtx, codexCwd, aiSessionID)
+		}
 		h.onAISidCaptured(id, kind, aiSessionID)
 		logInfo("ai-sid", "applied hook identity session=%s kind=%s source=session-start", id, kind)
 		resolveMu.Unlock()
 
-		if kind == "codex" {
-			sess, ok := h.server.Registry().Get(id)
-			if !ok {
-				return
-			}
-			info := sess.Info()
-			go startCodexTurnStream(generationCtx, info.Cwd, aiSessionID, false, func(turn codexTranscriptTurn) {
+		if codexSession != nil {
+			go startCodexTurnStream(generationCtx, codexCwd, aiSessionID, false, func(turn codexTranscriptTurn) {
 				h.handleCodexTranscriptTurn(id, aiSessionID, turn)
 			})
-			go startCodexKnownTitleResolve(generationCtx, sess, info.Cwd, aiSessionID)
+			go startCodexKnownTitleResolve(generationCtx, codexSession, codexCwd, aiSessionID)
 		}
 	}
 	active.feishuUserActivated.Store(!req.Recovered)

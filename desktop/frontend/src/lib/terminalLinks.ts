@@ -285,6 +285,8 @@ export interface MappedLogicalLine {
   text: string;
   /** cellStart[i] = 0-based cell column within its physical row for text[i]. */
   cellStart: number[];
+  /** cellEnd[i] = end-exclusive terminal cell column for text[i]. */
+  cellEnd: number[];
   /** cellY[i] = 0-based physical row index (0 = firstY) for text[i]. */
   cellY: number[];
   /** Number of physical rows this logical line spans. */
@@ -298,6 +300,73 @@ export interface PhysicalLinkSegment {
   /** 0-based terminal cell range on row, end-exclusive. */
   startCell: number;
   endCell: number;
+}
+
+interface AbsoluteLogicalLine {
+  text: string;
+  cellStart: number[];
+  cellEnd: number[];
+  cellRow: number[];
+  firstRow: number;
+  rowCount: number;
+}
+
+function mapAbsoluteLogicalLine(
+  buffer: BufferLike,
+  firstRow: number,
+  cols: number,
+  maxRows: number,
+): AbsoluteLogicalLine {
+  let text = "";
+  const cellStart: number[] = [];
+  const cellEnd: number[] = [];
+  const cellRow: number[] = [];
+  let rowCount = 0;
+  for (let offset = 0; offset < maxRows; offset++) {
+    const row = firstRow + offset;
+    const line = buffer.getLine(row);
+    if (!line || (offset > 0 && !line.isWrapped)) break;
+    rowCount = offset + 1;
+    for (let x = 0; x < cols; x++) {
+      const cell = line.getCell(x);
+      if (!cell) continue;
+      const width = cell.getWidth();
+      if (width === 0) continue;
+      const chars = cell.getChars() || " ";
+      for (let index = 0; index < chars.length; index++) {
+        cellStart.push(x);
+        cellEnd.push(x + width);
+        cellRow.push(row);
+      }
+      text += chars;
+    }
+  }
+  return { text, cellStart, cellEnd, cellRow, firstRow, rowCount };
+}
+
+function segmentsForLogicalRange(
+  logical: AbsoluteLogicalLine,
+  start: number,
+  end: number,
+  match: LinkMatch,
+  wantedRow: number,
+): PhysicalLinkSegment[] {
+  const out: PhysicalLinkSegment[] = [];
+  while (start < end) {
+    const row = logical.cellRow[start];
+    let partEnd = start + 1;
+    while (partEnd < end && logical.cellRow[partEnd] === row) partEnd++;
+    if (row === wantedRow) {
+      out.push({
+        match,
+        row,
+        startCell: logical.cellStart[start],
+        endCell: logical.cellEnd[partEnd - 1],
+      });
+    }
+    start = partEnd;
+  }
+  return out;
 }
 
 /**
@@ -314,6 +383,7 @@ export function mapWrappedLogicalLine(
 ): MappedLogicalLine {
   let text = "";
   const cellStart: number[] = [];
+  const cellEnd: number[] = [];
   const cellY: number[] = [];
   let rowCount = 0;
   for (let row = 0; row < maxRows; row++) {
@@ -329,12 +399,13 @@ export function mapWrappedLogicalLine(
       const chars = cell.getChars() || " ";
       for (let k = 0; k < chars.length; k++) {
         cellStart.push(x);
+        cellEnd.push(x + width);
         cellY.push(row);
       }
       text += chars;
     }
   }
-  return { text, cellStart, cellY, rowCount };
+  return { text, cellStart, cellEnd, cellY, rowCount };
 }
 
 /**
@@ -351,7 +422,10 @@ export function linkSegmentsAtBufferRow(
   cols: number,
   maxRows: number,
 ): PhysicalLinkSegment[] {
-  const markdownSegments = hardWrappedMarkdownSegmentsAtRow(buffer, row, cols, maxRows);
+  const markdownSegments = dedupeSegments([
+    ...hardWrappedMarkdownSegmentsAtRow(buffer, row, cols, maxRows),
+    ...logicalMarkdownSegmentsAtRow(buffer, row, cols, maxRows),
+  ]);
   const occupied = markdownSegments.map((s) => [s.startCell, s.endCell] as const);
 
   let firstRow = row;
@@ -371,7 +445,7 @@ export function linkSegmentsAtBufferRow(
       while (end < match.end && mapped.cellY[end] === relativeRow) end++;
       if (relativeRow === wantedRelativeRow) {
         const startCell = mapped.cellStart[start];
-        const endCell = mapped.cellStart[end - 1] + 1;
+        const endCell = mapped.cellEnd[end - 1];
         if (!occupied.some(([a, b]) => startCell < b && endCell > a)) {
           ordinary.push({ match, row, startCell, endCell });
         }
@@ -379,7 +453,112 @@ export function linkSegmentsAtBufferRow(
       start = end;
     }
   }
-  return [...markdownSegments, ...ordinary].sort((a, b) => a.startCell - b.startCell);
+  return dedupeSegments([...markdownSegments, ...ordinary]);
+}
+
+function dedupeSegments(segments: PhysicalLinkSegment[]): PhysicalLinkSegment[] {
+  const seen = new Set<string>();
+  return segments
+    .filter((segment) => {
+      const key = [
+        segment.row,
+        segment.startCell,
+        segment.endCell,
+        segment.match.kind,
+        segment.match.text,
+      ].join("\0");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.startCell - b.startCell || b.endCell - a.endCell);
+}
+
+interface PendingLogicalSegment {
+  logical: AbsoluteLogicalLine;
+  start: number;
+  end: number;
+}
+
+function logicalMarkdownSegmentsAtRow(
+  buffer: BufferLike,
+  wantedRow: number,
+  cols: number,
+  maxRows: number,
+): PhysicalLinkSegment[] {
+  const out: PhysicalLinkSegment[] = [];
+  let firstCandidateRow = Math.max(0, wantedRow - maxRows + 1);
+  for (let steps = 0; steps < maxRows; steps++) {
+    const line = buffer.getLine(firstCandidateRow);
+    if (!line?.isWrapped || firstCandidateRow === 0) break;
+    firstCandidateRow--;
+  }
+
+  for (let startRow = firstCandidateRow; startRow <= wantedRow;) {
+    const firstLine = buffer.getLine(startRow);
+    if (!firstLine) break;
+    if (firstLine.isWrapped) {
+      startRow++;
+      continue;
+    }
+    const first = mapAbsoluteLogicalLine(buffer, startRow, cols, maxRows);
+    if (first.rowCount === 0) break;
+    const opener = /\((https?|file):\/\//g;
+    let open: RegExpExecArray | null;
+    while ((open = opener.exec(first.text)) !== null) {
+      const urlStart = open.index + 1;
+      const firstEnd = tokenEnd(first.text, urlStart);
+      const firstPart = first.text.slice(urlStart, firstEnd);
+      if (hasMarkdownClosingDelimiter(firstPart)) continue;
+
+      for (const laneStart of possibleLaneStarts(first.text, open.index)) {
+        const pending: PendingLogicalSegment[] = [
+          { logical: first, start: urlStart, end: firstEnd },
+        ];
+        let joined = firstPart;
+        let complete = false;
+        let continuationRow = first.firstRow + first.rowCount;
+        while (continuationRow < first.firstRow + maxRows) {
+          const logical = mapAbsoluteLogicalLine(
+            buffer,
+            continuationRow,
+            cols,
+            first.firstRow + maxRows - continuationRow,
+          );
+          if (logical.rowCount === 0) break;
+          if (logical.text[laneStart] === undefined || /\s/.test(logical.text[laneStart])) break;
+          if (laneStart > 0 && !/\s/.test(logical.text[laneStart - 1])) break;
+          const end = tokenEnd(logical.text, laneStart);
+          const part = logical.text.slice(laneStart, end);
+          pending.push({ logical, start: laneStart, end });
+          joined += part;
+          if (hasMarkdownClosingDelimiter(joined)) {
+            complete = true;
+            break;
+          }
+          continuationRow += logical.rowCount;
+        }
+        if (!complete) continue;
+        const match = detectLinks(joined).find((candidate) => candidate.start === 0);
+        if (!match || match.kind === "path" || match.end >= joined.length) continue;
+        const last = pending[pending.length - 1];
+        last.end -= joined.length - match.end;
+        const normalized = { ...match, start: 0, end: match.text.length };
+        for (const segment of pending) {
+          out.push(...segmentsForLogicalRange(
+            segment.logical,
+            segment.start,
+            segment.end,
+            normalized,
+            wantedRow,
+          ));
+        }
+        break;
+      }
+    }
+    startRow += first.rowCount;
+  }
+  return out;
 }
 
 interface PendingHardSegment {
@@ -421,7 +600,7 @@ function hardWrappedMarkdownSegmentsAtRow(
           continuationRow < startRow + maxRows;
           continuationRow++) {
           const line = buffer.getLine(continuationRow);
-          if (!line || line.isWrapped) break;
+          if (!line) break;
           const mapped = mapBufferLineCells(line, cols);
           if (mapped.text[laneStart] === undefined || /\s/.test(mapped.text[laneStart])) break;
           if (laneStart > 0 && !/\s/.test(mapped.text[laneStart - 1])) break;

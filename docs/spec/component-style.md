@@ -1,7 +1,7 @@
 # 组件样式规范
 
 > **Audience**: 改 atterm 前端 UI 的工程师
-> **Last updated**: 2026-11-10
+> **Last updated**: 2026-11-12
 > **Status**: stable
 > **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md) · [session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)
 
@@ -565,6 +565,25 @@ template bar 同属终端工具面，不是 Settings 表单控件：
   和组件卸载都必须释放 URL/marker。缓存上限为 32 张或 64 MiB（任一先到即淘汰最旧项）。
 - 原有 `pasteImageBus` 的即时 5 秒 toast 保持独立；hover 预览使用单独的事务型 bus，避免
   transport 失败改变 toast 时序或留下 stale binding。
+
+## 终端链接识别与交互
+
+desktop、Web/PWA 和 Capacitor 统一复用共享 `TerminalView.vue` 的链接识别与交互，不在
+平台入口另建 recognizer。目标范围保持为 HTTP(S)、`file://` 和现有保守规则认可的
+POSIX 路径；新增 scheme 或 Windows 路径需要单独设计安全与打开策略。
+
+- xterm 软换行先还原为逻辑行，再把目标拆回当前 buffer 的物理 row/cell 片段；坐标必须
+  依据实时 cell width 计算，宽字符结尾使用 end-exclusive 范围。resize/reflow 后重新解析，
+  不缓存旧坐标。
+- `isWrapped` 只表示物理行属于同一逻辑行，不能单独用来排除 Markdown 结构续行。
+  跨硬逻辑行只允许重建显式 `(...://` 链接，并同时要求稳定列 lane 和最终闭合 `)`；裸 URL
+  不跨硬换行猜测，避免把下一条命令或相邻表格列拼进目标。
+- 同一 cell 上，完成结构校验的可见完整链接优先于普通单行前缀；OSC 8 与可见链接重叠时
+  同样使用可见完整目标，只有纯 OSC 8 标签才回退到再次校验为 HTTP(S) 的 URI。
+- hover 命中、Ctrl+点击、右键打开和“复制链接”必须共享同一目标解析。普通点击、Shift/Alt
+  点击和拖动选择不能打开链接；一次 Ctrl+点击最多触发一次打开，并在打开前清除 xterm 选择。
+- 回归测试至少覆盖软换行、Markdown 硬行与软行混合、并排列、防误拼、宽字符 cell 范围、
+  OSC 8 重叠/纯标签，以及打开失败不影响终端输入和选择。
 
 ## 移动端设置页
 

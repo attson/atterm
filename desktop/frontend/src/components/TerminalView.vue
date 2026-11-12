@@ -58,6 +58,10 @@ import {
   type LinkMatch,
 } from "../lib/terminalLinks";
 import { cellCoordsAt, readXtermCellSize } from "../lib/terminalCellCoords";
+import {
+  createTerminalOscLinkController,
+  type TerminalOscLinkController,
+} from "../lib/terminalOscLinks";
 import { wordBoundaryAt } from "../lib/wordBoundary";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import { descriptorsForSlot } from "../plugins/registry";
@@ -624,6 +628,7 @@ const menuLinkHit = ref<LinkMatch | null>(null);
 
 let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
+let oscLinkController: TerminalOscLinkController | null = null;
 let imagePreviewDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
 // Press origin of the most recent left mousedown on the terminal grid, used to
@@ -1988,7 +1993,7 @@ function getTerminalGridElement(): HTMLElement | null {
 // covers the clicked cell, or null when the click isn't on any detected link.
 // Reuses the provider's segment mapper so soft wraps and Markdown table hard
 // wraps behave identically for hover, Ctrl+click, and the context menu.
-function computeLinkHit(e: MouseEvent): LinkMatch | null {
+function computeVisibleLinkHit(e: MouseEvent): LinkMatch | null {
   if (!term) return null;
   const viewport = getTerminalGridElement();
   if (!viewport) return null;
@@ -2002,6 +2007,19 @@ function computeLinkHit(e: MouseEvent): LinkMatch | null {
     50,
   );
   return segments.find((segment) => hit.col >= segment.startCell && hit.col < segment.endCell)?.match ?? null;
+}
+
+function computeLinkHit(e: MouseEvent): LinkMatch | null {
+  const visible = computeVisibleLinkHit(e);
+  if (visible || !term || !oscLinkController) return visible;
+  const viewport = getTerminalGridElement();
+  if (!viewport) return null;
+  const hit = cellCoordsAt(e.clientX, e.clientY, term, viewport);
+  if (!hit) return null;
+  return oscLinkController.linkAtBufferCell(
+    term.buffer.active.viewportY + hit.row,
+    hit.col,
+  );
 }
 
 async function onMenuOpenLink() {
@@ -2300,6 +2318,14 @@ async function ensureTerm() {
     fontFamily = await resolveTerminalFontFamily(resolvedHead);
   }
   if (!isAlive) return;
+  oscLinkController = createTerminalOscLinkController({
+    isMac: isMac(),
+    getDownPos: () => linkClickDownPos,
+    resolveVisibleLink: computeVisibleLinkHit,
+    openLink: openLinkMatch,
+    clearSelection: () => term?.clearSelection(),
+    onError: () => emit("toast", t("terminal.link.openFailed")),
+  });
   term = new Terminal({
     fontFamily,
     fontSize: props.appearance.fontSize,
@@ -2317,6 +2343,7 @@ async function ensureTerm() {
     convertEol: false,
     disableStdin: !isDriver.value,
     allowProposedApi: true,
+    linkHandler: oscLinkController.handler,
   });
   terminalWriteQueue = createTerminalWriteQueue(term);
   // Metrics are already applied via the constructor args above; seed the
@@ -3104,6 +3131,7 @@ onBeforeUnmount(() => {
   exitSelection();
   linkProviderDisposer?.dispose();
   linkProviderDisposer = null;
+  oscLinkController = null;
   imagePreviewDisposer?.dispose();
   imagePreviewDisposer = null;
   conn?.detach();

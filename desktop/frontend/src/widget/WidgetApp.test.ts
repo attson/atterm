@@ -214,6 +214,67 @@ describe("WidgetApp", () => {
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(56, 56);
   });
 
+  it("opens and dismisses the context menu without leaving minimized mode", async () => {
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, minimized: true, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+    vi.mocked(widgetBridge.setCollapsed).mockClear();
+    vi.mocked(widgetBridge.setMinimized).mockClear();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const isMenu = this.classList.contains("menu");
+      return {
+        width: isMenu ? 130 : 56,
+        height: isMenu ? 154 : 56,
+        top: isMenu ? 46 : 0,
+        right: isMenu ? 130 : 56,
+        bottom: isMenu ? 200 : 56,
+        left: 0,
+        x: 0,
+        y: isMenu ? 46 : 0,
+        toJSON: () => ({}),
+      };
+    });
+
+    await w.get(".widget-window").trigger("contextmenu");
+    await w.vm.$nextTick();
+
+    expect(w.get(".widget-window").classes()).toContain("minimized");
+    expect(w.find(".menu").exists()).toBe(true);
+    expect(widgetBridge.setCollapsed).not.toHaveBeenCalled();
+    expect(widgetBridge.setMinimized).not.toHaveBeenCalled();
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(130, 200);
+
+    window.dispatchEvent(new MouseEvent("click"));
+    await w.vm.$nextTick();
+    await flushAnimationFrames();
+
+    expect(w.find(".menu").exists()).toBe(false);
+    expect(w.get(".widget-window").classes()).toContain("minimized");
+    expect(widgetBridge.resize).toHaveBeenLastCalledWith(56, 56);
+  });
+
+  it("offers expand instead of compact-mode actions in the minimized menu", async () => {
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, minimized: true, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+
+    await w.get(".widget-window").trigger("contextmenu");
+    await w.vm.$nextTick();
+
+    expect(w.get('[data-test="widget-restore-minimized"]').text()).toBe("展开");
+    expect(w.find('[data-test="widget-toggle-collapse"]').exists()).toBe(false);
+    expect(w.find('[data-test="widget-minimize"]').exists()).toBe(false);
+
+    await w.get('[data-test="widget-restore-minimized"]').trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.find(".menu").exists()).toBe(false);
+    expect(w.get(".widget-window").classes()).not.toContain("minimized");
+    expect(w.find(".rows").exists()).toBe(true);
+    expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(false);
+    expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
+  });
+
   it("uses border-box sizing so the compact card fits the native width", async () => {
     const w = mount(WidgetApp);
     bootstrapHandler?.({ collapsed: true, minimized: true, x: 0, y: 0, locale: "zh-CN" });

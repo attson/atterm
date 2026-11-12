@@ -86,7 +86,10 @@ function resizeToFitMenu(): Promise<void> {
   if (!card || !menu) return Promise.resolve();
   const cardRect = card.getBoundingClientRect();
   const menuRect = menu.getBoundingClientRect();
-  return reportWidgetSize(cardRect.width, Math.max(cardRect.height, menuRect.bottom - cardRect.top));
+  return reportWidgetSize(
+    Math.max(cardRect.width, menuRect.right - cardRect.left),
+    Math.max(cardRect.height, menuRect.bottom - cardRect.top),
+  );
 }
 
 function resizeToRenderedWidget(): Promise<void> {
@@ -278,11 +281,10 @@ function hideWidget() {
 
 async function openMenu(e: MouseEvent) {
   e.preventDefault();
-  if (minimized.value) return;
 
-  // A collapsed native window is only as tall as the header, so an absolute
-  // menu is clipped by the OS window regardless of its CSS z-index. Measure
-  // both layers and resize the native window before revealing the menu.
+  // A compact native window is smaller than the absolute menu, so CSS z-index
+  // cannot prevent clipping. Measure both layers and resize the native window
+  // before revealing the menu; closing it remeasures the card alone.
   menuOpen.value = true;
   menuVisible.value = false;
   await nextTick();
@@ -427,18 +429,28 @@ onUnmounted(() => {
     </div>
 
     <div
-      v-if="menuOpen && !minimized"
+      v-if="menuOpen"
       ref="menuEl"
       class="menu"
       :class="{ measuring: !menuVisible }"
       @click.stop
     >
-      <button data-test="widget-toggle-collapse" type="button" @click="toggleCollapsed(); closeMenu()">
-        {{ collapsed ? "展开" : "折叠" }}
+      <button
+        v-if="minimized"
+        data-test="widget-restore-minimized"
+        type="button"
+        @click="restoreMinimized(); closeMenu()"
+      >
+        展开
       </button>
-      <button data-test="widget-minimize" type="button" @click="minimizeWidget">
-        最小化
-      </button>
+      <template v-else>
+        <button data-test="widget-toggle-collapse" type="button" @click="toggleCollapsed(); closeMenu()">
+          {{ collapsed ? "展开" : "折叠" }}
+        </button>
+        <button data-test="widget-minimize" type="button" @click="minimizeWidget">
+          最小化
+        </button>
+      </template>
       <template v-if="muted">
         <button type="button" @click="unmute">取消静音</button>
       </template>
@@ -737,6 +749,11 @@ onUnmounted(() => {
   border: 1px solid #30363d;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
   --wails-draggable: no-drag;
+}
+
+.widget-shell.minimized .menu {
+  right: auto;
+  left: 0;
 }
 
 .menu.measuring {

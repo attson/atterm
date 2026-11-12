@@ -509,4 +509,67 @@ describe("linkSegmentsAtBufferRow", () => {
       "http://ex.com/aaaaabbb/ccc",
     ]);
   });
+
+  it("reconstructs each Markdown table URL when its continuation carries a wrap flag", () => {
+    const devPrefix =
+      "!371 (http://git.hzwxbz2.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-platform/";
+    const masterPrefix =
+      "!372 (http://git.hzwxbz2.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-platform/";
+    const laneStart = 96;
+    const rows = [
+      {
+        text: `    ${devPrefix.padEnd(laneStart - 4)}${masterPrefix}`,
+        wrapped: false,
+      },
+      {
+        text: `    ${"merge_requests/371)".padEnd(laneStart - 4)}merge_requests/372)`,
+        wrapped: true,
+      },
+    ];
+    const cols = Math.max(...rows.map((row) => row.text.length));
+    const buffer = fakeBuffer(rows, cols);
+    const expected = [
+      "http://git.hzwxbz2.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-platform/merge_requests/371",
+      "http://git.hzwxbz2.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-platform/merge_requests/372",
+    ];
+
+    for (let row = 0; row < rows.length; row++) {
+      expect(linkSegmentsAtBufferRow(buffer, row, cols, 50).map((s) => s.match.text)).toEqual(expected);
+    }
+  });
+
+  it("reconstructs a Markdown URL when both hard lines also soft-wrap", () => {
+    const cols = 40;
+    const hardLines = [
+      "    !72 (http://git.example.cn/back_end/advertisement/ad-toolkit/team-hub/",
+      "    team-hub-root/merge_requests/72)",
+    ];
+    const rows = hardLines.flatMap((text) => {
+      const chunks: Array<{ text: string; wrapped: boolean }> = [];
+      for (let start = 0; start < text.length; start += cols) {
+        chunks.push({ text: text.slice(start, start + cols), wrapped: start > 0 });
+      }
+      return chunks;
+    });
+    const buffer = fakeBuffer(rows, cols);
+    const expected =
+      "http://git.example.cn/back_end/advertisement/ad-toolkit/team-hub/team-hub-root/merge_requests/72";
+
+    for (let row = 0; row < rows.length; row++) {
+      expect(linkSegmentsAtBufferRow(buffer, row, cols, 50).map((s) => s.match.text)).toEqual([expected]);
+    }
+  });
+
+  it("uses the full cell width when a path ends in a wide glyph", () => {
+    const buffer = fakeBuffer([{ text: "open /tmp/文", wrapped: false }], 12);
+
+    expect(linkSegmentsAtBufferRow(buffer, 0, 12, 50)).toEqual([
+      {
+        match: { start: 5, end: 11, text: "/tmp/文", kind: "path" },
+        row: 0,
+        startCell: 5,
+        endCell: 12,
+      },
+    ]);
+  });
 });

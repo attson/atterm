@@ -962,6 +962,13 @@ describe("TerminalView link provider wiring", () => {
     expect(source).toContain("openLink: (m) => openLinkMatch(m)");
   });
 
+  test("routes OSC 8 links through the same activation and hit-test policy", () => {
+    expect(source).toContain("createTerminalOscLinkController");
+    expect(source).toContain("linkHandler: oscLinkController.handler");
+    expect(source).toContain("resolveVisibleLink: computeVisibleLinkHit");
+    expect(source).toContain("oscLinkController.linkAtBufferCell(");
+  });
+
   test("routes local file paths to the file reveal store, http to external URL", () => {
     expect(source).toContain("useFileRevealStore");
     expect(source).toContain("resolvePathForReveal(hit, cachedHomeDir, cwd)");

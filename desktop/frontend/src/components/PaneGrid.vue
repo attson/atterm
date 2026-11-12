@@ -179,6 +179,10 @@ function onPaneClick(idx: number) {
   if (idx !== props.tab.activePaneIdx) emit("set-active-pane", idx);
 }
 
+function isPaneFocused(idx: number): boolean {
+  return props.active && idx === props.tab.activePaneIdx;
+}
+
 function paneKey(pane: Pane, idx: number): string {
   return pane.sessionId ?? `empty-${idx}`;
 }
@@ -226,7 +230,7 @@ function requestServicePreview(pane: Pane): void {
           :prefer-direct="pane.remote && preferDirect"
           :session-id="pane.sessionId"
           :active="active"
-          :focused="active && idx === tab.activePaneIdx"
+          :focused="isPaneFocused(idx)"
           :expected-cols="sessionInfoFor(pane)?.cols"
           :expected-rows="sessionInfoFor(pane)?.rows"
           :remote-permission="sessionInfoFor(pane)?.remote_permission"
@@ -251,7 +255,7 @@ function requestServicePreview(pane: Pane): void {
 
       <div class="cell-controls">
         <span
-          v-if="pane.sessionId"
+          v-if="pane.sessionId && isPaneFocused(idx)"
           class="session-input-history-controls-slot"
           :id="`session-input-history-controls-${pane.sessionId}`"
         ></span>
@@ -321,7 +325,7 @@ function requestServicePreview(pane: Pane): void {
              can be picked up by. Only shown when there is somewhere to detach
              to: in a single-pane tab the session already owns its tab. -->
         <span
-          v-if="pane.sessionId && tab.layout !== 'single'"
+          v-if="pane.sessionId && tab.layout !== 'single' && isPaneFocused(idx)"
           class="pane-grip"
           data-test="pane-grip"
           draggable="true"
@@ -331,7 +335,7 @@ function requestServicePreview(pane: Pane): void {
           @dragend="onGripDragEnd"
         >⠿</span>
         <button
-          v-if="tab.layout !== 'single'"
+          v-if="tab.layout !== 'single' && isPaneFocused(idx)"
           type="button"
           class="close-pane"
           v-tooltip="t('terminal.closePaneTitle')"
@@ -503,14 +507,10 @@ function requestServicePreview(pane: Pane): void {
   padding: 2px 6px;
   border-radius: 4px;
   cursor: pointer;
-  opacity: 0;
   pointer-events: auto;
-  transition: opacity 120ms, background 120ms, color 120ms;
+  transition: background 120ms, color 120ms;
 }
-.cell:hover .close-pane { opacity: 1; }
 .pane-grip {
-  opacity: 0;
-  transition: opacity 100ms;
   cursor: grab;
   /* .cell-controls is pointer-events:none so gaps between the badges fall
      through to xterm; every child has to opt back in or it is inert. */
@@ -525,7 +525,6 @@ function requestServicePreview(pane: Pane): void {
   user-select: none;
 }
 .pane-grip:active { cursor: grabbing; }
-.cell:hover .pane-grip { opacity: 1; }
 @media (hover: none) {
   /* No hover to reveal it, and HTML5 drag never fires on touch anyway. */
   .pane-grip { display: none; }

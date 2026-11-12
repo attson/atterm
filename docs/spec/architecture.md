@@ -603,9 +603,9 @@ desktop/frontend/src/
 │                          渲染 aux key row（Enter/Esc/Tab/Ctrl-C/Ctrl-D/方向键）
 │                          与图片/文件 hidden input，发送 PASTE_IMAGE/PASTE_FILE
 │                          时要求 attached + driver + remote_permission=full
-│   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge
-│                          + close-pane × 同行 flex 布局；close 按钮 mousedown
-│                          不冒泡，避免先激活其它 pane 再关错目标
+│   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge；
+│                          仅聚焦 pane 渲染输入历史、拖拽和关闭操作，隐藏时不占位；
+│                          操作按钮 mousedown 不冒泡，避免误触 pane 聚焦
 │   ├── SettingsDialog.vue relay 配置 + Updates 区（current / latest / 进度 /
 │                          autocheck toggle / release notes / 三个按钮）
 │   ├── ConfirmInstallDialog.vue force install & restart 确认弹窗，列出会被

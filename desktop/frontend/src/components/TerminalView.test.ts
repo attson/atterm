@@ -66,7 +66,7 @@ describe("TerminalView submitted input history", () => {
   test("mounts one pane-scoped button and keeps the panel outside terminal sizing", () => {
     expect(paneSource).toContain('`session-input-history-controls-${pane.sessionId}`');
     expect(source).toContain("const inputHistoryTarget = computed(() => `#session-input-history-controls-${props.sessionId}`)");
-    expect(source).toContain('<Teleport defer :to="inputHistoryTarget">');
+    expect(source).toContain('<Teleport v-if="focused" defer :to="inputHistoryTarget">');
     expect(source).toContain('data-test="session-input-history-trigger"');
     expect(source).toContain("<SessionInputHistoryPanel");
     expect(source).toMatch(/<SessionInputHistoryPanel[\s\S]*?v-if="inputHistoryOpen"/);
@@ -84,6 +84,12 @@ describe("TerminalView submitted input history", () => {
     expect(source).toContain('document.addEventListener("keydown", onInputHistoryDocumentKeyDown)');
     expect(source).toMatch(/onInputHistoryDocumentKeyDown[\s\S]*?event\.key !== "Escape"[\s\S]*?closeInputHistory/);
     expect(source).toMatch(/onInputHistoryDocumentPointerDown[\s\S]*?inputHistoryTriggerRef[\s\S]*?inputHistoryPanelRef[\s\S]*?closeInputHistory/);
+  });
+
+  test("closes an open history panel when its pane loses focus", () => {
+    expect(source).toMatch(
+      /watch\(\s*\(\)\s*=>\s*props\.focused,[\s\S]*?if\s*\(isFocused\)[\s\S]*?else\s*\{\s*closeInputHistory\(\)/,
+    );
   });
 });
 

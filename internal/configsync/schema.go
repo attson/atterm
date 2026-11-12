@@ -80,6 +80,7 @@ var relayKeySpecs = []RelayKeySpec{
 	{Key: "terminal_line_height", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeNumber},
 	{Key: "terminal_scrollback", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeInt},
 	{Key: "terminal_theme", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeString},
+	{Key: "traffic_time_zone", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeString},
 }
 
 // RelayKeySpecs returns detached, key-sorted compatibility descriptors.

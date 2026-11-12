@@ -16,9 +16,9 @@ describe("widgetBridge.resize", () => {
       },
     };
 
-    const result: unknown = widgetBridge.resize(200);
+    const result: unknown = widgetBridge.resize(252, 200);
 
-    expect(nativeResize).toHaveBeenCalledWith(200);
+    expect(nativeResize).toHaveBeenCalledWith(252, 200);
     expect(result).toBeInstanceOf(Promise);
   });
 });

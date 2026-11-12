@@ -634,6 +634,7 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn, allowA
 //   - Title
 //   - Cwd
 //   - Command (the spawn command)
+//   - SSHHostAlias / SSHAppearance (saved-host display preferences)
 //
 // Caller MUST run sealSessionInfoContent on the same snapshot before
 // invoking this helper — otherwise the relay carries opaque ids
@@ -647,6 +648,8 @@ func stripContentFieldsFromSnapshot(sessions []proto.SessionInfo) []proto.Sessio
 		s.Title = ""
 		s.Cwd = ""
 		s.Command = ""
+		s.SSHHostAlias = ""
+		s.SSHAppearance = nil
 		out[i] = s
 	}
 	return out

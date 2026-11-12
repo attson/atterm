@@ -110,6 +110,8 @@ export interface RemoteSession {
   host_id: string
   host: string
   user: string
+  ssh_host_alias?: string
+  ssh_appearance?: TerminalAppearanceOverride
   title: string
   cwd?: string
   cols: number
@@ -142,6 +144,12 @@ export interface RemoteSession {
   sealed?: string
   /** Desktop-only accountless route discovered through encrypted Rendezvous. */
   peer_direct?: boolean
+}
+
+export interface TerminalAppearanceOverride {
+  theme_id?: string
+  font_head?: string
+  font_size?: number
 }
 
 export interface SessionBridge {
@@ -199,6 +207,13 @@ export interface SystemBridge {
 export interface EventBus {
   on(event: string, handler: (data: unknown) => void): () => void
   emit(event: string, data: unknown): void
+}
+
+export interface NativeFileDropBridge {
+  /** Registers the Wails native listener, restricted to CSS drop targets. */
+  onFileDrop(handler: (paths: string[]) => void): () => void
+  /** Reads one path received from onFileDrop through the SSH-key-only binding. */
+  readSSHKeyFile(path: string): Promise<{ name: string; content: string }>
 }
 
 export interface UpdaterBridge {
@@ -446,6 +461,8 @@ export interface Platform {
   pluginHost?: PluginHostBridge
   deskWidget?: WidgetBridge
   servicePreview?: ServicePreviewBridge
+  /** Desktop-only native paths. Browser drops continue to use File. */
+  nativeFileDrop?: NativeFileDropBridge
   /** Desktop-only local AI prompt history. Absent on Web and Capacitor. */
   promptHistory?: PromptHistoryBridge
 }

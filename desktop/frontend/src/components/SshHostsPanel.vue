@@ -9,7 +9,8 @@ import TermiusImportDrawer from "./TermiusImportDrawer.vue";
 import type { TermiusImportReport } from "../lib/api";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
-import { readPrivateKeyFile } from "../lib/sshKeyFile";
+import { importedKeyFromText, readPrivateKeyFile, type ImportedKeyFile } from "../lib/sshKeyFile";
+import { useOptionalPlatform } from "../platform";
 import { sshCommandFor } from "../lib/sshCommand";
 import { allHostTags, hostHasAllTags, normalizeTags, parseTagInput } from "../lib/hostTags";
 import { fallbackCopyText } from "../lib/terminalCopy";
@@ -38,6 +39,8 @@ import {
   type ActiveForward,
 } from "../lib/api";
 import { parseHostKeyPrompt, type HostKeyPrompt } from "../lib/sshHostKey";
+import { TERMINAL_THEMES, terminalThemePreview } from "../lib/terminalThemes";
+import { TERMINAL_FONT_PRESETS } from "../lib/terminalFont";
 
 const emit = defineEmits<{
   (e: "connected", sessionId: string): void;
@@ -72,6 +75,7 @@ function swallowStrayDrag(e: Event) {
 // the user has open for seconds at a time.
 const FORWARD_POLL_MS = 3000;
 let forwardsPoll: ReturnType<typeof setInterval> | undefined;
+let stopNativeFileDrop: (() => void) | undefined;
 
 onMounted(() => {
   window.addEventListener("dragover", swallowStrayDrag);
@@ -79,11 +83,19 @@ onMounted(() => {
   void reload();
   void refreshActiveForwards();
   forwardsPoll = setInterval(() => void refreshActiveForwards(), FORWARD_POLL_MS);
+  const nativeDrop = useOptionalPlatform()?.nativeFileDrop;
+  if (nativeDrop) {
+    stopNativeFileDrop = nativeDrop.onFileDrop((paths) => {
+      const path = paths[0];
+      if (path && keyDrawer.value) void importNativeKeyPath(path);
+    });
+  }
 });
 onBeforeUnmount(() => {
   window.removeEventListener("dragover", swallowStrayDrag);
   window.removeEventListener("drop", swallowStrayDrag);
   if (forwardsPoll !== undefined) clearInterval(forwardsPoll);
+  stopNativeFileDrop?.();
 });
 
 // ---- Hosts ----
@@ -116,7 +128,7 @@ const filteredHosts = computed(() => {
     } else if (!hostHasAllTags(h.tags, selectedGroupPath.value)) return false;
     if (q === "") return true;
     return `${h.alias ?? ""} ${h.host} ${h.user} ${(h.tags ?? []).join(" ")} ${(h.group_path ?? []).join(" ")}`.toLowerCase().includes(q);
-  });
+  }).sort((a, b) => (b.last_used_at ?? 0) - (a.last_used_at ?? 0));
 });
 function enterGroup(tag: string) {
   selectedGroupPath.value = [...selectedGroupPath.value, tag];
@@ -131,6 +143,24 @@ const keyOptions = computed<SelectOption[]>(() =>
     label: k.key_type ? `${k.name} (${k.key_type})` : k.name,
   })),
 );
+
+const appearanceThemeOptions = computed<SelectOption[]>(() => [
+  { value: "", label: t("ssh.hostDrawer.inheritGlobal") },
+  ...TERMINAL_THEMES.map((theme) => ({
+    value: theme.id,
+    label: t(theme.labelKey),
+    description: t(theme.descriptionKey),
+    preview: terminalThemePreview(theme),
+  })),
+]);
+
+const appearanceFontOptions = computed<SelectOption[]>(() => [
+  { value: "__inherit__", label: t("ssh.hostDrawer.inheritGlobal") },
+  ...TERMINAL_FONT_PRESETS.map((font) => ({
+    value: font.id,
+    label: font.label,
+  })),
+]);
 
 // Tags already in use elsewhere, minus the ones this host already carries —
 // offered as suggestions in the host form. Typing a brand-new tag also works.
@@ -405,6 +435,7 @@ async function duplicateHost(h: SSHHost) {
     ...h,
     id: "",
     alias: h.alias?.trim() ? `${h.alias.trim()} copy` : "",
+    last_used_at: undefined,
   };
   try {
     const created = await addSSHHost(copy, {});
@@ -451,6 +482,23 @@ const fKeyID = ref("");
 // changing the default later reaches hosts the user never touched.
 const fStartupCommand = ref("");
 const fStartupDelayMs = ref("");
+const fThemeID = ref("");
+const fFontHead = ref("__inherit__");
+const fFontSize = ref<string | number>("");
+
+const appearanceFontSizeValid = computed(() => {
+  if (String(fFontSize.value).trim() === "") return true;
+  const value = Number(fFontSize.value);
+  return Number.isInteger(value) && value >= 8 && value <= 32;
+});
+
+function terminalAppearanceValue(): SSHHost["terminal_appearance"] {
+  const appearance: NonNullable<SSHHost["terminal_appearance"]> = {};
+  if (fThemeID.value) appearance.theme_id = fThemeID.value;
+  if (fFontHead.value !== "__inherit__") appearance.font_head = fFontHead.value;
+  if (String(fFontSize.value).trim() !== "") appearance.font_size = Number(fFontSize.value);
+  return Object.keys(appearance).length ? appearance : undefined;
+}
 
 // startupDelayValue parses the delay field for the save payload. Anything
 // unparseable becomes 0, which the Go side reads as "default" — the same
@@ -480,6 +528,9 @@ function openNewHost() {
   fKeyID.value = keys.value[0]?.id ?? "";
   fStartupCommand.value = "";
   fStartupDelayMs.value = "";
+  fThemeID.value = "";
+  fFontHead.value = "__inherit__";
+  fFontSize.value = "";
   fForwards.value = [];
   hostDrawer.value = true;
 }
@@ -497,6 +548,11 @@ function openEditHost(h: SSHHost) {
   fKeyID.value = h.key_id ?? keys.value[0]?.id ?? "";
   fStartupCommand.value = h.startup_command ?? "";
   fStartupDelayMs.value = h.startup_delay_ms ? String(h.startup_delay_ms) : "";
+  fThemeID.value = h.terminal_appearance?.theme_id ?? "";
+  fFontHead.value = h.terminal_appearance?.font_head === undefined
+    ? "__inherit__"
+    : h.terminal_appearance.font_head;
+  fFontSize.value = h.terminal_appearance?.font_size ? String(h.terminal_appearance.font_size) : "";
   fForwards.value = cloneForwards(h.forwards);
   hostDrawer.value = true;
 }
@@ -507,6 +563,7 @@ function closeHostDrawer() {
 }
 const canSaveHost = computed(() => {
   if (fHost.value.trim() === "" || fUser.value.trim() === "") return false;
+  if (!appearanceFontSizeValid.value) return false;
   if (fAuthKind.value === "key") return fKeyID.value !== "";
   return true;
 });
@@ -526,6 +583,7 @@ async function saveHost() {
     // both, so the payload always carries them and clearing one sticks.
     startup_command: fStartupCommand.value,
     startup_delay_ms: startupDelayValue(),
+    terminal_appearance: terminalAppearanceValue(),
     // The drawer owns Forwards, and UpdateSSHHost lets the caller's value
     // win — including an empty list, so deleting the last rule is a saveable
     // edit. The flip side is that a payload built without this line deletes
@@ -1046,7 +1104,30 @@ async function onKeyFilePicked(e: Event) {
 
 async function onKeyFileDropped(e: DragEvent) {
   keyDragOver.value = false;
+  // Wails emits the same gesture through OnFileDrop with an absolute path.
+  // Ignore the browser event there so one drop cannot import twice; Web keeps
+  // using dataTransfer.files because it has no nativeFileDrop bridge.
+  if (useOptionalPlatform()?.nativeFileDrop) return;
   await importKeyFile(e.dataTransfer?.files?.[0]);
+}
+
+async function importNativeKeyPath(path: string) {
+  const nativeDrop = useOptionalPlatform()?.nativeFileDrop;
+  if (!nativeDrop) return;
+  keyDragOver.value = false;
+  errorMsg.value = "";
+  try {
+    const file = await nativeDrop.readSSHKeyFile(path);
+    applyImportedKey(importedKeyFromText(file.name, file.content));
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+function applyImportedKey(imported: ImportedKeyFile) {
+  kPem.value = imported.pem;
+  kNeedsPassphrase.value = imported.encrypted;
+  if (kName.value.trim() === "") kName.value = imported.suggestedName;
 }
 
 // importKeyFile fills the drawer from a local file. The name is only filled in
@@ -1056,9 +1137,7 @@ async function importKeyFile(file: File | undefined | null) {
   errorMsg.value = "";
   try {
     const imported = await readPrivateKeyFile(file);
-    kPem.value = imported.pem;
-    kNeedsPassphrase.value = imported.encrypted;
-    if (kName.value.trim() === "") kName.value = imported.suggestedName;
+    applyImportedKey(imported);
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : String(e);
   }
@@ -1575,6 +1654,43 @@ async function confirmConfigImport() {
               </div>
             </template>
 
+            <details class="host-more-settings" data-test="ssh-more-settings">
+              <summary class="host-more-settings-summary">
+                <span>{{ t("ssh.hostDrawer.moreSettings") }}</span>
+                <ChevronDown :size="14" aria-hidden="true" />
+              </summary>
+              <div class="host-more-settings-body">
+            <div class="fwd-section" data-test="ssh-appearance-section">
+              <div class="fwd-section-head"><span class="fl">{{ t("ssh.hostDrawer.appearance") }}</span></div>
+              <p class="hint">{{ t("ssh.hostDrawer.appearanceHint") }}</p>
+              <label class="field">
+                <span class="fl">{{ t("ssh.hostDrawer.theme") }}</span>
+                <SelectDropdown
+                  data-test="ssh-appearance-theme"
+                  v-model="fThemeID"
+                  :options="appearanceThemeOptions"
+                  :aria-label="t('ssh.hostDrawer.theme')"
+                />
+              </label>
+              <label class="field">
+                <span class="fl">{{ t("ssh.hostDrawer.font") }}</span>
+                <SelectDropdown
+                  data-test="ssh-appearance-font"
+                  v-model="fFontHead"
+                  :options="appearanceFontOptions"
+                  :aria-label="t('ssh.hostDrawer.font')"
+                />
+              </label>
+              <label class="field">
+                <span class="fl">{{ t("ssh.hostDrawer.fontSize") }}</span>
+                <input
+                  data-test="ssh-appearance-size" v-model="fFontSize" type="number" min="8" max="32"
+                  :placeholder="t('ssh.hostDrawer.inheritGlobal')"
+                />
+                <span v-if="!appearanceFontSizeValid" class="fwd-warn">{{ t("ssh.hostDrawer.fontSizeError") }}</span>
+              </label>
+            </div>
+
             <!-- STARTUP COMMAND -->
             <!-- For a bastion that puts a menu in front of the shell.
                  JumpServer asks for the asset at `Opt>` and then for the
@@ -1691,6 +1807,8 @@ async function confirmConfigImport() {
                 >{{ forwardBindWarning(r) }}</p>
               </div>
             </div>
+              </div>
+            </details>
           </div>
           <div class="drawer-foot">
             <button class="btn ghost" @click="closeHostDrawer">{{ t("common.cancel") }}</button>
@@ -2136,6 +2254,7 @@ async function confirmConfigImport() {
 .import-block { margin-top: 4px; display: flex; flex-direction: column; gap: 8px; }
 .file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .dropzone {
+  --wails-drop-target: drop;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   padding: 18px 12px; text-align: center;
   border: 1px dashed var(--border); border-radius: 8px;
@@ -2185,6 +2304,19 @@ async function confirmConfigImport() {
 
 /* --- port forwarding: rules editor (host drawer) --- */
 .fwd-section { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.host-more-settings {
+  border-top: 1px solid var(--border);
+}
+.host-more-settings-summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 11px 0 0; color: var(--fg); font-size: 12px; font-weight: 600;
+  cursor: pointer; list-style: none; user-select: none;
+}
+.host-more-settings-summary::-webkit-details-marker { display: none; }
+.host-more-settings-summary svg { color: var(--fg-dim); transition: transform 120ms ease; }
+.host-more-settings[open] .host-more-settings-summary svg { transform: rotate(180deg); }
+.host-more-settings-body { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+.host-more-settings-body > .fwd-section:first-child { border-top: 0; }
 .fwd-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .fwd-section-head .fl { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .fwd-rule { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }

@@ -48,6 +48,7 @@ import {
   getRelayConfig,
   getCommandNotifyThresholdSeconds,
   getTerminalThemePreference,
+  setTerminalThemePreference,
   getTerminalFontHead,
   getTerminalFontSize,
   setTerminalFontSize,
@@ -1068,6 +1069,21 @@ function onTerminalThemeChanged(themeID: string) {
   currentTerminalThemeID.value = getTerminalTheme(themeID).id;
 }
 
+async function onToolbarThemeChanged(themeID: string) {
+  const previous = currentTerminalThemeID.value;
+  const next = getTerminalTheme(themeID).id;
+  if (next === previous) return;
+  currentTerminalThemeID.value = next;
+  try {
+    if (caps.wailsBindings) await setTerminalThemePreference(next);
+  } catch (e) {
+    currentTerminalThemeID.value = previous;
+    const message = errText(e);
+    logError("theme", "toolbar theme persist failed", { error: message });
+    showToast(message);
+  }
+}
+
 // One Promise.all mirrors SettingsTerminalAppearance.vue's own onMounted load
 // so the two never observe different Go-side values at boot.
 async function refreshTerminalAppearance() {
@@ -2049,6 +2065,7 @@ defineExpose({ me });
             :session-info-for="paneSessionInfo"
             :viewer-count-for="viewerCountFor"
             :active="t.id === currentTabId"
+            :terminal-theme-id="currentTerminalThemeID"
             :terminal-theme="currentTerminalTheme.xtermTheme"
             :command-notify-threshold-sec="commandNotifyThresholdSec"
             :search-request-seq="terminalSearchSeq"
@@ -2059,6 +2076,7 @@ defineExpose({ me });
             @drop-session="(p) => onPaneDropSession(t, p)"
             @detach-session="onDetachSessionToTab"
             @toast="showToast"
+            @terminal-theme-changed="onToolbarThemeChanged"
             @update:col-ratio="(r) => { t.colRatio = r; }"
             @update:row-ratio="(r) => { t.rowRatio = r; }"
           />

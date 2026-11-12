@@ -120,6 +120,11 @@ type SSHConnectReq struct {
 	// connection can find the host's ProxyJump chain. Empty for ad-hoc
 	// connections. Not part of the frontend-facing request shape.
 	SSHHostID string `json:"-"`
+	// SSHHostAlias / SSHAppearance are copied from the saved host and become a
+	// connect-time SessionInfo snapshot. They are intentionally unavailable to
+	// ad-hoc frontend requests.
+	SSHHostAlias  string                            `json:"-"`
+	SSHAppearance *proto.TerminalAppearanceOverride `json:"-"`
 	// StartupCommand / StartupDelayMs are copied from the saved host by
 	// NewSshSessionByID and typed into the shell once it is open (see
 	// ssh_startup_command.go).

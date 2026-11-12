@@ -37,6 +37,8 @@ vi.mock('../../../wailsjs/runtime/runtime', () => ({
   Quit: vi.fn(),
   Environment: vi.fn().mockResolvedValue({ platform: 'darwin', arch: 'arm64', buildType: 'production' }),
   BrowserOpenURL: vi.fn(),
+  OnFileDrop: vi.fn(),
+  OnFileDropOff: vi.fn(),
 }))
 
 vi.mock('../../lib/api', () => ({
@@ -68,6 +70,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetPluginConfig: vi.fn().mockResolvedValue({ enabled_plugins: [] }),
   SetPluginConfig: vi.fn().mockResolvedValue(undefined),
   GetAppVersion: vi.fn().mockResolvedValue('v0.4.0'),
+  ReadSSHKeyFile: vi.fn().mockResolvedValue({ name: 'id_ed25519', content: 'pem' }),
 }))
 
 import { createWailsPlatform } from '../wails'

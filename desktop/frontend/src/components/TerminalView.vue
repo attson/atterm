@@ -3063,7 +3063,14 @@ onMounted(async () => {
   // the blank/cached terminal has had a chance to paint.
   if (props.active) {
     ensureConnection();
-    scheduleTerminalResumeAfterReveal(() => safeFit(), () => redrawTerminalAfterReveal());
+    scheduleTerminalResumeAfterReveal(() => {
+      // A newly-created tab mounts active, so the active watcher below never
+      // sees a transition. Focus here as part of the same reveal path or the
+      // picker closes onto a terminal that still needs an extra click before
+      // it accepts keyboard input.
+      focusTerminalForPaneActivation();
+      safeFit();
+    }, () => redrawTerminalAfterReveal());
   }
 });
 

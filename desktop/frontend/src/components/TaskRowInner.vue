@@ -23,7 +23,7 @@ import LastOutputIndicator from "./LastOutputIndicator.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { formatLastOutput } from "../lib/lastOutput";
-import { titleOrCommand, rowTitle, taskStateLabel, commandLabel } from "../lib/sessionLabel";
+import { titleOrCommand, rowTitle, taskStateLabel, commandLabel, sshEndpoint } from "../lib/sessionLabel";
 
 const props = withDefaults(defineProps<{
   session: RemoteSession;
@@ -43,6 +43,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const cwd = computed(() => shortenCwd(props.session.cwd, props.home));
+const endpoint = computed(() => props.session.ssh_host_alias ? sshEndpoint(props.session) : "");
 const hasLastOutput = computed(() =>
   formatLastOutput(props.session.last_output_at, props.session.task_state, props.nowMs) !== null,
 );
@@ -73,8 +74,10 @@ function stateLabel(state: string | undefined): string {
       <span class="cmd">{{ titleOrCommand(props.session) }}</span>
     </span>
   </span>
-  <span v-if="cwd" class="row-meta" data-test="row-meta">
-    <span class="cwd" data-test="row-cwd">{{ cwd }}</span>
+  <span v-if="endpoint || cwd" class="row-meta" data-test="row-meta">
+    <span v-if="endpoint" class="endpoint" data-test="row-endpoint">{{ endpoint }}</span>
+    <span v-if="endpoint && cwd" class="meta-separator" aria-hidden="true">·</span>
+    <span v-if="cwd" class="cwd" data-test="row-cwd">{{ cwd }}</span>
   </span>
   </span>
   <!-- Right-hand tail, same shape as the desk widget's row: kind badge on the
@@ -119,6 +122,8 @@ function stateLabel(state: string | undefined): string {
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
 .row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
 .cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 1 1 auto; min-width: 0; }
+.endpoint { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 0 1 auto; min-width: 0; }
+.meta-separator { color: var(--fg-dim); opacity: 0.65; flex: 0 0 auto; }
 
 /* Tail column. `align-self: stretch` + space-between is what pins the kind
    badge to the title line and the timestamp to the cwd line without either

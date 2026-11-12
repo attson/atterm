@@ -70,6 +70,15 @@ describe("TaskRowInner right-hand affordances", () => {
 });
 
 describe("TaskRowInner layout", () => {
+  test("shows saved SSH alias on the first line and endpoint with cwd on the second", () => {
+    const w = factory({
+      ssh_host_alias: "Ali ECS Atterm", user: "root", host: "121.43.40.128", cwd: "/opt/atterm",
+      title: "root@remote: /opt/atterm", current_command: "zsh",
+    });
+    expect(w.get(".cmd").text()).toBe("Ali ECS Atterm");
+    expect(w.get('[data-test="row-endpoint"]').text()).toBe("root@121.43.40.128");
+    expect(w.get('[data-test="row-cwd"]').text()).toContain("/opt/atterm");
+  });
   // The close × is absolute again, but for a different reason than the version
   // that got reverted: back then it floated over the title line and the row
   // reserved a permanent 32px gutter for it. Now it sits in the tail column's

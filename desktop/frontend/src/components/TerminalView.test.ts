@@ -297,7 +297,7 @@ describe("TerminalView reveal redraw", () => {
     const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
     expect(mountedBody).not.toBeNull();
     expect(mountedBody![0]).toMatch(
-      /scheduleTerminalResumeAfterReveal\(\(\) => safeFit\(\), \(\) => redrawTerminalAfterReveal\(\)\)/,
+      /scheduleTerminalResumeAfterReveal\(\(\) => \{[\s\S]*?safeFit\(\);[\s\S]*?\}, \(\) => redrawTerminalAfterReveal\(\)\)/,
     );
   });
 });
@@ -1377,6 +1377,19 @@ describe("TerminalView paste-file dispatch", () => {
 });
 
 describe("TerminalView programmatic focus", () => {
+  test("focuses a newly mounted active desktop pane after its layout is revealed", () => {
+    // A newly-created SSH tab mounts already active, so the props.active
+    // watcher never observes a false -> true transition. Its initial mount
+    // path must therefore use the same pane-activation focus helper after the
+    // reveal settles; otherwise the host picker disappears but typing still
+    // goes nowhere until the user clicks inside the terminal.
+    const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
+    expect(mountedBody).not.toBeNull();
+    expect(mountedBody![0]).toMatch(
+      /if \(props\.active\)[\s\S]*?scheduleTerminalResumeAfterReveal\(\(\) => \{[\s\S]*?focusTerminalForPaneActivation\(\)/,
+    );
+  });
+
   test("does not focus xterm while the pane is still a viewer", () => {
     expect(source).toMatch(/function\s+focusTerminalIfDriver\s*\(/);
     expect(source).toMatch(/focusTerminalIfDriver[\s\S]*?if\s*\(\s*!isDriver\.value\s*\)\s*return/);
@@ -1537,11 +1550,12 @@ describe("TerminalView appearance", () => {
     expect(body![0]).not.toMatch(/lastAppliedMetrics\.cursorStyle|lastAppliedMetrics\.cursorBlink|lastAppliedMetrics\.scrollback/);
   });
 
-  test("App drills one appearance object through PaneGrid", () => {
+  test("App drills global appearance through PaneGrid, which resolves each pane", () => {
     expect(appSource).toMatch(/const terminalAppearance = ref</);
     expect(appSource).toContain(':appearance="terminalAppearance"');
     expect(paneSource).toContain("appearance?: TerminalAppearance");
-    expect(paneSource).toContain(':appearance="appearance"');
+    expect(paneSource).toContain("resolveSSHAppearance(props.appearance");
+    expect(paneSource).toContain(':appearance="appearanceFor(pane)"');
   });
 
   // Important 1 — SettingsDialog.vue:214-215 forwards appearance-changed

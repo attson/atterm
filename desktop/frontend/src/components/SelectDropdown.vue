@@ -1,10 +1,17 @@
 <script lang="ts" setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from "vue";
+
+export interface SelectOptionPreview {
+  background: string;
+  foreground: string;
+  colors: string[];
+}
 
 export interface SelectOption {
   value: string;
   label: string;
   description?: string;
+  preview?: SelectOptionPreview;
 }
 
 const instanceId = `select-dropdown-${Math.random().toString(36).slice(2, 10)}`;
@@ -32,6 +39,16 @@ const selectedLabel = computed(() => {
   const match = props.options.find((o) => o.value === props.modelValue);
   return match ? match.label : "";
 });
+
+const hasPreviews = computed(() => props.options.some((option) => option.preview));
+
+function previewStyle(option: SelectOption): CSSProperties {
+  if (!option.preview) return {};
+  return {
+    "--preview-background": option.preview.background,
+    "--preview-foreground": option.preview.foreground,
+  } as CSSProperties;
+}
 
 function findSelectedIndex(): number {
   return props.options.findIndex((o) => o.value === props.modelValue);
@@ -154,6 +171,7 @@ onBeforeUnmount(() => {
     <ul
       v-if="open"
       class="menu"
+      :class="{ 'menu-with-previews': hasPreviews }"
       data-testid="select-menu"
       role="listbox"
     >
@@ -165,6 +183,7 @@ onBeforeUnmount(() => {
         :class="{
           'option-highlight': index === highlightIndex,
           'option-selected': option.value === modelValue,
+          'option-with-preview': option.preview,
         }"
         data-testid="select-option"
         role="option"
@@ -172,9 +191,42 @@ onBeforeUnmount(() => {
         @click="selectOption(option)"
         @mouseenter="highlightIndex = index"
       >
-        <span class="option-label">{{ option.label }}</span>
-        <span v-if="option.description" class="option-description">
-          {{ option.description }}
+        <div
+          v-if="option.preview"
+          class="terminal-preview"
+          data-testid="select-option-preview"
+          :style="previewStyle(option)"
+          aria-hidden="true"
+        >
+          <div class="terminal-preview-chrome">
+            <i
+              v-for="color in option.preview.colors.slice(0, 3)"
+              :key="color"
+              :style="{ backgroundColor: color }"
+            ></i>
+          </div>
+          <div class="terminal-preview-content">
+            <div class="terminal-preview-line terminal-preview-line--long">
+              <b :style="{ color: option.preview.colors[1] ?? option.preview.foreground }">$</b><span></span>
+            </div>
+            <div class="terminal-preview-line terminal-preview-line--short">
+              <b :style="{ color: option.preview.colors[3] ?? option.preview.foreground }">›</b><span></span>
+            </div>
+            <div class="terminal-preview-swatches">
+              <i
+                v-for="color in option.preview.colors"
+                :key="color"
+                class="terminal-preview-swatch"
+                :style="{ backgroundColor: color }"
+              ></i>
+            </div>
+          </div>
+        </div>
+        <span class="option-copy">
+          <span class="option-label">{{ option.label }}</span>
+          <span v-if="option.description" class="option-description">
+            {{ option.description }}
+          </span>
         </span>
       </li>
     </ul>
@@ -255,6 +307,12 @@ onBeforeUnmount(() => {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
   z-index: 1000;
 }
+.menu-with-previews {
+  right: auto;
+  width: max(100%, 310px);
+  max-width: calc(100vw - 32px);
+  max-height: min(336px, calc(100vh - 48px));
+}
 .option {
   position: relative;
   display: flex;
@@ -262,6 +320,20 @@ onBeforeUnmount(() => {
   gap: 2px;
   padding: 8px 10px;
   cursor: pointer;
+}
+.option-with-preview {
+  box-sizing: border-box;
+  min-height: 70px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.option-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
 }
 .option-label {
   color: var(--fg);
@@ -272,6 +344,72 @@ onBeforeUnmount(() => {
   color: var(--fg-dim);
   font-size: 12px;
   line-height: 1.3;
+}
+.terminal-preview {
+  box-sizing: border-box;
+  width: 88px;
+  height: 54px;
+  flex: 0 0 88px;
+  overflow: hidden;
+  color: var(--preview-foreground);
+  background: var(--preview-background);
+  border: 1px solid rgba(127, 127, 127, 0.42);
+  border-radius: 5px;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.28);
+}
+.terminal-preview-chrome {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 12px;
+  padding: 0 5px;
+  background: rgba(127, 127, 127, 0.16);
+  border-bottom: 1px solid rgba(127, 127, 127, 0.16);
+}
+.terminal-preview-chrome i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+.terminal-preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 6px 5px;
+}
+.terminal-preview-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 6px;
+}
+.terminal-preview-line b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  line-height: 1;
+}
+.terminal-preview-line span {
+  display: block;
+  width: 48px;
+  height: 3px;
+  background: var(--preview-foreground);
+  border-radius: 2px;
+  opacity: 0.72;
+}
+.terminal-preview-line--short span {
+  width: 31px;
+  opacity: 0.42;
+}
+.terminal-preview-swatches {
+  display: flex;
+  gap: 3px;
+  padding-left: 9px;
+}
+.terminal-preview-swatch {
+  width: 7px;
+  height: 4px;
+  border-radius: 1px;
 }
 .option-highlight {
   background: rgba(255, 255, 255, 0.06);

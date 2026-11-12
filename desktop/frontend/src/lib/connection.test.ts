@@ -1063,19 +1063,23 @@ describe("decryptSessionFields", () => {
 
   afterEach(() => setAccountKeyProvider(null));
 
-  test("overlays sealed title/cwd/command/current_command when key is unlocked", () => {
+  test("overlays sealed session content including saved SSH identity and appearance", () => {
     setAccountKeyProvider(() => accountKey);
     const sealed = sealSessionFields(accountKey, uuid, {
       title: "atterm - claude",
       cwd: "/Users/alice/proj",
       command: "claude",
       current_command: "rg api_key",
+      ssh_host_alias: "Ali ECS Atterm",
+      ssh_appearance: { theme_id: "nord", font_head: "Source Code Pro", font_size: 14 },
     });
     const [out] = decryptSessionFields([baseSession(uuid, { sealed })]);
     expect(out.title).toBe("atterm - claude");
     expect(out.cwd).toBe("/Users/alice/proj");
     expect(out.command).toBe("claude");
     expect(out.current_command).toBe("rg api_key");
+    expect(out.ssh_host_alias).toBe("Ali ECS Atterm");
+    expect(out.ssh_appearance).toEqual({ theme_id: "nord", font_head: "Source Code Pro", font_size: 14 });
   });
 
   test("passes sessions through unchanged when account key is locked", () => {

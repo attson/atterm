@@ -3,6 +3,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import source from "./SettingsGeneral.vue?raw";
 import SettingsGeneral from "./SettingsGeneral.vue";
 import SettingsTerminalAppearance from "./SettingsTerminalAppearance.vue";
+import SelectDropdown from "./SelectDropdown.vue";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "../lib/api";
@@ -61,6 +62,26 @@ describe("SettingsGeneral", () => {
     const grid = w.get('[data-test="general-primary-grid"]');
 
     expect(grid.findAllComponents({ name: "SelectDropdown" })).toHaveLength(2);
+    __setPlatformForTests(null);
+  });
+
+  it("provides real palette previews for every terminal theme", () => {
+    const platform = createFakePlatform();
+    platform.caps.wailsBindings = false;
+    __setPlatformForTests(platform);
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+
+    const themeDropdown = w.findAllComponents(SelectDropdown)[1];
+    const themeOptions = themeDropdown.props("options") as Array<{
+      value: string;
+      preview?: { background: string; foreground: string; colors: string[] };
+    }>;
+    expect(themeOptions).toHaveLength(4);
+    expect(themeOptions.find((option) => option.value === "nord")?.preview).toEqual({
+      background: "#2e3440",
+      foreground: "#d8dee9",
+      colors: ["#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#88c0d0"],
+    });
     __setPlatformForTests(null);
   });
 

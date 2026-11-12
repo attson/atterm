@@ -9,6 +9,10 @@ import type { RemoteSession } from "../platform/types";
 // contribute.
 export function matchesSession(s: RemoteSession, q: string): boolean {
   if (!q) return true;
+  const alias = s.ssh_host_alias;
+  if (alias && alias.toLocaleLowerCase().includes(q)) return true;
+  const endpoint = s.host && s.user ? `${s.user}@${s.host}` : (s.host || s.user);
+  if (endpoint && endpoint.toLocaleLowerCase().includes(q)) return true;
   const t = s.title;
   if (t && t.toLocaleLowerCase().includes(q)) return true;
   const c = s.cwd;

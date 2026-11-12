@@ -23,6 +23,7 @@ import {
   coResidentIndex,
   taskStateLabel,
   commandLabel,
+  sshEndpoint,
 } from "../lib/sessionLabel";
 
 const preset = useTaskPreset();
@@ -656,11 +657,9 @@ function stateLabel(state: string | undefined): string {
                 <span class="cmd">{{ titleOrCommand(s) }}</span>
               </span>
             </span>
-            <span
-              v-if="shortenCwd(s.cwd, home)"
-              class="row-meta"
-              data-test="row-meta"
-            >
+            <span v-if="s.ssh_host_alias || shortenCwd(s.cwd, home)" class="row-meta" data-test="row-meta">
+              <span v-if="s.ssh_host_alias" class="endpoint" data-test="row-endpoint">{{ sshEndpoint(s) }}</span>
+              <span v-if="s.ssh_host_alias && shortenCwd(s.cwd, home)" class="meta-separator" aria-hidden="true">·</span>
               <span class="cwd">{{ shortenCwd(s.cwd, home) }}</span>
             </span>
           </span>
@@ -802,6 +801,8 @@ function stateLabel(state: string | undefined): string {
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
 .row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
 .cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 1 1 auto; min-width: 0; }
+.endpoint { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 0 1 auto; min-width: 0; }
+.meta-separator { color: var(--fg-dim); opacity: 0.65; flex: 0 0 auto; }
 /* Mirrors TaskRowInner's tail — see the comment there for why min-width. */
 .row-tail {
   flex: 0 0 auto;

@@ -582,6 +582,8 @@ export function createCapacitorPlatform(): Platform {
           current_command?: string; command_started_at?: number; command_ended_at?: number; command_duration_ms?: number;
           command_exit_code?: number; last_output_at?: number; type?: string; summary?: SessionSummary;
           unread?: boolean; attention_at?: number; sealed?: string;
+          ssh_host_id?: string; ssh_host_alias?: string;
+          ssh_appearance?: { theme_id?: string; font_head?: string; font_size?: number };
         }>
         // M3b: decrypt SessionInfo.Sealed when an account_key is in
         // secureStorage. Mirrors web/src/shared/api/sessions.ts. On any
@@ -594,6 +596,8 @@ export function createCapacitorPlatform(): Platform {
           let cwd = s.cwd
           let command = s.command
           let currentCommand = s.current_command
+          let sshHostAlias = s.ssh_host_alias
+          let sshAppearance = s.ssh_appearance
           if (accountKey && s.sealed) {
             try {
               const env = b64StdToBytes(s.sealed)
@@ -603,6 +607,8 @@ export function createCapacitorPlatform(): Platform {
                 if (fields.cwd !== undefined) cwd = fields.cwd
                 if (fields.command !== undefined) command = fields.command
                 if (fields.current_command !== undefined) currentCommand = fields.current_command
+                if (fields.ssh_host_alias !== undefined) sshHostAlias = fields.ssh_host_alias
+                if (fields.ssh_appearance !== undefined) sshAppearance = fields.ssh_appearance
               }
             } catch (e) {
               // Falling back to plaintext is the designed behaviour, but it is
@@ -610,7 +616,7 @@ export function createCapacitorPlatform(): Platform {
               logWarn('capacitor', 'sealed field open failed; using plaintext', { error: errText(e) })
             }
           }
-          s = { ...s, title, cwd, command, current_command: currentCommand }
+          s = { ...s, title, cwd, command, current_command: currentCommand, ssh_host_alias: sshHostAlias, ssh_appearance: sshAppearance }
           const out: RemoteSession = {
             session_id: s.id,
             host_id: s.host_id,
@@ -621,6 +627,8 @@ export function createCapacitorPlatform(): Platform {
             cols: s.cols,
             rows: s.rows,
           }
+          if (s.ssh_host_alias !== undefined) out.ssh_host_alias = s.ssh_host_alias
+          if (s.ssh_appearance !== undefined) out.ssh_appearance = s.ssh_appearance
           if (s.remote_permission !== undefined) out.remote_permission = s.remote_permission
           if (s.task_state !== undefined) out.task_state = s.task_state
           if (s.current_command !== undefined) out.current_command = s.current_command

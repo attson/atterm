@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 )
 
@@ -130,7 +131,13 @@ func TestNewSshSessionByIDAcceptedHostKeyConnects(t *testing.T) {
 	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
 	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
 
-	h, err := a.AddSSHHost(SSHHost{Host: host, Port: port, User: "u", AuthKind: "password"},
+	fontHead := "Source Code Pro"
+	h, err := a.AddSSHHost(SSHHost{
+		Alias: "Ali ECS Atterm", Host: host, Port: port, User: "u", AuthKind: "password",
+		TerminalAppearance: &proto.TerminalAppearanceOverride{
+			ThemeID: "nord", FontHead: &fontHead, FontSize: 14,
+		},
+	},
 		sshCredential{Password: "pw"})
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +148,9 @@ func TestNewSshSessionByIDAcceptedHostKeyConnects(t *testing.T) {
 	if !errors.As(err, &hkErr) {
 		t.Fatalf("expected HostKeyUnknownError first, got %v", err)
 	}
+	if got := a.ListSSHHosts()[0].LastUsedAt; got != 0 {
+		t.Fatalf("failed TOFU attempt updated LastUsedAt to %d", got)
+	}
 	if hkErr.Host == "" || hkErr.Fingerprint == "" {
 		t.Fatalf("prompt must carry both halves to echo back, got host=%q fp=%q",
 			hkErr.Host, hkErr.Fingerprint)
@@ -150,10 +160,66 @@ func TestNewSshSessionByIDAcceptedHostKeyConnects(t *testing.T) {
 	if _, err := a.NewSshSessionByID(h.ID, wrong); !errors.As(err, &hkErr) {
 		t.Fatalf("a fingerprint the user was never shown must not be accepted, got %v", err)
 	}
+	if got := a.ListSSHHosts()[0].LastUsedAt; got != 0 {
+		t.Fatalf("rejected fingerprint updated LastUsedAt to %d", got)
+	}
 
 	resp, err := a.NewSshSessionByID(h.ID, AcceptedHostKey{Host: hkErr.Host, Fingerprint: hkErr.Fingerprint})
 	if err != nil {
 		t.Fatalf("NewSshSessionByID after accepting the shown key: %v", err)
+	}
+	if resp.SessionID == "" {
+		t.Fatal("empty session id")
+	}
+	if got := a.ListSSHHosts()[0].LastUsedAt; got <= 0 {
+		t.Fatalf("successful saved-host connection did not update LastUsedAt: %d", got)
+	}
+	sid := uuid.MustParse(resp.SessionID)
+	sess, ok := a.host.server.Registry().Get(sid)
+	if !ok {
+		t.Fatal("saved-host session not registered")
+	}
+	info := sess.Info()
+	if info.SSHHostAlias != "Ali ECS Atterm" || info.SSHAppearance == nil ||
+		info.SSHAppearance.ThemeID != "nord" || info.SSHAppearance.FontHead == nil ||
+		*info.SSHAppearance.FontHead != "Source Code Pro" || info.SSHAppearance.FontSize != 14 {
+		t.Fatalf("saved-host snapshot missing alias/appearance: %+v", info)
+	}
+}
+
+func TestNewSshSessionByIDKeepsSuccessfulSessionWhenRecentUseCannotPersist(t *testing.T) {
+	useIsolatedKeyring(t)
+	addr, _ := startSSHTestServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
+	h, err := a.AddSSHHost(
+		SSHHost{Host: host, Port: port, User: "u", AuthKind: "password"},
+		sshCredential{Password: "pw"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.NewSshSessionByID(h.ID, AcceptedHostKey{})
+	var hkErr *HostKeyUnknownError
+	if !errors.As(err, &hkErr) {
+		t.Fatalf("expected HostKeyUnknownError first, got %v", err)
+	}
+
+	// Redirect config persistence beneath a regular file. The SSH credential
+	// remains in the isolated keyring, so only the post-connect metadata write
+	// fails; the already-adopted terminal must still be returned to the caller.
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", blocker)
+
+	resp, err := a.NewSshSessionByID(h.ID, AcceptedHostKey{Host: hkErr.Host, Fingerprint: hkErr.Fingerprint})
+	if err != nil {
+		t.Fatalf("successful session was hidden by recent-use persistence failure: %v", err)
 	}
 	if resp.SessionID == "" {
 		t.Fatal("empty session id")

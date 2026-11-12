@@ -40,6 +40,12 @@ describe('sessionLabel.rowTitle', () => {
   it('returns just the command when cwd is missing', () => {
     expect(rowTitle({ current_command: 'ls', session_id: 'x' })).toBe('ls')
   })
+  it('includes saved SSH alias, endpoint, command, and cwd', () => {
+    expect(rowTitle({
+      ssh_host_alias: 'Ali ECS Atterm', user: 'root', host: '121.43.40.128',
+      current_command: 'docker compose ps', cwd: '/opt/atterm', session_id: 'x',
+    })).toBe('Ali ECS Atterm\nroot@121.43.40.128\ndocker compose ps\n/opt/atterm')
+  })
 })
 
 describe('sessionLabel.hostName', () => {
@@ -72,6 +78,12 @@ describe('sessionLabel.taskStateLabel', () => {
 })
 
 describe('sessionLabel.titleOrCommand', () => {
+  it('prefers a saved SSH connection name over the remote title', () => {
+    expect(titleOrCommand({
+      session_id: 'x', ssh_host_alias: 'Ali ECS Atterm',
+      title: 'root@remote: /opt/atterm', current_command: 'zsh', type: 'shell',
+    })).toBe('Ali ECS Atterm')
+  })
   it('returns AI title when session is ai and title is non-empty', () => {
     expect(titleOrCommand({
       session_id: 'x',

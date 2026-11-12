@@ -18,10 +18,12 @@ import (
 // outer SessionInfo so the relay can still route, schedule push,
 // and order the session list.
 type sealedSessionFields struct {
-	Title          string `json:"title,omitempty"`
-	Cwd            string `json:"cwd,omitempty"`
-	Command        string `json:"command,omitempty"`
-	CurrentCommand string `json:"current_command,omitempty"`
+	Title          string                            `json:"title,omitempty"`
+	Cwd            string                            `json:"cwd,omitempty"`
+	Command        string                            `json:"command,omitempty"`
+	CurrentCommand string                            `json:"current_command,omitempty"`
+	SSHHostAlias   string                            `json:"ssh_host_alias,omitempty"`
+	SSHAppearance  *proto.TerminalAppearanceOverride `json:"ssh_appearance,omitempty"`
 }
 
 type sessionInfoSealCacheEntry struct {
@@ -86,17 +88,17 @@ func sessionInfoContentMAC(accountKey []byte, id uuid.UUID, payload []byte) [sha
 // available" — the input snapshot is returned unchanged. This is the
 // clean fallback for legacy / bootstrap-admin / pre-login paths.
 //
-// During the M3b-additive rollout the plaintext fields stay in place
-// so older clients without decrypt support keep working. A later
-// slice (M3b-strip) will drop them once the three client SDKs all
-// decrypt reliably.
+// This helper only creates envelopes. writeAnnounce subsequently calls
+// stripContentFieldsFromSnapshot so the relay never receives a plaintext copy
+// after sealing succeeds.
 func sealSessionInfoContent(snapshot []proto.SessionInfo, accountKey []byte) []proto.SessionInfo {
 	var cache sessionInfoSealCache
 	return cache.seal(snapshot, accountKey)
 }
 
 func sessionInfoSealedPayload(s proto.SessionInfo) (uuid.UUID, []byte, bool) {
-	if s.Title == "" && s.Cwd == "" && s.Command == "" && s.CurrentCommand == "" {
+	if s.Title == "" && s.Cwd == "" && s.Command == "" && s.CurrentCommand == "" &&
+		s.SSHHostAlias == "" && s.SSHAppearance == nil {
 		// Nothing sensitive to hide. Emitting an empty Sealed envelope
 		// would just leak that a session_uuid is in use, which the
 		// outer struct already broadcasts.
@@ -111,6 +113,8 @@ func sessionInfoSealedPayload(s proto.SessionInfo) (uuid.UUID, []byte, bool) {
 		Cwd:            s.Cwd,
 		Command:        s.Command,
 		CurrentCommand: s.CurrentCommand,
+		SSHHostAlias:   s.SSHHostAlias,
+		SSHAppearance:  s.SSHAppearance,
 	})
 	if err != nil {
 		return uuid.Nil, nil, false

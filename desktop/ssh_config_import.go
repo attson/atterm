@@ -164,8 +164,8 @@ func hostFromEntry(e sshconfig.Entry) SSHHost {
 // informational (recorded verbatim, never read) and doesn't drive the auth
 // branch.
 //
-// ID, AuthKind, KeyID, Tags, Note and Forwards are all things the user added
-// or established inside atterm — ~/.ssh/config has no concept of any of them —
+// ID, AuthKind, KeyID, Tags, Note, LastUsedAt and Forwards are all things the
+// user added or established inside atterm — ~/.ssh/config has no concept of any of them —
 // so they survive untouched, including when incoming's Tags is nil: this is
 // "config says nothing about tags", never "clear the user's tags". The same
 // reading is what makes Forwards load-bearing rather than tidy: the parser
@@ -180,6 +180,7 @@ func mergeImportedHost(existing, incoming SSHHost) SSHHost {
 	merged.KeyID = existing.KeyID
 	merged.Tags = existing.Tags
 	merged.Note = existing.Note
+	merged.LastUsedAt = existing.LastUsedAt
 	merged.Forwards = existing.Forwards
 	return merged
 }

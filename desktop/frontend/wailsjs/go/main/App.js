@@ -522,6 +522,10 @@ export function QueryPromptHistoryPage(arg1, arg2, arg3) {
   return window['go']['main']['App']['QueryPromptHistoryPage'](arg1, arg2, arg3);
 }
 
+export function ReadSSHKeyFile(arg1) {
+  return window['go']['main']['App']['ReadSSHKeyFile'](arg1);
+}
+
 export function RebindServicePreview(arg1) {
   return window['go']['main']['App']['RebindServicePreview'](arg1);
 }

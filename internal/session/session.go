@@ -212,6 +212,11 @@ type Session struct {
 	// It runs while s.mu is held, so callers must stay non-blocking and must not
 	// call back into Session methods.
 	onCommandSubmitted func(commandLine string)
+	// onEchoConfirmedInput is enabled only for SSH sessions. Its tracker sees
+	// accepted IN and PTY OUT under s.mu and emits a line only after the remote
+	// terminal echoed every visible glyph.
+	onEchoConfirmedInput func(commandLine string)
+	echoInput            echoConfirmedInputTracker
 
 	// aiCommandFinished records the exact boundary where an AI CLI command has
 	// emitted OSC 133;D. If the next OSC 133;C is a plain shell command, the
@@ -419,6 +424,16 @@ func (s *Session) SetOnAIClassified(fn func(commandLine, cwd string)) {
 func (s *Session) SetOnCommandSubmitted(fn func(commandLine string)) {
 	s.mu.Lock()
 	s.onCommandSubmitted = fn
+	s.mu.Unlock()
+}
+
+// SetOnEchoConfirmedInput registers the conservative SSH input-history path.
+// Unlike OSC 133 it does not trust raw IN: a submitted line is reported only
+// after matching PTY output proved terminal echo was enabled.
+func (s *Session) SetOnEchoConfirmedInput(fn func(commandLine string)) {
+	s.mu.Lock()
+	s.onEchoConfirmedInput = fn
+	s.echoInput.reset()
 	s.mu.Unlock()
 }
 
@@ -1036,6 +1051,7 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	}
 	const tailLen = 32
 	prevTail := s.termTail
+	altScreenBeforeData := s.altScreen
 	if len(prevTail) > 0 {
 		prefixLen := tailLen - len(prevTail)
 		if prefixLen > len(data) {
@@ -1046,6 +1062,11 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	}
 	s.altScreen = scanAltScreenMode(s.altScreen, data)
 	s.termTail = appendTrailingBytes(s.termTail[:0], prevTail, data, tailLen)
+	echoInputHook := s.onEchoConfirmedInput
+	var confirmedInputs []string
+	if echoInputHook != nil {
+		confirmedInputs = s.echoInput.observeOutput(data, altScreenBeforeData)
+	}
 
 	// Silence heuristic: output arriving while we were heuristic-waiting
 	// restores running, BUT only once we've accumulated enough output to
@@ -1089,6 +1110,11 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		metaHook = s.onMetaChanged
 	}
 	s.mu.Unlock()
+	if echoInputHook != nil {
+		for _, line := range confirmedInputs {
+			echoInputHook(line)
+		}
+	}
 	if metaHook != nil {
 		// Fire OUT-OF-BAND so the session list view picks up running again
 		// after silence restored. The caller (PushOut) will also broadcast
@@ -1356,9 +1382,19 @@ func (s *Session) SendInbound(f proto.Frame) bool {
 		case s.inbound <- f:
 			s.lastResizeMono = time.Time{}
 			onInput := s.onInput
+			echoInputHook := s.onEchoConfirmedInput
+			var confirmedInputs []string
+			if echoInputHook != nil {
+				confirmedInputs = s.echoInput.observeInput(f.Payload, s.altScreen)
+			}
 			s.mu.Unlock()
 			if onInput != nil {
 				onInput()
+			}
+			if echoInputHook != nil {
+				for _, line := range confirmedInputs {
+					echoInputHook(line)
+				}
 			}
 			return true
 		default:

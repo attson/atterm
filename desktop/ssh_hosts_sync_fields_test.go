@@ -1,6 +1,63 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/attson/atterm/internal/proto"
+)
+
+func TestSealOpenSSHHostsRoundTripLastUsedAt(t *testing.T) {
+	key := testAccountKey(t)
+	hosts := []SSHHost{{
+		ID: "recent-host", Host: "recent.example.internal", User: "deploy",
+		AuthKind: "key", LastUsedAt: 1773302400123,
+	}}
+
+	blob, err := sealSSHHosts(key, hosts, map[string]sshCredential{}, nil, nil)
+	if err != nil {
+		t.Fatalf("sealSSHHosts: %v", err)
+	}
+	gotHosts, _, _, _, err := openSSHHosts(key, blob)
+	if err != nil {
+		t.Fatalf("openSSHHosts: %v", err)
+	}
+	if len(gotHosts) != 1 || gotHosts[0].LastUsedAt != 1773302400123 {
+		t.Fatalf("last-used timestamp did not survive round trip: %+v", gotHosts)
+	}
+}
+
+func TestSealOpenSSHHostsRoundTripTerminalAppearance(t *testing.T) {
+	key := testAccountKey(t)
+	bundledFont := ""
+	hosts := []SSHHost{{
+		ID:       "appearance-host",
+		Alias:    "production",
+		Host:     "prod.example.internal",
+		User:     "deploy",
+		AuthKind: "key",
+		TerminalAppearance: &proto.TerminalAppearanceOverride{
+			ThemeID:  "nord",
+			FontHead: &bundledFont,
+			FontSize: 17,
+		},
+	}}
+
+	blob, err := sealSSHHosts(key, hosts, map[string]sshCredential{}, nil, nil)
+	if err != nil {
+		t.Fatalf("sealSSHHosts: %v", err)
+	}
+	gotHosts, _, _, _, err := openSSHHosts(key, blob)
+	if err != nil {
+		t.Fatalf("openSSHHosts: %v", err)
+	}
+	if len(gotHosts) != 1 || gotHosts[0].TerminalAppearance == nil {
+		t.Fatalf("terminal appearance did not survive round trip: %+v", gotHosts)
+	}
+	got := gotHosts[0].TerminalAppearance
+	if got.ThemeID != "nord" || got.FontSize != 17 || got.FontHead == nil || *got.FontHead != "" {
+		t.Fatalf("unexpected terminal appearance after round trip: %+v", got)
+	}
+}
 
 // TestSealOpenSSHHostsRoundTripProxyFields exists to close design-doc §7
 // risk 1 for roadmap item 25: the assumption that adding fields to SSHHost

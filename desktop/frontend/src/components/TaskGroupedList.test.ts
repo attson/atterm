@@ -165,6 +165,28 @@ describe("TaskGroupedList", () => {
     expect(row.get('[data-test="last-output"]').text()).toBe("2h");
   });
 
+  test("completed saved-host SSH row keeps alias and endpoint visible", async () => {
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [mk({
+          session_id: "ssh-done",
+          task_state: "completed",
+          host: "prod.example.com",
+          user: "deploy",
+          ssh_host_alias: "production",
+          cwd: "/srv/app",
+        })],
+      },
+    });
+    await w.get('[data-test="completed-fold-toggle"]').trigger("click");
+    const row = w.get('[data-test="completed-fold-row"]');
+    expect(row.get(".cmd").text()).toBe("production");
+    expect(row.get('[data-test="row-endpoint"]').text()).toBe("deploy@prod.example.com");
+    expect(row.get(".cwd").text()).toContain("/srv/app");
+  });
+
   test("row renders the session cwd alongside the command", () => {
     const byHost = {
       h: [

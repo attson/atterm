@@ -82,6 +82,22 @@ export type ImportedKeyFile = {
   encrypted: boolean;
 };
 
+// Apply the same validation to content read by the Wails native file-drop
+// bridge as readPrivateKeyFile applies to a browser File.
+export function importedKeyFromText(filename: string, pem: string): ImportedKeyFile {
+  if (new TextEncoder().encode(pem).byteLength > MAX_KEY_FILE_BYTES) {
+    throw new Error(`${filename} is too large to be a private key.`);
+  }
+  if (!looksLikePrivateKey(pem)) {
+    throw new Error(`${filename} is not a private key file.`);
+  }
+  return {
+    pem,
+    suggestedName: keyNameFromFilename(filename),
+    encrypted: detectEncryptedPem(pem),
+  };
+}
+
 // readPrivateKeyFile validates a picked/dropped file and extracts what the Key
 // drawer needs. Rejects with a message meant for the panel's error banner; the
 // backend still does the authoritative parse on save.
@@ -90,14 +106,7 @@ export async function readPrivateKeyFile(file: File): Promise<ImportedKeyFile> {
     throw new Error(`${file.name} is too large to be a private key.`);
   }
   const pem = await readFileText(file);
-  if (!looksLikePrivateKey(pem)) {
-    throw new Error(`${file.name} is not a private key file.`);
-  }
-  return {
-    pem,
-    suggestedName: keyNameFromFilename(file.name),
-    encrypted: detectEncryptedPem(pem),
-  };
+  return importedKeyFromText(file.name, pem);
 }
 
 // keyNameFromFilename turns a dropped file's name into a default vault label.

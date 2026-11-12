@@ -406,18 +406,35 @@ func (h *peerHostRuntime) hostInfo(clientPeerID string) (rendezvousclient.PeerHo
 }
 
 func peerCatalogSession(info proto.SessionInfo, permission peertransport.Permission) rendezvousclient.PeerSession {
+	var appearance *rendezvousclient.PeerTerminalAppearance
+	if info.SSHAppearance != nil {
+		appearance = &rendezvousclient.PeerTerminalAppearance{
+			ThemeID:  truncatePeerCatalogText(info.SSHAppearance.ThemeID),
+			FontHead: cloneStringPointer(info.SSHAppearance.FontHead),
+			FontSize: info.SSHAppearance.FontSize,
+		}
+	}
 	return rendezvousclient.PeerSession{
 		ID: truncatePeerCatalogText(info.ID), Command: truncatePeerCatalogText(info.Command),
 		Cwd: truncatePeerCatalogText(info.Cwd), Title: truncatePeerCatalogText(info.Title),
 		Cols: info.Cols, Rows: info.Rows, StartedAt: info.StartedAt,
 		HostID: truncatePeerCatalogText(info.HostID), Host: truncatePeerCatalogText(info.Host),
 		User: truncatePeerCatalogText(info.User), SSHHostID: truncatePeerCatalogText(info.SSHHostID),
+		SSHHostAlias: truncatePeerCatalogText(info.SSHHostAlias), SSHAppearance: appearance,
 		Permission: permission, TaskState: truncatePeerCatalogText(info.TaskState),
 		CurrentCommand: truncatePeerCatalogText(info.CurrentCommand), CommandStartedAt: info.CommandStartedAt,
 		CommandEndedAt: info.CommandEndedAt, CommandDurationMS: info.CommandDurationMS,
 		CommandExitCode: info.CommandExitCode, LastOutputAt: info.LastOutputAt,
 		Type: truncatePeerCatalogText(info.Type), AttentionAt: info.AttentionAt,
 	}
+}
+
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copy := truncatePeerCatalogText(*value)
+	return &copy
 }
 
 func truncatePeerCatalogText(value string) string {

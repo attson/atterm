@@ -203,6 +203,13 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
   "host_id": "<uuid>",
   "host": "myhost",
   "user": "alice",
+  "ssh_host_id": "<saved-host-id>",
+  "ssh_host_alias": "production",
+  "ssh_appearance": {
+    "theme_id": "nord",
+    "font_head": "JetBrains Mono",
+    "font_size": 15
+  },
   "remote_permission": "full",
   "task_state": "completed",
   "current_command": "go test ./...",
@@ -226,7 +233,9 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
 
 任务字段均为可选 additive metadata。缺失 `task_state` 的旧 publisher 按 `idle` 处理。`type` / `summary` 字段与 META 帧同语义（详见 §`META`），新增于 P2.11 / P2.12。`attention_at` 是最近一次需要用户关注的状态转换时间；`unread` 由 relay 按当前认证用户的 `attention_at > seen_at` 且 session 无 subscriber 计算，客户端不得自行重算。显式标记已读也把 `seen_at` 写为 `max(relay_now, attention_at)`，避免 host 时钟领先时写入后仍显示未读。
 
-**E2EE（`sealed` 字段）**：M3b 之后 agent 在 ANNOUNCE 时把 `title` / `cwd` / `command` / `current_command` 写零，等价的 `SealedSessionFields { title, cwd, command, current_command }` 封装进 [§E2EE 信封](#e2ee-信封) 并 base64 存进 `sealed` 字段。AAD 鉴别字节 = `0x12`（LIST_RESP 帧类型）。`summary.error_lines` 在 sealed 路径下也由 agent 直接擦零，避免泄漏失败行内容；客户端解开 `sealed` 后把字段 overlay 回 list 渲染。
+`ssh_host_id` 标记会话来自哪个 saved host，供恢复时按 id 重连；`ssh_host_alias` 与 `ssh_appearance` 是建连时的 saved-host 快照。`ssh_appearance` 的 `theme_id` / `font_head` / `font_size` 各自可选，缺失成员继承客户端当前全局设置；显式空 `font_head` 表示 AT Term 内置字体。编辑 saved host 只影响之后的新连接，不改动已打开 pane。
+
+**E2EE（`sealed` 字段）**：M3b 之后 agent 在 ANNOUNCE 时把 `title` / `cwd` / `command` / `current_command` / `ssh_host_alias` / `ssh_appearance` 写零，等价的 `SealedSessionFields { title, cwd, command, current_command, ssh_host_alias, ssh_appearance }` 封装进 [§E2EE 信封](#e2ee-信封) 并 base64 存进 `sealed` 字段。AAD 鉴别字节 = `0x12`（LIST_RESP 帧类型）。`summary.error_lines` 在 sealed 路径下也由 agent 直接擦零，避免泄漏失败行内容；客户端解开 `sealed` 后把字段 overlay 回 list 渲染。
 
 | 值 | 远程允许 | relay/host 拦截 |
 |----|----------|-----------------|
@@ -696,7 +705,11 @@ Payload (UTF-8 JSON):
 
 ### `INPUT_HISTORY_REQUEST` (0x41) / `INPUT_HISTORY_RESPONSE` (0x42)
 
-按需读取一个活跃 PTY 会话中经 OSC 133 C 确认开始执行的 shell 命令，以及已提交给 Claude/Codex 的用户输入记录。新版 shell integration 用紧邻 C 之前的 Atterm 私有 OSC 133 I 携带用户原始输入（例如 alias 展开前的 `ls`），C 仍是分类/恢复使用的完整可执行命令；旧 integration 没有 I 时历史回退记录 C。未执行草稿和逐键输入不采集。该能力不进入 `SessionInfo` / `META`，没有请求时不上传任何历史内容，因此不改变 Lazy 上传语义。viewer 与 driver 都可读取；请求者必须已 attach 目标 `session_id`。
+按需读取一个活跃 PTY 会话中经 OSC 133 C 确认开始执行的 shell 命令、当前 atterm SSH pane 内由可见 PTY 回显确认已提交的命令，以及已提交给 Claude/Codex 的用户输入记录。新版 shell integration 用紧邻 C 之前的 Atterm 私有 OSC 133 I 携带用户原始输入（例如 alias 展开前的 `ls`），C 仍是分类/恢复使用的完整可执行命令；旧 integration 没有 I 时历史回退记录 C。
+
+SSH 不向远端注入 shell integration，也绝不读取远端 `.bash_history` / `.zsh_history`。owner 仅跟踪当前 atterm 会话里已经接受的 `IN`，并在同一行内容被普通屏幕 PTY 输出逐字回显且收到 Enter 后才记录；密码输入（无回显）、未提交草稿、未知控制序列、alternate-screen 输入和 saved-host startup command 均不记录。编辑器只保守识别常见插入、退格/Delete、方向键、Home/End、Ctrl-U、Ctrl-W 与 bracketed paste；无法证明内容一致时宁可漏记。
+
+该能力不进入 `SessionInfo` / `META`，没有请求时不上传任何历史内容，因此不改变 Lazy 上传语义。viewer 与 driver 都可读取；请求者必须已 attach 目标 `session_id`。
 
 `INPUT_HISTORY_REQUEST` 方向为 client → relay → owner uplink，或 negotiated direct client → owner host。header `SessionID` 是唯一权威会话标识，payload 为 UTF-8 JSON：
 
@@ -913,7 +926,7 @@ Relay session 信封的 AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字�
 | `0x02` `IN` | IN 帧 payload（整体，无 seq） | 原始 UTF-8 键入字节；relay→agent 方向，desktop `openInboundFrame` 已支持解封，尚无发送端（web/desktop 前端）产出该信封 |
 | `0x03` `OUT` | OUT 帧 `seq` 后的字节流 | 原始 PTY 输出字节 |
 | `0x05` `META` | `MetaPayload.sealed`（base64） | JSON `SealedMetaFields { title, cwd, current_command }` |
-| `0x12` `LIST_RESP` | `SessionInfo.sealed`（base64） | JSON `SealedSessionFields { title, cwd, command, current_command }` |
+| `0x12` `LIST_RESP` | `SessionInfo.sealed`（base64） | JSON `SealedSessionFields { title, cwd, command, current_command, ssh_host_alias, ssh_appearance }` |
 | `0x33` `PASTE_IMAGE` | PASTE_IMAGE 帧 payload（整体） | JSON `PasteImagePayload { filename, content_type, data }`；relay→agent 方向，desktop `openInboundFrame` 已支持解封，尚无发送端产出该信封 |
 | `0x35` `COMMAND_EVENT` | `CommandEventPayload.sealed_body`（base64） | JSON `SealedPushBody { label, exit_code, elapsed_ms }` |
 | `0x37` `PASTE_FILE` | PASTE_FILE 帧 payload（整体） | JSON `PasteFilePayload { filename, content_type, data }` |
@@ -942,7 +955,7 @@ Agent seal 成功后**必须**把对应明文字段擦零（[AGENTS.md](../../AG
 | 信封 | 同时清零 / 清空的明文字段 |
 |------|---------------------------|
 | `META.sealed` | `MetaPayload.title` / `cwd` / `current_command` 写为 `""` |
-| `SessionInfo.sealed` | `SessionInfo.title` / `cwd` / `command` / `current_command` 写为 `""`；`summary.error_lines` 清空 |
+| `SessionInfo.sealed` | `SessionInfo.title` / `cwd` / `command` / `current_command` / `ssh_host_alias` 写为 `""`，`ssh_appearance` 写为 `nil`；`summary.error_lines` 清空 |
 | `CommandEventPayload.sealed_body` | `label` 写空、`exit_code` / `elapsed_ms` 写零 |
 | `OUT` 帧 | 整条字节流就是密文（没有明文 fallback） |
 

@@ -425,6 +425,16 @@ type ServiceClosePayload struct {
 	ServiceID string `json:"service_id"`
 }
 
+// TerminalAppearanceOverride is a per-session subset of the terminal's
+// appearance. Missing members inherit the client's current global value.
+// FontHead is a pointer because an explicitly empty string selects AT Term's
+// bundled font while an absent member means "inherit".
+type TerminalAppearanceOverride struct {
+	ThemeID  string  `json:"theme_id,omitempty"`
+	FontHead *string `json:"font_head,omitempty"`
+	FontSize int     `json:"font_size,omitempty"`
+}
+
 // SessionInfo is one entry of TypeListResp.
 type SessionInfo struct {
 	ID        string `json:"id"`
@@ -443,6 +453,11 @@ type SessionInfo struct {
 	// omitempty keeps the wire shape backward-compatible (red line 4): older
 	// publishers omit it, older clients ignore the unknown field.
 	SSHHostID string `json:"ssh_host_id,omitempty"`
+	// SSHHostAlias and SSHAppearance are connect-time snapshots for sessions
+	// opened from a saved host. They are content-bearing and therefore travel
+	// inside Sealed whenever the publisher has an unlocked account key.
+	SSHHostAlias  string                      `json:"ssh_host_alias,omitempty"`
+	SSHAppearance *TerminalAppearanceOverride `json:"ssh_appearance,omitempty"`
 	// RemotePermission is owner-published permission for remote attachers.
 	// Empty means full for backwards compatibility with older ANNOUNCEs.
 	RemotePermission string `json:"remote_permission,omitempty"`
@@ -474,7 +489,8 @@ type SessionInfo struct {
 	// Sealed is the AEAD envelope (cipher_id + nonce + ciphertext + tag,
 	// per internal/e2eecrypto) over a JSON document carrying the
 	// content-bearing fields the relay is structurally unable to read
-	// when E2EE is on: title, cwd, command, current_command. The agent
+	// when E2EE is on: title, cwd, command, current_command, ssh_host_alias,
+	// and ssh_appearance. The agent
 	// populates it when it has the user's unlocked account_key;
 	// clients that share the account_key (same user, same relay)
 	// decrypt and prefer these values over the plaintext fields.

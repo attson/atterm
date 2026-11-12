@@ -49,8 +49,9 @@
 ### 下拉选择
 
 - Desktop 统一使用 `desktop/frontend/src/components/SelectDropdown.vue`，不要在 Settings、工具栏或 plugin 设置里新增原生 `<select>`。
-- `SelectDropdown` 必须提供 `ariaLabel`，选项结构为 `{ value, label, description? }`。
+- `SelectDropdown` 必须提供 `ariaLabel`，选项结构为 `{ value, label, description?, preview? }`；`preview` 只用于受控的终端主题缩略图数据，不接受任意 HTML/VNode。
 - 选项来自 i18n 时用 computed 包装，避免切换语言后 label 不刷新。
+- 终端主题选项使用 registry 的真实 background / foreground / ANSI 色生成缩略效果图，名称与说明放在右侧；“继承全局 / 跟随连接设置”等非具体主题不显示伪造预览。
 - 打开菜单使用 listbox 语义，保留键盘操作：ArrowUp/ArrowDown、Home/End、Enter、Escape、点击外部关闭。
 - 如果某处确实需要浏览器原生 select，必须在 PR 里说明原因，并加注释限定范围。
 
@@ -158,6 +159,17 @@ Settings 是最容易跑偏的区域，新增 tab 或字段时遵守以下结构
 - Pane gap 维持 2px；调整时必须同步 `predictCellDims` 的尺寸假设，否则新 pane 初始 PTY winsize 会回归。
 - Pane 关闭按钮、remote badge、viewer overlay 要使用轻量 overlay，不改变 xterm cell 尺寸。
 - Pane 内点击目标必须以事件归属 pane 为准，不能隐式作用于当前 active pane；此类交互需要布局/组件测试覆盖。
+- 每个有 session 的 pane 在输入历史按钮旁显示应用主题入口。这里与 Settings 的终端
+  主题共用同一个全局偏好：选择后由 `App.vue` 同时更新应用 CSS variables 与全局
+  xterm theme，并持久化；SSH 主机显式保存的终端外观仍只覆盖对应 terminal，不反向
+  修改全局应用主题。
+
+## SSH 主机编辑
+
+- 地址、标签、端口、用户名和认证方式保持首屏可见；终端外观、启动命令、端口转发
+  放入默认折叠的“更多设置”，避免低频配置撑满抽屉。
+- 主题和字体必须复用 `SelectDropdown`，字号保持 8–32 整数校验；三个字段都要提供
+  独立的全局继承语义。
 
 ## Title bar
 
@@ -428,8 +440,11 @@ header 必须可键盘操作：
   快捷键从别处跳转聚焦搜索框；新增聚焦入口复用这个方法，不要在别处重复
   `querySelector` 找输入框。
 - 过滤逻辑（`sessionMatch.ts`）作用于命令、cwd、标题、host 名等字段，大小写
-  不敏感；置顶组和普通分组各自独立过滤（见上一节），搜索词变化不影响
-  折叠状态。
+  不敏感；saved-host SSH 还必须匹配 alias 与 `user@host` endpoint。置顶组和普通
+  分组各自独立过滤（见上一节），搜索词变化不影响折叠状态。
+- saved-host SSH 行以建连时快照的 alias 作为主标题，并在第二行先显示
+  `user@host`、再显示 cwd；tooltip 同时保留 alias、endpoint、command、cwd。
+  ad-hoc SSH 没有 alias，继续走普通会话标题规则。
 
 ### 会话行右键菜单：视口翻转 popover（SessionRowMenu）
 

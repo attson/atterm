@@ -96,6 +96,15 @@ type HostCallbacks struct {
 
 type HostAuthorizeFunc func(context.Context, PeerOpenRequest) (HostAuthorization, HostCallbacks, error)
 
+// PeerTerminalAppearance is the saved-host appearance snapshot advertised in
+// an encrypted Peer catalog. Missing members inherit the receiving client's
+// global terminal appearance.
+type PeerTerminalAppearance struct {
+	ThemeID  string  `json:"theme_id,omitempty"`
+	FontHead *string `json:"font_head,omitempty"`
+	FontSize int     `json:"font_size,omitempty"`
+}
+
 // PeerSession is the bounded, pairwise-encrypted session metadata exchanged
 // before a terminal attempt exists. Content and terminal frames never leave
 // the encrypted route envelope.
@@ -111,6 +120,8 @@ type PeerSession struct {
 	Host              string                   `json:"host,omitempty"`
 	User              string                   `json:"user,omitempty"`
 	SSHHostID         string                   `json:"ssh_host_id,omitempty"`
+	SSHHostAlias      string                   `json:"ssh_host_alias,omitempty"`
+	SSHAppearance     *PeerTerminalAppearance  `json:"ssh_appearance,omitempty"`
 	Permission        peertransport.Permission `json:"permission"`
 	TaskState         string                   `json:"task_state,omitempty"`
 	CurrentCommand    string                   `json:"current_command,omitempty"`
@@ -1247,11 +1258,22 @@ func validatePeerSession(session PeerSession) error {
 		return ErrInvalidSignal
 	}
 	for _, value := range []string{
-		session.Command, session.Cwd, session.Title, session.Host, session.User, session.SSHHostID,
+		session.Command, session.Cwd, session.Title, session.Host, session.User, session.SSHHostID, session.SSHHostAlias,
 		session.TaskState, session.CurrentCommand, session.Type,
 	} {
 		if len(value) > routeMaxMetadataSize || !utf8.ValidString(value) {
 			return ErrInvalidSignal
+		}
+	}
+	if session.SSHAppearance != nil {
+		fontHead := ""
+		if session.SSHAppearance.FontHead != nil {
+			fontHead = *session.SSHAppearance.FontHead
+		}
+		for _, value := range []string{session.SSHAppearance.ThemeID, fontHead} {
+			if len(value) > routeMaxMetadataSize || !utf8.ValidString(value) {
+				return ErrInvalidSignal
+			}
 		}
 	}
 	return nil
@@ -1266,6 +1288,14 @@ func clonePeerSessions(sessions []PeerSession) []PeerSession {
 		if out[index].CommandExitCode != nil {
 			value := *out[index].CommandExitCode
 			out[index].CommandExitCode = &value
+		}
+		if out[index].SSHAppearance != nil {
+			appearance := *out[index].SSHAppearance
+			if appearance.FontHead != nil {
+				fontHead := *appearance.FontHead
+				appearance.FontHead = &fontHead
+			}
+			out[index].SSHAppearance = &appearance
 		}
 	}
 	return out

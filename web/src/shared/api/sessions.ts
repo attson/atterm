@@ -43,6 +43,8 @@ function decryptSessionInfo(s: SessionInfo, accountKey: Uint8Array): SessionInfo
   if (fields.cwd !== undefined) out.cwd = fields.cwd
   if (fields.command !== undefined) out.command = fields.command
   if (fields.current_command !== undefined) out.current_command = fields.current_command
+  if (fields.ssh_host_alias !== undefined) out.ssh_host_alias = fields.ssh_host_alias
+  if (fields.ssh_appearance !== undefined) out.ssh_appearance = fields.ssh_appearance
   return out
 }
 

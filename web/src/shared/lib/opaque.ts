@@ -129,13 +129,14 @@ function b64ToBytes(s: string): Uint8Array {
 
 // ---- M3b: per-session content decrypt ----
 //
-// The Go agent encrypts {title, cwd, command, current_command} into
+// The Go agent encrypts the content-bearing SessionInfo fields, including the
+// saved-SSH alias/appearance snapshot, into
 // SessionInfo.Sealed via:
 //   session_key = HKDF-SHA256(account_key, info = "atterm-session-v1" || uuid_bytes)
 //   envelope    = cipher_id(0x01) || nonce(24) || XChaCha20-Poly1305.encrypt(
 //                    key = session_key,
 //                    nonce,
-//                    plaintext = JSON({title, cwd, command, current_command}),
+//                    plaintext = JSON(SealedSessionFields),
 //                    aad = uuid(16) || 0x12 /* TypeListResp */,
 //                 )
 // openSessionFields below is the matching client-side inverse.
@@ -151,6 +152,8 @@ export interface SealedSessionFields {
   cwd?: string
   command?: string
   current_command?: string
+  ssh_host_alias?: string
+  ssh_appearance?: { theme_id?: string; font_head?: string; font_size?: number }
 }
 
 /** uuidStringToBytes parses a canonical UUID string into 16 raw bytes.

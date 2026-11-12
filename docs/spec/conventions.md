@@ -715,6 +715,28 @@ gh run list --repo attson/atterm --limit 10
 
 默认 shell（`default_shell`）仅在本机持久化，不参与 relay 或 Peer 配置同步，也不在同步清空时重置。旧 relay 中保留的该字段应忽略；服务端继续接受旧客户端的字段以保持兼容。本机路径与环境相关的设置不能仅因已持久化就加入同步白名单。
 
+### SSH 用户输入历史
+
+saved-host 与 ad-hoc SSH 都不注入远端 shell integration，也不读取远端 shell 的
+`.bash_history` / `.zsh_history`。输入历史只来自当前 atterm pane：
+`internal/session/input_echo.go` 旁路观察已经接受的 `IN`，同时要求普通屏幕 PTY 输出
+出现与编辑后命令完全一致的可见回显，且用户提交 Enter 后才允许写入现有
+`sessionInputHistory`。密码输入、草稿、alternate-screen 输入、未知控制序列和
+saved-host startup command 必须排除。识别新增编辑序列时优先 false negative；不能证明
+回显与用户最终提交内容一致，就不要记录。持久化容量、TTL、恢复与远程读取继续复用
+`sessionInputHistory` 和 `INPUT_HISTORY_RESPONSE (0x42)` 的 E2EE 路径。
+
+saved host 的终端主题、字体、字号保存在 `ssh_hosts_encrypted` 中，每个字段独立继承
+全局设置。连接时把 alias 与 appearance 深拷贝到 `SessionInfo`；已打开 pane 永远使用
+这份建连快照，后续编辑 host 只影响新连接。别名和外观属于内容字段，必须进入现有
+`SessionInfo.sealed`，seal 成功后清空外层明文。
+
+saved host 的 `last_used_at` 是成功建立终端连接后的 Unix 毫秒时间戳，同样随
+`ssh_hosts_encrypted` 持久化和同步。TOFU、凭据或网络失败不得更新时间；时间戳写盘失败
+只记日志，不能把已经建立的终端改判为连接失败。主机卡片在根列表、分组和搜索结果中
+按该字段倒序稳定排列，缺字段的旧主机排在后面并保持配置中的相对顺序。编辑主机或重新
+导入匹配的 `~/.ssh/config` 记录必须保留时间戳；新建和复制主机必须从“未使用”开始。
+
 ### 桌面 AI 提示词历史建议
 
 提示词历史是 Wails 桌面端的设备本地能力。Claude 的唯一持久化来源是

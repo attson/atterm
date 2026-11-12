@@ -22,9 +22,19 @@ describe("App terminal theme wiring", () => {
     expect(appSource).toContain(":style=\"themeStyle\"");
   });
 
-  test("App passes the xterm theme to PaneGrid and PaneGrid forwards it", () => {
+  test("App passes the xterm theme to PaneGrid and PaneGrid resolves it per pane", () => {
+    expect(appSource).toContain(':terminal-theme-id="currentTerminalThemeID"');
     expect(appSource).toContain(":terminal-theme=\"currentTerminalTheme.xtermTheme\"");
     expect(paneSource).toContain("terminalTheme: TerminalThemeDefinition[\"xtermTheme\"]");
-    expect(paneSource).toContain(":theme=\"terminalTheme\"");
+    expect(paneSource).toContain("resolveSSHTheme(props.terminalTheme");
+    expect(paneSource).toContain(":theme=\"themeFor(pane)\"");
+  });
+
+  test("persists toolbar theme changes and applies them to the whole app", () => {
+    expect(appSource).toContain("setTerminalThemePreference");
+    expect(appSource).toMatch(/async function onToolbarThemeChanged\(themeID: string\)/);
+    expect(appSource).toContain('currentTerminalThemeID.value = next');
+    expect(appSource).toContain('@terminal-theme-changed="onToolbarThemeChanged"');
+    expect(paneSource).toContain('(e: "terminal-theme-changed", themeID: string): void');
   });
 });

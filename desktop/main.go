@@ -95,8 +95,11 @@ func appOptions(app *App) *options.App {
 		},
 		BackgroundColour: &options.RGBA{R: 13, G: 17, B: 23, A: 1},
 		ErrorFormatter:   frontendErrorFormatter,
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+		},
+		OnStartup:  app.startup,
+		OnShutdown: app.shutdown,
 		OnBeforeClose: func(ctx context.Context) bool {
 			return app.beforeClose(ctx, func() {
 				wailsruntime.EventsEmit(ctx, "before-close")

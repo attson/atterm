@@ -603,9 +603,11 @@ desktop/frontend/src/
 │                          渲染 aux key row（Enter/Esc/Tab/Ctrl-C/Ctrl-D/方向键）
 │                          与图片/文件 hidden input，发送 PASTE_IMAGE/PASTE_FILE
 │                          时要求 attached + driver + remote_permission=full
-│   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge；
-│                          仅聚焦 pane 渲染输入历史、拖拽和关闭操作，隐藏时不占位；
-│                          操作按钮 mousedown 不冒泡，避免误触 pane 聚焦
+│   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge
+│                          + close-pane × 同行 flex 布局；close 按钮 mousedown
+│                          不冒泡，避免先激活其它 pane 再关错目标；saved-host SSH
+│                          按 SessionInfo 建连快照逐字段合并主题/字体/字号，theme
+│                          只作用于 terminal pane，不改变 App chrome
 │   ├── SettingsDialog.vue relay 配置 + Updates 区（current / latest / 进度 /
 │                          autocheck toggle / release notes / 三个按钮）
 │   ├── ConfirmInstallDialog.vue force install & restart 确认弹窗，列出会被
@@ -654,6 +656,11 @@ desktop/frontend/src/
 │                          由 QuickTemplate 取代）
 └── i18n/                  desktop 前端中英 messages + useI18n()
 ```
+
+saved-host SSH 的 alias 与 `terminal_appearance` 随 `ssh_hosts_encrypted` 同步，但连接
+建立后会深拷贝进该 session 的 metadata。relay 账号路径把两者放进
+`SessionInfo.sealed`；Peer 目录路径放进 pairwise-encrypted catalog。两条路径都只发布
+建连快照，因此 host 编辑不会让已打开 pane 的名称或外观突变。
 
 `web/` 前端同样是 Vue 3 + TypeScript，Vite 多入口构建，但**主页面不再是独立实现**：`index.html`
 挂载的是桌面同一份 `App.vue`（tabs/panes/侧栏/设置全部复用，见上一节），只有登录前后的少数独立

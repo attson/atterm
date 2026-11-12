@@ -139,6 +139,45 @@ describe("SelectDropdown selection", () => {
     expect(items[2].text()).not.toContain("undefined");
     wrapper.unmount();
   });
+
+  test("renders a terminal preview from option palette colors without changing plain options", async () => {
+    const previewOptions = [
+      {
+        value: "nord",
+        label: "Nord",
+        description: "Cool arctic palette",
+        preview: {
+          background: "#2e3440",
+          foreground: "#d8dee9",
+          colors: ["#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1"],
+        },
+      },
+      { value: "inherit", label: "Follow connection settings" },
+    ];
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "nord", options: previewOptions },
+      attachTo: document.body,
+    });
+
+    await wrapper.get('[data-testid="select-trigger"]').trigger("click");
+
+    const items = wrapper.findAll('[data-testid="select-option"]');
+    const preview = items[0].get('[data-testid="select-option-preview"]');
+    expect(preview.attributes("style")).toContain("--preview-background: #2e3440");
+    expect(preview.attributes("style")).toContain("--preview-foreground: #d8dee9");
+    expect(preview.findAll(".terminal-preview-swatch").map((item) =>
+      (item.element as HTMLElement).style.backgroundColor,
+    )).toEqual([
+      "rgb(191, 97, 106)",
+      "rgb(163, 190, 140)",
+      "rgb(235, 203, 139)",
+      "rgb(129, 161, 193)",
+    ]);
+    expect(items[0].classes()).toContain("option-with-preview");
+    expect(items[1].find('[data-testid="select-option-preview"]').exists()).toBe(false);
+    expect(items[1].classes()).not.toContain("option-with-preview");
+    wrapper.unmount();
+  });
 });
 
 describe("SelectDropdown keyboard navigation", () => {

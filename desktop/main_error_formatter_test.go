@@ -71,6 +71,14 @@ func TestAppOptionsInstallsFrontendErrorFormatter(t *testing.T) {
 	}
 }
 
+func TestAppOptionsEnablesNativeFileDrop(t *testing.T) {
+	opts := appOptions(&App{})
+
+	if opts.DragAndDrop == nil || !opts.DragAndDrop.EnableFileDrop {
+		t.Fatal("options.App.DragAndDrop.EnableFileDrop is false: native WebViews will not expose dropped file paths")
+	}
+}
+
 // main() does not run appOptions' result directly — it hands it to
 // mergePlatformOptions first. That function copies a hand-listed set of fields
 // from the platform options, so a field it does not know about must survive

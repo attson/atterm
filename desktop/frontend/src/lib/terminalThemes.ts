@@ -11,6 +11,12 @@ export interface TerminalThemeDefinition {
   appVars: Record<string, string>;
 }
 
+export interface TerminalThemePreview {
+  background: string;
+  foreground: string;
+  colors: string[];
+}
+
 export const DEFAULT_TERMINAL_THEME_ID: TerminalThemeID = "classic";
 
 export const TERMINAL_THEMES: TerminalThemeDefinition[] = [
@@ -190,6 +196,22 @@ export const TERMINAL_THEMES: TerminalThemeDefinition[] = [
 
 export function getTerminalTheme(id: string): TerminalThemeDefinition {
   return TERMINAL_THEMES.find((theme) => theme.id === id) ?? TERMINAL_THEMES[0];
+}
+
+export function terminalThemePreview(theme: TerminalThemeDefinition): TerminalThemePreview {
+  const palette = theme.xtermTheme;
+  return {
+    background: palette.background ?? "#000000",
+    foreground: palette.foreground ?? "#ffffff",
+    colors: [
+      palette.red,
+      palette.green,
+      palette.yellow,
+      palette.blue,
+      palette.magenta,
+      palette.cyan,
+    ].filter((color): color is string => typeof color === "string"),
+  };
 }
 
 // isLightTerminalTheme returns true when the active terminal palette has a

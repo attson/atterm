@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import PaneGrid from "./PaneGrid.vue";
+import SelectDropdown from "./SelectDropdown.vue";
 import source from "./PaneGrid.vue?raw";
 import type { Tab } from "../lib/types";
 import type { SessionInfo } from "../lib/connection";
@@ -8,12 +9,16 @@ import type { SessionInfo } from "../lib/connection";
 vi.mock("./TerminalView.vue", () => ({
   default: {
     name: "TerminalView",
-    props: ["currentCwd"],
+    props: ["currentCwd", "appearance", "theme"],
     template: "<div />",
   },
 }));
 
 describe("PaneGrid terminal identity", () => {
+  test("keeps the preview menu aligned with the pane theme trigger field", () => {
+    expect(source).toMatch(/\.pane-theme-menu\s+:deep\(\.menu-with-previews\)\s*\{\s*width:\s*100%;\s*\}/);
+  });
+
   test("keys each pane by session identity with an empty-cell fallback", () => {
     expect(source).toMatch(/function paneKey\(pane: Pane, idx: number\): string/);
     expect(source).toMatch(/return pane\.sessionId \?\? `empty-\$\{idx\}`/);
@@ -53,6 +58,99 @@ describe("PaneGrid terminal identity", () => {
     expect(wrapper.findComponent({ name: "TerminalView" }).props("currentCwd")).toBe(
       "/work/atterm",
     );
+  });
+
+  test("resolves saved SSH appearance per pane without changing app chrome", () => {
+    const tab: Tab = {
+      id: "tab-1", layout: "single", activePaneIdx: 0,
+      panes: [{ sessionId: "session-1", remote: true }], colRatio: 0.5, rowRatio: 0.5,
+    };
+    const info: SessionInfo = {
+      id: "session-1", command: "ssh root@host", cwd: "", title: "", cols: 80, rows: 24, started_at: 0,
+      ssh_appearance: { theme_id: "nord", font_head: "Source Code Pro", font_size: 14 },
+    };
+    const globalAppearance = {
+      fontHead: "JetBrains Mono", fontSize: 13, lineHeight: 1,
+      cursorStyle: "block" as const, cursorBlink: true, scrollback: 5000,
+    };
+    const wrapper = mount(PaneGrid, {
+      props: {
+        tab,
+        endpointFor: () => ({ url: "ws://127.0.0.1:1", session_token: "token" }),
+        sessionInfoFor: () => info,
+        active: true,
+        terminalTheme: { background: "#000" },
+        appearance: globalAppearance,
+        commandNotifyThresholdSec: 10,
+      },
+    });
+    const terminal = wrapper.findComponent({ name: "TerminalView" });
+    expect(terminal.props("appearance")).toEqual({
+      ...globalAppearance, fontHead: "Source Code Pro", fontSize: 14,
+    });
+    expect(terminal.props("theme").background).toBe("#2e3440");
+  });
+
+  test("requests a global app theme change from the pane toolbar", async () => {
+    const tab: Tab = {
+      id: "tab-1", layout: "vertical", activePaneIdx: 0,
+      panes: [
+        { sessionId: "left", remote: true },
+        { sessionId: "right", remote: true },
+      ],
+      colRatio: 0.5, rowRatio: 0.5,
+    };
+    const infoFor = (id: string): SessionInfo => ({
+      id, command: "ssh root@host", cwd: "", title: "", cols: 80, rows: 24, started_at: 0,
+      ...(id === "left" ? { ssh_appearance: { theme_id: "solarized-dark" } } : {}),
+    });
+    const wrapper = mount(PaneGrid, {
+      props: {
+        tab,
+        endpointFor: () => ({ url: "ws://127.0.0.1:1", session_token: "token" }),
+        sessionInfoFor: (pane) => infoFor(pane.sessionId ?? ""),
+        active: true,
+        terminalThemeId: "classic",
+        terminalTheme: { background: "#000000" },
+        commandNotifyThresholdSec: 10,
+      },
+    });
+
+    const terminals = () => wrapper.findAllComponents({ name: "TerminalView" });
+    expect(terminals()[0].props("theme").background).toBe("#002b36");
+    expect(terminals()[1].props("theme").background).toBe("#000000");
+
+    await wrapper.get('[data-test="terminal-theme-trigger-left"]').trigger("click");
+    expect(wrapper.find('[data-test="terminal-theme-menu-left"] select').exists()).toBe(false);
+    const themeDropdown = wrapper.findAllComponents(SelectDropdown)
+      .find((item) => item.attributes("data-test") === "terminal-theme-select-left")!;
+    const themeOptions = themeDropdown.props("options") as Array<{
+      value: string;
+      description?: string;
+      preview?: { background: string; foreground: string; colors: string[] };
+    }>;
+    const nordOption = themeOptions.find(
+      (option) => option.value === "nord",
+    );
+    expect(nordOption?.description).toBeTruthy();
+    expect(nordOption?.preview?.background).toBe("#2e3440");
+    expect(themeOptions.find((option) => option.value === "__session__")).toBeUndefined();
+    themeDropdown.vm.$emit("update:modelValue", "nord");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.emitted("terminal-theme-changed")).toEqual([["nord"]]);
+    // PaneGrid only requests the global mutation. App owns the persisted
+    // preference and feeds the resulting palette back through props.
+    expect(terminals()[0].props("theme").background).toBe("#002b36");
+    expect(terminals()[1].props("theme").background).toBe("#000000");
+
+    await wrapper.setProps({
+      terminalThemeId: "nord",
+      terminalTheme: { background: "#2e3440" },
+    });
+    // A saved SSH terminal override remains terminal-specific; panes without
+    // one and the surrounding app use the new global theme.
+    expect(terminals()[0].props("theme").background).toBe("#002b36");
+    expect(terminals()[1].props("theme").background).toBe("#2e3440");
   });
 });
 

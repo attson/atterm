@@ -40,6 +40,38 @@ type peerConfigTestRecord struct {
 	payload []byte
 }
 
+func TestPeerCatalogSessionPreservesSSHIdentityAndAppearance(t *testing.T) {
+	fontHead := ""
+	info := proto.SessionInfo{
+		ID:           uuid.NewString(),
+		Cols:         80,
+		Rows:         24,
+		HostID:       "desktop-host",
+		SSHHostID:    "saved-host",
+		SSHHostAlias: "production",
+		SSHAppearance: &proto.TerminalAppearanceOverride{
+			ThemeID:  "nord",
+			FontHead: &fontHead,
+			FontSize: 17,
+		},
+	}
+
+	advertised := peerCatalogSession(info, peertransport.PermissionFull)
+	got := peerCatalogSessionInfo(advertised)
+	if got.SSHHostAlias != info.SSHHostAlias || got.SSHAppearance == nil {
+		t.Fatalf("SSH metadata did not survive Peer catalog mapping: %+v", got)
+	}
+	if got.SSHAppearance.ThemeID != "nord" || got.SSHAppearance.FontSize != 17 ||
+		got.SSHAppearance.FontHead == nil || *got.SSHAppearance.FontHead != "" {
+		t.Fatalf("unexpected Peer SSH appearance: %+v", got.SSHAppearance)
+	}
+
+	*info.SSHAppearance.FontHead = "JetBrains Mono"
+	if advertised.SSHAppearance.FontHead == nil || *advertised.SSHAppearance.FontHead != "" {
+		t.Fatalf("Peer catalog retained source appearance pointer: %+v", advertised.SSHAppearance)
+	}
+}
+
 func newPeerQuickTunnelFixture(t *testing.T, permission peerproto.Permission) peerQuickTunnelFixture {
 	return newPeerQuickTunnelFixtureWithScope(t, permission, true)
 }

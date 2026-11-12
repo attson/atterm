@@ -19,7 +19,7 @@ import {
 } from "../lib/api";
 import { type LocalePreference, type MessageKey } from "../i18n";
 import { useI18n } from "../i18n/useI18n";
-import { TERMINAL_THEMES, getTerminalTheme } from "../lib/terminalThemes";
+import { TERMINAL_THEMES, getTerminalTheme, terminalThemePreview } from "../lib/terminalThemes";
 import SelectDropdown from "./SelectDropdown.vue";
 import SettingsTerminalAppearance, { type TerminalAppearanceState } from "./SettingsTerminalAppearance.vue";
 import { usePlatform } from "../platform";
@@ -60,6 +60,7 @@ const themeOptions = computed(() =>
     value: theme.id,
     label: t(theme.labelKey),
     description: t(theme.descriptionKey),
+    preview: terminalThemePreview(theme),
   })),
 );
 

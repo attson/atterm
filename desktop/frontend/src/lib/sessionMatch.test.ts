@@ -43,6 +43,12 @@ describe("matchesSession", () => {
     expect(matchesSession(s, "run bui")).toBe(true);
   });
 
+  test("matches saved SSH alias and user@host endpoint", () => {
+    const s = mk({ ssh_host_alias: "Ali ECS Atterm", user: "root", host: "121.43.40.128" });
+    expect(matchesSession(s, "ali ecs")).toBe(true);
+    expect(matchesSession(s, "root@121.43")).toBe(true);
+  });
+
   test("matches CJK", () => {
     const s = mk({ title: "支付网关" });
     expect(matchesSession(s, "支付")).toBe(true);

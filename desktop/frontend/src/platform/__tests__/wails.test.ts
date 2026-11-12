@@ -50,6 +50,8 @@ vi.mock('../../../wailsjs/runtime/runtime', () => ({
   Environment: vi.fn().mockResolvedValue({ platform: 'darwin', arch: 'arm64', buildType: 'production' }),
   BrowserOpenURL: vi.fn(),
   ClipboardSetText: vi.fn().mockResolvedValue(true),
+  OnFileDrop: vi.fn(),
+  OnFileDropOff: vi.fn(),
 }))
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
@@ -97,6 +99,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   StartPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
   SendPeerNativeDirectFrame: vi.fn().mockResolvedValue(undefined),
   StopPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
+  ReadSSHKeyFile: vi.fn().mockResolvedValue({ name: 'id_ed25519', content: 'pem' }),
 }))
 
 vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
@@ -109,7 +112,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 }))
 
 import { createWailsPlatform } from '../wails'
-import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
+import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit, OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime'
 import {
   AcceptPendingPeerConfig,
   CreatePeerConnectionBundle,
@@ -139,6 +142,7 @@ import {
   StartServicePreview,
   StopPeerNativeDirect,
   StopPeerQuickTunnel,
+  ReadSSHKeyFile,
 } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile, RevealInOS } from '../../../wailsjs/go/main/PluginFS'
 import {
@@ -174,6 +178,24 @@ describe('createWailsPlatform', () => {
     const me = await p.relay.fetchMe()
     expect(fetchRelayMe).toHaveBeenCalledOnce()
     expect(me).toEqual({ user_id: 'u', email: 'e' })
+  })
+
+  it('nativeFileDrop restricts native paths to drop targets and reads through the SSH-key binding', async () => {
+    const p = createWailsPlatform()
+    const handler = vi.fn()
+    const off = p.nativeFileDrop!.onFileDrop(handler)
+    expect(OnFileDrop).toHaveBeenCalledWith(expect.any(Function), true)
+
+    const callback = (OnFileDrop as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    callback(10, 20, ['/home/test/.ssh/id_ed25519'])
+    expect(handler).toHaveBeenCalledWith(['/home/test/.ssh/id_ed25519'])
+
+    await expect(p.nativeFileDrop!.readSSHKeyFile('/home/test/.ssh/id_ed25519'))
+      .resolves.toEqual({ name: 'id_ed25519', content: 'pem' })
+    expect(ReadSSHKeyFile).toHaveBeenCalledWith('/home/test/.ssh/id_ed25519')
+
+    off()
+    expect(OnFileDropOff).toHaveBeenCalledOnce()
   })
 
   it('relay.setUplinkPaused delegates', async () => {

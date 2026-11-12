@@ -128,8 +128,10 @@ func (a *App) NewSshSessionByID(id string, accepted AcceptedHostKey) (NewSession
 
 	req := SSHConnectReq{
 		Host: found.Host, Port: found.Port, User: found.User,
-		AuthKind:  found.AuthKind,
-		SSHHostID: found.ID, // carried into SessionInfo, and used to find the chain
+		AuthKind:      found.AuthKind,
+		SSHHostID:     found.ID, // carried into SessionInfo, and used to find the chain
+		SSHHostAlias:  found.Alias,
+		SSHAppearance: cloneTerminalAppearance(found.TerminalAppearance),
 		// Verbatim, both halves: the acceptance names one key on one machine,
 		// and rebuilding either half here would let it match a hop the user was
 		// never shown. See acceptedHostKey.
@@ -154,7 +156,17 @@ func (a *App) NewSshSessionByID(id string, accepted AcceptedHostKey) (NewSession
 		}
 		req.Password = cred.Password
 	}
-	return a.NewSshSession(req)
+	resp, err := a.NewSshSession(req)
+	if err != nil {
+		return NewSessionResp{}, err
+	}
+	// The session is already live at this point. Recent-use metadata is useful
+	// but must never turn a successful connection into an apparent failure or
+	// leave the frontend retrying while the first session remains open.
+	if err := a.markSSHHostUsed(found.ID, time.Now()); err != nil {
+		logWarn("ssh", "persist recent use host=%s: %v", found.ID, err)
+	}
+	return resp, nil
 }
 
 // NewSshSession opens an SSH remote shell as an adoptable session. On an
@@ -273,22 +285,24 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 	id := uuid.New()
 	title := "ssh " + req.User + "@" + req.Host
 	info := proto.SessionInfo{
-		Command:   title,
-		Title:     title,
-		Cols:      cols,
-		Rows:      rows,
-		HostID:    h.hostID,
-		Host:      req.Host,
-		User:      req.User,
-		SSHHostID: req.SSHHostID, // empty for ad-hoc; set for saved-host connects
-		StartedAt: time.Now().Unix(),
+		Command:       title,
+		Title:         title,
+		Cols:          cols,
+		Rows:          rows,
+		HostID:        h.hostID,
+		Host:          req.Host,
+		User:          req.User,
+		SSHHostID:     req.SSHHostID, // empty for ad-hoc; set for saved-host connects
+		SSHHostAlias:  req.SSHHostAlias,
+		SSHAppearance: cloneTerminalAppearance(req.SSHAppearance),
+		StartedAt:     time.Now().Unix(),
 	}
 
 	host := &sshPtyHost{Session: sess}
 	cleanup := h.server.AdoptSession(ctx, id, info, host, h.adminUserID)
 	active := &activeSession{host: host, cleanup: cleanup, inputHistory: h.newSessionInputHistory(id)}
 	if relaySession, ok := h.server.Registry().Get(id); ok {
-		relaySession.SetOnCommandSubmitted(active.inputHistory.Append)
+		relaySession.SetOnEchoConfirmedInput(active.inputHistory.Append)
 	}
 
 	h.mu.Lock()
@@ -327,4 +341,16 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 	}()
 
 	return id, nil
+}
+
+func cloneTerminalAppearance(in *proto.TerminalAppearanceOverride) *proto.TerminalAppearanceOverride {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.FontHead != nil {
+		fontHead := *in.FontHead
+		out.FontHead = &fontHead
+	}
+	return &out
 }

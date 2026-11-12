@@ -1660,8 +1660,8 @@ export class SessionConnection {
   }
 }
 
-// decryptSessionFields overlays the E2EE-sealed {title, cwd, command,
-// current_command} onto each SessionInfo when an account_key is unlocked.
+// decryptSessionFields overlays the E2EE-sealed content fields, including the
+// saved-SSH alias/appearance snapshot, when an account_key is unlocked.
 // The relay strips the plaintext for these fields once the agent seals them
 // (uplink M6-final), so without this the session list shows only the short
 // session id. Mirrors the Capacitor list path (platform/capacitor.ts) and the
@@ -1681,6 +1681,8 @@ export function decryptSessionFields(sessions: SessionInfo[]): SessionInfo[] {
       if (fields.cwd !== undefined) next.cwd = fields.cwd;
       if (fields.command !== undefined) next.command = fields.command;
       if (fields.current_command !== undefined) next.current_command = fields.current_command;
+      if (fields.ssh_host_alias !== undefined) next.ssh_host_alias = fields.ssh_host_alias;
+      if (fields.ssh_appearance !== undefined) next.ssh_appearance = fields.ssh_appearance;
       return next;
     } catch {
       return s;
@@ -1708,6 +1710,8 @@ export interface SessionInfo {
   // ssh_host_id marks an SSH session connected from a saved host (SSHHost.ID);
   // used by recovery to reconnect. Absent for local shells / ad-hoc SSH.
   ssh_host_id?: string;
+  ssh_host_alias?: string;
+  ssh_appearance?: { theme_id?: string; font_head?: string; font_size?: number };
   remote_permission?: string;
   task_state?: TaskState;
   current_command?: string;
@@ -1721,7 +1725,8 @@ export interface SessionInfo {
   /** Unix seconds for the latest attention-worthy state transition. */
   attention_at?: number;
   unread?: boolean;
-  /** Base64 (std) AEAD envelope over {title, cwd, command, current_command}
+  /** Base64 (std) AEAD envelope over content fields including the saved-SSH
+   *  alias/appearance snapshot.
    *  sealed by the agent under HKDF(account_key, session_uuid). The relay
    *  strips the matching plaintext once a session is sealed (uplink M6-final),
    *  so a client MUST run decryptSessionFields to recover them. Empty/absent

@@ -15,7 +15,7 @@ func TestImportPreservesUserEditsOnRename(t *testing.T) {
 	existing := SSHHost{
 		ID: "keep-me", Alias: "web1", Host: "old.example",
 		User: "old", KeyID: "key-1",
-		Tags: []string{"prod"}, Note: "my note",
+		Tags: []string{"prod"}, Note: "my note", LastUsedAt: 123456,
 	}
 	incoming := SSHHost{Alias: "web1", Host: "new.example", User: "new"}
 
@@ -35,6 +35,9 @@ func TestImportPreservesUserEditsOnRename(t *testing.T) {
 	}
 	if merged.Note != "my note" {
 		t.Fatalf("Note must survive re-import, got %q", merged.Note)
+	}
+	if merged.LastUsedAt != 123456 {
+		t.Fatalf("LastUsedAt must survive re-import, got %d", merged.LastUsedAt)
 	}
 }
 

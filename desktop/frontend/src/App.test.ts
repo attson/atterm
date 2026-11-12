@@ -55,6 +55,13 @@ describe("tab activation", () => {
     expect(hashIdx).toBeGreaterThanOrEqual(0);
     expect(currentIdx).toBeLessThan(hashIdx);
   });
+
+  test("a successful saved-host connection closes the picker and opens its terminal tab", () => {
+    const connectedBody = source.match(/function\s+onSshConnected\s*\(sessionId:\s*string\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(connectedBody).toContain("showSshHosts.value = false");
+    expect(connectedBody).toContain("openSshTab(sessionId)");
+    expect(source).toContain('@connected="onSshConnected"');
+  });
 });
 
 describe("terminal toasts", () => {

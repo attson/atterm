@@ -29,6 +29,9 @@ export interface SessionLike {
   title?: string
   session_id: string
   cwd?: string
+  ssh_host_alias?: string
+  host?: string
+  user?: string
   // Optional workload classification — "ai" | "shell" | "test" | "build"
   // | "deploy". When absent, treat as shell. Drives usableAITitle() /
   // usableTitle() heuristics.
@@ -48,9 +51,22 @@ export function commandLabel(s: Pick<SessionLike, 'current_command' | 'title' | 
   return firstToken.split('/').pop() || firstToken
 }
 
+export function sshEndpoint(s: Pick<SessionLike, 'host' | 'user'>): string {
+  const host = (s.host ?? '').trim()
+  const user = (s.user ?? '').trim()
+  if (host && user) return `${user}@${host}`
+  return host || user
+}
+
 export function rowTitle(s: SessionLike): string {
+  const lines: string[] = []
+  const alias = (s.ssh_host_alias ?? '').trim()
+  const endpoint = alias ? sshEndpoint(s) : ''
   const cmd = fullCommand(s)
-  return s.cwd ? `${cmd}\n${s.cwd}` : cmd
+  for (const value of [alias, endpoint, cmd, s.cwd ?? '']) {
+    if (value && !lines.includes(value)) lines.push(value)
+  }
+  return lines.join('\n')
 }
 
 function basenameFromCwd(cwd: string | undefined): string {
@@ -125,6 +141,8 @@ export function usableTitle(s: Pick<SessionLike, 'current_command' | 'title' | '
 // OSC 2 title (typically the project directory or a user-set label)
 // instead of every row collapsing to "zsh".
 export function titleOrCommand(s: SessionLike): string {
+  const alias = (s.ssh_host_alias ?? '').trim()
+  if (alias) return alias
   const title = usableTitle(s)
   if (title) return title
   return commandLabel(s)

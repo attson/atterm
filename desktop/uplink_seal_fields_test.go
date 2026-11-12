@@ -22,6 +22,7 @@ func mustAccountKey32(t *testing.T) []byte {
 }
 
 func mustSessionInfo() proto.SessionInfo {
+	fontHead := "Source Code Pro"
 	return proto.SessionInfo{
 		ID:             uuid.NewString(),
 		HostID:         "host-1",
@@ -31,10 +32,16 @@ func mustSessionInfo() proto.SessionInfo {
 		Cwd:            "/Users/alice/secrets",
 		Command:        "bash",
 		CurrentCommand: "rg api_key",
-		Cols:           80,
-		Rows:           24,
-		StartedAt:      1700000000,
-		TaskState:      proto.TaskStateRunning,
+		SSHHostAlias:   "Ali ECS Atterm",
+		SSHAppearance: &proto.TerminalAppearanceOverride{
+			ThemeID:  "nord",
+			FontHead: &fontHead,
+			FontSize: 14,
+		},
+		Cols:      80,
+		Rows:      24,
+		StartedAt: 1700000000,
+		TaskState: proto.TaskStateRunning,
 	}
 }
 
@@ -80,7 +87,12 @@ func TestSealSessionInfoContent_RoundTrip(t *testing.T) {
 	if got.Title != original.Title ||
 		got.Cwd != original.Cwd ||
 		got.Command != original.Command ||
-		got.CurrentCommand != original.CurrentCommand {
+		got.CurrentCommand != original.CurrentCommand ||
+		got.SSHHostAlias != original.SSHHostAlias ||
+		got.SSHAppearance == nil ||
+		got.SSHAppearance.ThemeID != "nord" ||
+		got.SSHAppearance.FontHead == nil || *got.SSHAppearance.FontHead != "Source Code Pro" ||
+		got.SSHAppearance.FontSize != 14 {
 		t.Fatalf("decrypted fields mismatch: %+v", got)
 	}
 }
@@ -228,12 +240,17 @@ func TestSealSessionInfoContent_BadIDSkipsSilently(t *testing.T) {
 func TestSealThenStrip_RelayCantSeePlaintext(t *testing.T) {
 	const marker = "M3B_STRIP_E2E_MARKER_7C9D"
 	ak := mustAccountKey32(t)
+	fontHead := marker + "-font"
 	in := []proto.SessionInfo{{
-		ID:        uuid.NewString(),
-		HostID:    "host-1",
-		Title:     marker + "-title",
-		Cwd:       "/home/alice/" + marker,
-		Command:   marker + " --flag",
+		ID:           uuid.NewString(),
+		HostID:       "host-1",
+		Title:        marker + "-title",
+		Cwd:          "/home/alice/" + marker,
+		Command:      marker + " --flag",
+		SSHHostAlias: marker + "-alias",
+		SSHAppearance: &proto.TerminalAppearanceOverride{
+			ThemeID: marker + "-theme", FontHead: &fontHead, FontSize: 14,
+		},
 		StartedAt: 1700000000,
 		Cols:      80,
 		Rows:      24,
@@ -264,7 +281,10 @@ func TestSealThenStrip_RelayCantSeePlaintext(t *testing.T) {
 	if err := json.Unmarshal(pt, &got); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if got.Title != marker+"-title" || got.Command != marker+" --flag" {
+	if got.Title != marker+"-title" || got.Command != marker+" --flag" ||
+		got.SSHHostAlias != marker+"-alias" || got.SSHAppearance == nil ||
+		got.SSHAppearance.ThemeID != marker+"-theme" || got.SSHAppearance.FontHead == nil ||
+		*got.SSHAppearance.FontHead != marker+"-font" {
 		t.Fatalf("recovered fields mismatch: %+v", got)
 	}
 }

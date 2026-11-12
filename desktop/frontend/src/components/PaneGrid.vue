@@ -1,12 +1,19 @@
 <script lang="ts" setup>
-import { computed, nextTick, ref, watch, type CSSProperties } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from "vue";
+import { Palette } from "lucide-vue-next";
 import TerminalView from "./TerminalView.vue";
 import PaneSplitter from "./PaneSplitter.vue";
+import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import type { Endpoint } from "../lib/api";
 import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab, TerminalAppearance } from "../lib/types";
-import type { TerminalThemeDefinition } from "../lib/terminalThemes";
+import {
+  TERMINAL_THEMES,
+  terminalThemePreview,
+  type TerminalThemeDefinition,
+} from "../lib/terminalThemes";
 import { extractSessionLabel } from "../lib/terminalBell";
+import { resolveSSHAppearance, resolveSSHTheme } from "../lib/sshAppearance";
 import { useServicePreviewActive } from "../composables/useServicePreviewActive";
 import { useI18n } from "../i18n/useI18n";
 import { RATIO_DEFAULT, clampRatio } from "../lib/layout";
@@ -26,6 +33,7 @@ const props = defineProps<{
   sessionInfoFor: (pane: Pane) => SessionInfo | null;
   viewerCountFor?: (sessionId: string) => number;
   active: boolean;
+  terminalThemeId?: string;
   terminalTheme: TerminalThemeDefinition["xtermTheme"];
   commandNotifyThresholdSec: number;
   searchRequestSeq?: number;
@@ -39,6 +47,7 @@ const emit = defineEmits<{
   (e: "drop-session", payload: { paneIdx: number; sessionId: string }): void;
   (e: "detach-session", sessionId: string): void;
   (e: "toast", message: string): void;
+  (e: "terminal-theme-changed", themeID: string): void;
   (e: "update:col-ratio", ratio: number): void;
   (e: "update:row-ratio", ratio: number): void;
 }>();
@@ -187,6 +196,60 @@ function paneKey(pane: Pane, idx: number): string {
   return pane.sessionId ?? `empty-${idx}`;
 }
 
+const defaultAppearance: TerminalAppearance = {
+  fontHead: "", fontSize: 13, lineHeight: 1, cursorStyle: "block", cursorBlink: true, scrollback: 5000,
+};
+
+function appearanceFor(pane: Pane): TerminalAppearance {
+  return resolveSSHAppearance(props.appearance ?? defaultAppearance, sessionInfoForPane(pane)?.ssh_appearance);
+}
+
+function themeFor(pane: Pane): TerminalThemeDefinition["xtermTheme"] {
+  return resolveSSHTheme(props.terminalTheme, sessionInfoForPane(pane)?.ssh_appearance);
+}
+
+const themeMenuSessionId = ref("");
+
+function themeOptionsFor(): SelectOption[] {
+  return TERMINAL_THEMES.map((theme) => ({
+    value: theme.id,
+    label: t(theme.labelKey),
+    description: t(theme.descriptionKey),
+    preview: terminalThemePreview(theme),
+  }));
+}
+
+function toggleThemeMenu(sessionId: string): void {
+  themeMenuSessionId.value = themeMenuSessionId.value === sessionId ? "" : sessionId;
+}
+
+function setGlobalTheme(value: string): void {
+  if (TERMINAL_THEMES.some((theme) => theme.id === value)) {
+    emit("terminal-theme-changed", value);
+  }
+  themeMenuSessionId.value = "";
+}
+
+function onThemeMenuDocumentMousedown(e: MouseEvent): void {
+  if (!themeMenuSessionId.value) return;
+  const picker = e.target instanceof Element ? e.target.closest(".pane-theme-picker") : null;
+  if (picker?.getAttribute("data-theme-picker-session") === themeMenuSessionId.value) return;
+  themeMenuSessionId.value = "";
+}
+
+watch(themeMenuSessionId, (sessionId, previous) => {
+  if (sessionId && !previous) document.addEventListener("mousedown", onThemeMenuDocumentMousedown);
+  if (!sessionId && previous) document.removeEventListener("mousedown", onThemeMenuDocumentMousedown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onThemeMenuDocumentMousedown);
+});
+
+function sessionInfoForPane(pane: Pane): SessionInfo | null {
+  return props.sessionInfoFor(pane);
+}
+
 function formatWho(info: SessionInfo | null): string {
   if (!info) return "";
   const u = info.user || "";
@@ -239,14 +302,14 @@ function requestServicePreview(pane: Pane): void {
           :current-command="sessionInfoFor(pane)?.current_command"
           :current-cwd="sessionInfoFor(pane)?.cwd"
           :avoid-top-right-badge="pane.remote || (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
-          :theme="terminalTheme"
+          :theme="themeFor(pane)"
           :is-local-session="!pane.remote"
           :peer-direct="pane.peerDirect === true"
           :command-notify-threshold-sec="commandNotifyThresholdSec"
           :resize-suspended="dragging"
           :search-request-seq="searchRequestSeq"
           :can-detach="tab.layout !== 'single'"
-          :appearance="appearance"
+          :appearance="appearanceFor(pane)"
           @toast="emit('toast', $event)"
           @detach="pane.sessionId && emit('detach-session', pane.sessionId)"
         />
@@ -259,6 +322,42 @@ function requestServicePreview(pane: Pane): void {
           class="session-input-history-controls-slot"
           :id="`session-input-history-controls-${pane.sessionId}`"
         ></span>
+
+        <div
+          v-if="pane.sessionId"
+          class="pane-theme-picker"
+          :data-theme-picker-session="pane.sessionId"
+        >
+          <button
+            type="button"
+            class="pane-theme-trigger"
+            :class="{ active: themeMenuSessionId === pane.sessionId }"
+            :data-test="`terminal-theme-trigger-${pane.sessionId}`"
+            v-tooltip="t('terminal.theme.open')"
+            :aria-label="t('terminal.theme.open')"
+            :aria-expanded="themeMenuSessionId === pane.sessionId"
+            @mousedown.stop
+            @click.stop="toggleThemeMenu(pane.sessionId)"
+          >
+            <Palette :size="15" aria-hidden="true" />
+          </button>
+          <div
+            v-if="themeMenuSessionId === pane.sessionId"
+            class="pane-theme-menu"
+            :data-test="`terminal-theme-menu-${pane.sessionId}`"
+            @mousedown.stop
+            @click.stop
+          >
+            <span class="pane-theme-menu-title">{{ t("terminal.theme.currentPane") }}</span>
+            <SelectDropdown
+              :data-test="`terminal-theme-select-${pane.sessionId}`"
+              :model-value="terminalThemeId || 'classic'"
+              :options="themeOptionsFor()"
+              :aria-label="t('terminal.theme.currentPane')"
+              @update:model-value="setGlobalTheme($event)"
+            />
+          </div>
+        </div>
 
         <div
           v-if="pane.sessionId && !pane.remote && (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
@@ -437,6 +536,36 @@ function requestServicePreview(pane: Pane): void {
   align-items: center;
   pointer-events: auto;
 }
+.pane-theme-picker {
+  position: relative;
+  display: inline-flex;
+  pointer-events: auto;
+}
+.pane-theme-trigger {
+  width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg-dim); background: rgba(13, 17, 23, 0.88);
+  cursor: pointer;
+}
+.pane-theme-trigger:hover,
+.pane-theme-trigger:focus-visible,
+.pane-theme-trigger.active {
+  color: var(--fg); border-color: var(--accent); outline: none;
+}
+.pane-theme-menu {
+  position: absolute; top: 32px; right: 0; z-index: 9;
+  width: 310px; max-width: min(310px, calc(100vw - 32px)); padding: 10px;
+  display: flex; flex-direction: column; gap: 7px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--terminal-overlay); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+}
+.pane-theme-menu-title {
+  color: var(--fg); font-size: 11px; font-weight: 600;
+}
+.pane-theme-menu :deep(.trigger) { height: 28px; font-size: 12px; }
+.pane-theme-menu :deep(.menu) { right: 0; left: auto; background: var(--terminal-overlay); }
+.pane-theme-menu :deep(.menu-with-previews) { width: 100%; }
 .remote-badge {
   display: inline-flex;
   align-items: center;

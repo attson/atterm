@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/appdir"
+	"github.com/attson/atterm/internal/proto"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -50,6 +51,12 @@ type SSHHost struct {
 	Tags      []string `json:"tags,omitempty"`
 	GroupPath []string `json:"group_path,omitempty"`
 	Note      string   `json:"note,omitempty"`
+	// LastUsedAt is updated only after a saved-host terminal connection
+	// succeeds. It is presentation metadata, not a connection input.
+	LastUsedAt int64 `json:"last_used_at,omitempty"`
+	// TerminalAppearance contains only values this host overrides. Missing
+	// members inherit the current global terminal preference on the client.
+	TerminalAppearance *proto.TerminalAppearanceOverride `json:"terminal_appearance,omitempty"`
 
 	// StartupCommand is typed into the shell after login, one line per
 	// prompt, and StartupDelayMs is the pause before each line (0 → the
@@ -92,6 +99,35 @@ type SSHHost struct {
 	Forwards []ForwardRule `json:"forwards,omitempty"`
 }
 
+var validSSHTerminalThemes = map[string]struct{}{
+	"classic": {}, "nord": {}, "solarized-dark": {}, "daylight": {},
+}
+
+var validSSHTerminalFonts = map[string]struct{}{
+	"": {}, "SF Mono": {}, "JetBrains Mono": {}, "Fira Code": {},
+	"Cascadia Code": {}, "Source Code Pro": {}, "IBM Plex Mono": {},
+}
+
+func validateSSHTerminalAppearance(appearance *proto.TerminalAppearanceOverride) error {
+	if appearance == nil {
+		return nil
+	}
+	if appearance.ThemeID != "" {
+		if _, ok := validSSHTerminalThemes[appearance.ThemeID]; !ok {
+			return fmt.Errorf("unsupported terminal theme %q", appearance.ThemeID)
+		}
+	}
+	if appearance.FontHead != nil {
+		if _, ok := validSSHTerminalFonts[*appearance.FontHead]; !ok {
+			return fmt.Errorf("unsupported terminal font %q", *appearance.FontHead)
+		}
+	}
+	if appearance.FontSize != 0 && (appearance.FontSize < terminalFontSizeMin || appearance.FontSize > terminalFontSizeMax) {
+		return fmt.Errorf("terminal font size must be between %d and %d", terminalFontSizeMin, terminalFontSizeMax)
+	}
+	return nil
+}
+
 // sshCredential is JSON-encoded into a single keyring entry keyed by host ID.
 // Private keys are no longer inlined here — key auth references an SSHKey by ID.
 type sshCredential struct {
@@ -127,6 +163,28 @@ func (a *App) ListSSHHosts() []SSHHost {
 	return hosts
 }
 
+// markSSHHostUsed persists the successful-connect clock without changing the
+// host list's configured order. The frontend derives its display order from
+// this field, so equal and missing timestamps can retain that stable order.
+func (a *App) markSSHHostUsed(id string, at time.Time) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	for i := range cfg.SSHHosts {
+		if cfg.SSHHosts[i].ID != id {
+			continue
+		}
+		cfg.SSHHosts[i].LastUsedAt = at.UnixMilli()
+		if err := a.cfgStore.Set(cfg); err != nil {
+			return err
+		}
+		a.markSSHHostsDirty()
+		return nil
+	}
+	return fmt.Errorf("no such host: %s", id)
+}
+
 // AddSSHHost generates an ID, stores non-secret fields in config and the
 // credential in the keyring. On keyring failure it does not touch config; on
 // config failure it rolls back the keyring entry.
@@ -134,7 +192,11 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 	if a.cfgStore == nil {
 		return SSHHost{}, fmt.Errorf("config store not ready")
 	}
+	if err := validateSSHTerminalAppearance(h.TerminalAppearance); err != nil {
+		return SSHHost{}, err
+	}
 	h.ID = ulid.Make().String()
+	h.LastUsedAt = 0
 
 	if err := sshCredentialSlot(h.ID).Save(cred); err != nil {
 		return SSHHost{}, fmt.Errorf("store credential: %w", err)
@@ -199,6 +261,9 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 // Clearing a proxy field is a ~/.ssh/config edit followed by re-import, not
 // a side effect of typing a password.
 func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
+	if err := validateSSHTerminalAppearance(h.TerminalAppearance); err != nil {
+		return err
+	}
 	if a.cfgStore == nil {
 		return fmt.Errorf("config store not ready")
 	}
@@ -228,6 +293,7 @@ func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
 		}
 	}
 	h.GroupPath = cfg.SSHHosts[idx].GroupPath
+	h.LastUsedAt = cfg.SSHHosts[idx].LastUsedAt
 	h.IdentityFile = cfg.SSHHosts[idx].IdentityFile
 	h.ProxyJump = cfg.SSHHosts[idx].ProxyJump
 	h.ProxyCommand = cfg.SSHHosts[idx].ProxyCommand

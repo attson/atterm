@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/safekeyring"
 )
 
@@ -17,7 +19,7 @@ func newHostsTestApp(t *testing.T) *App {
 func TestAddSSHHostPersistsAndReadsBack(t *testing.T) {
 	a := newHostsTestApp(t)
 	h, err := a.AddSSHHost(SSHHost{
-		Alias: "box", Host: "h", Port: "22", User: "u", AuthKind: "password",
+		Alias: "box", Host: "h", Port: "22", User: "u", AuthKind: "password", LastUsedAt: 123,
 	}, sshCredential{Password: "pw"})
 	if err != nil {
 		t.Fatalf("AddSSHHost: %v", err)
@@ -32,6 +34,9 @@ func TestAddSSHHostPersistsAndReadsBack(t *testing.T) {
 	}
 	if list[0].AuthKind != "password" {
 		t.Fatalf("auth kind lost: %+v", list[0])
+	}
+	if list[0].LastUsedAt != 0 {
+		t.Fatalf("a newly added host must not inherit recent-use metadata: %+v", list[0])
 	}
 
 	raw, err := safekeyring.Get(sshCredentialService(), h.ID)
@@ -61,6 +66,24 @@ func TestUpdateSSHHostKeepsCredentialWhenNil(t *testing.T) {
 	raw, err := safekeyring.Get(sshCredentialService(), h.ID)
 	if err != nil || raw == "" {
 		t.Fatalf("credential should remain: %v", err)
+	}
+}
+
+func TestUpdateSSHHostPreservesLastUsedAt(t *testing.T) {
+	a := newHostsTestApp(t)
+	h, _ := a.AddSSHHost(SSHHost{Host: "h", User: "u", AuthKind: "password"}, sshCredential{Password: "pw"})
+	if err := a.markSSHHostUsed(h.ID, time.UnixMilli(123456)); err != nil {
+		t.Fatalf("markSSHHostUsed: %v", err)
+	}
+
+	edited := a.ListSSHHosts()[0]
+	edited.Alias = "renamed"
+	edited.LastUsedAt = 0 // mirrors a stale/older frontend payload
+	if err := a.UpdateSSHHost(edited, nil); err != nil {
+		t.Fatalf("UpdateSSHHost: %v", err)
+	}
+	if got := a.ListSSHHosts()[0].LastUsedAt; got != 123456 {
+		t.Fatalf("LastUsedAt = %d, want 123456", got)
 	}
 }
 
@@ -270,5 +293,29 @@ func TestCRUDMarksSSHSyncDirty(t *testing.T) {
 	}
 	if !a.cfgStore.Get().PrefsMeta["ssh_hosts_encrypted"].Dirty {
 		t.Fatal("Delete should mark ssh_hosts_encrypted dirty")
+	}
+}
+
+func TestSSHHostTerminalAppearanceValidationIsAtomic(t *testing.T) {
+	a := newHostsTestApp(t)
+	fontHead := "Source Code Pro"
+	h, err := a.AddSSHHost(SSHHost{
+		Host: "example.com", User: "root", AuthKind: "password",
+		TerminalAppearance: &proto.TerminalAppearanceOverride{
+			ThemeID: "nord", FontHead: &fontHead, FontSize: 14,
+		},
+	}, sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.TerminalAppearance = &proto.TerminalAppearanceOverride{ThemeID: "future-theme", FontSize: 99}
+	if err := a.UpdateSSHHost(h, nil); err == nil {
+		t.Fatal("invalid appearance update succeeded")
+	}
+	stored := a.ListSSHHosts()[0].TerminalAppearance
+	if stored == nil || stored.ThemeID != "nord" || stored.FontHead == nil ||
+		*stored.FontHead != "Source Code Pro" || stored.FontSize != 14 {
+		t.Fatalf("invalid update partially replaced stored appearance: %+v", stored)
 	}
 }

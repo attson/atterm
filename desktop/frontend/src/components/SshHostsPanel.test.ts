@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import SshHostsPanel from "./SshHostsPanel.vue";
+import SelectDropdown from "./SelectDropdown.vue";
 import { resetI18nForTest } from "../i18n";
 
 const listSSHHosts = vi.fn();
@@ -18,6 +19,10 @@ const importSSHHosts = vi.fn();
 const startForward = vi.fn();
 const stopForward = vi.fn();
 const listActiveForwards = vi.fn();
+const readNativeSSHKeyFile = vi.fn();
+const stopNativeFileDrop = vi.fn();
+let nativeFileDropHandler: ((paths: string[]) => void) | null = null;
+let nativeFileDropEnabled = false;
 vi.mock("../lib/api", () => ({
   listSSHHosts: (...a: unknown[]) => listSSHHosts(...a),
   addSSHHost: (...a: unknown[]) => addSSHHost(...a),
@@ -34,6 +39,17 @@ vi.mock("../lib/api", () => ({
   startForward: (...a: unknown[]) => startForward(...a),
   stopForward: (...a: unknown[]) => stopForward(...a),
   listActiveForwards: (...a: unknown[]) => listActiveForwards(...a),
+}));
+vi.mock("../platform", () => ({
+  useOptionalPlatform: () => nativeFileDropEnabled ? {
+    nativeFileDrop: {
+      onFileDrop: (handler: (paths: string[]) => void) => {
+        nativeFileDropHandler = handler;
+        return stopNativeFileDrop;
+      },
+      readSSHKeyFile: (...a: unknown[]) => readNativeSSHKeyFile(...a),
+    },
+  } : null,
 }));
 
 // The panel renders through the i18n layer, so every assertion below that
@@ -61,6 +77,10 @@ beforeEach(() => {
   startForward.mockReset().mockResolvedValue(undefined);
   stopForward.mockReset().mockResolvedValue(undefined);
   listActiveForwards.mockReset().mockResolvedValue([]);
+  nativeFileDropEnabled = false;
+  nativeFileDropHandler = null;
+  readNativeSSHKeyFile.mockReset();
+  stopNativeFileDrop.mockReset();
 });
 
 describe("SshHostsPanel", () => {
@@ -71,6 +91,31 @@ describe("SshHostsPanel", () => {
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
     expect(wrapper.text()).toContain("box");
+  });
+
+  it("按最近成功使用时间倒序展示主机，未使用主机保持原相对顺序", async () => {
+    listSSHHosts.mockResolvedValueOnce([
+      { id: "unused-a", host: "a", user: "u", auth_kind: "password", alias: "unused A" },
+      { id: "older", host: "old", user: "u", auth_kind: "password", alias: "older", last_used_at: 1000 },
+      { id: "unused-b", host: "b", user: "u", auth_kind: "password", alias: "unused B" },
+      { id: "newer", host: "new", user: "u", auth_kind: "password", alias: "newer", last_used_at: 2000 },
+    ]);
+
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+
+    expect(wrapper.findAll(".host-card").map((card) => card.attributes("data-test"))).toEqual([
+      "ssh-host-card-newer",
+      "ssh-host-card-older",
+      "ssh-host-card-unused-a",
+      "ssh-host-card-unused-b",
+    ]);
+
+    await wrapper.find('[data-test="ssh-search"]').setValue("er");
+    expect(wrapper.findAll(".host-card").map((card) => card.attributes("data-test"))).toEqual([
+      "ssh-host-card-newer",
+      "ssh-host-card-older",
+    ]);
   });
 
   it("单击主机不连接，双击触发 newSshSessionByID 并 emit connected", async () => {
@@ -104,6 +149,82 @@ describe("SshHostsPanel", () => {
     expect(addSSHHost).toHaveBeenCalledWith(
       expect.objectContaining({ host: "h2", user: "u2", auth_kind: "password" }),
       expect.objectContaining({ password: "pw" }),
+    );
+  });
+
+  it("保存并清除每主机主题、字体与字号覆盖", async () => {
+    listSSHHosts.mockResolvedValueOnce([
+      { id: "1", host: "h", user: "u", auth_kind: "password", alias: "box" },
+    ]);
+    updateSSHHost.mockResolvedValue(undefined);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-host-card-1"]').trigger("contextmenu");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="session-row-menu-item-edit"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    const moreSettings = wrapper.get('[data-test="ssh-more-settings"]');
+    expect(moreSettings.element.tagName).toBe("DETAILS");
+    expect(moreSettings.attributes("open")).toBeUndefined();
+    expect(moreSettings.find('[data-test="ssh-appearance-section"]').exists()).toBe(true);
+    expect(moreSettings.find('[data-test="ssh-startup-section"]').exists()).toBe(true);
+    expect(moreSettings.find('[data-test="ssh-forwards-section"]').exists()).toBe(true);
+    expect(moreSettings.findAll("select")).toHaveLength(0);
+
+    const appearanceDropdowns = wrapper.findAllComponents(SelectDropdown);
+    const themeDropdown = appearanceDropdowns.find((item) => item.attributes("data-test") === "ssh-appearance-theme")!;
+    const themeOptions = themeDropdown.props("options") as Array<{
+      value: string;
+      description?: string;
+      preview?: { background: string; foreground: string; colors: string[] };
+    }>;
+    const nordOption = themeOptions.find(
+      (option) => option.value === "nord",
+    );
+    expect(nordOption?.description).toBeTruthy();
+    expect(nordOption?.preview?.background).toBe("#2e3440");
+    expect(themeOptions.find((option) => option.value === "")?.preview).toBeUndefined();
+    themeDropdown.vm.$emit("update:modelValue", "nord");
+    appearanceDropdowns.find((item) => item.attributes("data-test") === "ssh-appearance-font")!
+      .vm.$emit("update:modelValue", "Source Code Pro");
+    await wrapper.find('[data-test="ssh-appearance-size"]').setValue("14");
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+    expect(updateSSHHost).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        terminal_appearance: { theme_id: "nord", font_head: "Source Code Pro", font_size: 14 },
+      }),
+      null,
+    );
+
+    // Reopen with saved values, then independently return every member to
+    // inherit. The object disappears rather than storing fake global values.
+    listSSHHosts.mockResolvedValue([
+      {
+        id: "1", host: "h", user: "u", auth_kind: "password", alias: "box",
+        terminal_appearance: { theme_id: "nord", font_head: "Source Code Pro", font_size: 14 },
+      },
+    ]);
+    const clearing = mount(SshHostsPanel);
+    await flushPromises();
+    await clearing.find('[data-test="ssh-host-card-1"]').trigger("contextmenu");
+    await clearing.vm.$nextTick();
+    await clearing.find('[data-test="session-row-menu-item-edit"]').trigger("click");
+    await clearing.vm.$nextTick();
+    const clearingDropdowns = clearing.findAllComponents(SelectDropdown);
+    const clearingTheme = clearingDropdowns.find((item) => item.attributes("data-test") === "ssh-appearance-theme");
+    const clearingFont = clearingDropdowns.find((item) => item.attributes("data-test") === "ssh-appearance-font");
+    expect(clearingTheme).toBeDefined();
+    expect(clearingFont).toBeDefined();
+    clearingTheme!.vm.$emit("update:modelValue", "");
+    clearingFont!.vm.$emit("update:modelValue", "__inherit__");
+    await clearing.find('[data-test="ssh-appearance-size"]').setValue("");
+    await clearing.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+    expect(updateSSHHost).toHaveBeenLastCalledWith(
+      expect.objectContaining({ terminal_appearance: undefined }),
+      null,
     );
   });
 
@@ -191,6 +312,23 @@ describe("SshHostsPanel", () => {
 });
 
 describe("SshHostsPanel 分组层级", () => {
+  it("分组内也按最近成功使用时间倒序展示主机", async () => {
+    listSSHHosts.mockResolvedValue([
+      { id: "old", alias: "old", host: "old", user: "root", auth_kind: "password", group_path: ["公司"], last_used_at: 1000 },
+      { id: "unused", alias: "unused", host: "unused", user: "root", auth_kind: "password", group_path: ["公司"] },
+      { id: "new", alias: "new", host: "new", user: "root", auth_kind: "password", group_path: ["公司"], last_used_at: 2000 },
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+
+    await wrapper.find('[data-test="ssh-tag-filter-公司"]').trigger("click");
+    expect(wrapper.findAll(".host-card").map((card) => card.attributes("data-test"))).toEqual([
+      "ssh-host-card-new",
+      "ssh-host-card-old",
+      "ssh-host-card-unused",
+    ]);
+  });
+
   it("只显示当前层子分组和直属主机，支持逐级返回和同名子分组隔离", async () => {
     const host = (id: string, group_path: string[]) => ({ id, alias: id, host: "localhost", user: "root", auth_kind: "password", group_path });
     listSSHHosts.mockResolvedValue([
@@ -466,8 +604,9 @@ describe("SshHostsPanel 主机右键菜单", () => {
   });
 
   it("Duplicate 复制主机的全部字段,label 加 copy 后缀", async () => {
+    const recentlyUsed = { ...HOST, last_used_at: 123456 };
     addSSHHost.mockResolvedValueOnce({ ...HOST, id: "2" });
-    const wrapper = await mountWithHosts();
+    const wrapper = await mountWithHosts([recentlyUsed]);
     await openMenu(wrapper);
     await wrapper.find('[data-test="session-row-menu-item-duplicate"]').trigger("click");
     await flushPromises();
@@ -480,6 +619,7 @@ describe("SshHostsPanel 主机右键菜单", () => {
         auth_kind: "key",
         key_id: "k1",
         alias: "box copy",
+        last_used_at: undefined,
       }),
       expect.anything(),
     );
@@ -659,6 +799,30 @@ describe("SshHostsPanel 私钥文件导入", () => {
     await dropFile(wrapper, new File([PLAIN_ED25519], "aws.pem"));
     expect(pemValue(wrapper)).toBe(PLAIN_ED25519);
     expect(nameValue(wrapper)).toBe("aws");
+  });
+
+  it("Wails 原生文件拖放读取绝对路径并在卸载时注销", async () => {
+    nativeFileDropEnabled = true;
+    readNativeSSHKeyFile.mockResolvedValue({ name: "id_ed25519", content: PLAIN_ED25519 });
+    const wrapper = await mountWithKeyDrawer();
+    expect(nativeFileDropHandler).not.toBeNull();
+
+    await wrapper.find('[data-test="ssh-key-dropzone"]').trigger("drop", {
+      dataTransfer: { files: [new File([PLAIN_ED25519], "browser-copy.pem")] },
+    });
+    await wrapper.vm.$nextTick();
+    expect(pemValue(wrapper)).toBe("");
+
+    nativeFileDropHandler?.(["/home/test/.ssh/id_ed25519"]);
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(readNativeSSHKeyFile).toHaveBeenCalledWith("/home/test/.ssh/id_ed25519");
+    expect(pemValue(wrapper)).toBe(PLAIN_ED25519);
+    expect(nameValue(wrapper)).toBe("id_ed25519");
+
+    wrapper.unmount();
+    expect(stopNativeFileDrop).toHaveBeenCalledOnce();
   });
 
   it("dragover 时虚线区进入高亮态,dragleave 后恢复", async () => {

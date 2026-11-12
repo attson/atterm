@@ -115,6 +115,8 @@ export interface SealedSessionFields {
   cwd?: string
   command?: string
   current_command?: string
+  ssh_host_alias?: string
+  ssh_appearance?: { theme_id?: string; font_head?: string; font_size?: number }
 }
 
 function uuidStringToBytes(s: string): Uint8Array {

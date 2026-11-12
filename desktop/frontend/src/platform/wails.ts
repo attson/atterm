@@ -12,6 +12,8 @@ import {
   Environment,
   BrowserOpenURL,
   ClipboardSetText,
+  OnFileDrop,
+  OnFileDropOff,
 } from '../../wailsjs/runtime/runtime'
 import {
   GetPluginConfig,
@@ -62,6 +64,7 @@ import {
   SendPeerNativeDirectFrame,
   StopPeerNativeDirect,
   SetTrafficTimeZone,
+  ReadSSHKeyFile,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -195,6 +198,16 @@ export function createWailsPlatform(): Platform {
       listRelaySessions: api.listRelaySessions,
       revokeRelaySession: api.revokeRelaySession,
       signOutOtherRelaySessions: api.signOutOtherRelaySessions,
+    },
+    nativeFileDrop: {
+      onFileDrop: (handler) => {
+        OnFileDrop((_x, _y, paths) => handler(paths), true)
+        return () => OnFileDropOff()
+      },
+      readSSHKeyFile: async (path) => {
+        const file = await ReadSSHKeyFile(path)
+        return { name: file.name, content: file.content }
+      },
     },
     servicePreview: {
       supportsMappings: true,

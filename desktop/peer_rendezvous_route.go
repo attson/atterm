@@ -297,10 +297,19 @@ func permissionWithinPeerGrant(permission peertransport.Permission, granted peer
 }
 
 func peerCatalogSessionInfo(session rendezvousclient.PeerSession) proto.SessionInfo {
+	var appearance *proto.TerminalAppearanceOverride
+	if session.SSHAppearance != nil {
+		appearance = &proto.TerminalAppearanceOverride{
+			ThemeID:  session.SSHAppearance.ThemeID,
+			FontHead: cloneStringPointer(session.SSHAppearance.FontHead),
+			FontSize: session.SSHAppearance.FontSize,
+		}
+	}
 	return proto.SessionInfo{
 		ID: session.ID, Command: session.Command, Cwd: session.Cwd, Title: session.Title,
 		Cols: session.Cols, Rows: session.Rows, StartedAt: session.StartedAt,
 		HostID: session.HostID, Host: session.Host, User: session.User, SSHHostID: session.SSHHostID,
+		SSHHostAlias: session.SSHHostAlias, SSHAppearance: appearance,
 		RemotePermission: peerPermissionName(session.Permission), TaskState: session.TaskState,
 		CurrentCommand: session.CurrentCommand, CommandStartedAt: session.CommandStartedAt,
 		CommandEndedAt: session.CommandEndedAt, CommandDurationMS: session.CommandDurationMS,

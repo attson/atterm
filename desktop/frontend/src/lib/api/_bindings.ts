@@ -134,6 +134,8 @@ export interface SSHHost {
   tags?: string[];
   group_path?: string[];
   note?: string;
+  last_used_at?: number;
+  terminal_appearance?: { theme_id?: string; font_head?: string; font_size?: number };
   // startup_command is typed into the shell after login, one line per prompt,
   // with startup_delay_ms (0 → 1500) before each. It exists for bastions that
   // put a menu in front of the shell — JumpServer asks for the asset at

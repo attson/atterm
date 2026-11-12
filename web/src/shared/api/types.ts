@@ -175,6 +175,9 @@ export interface SessionInfo {
   host_id: string
   host: string
   user: string
+  ssh_host_id?: string
+  ssh_host_alias?: string
+  ssh_appearance?: { theme_id?: string; font_head?: string; font_size?: number }
   remote_permission?: string  // "view" | "control" | "full" (server omits when "full")
   task_state?: TaskState
   current_command?: string

@@ -73,16 +73,27 @@ function unsupported(): never {
   throw new Error('peer client capability unavailable on this device')
 }
 
-function sessionRow(value: unknown): RemoteSession | null {
+export function normalizePeerCatalogSession(value: unknown): RemoteSession | null {
   if (!value || typeof value !== 'object') return null
   const row = value as Record<string, unknown>
   const id = typeof row.id === 'string' ? row.id : ''
   if (!id) return null
+  let sshAppearance: RemoteSession['ssh_appearance']
+  if (row.ssh_appearance && typeof row.ssh_appearance === 'object') {
+    const raw = row.ssh_appearance as Record<string, unknown>
+    const appearance: NonNullable<RemoteSession['ssh_appearance']> = {}
+    if (typeof raw.theme_id === 'string') appearance.theme_id = raw.theme_id
+    if (typeof raw.font_head === 'string') appearance.font_head = raw.font_head
+    if (typeof raw.font_size === 'number') appearance.font_size = raw.font_size
+    if (Object.keys(appearance).length > 0) sshAppearance = appearance
+  }
   return {
     session_id: id,
     host_id: typeof row.host_id === 'string' ? row.host_id : '',
     host: typeof row.host === 'string' ? row.host : '',
     user: typeof row.user === 'string' ? row.user : '',
+    ssh_host_alias: typeof row.ssh_host_alias === 'string' ? row.ssh_host_alias : undefined,
+    ssh_appearance: sshAppearance,
     title: typeof row.title === 'string' ? row.title : '',
     cwd: typeof row.cwd === 'string' ? row.cwd : '',
     cols: typeof row.cols === 'number' ? row.cols : 80,
@@ -173,7 +184,7 @@ export function createPeerClientBridge(options: PeerClientBridgeOptions): PeerBr
     async syncConfigNow() { return emptySyncStatus(Boolean(await state())) },
     async listSessions() {
       const current = await configured()
-      return (await listQuickTunnelPeerSessions(current.identity, current.state)).map(sessionRow).filter((row): row is RemoteSession => row !== null)
+      return (await listQuickTunnelPeerSessions(current.identity, current.state)).map(normalizePeerCatalogSession).filter((row): row is RemoteSession => row !== null)
     },
     async getSessionRouteStatus() {
       const current = await configured()

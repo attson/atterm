@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 )
@@ -114,4 +115,52 @@ func TestOpenSSHSessionAdoptsAndCloses(t *testing.T) {
 		t.Fatalf("CloseSession: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
+}
+
+func TestOpenSSHSessionRecordsOnlyEchoConfirmedClientInput(t *testing.T) {
+	addr, hostPub := startSSHTestServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+	h := newTestRelayHost(t)
+
+	id, err := h.OpenSSHSession(context.Background(), SSHConnectReq{
+		Host: host, Port: port, User: "u", AuthKind: "password", Password: "pw",
+		StartupCommand: "automatic-startup", StartupDelayMs: 100,
+	}, testFixedHostKeyCb(hostPub), nil)
+	if err != nil {
+		t.Fatalf("OpenSSHSession: %v", err)
+	}
+	t.Cleanup(func() { _ = h.CloseSession(id) })
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatal("session not registered")
+	}
+	if !sess.SendInbound(proto.Frame{Type: proto.TypeIn, SessionID: id, Payload: []byte("docker compose ps\r")}) {
+		t.Fatal("client input was not accepted")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	recorded := false
+	for time.Now().Before(deadline) {
+		snapshot, err := h.sessionInputHistory(id)
+		if err == nil && len(snapshot.Items) == 1 {
+			if snapshot.Items[0].Text != "docker compose ps" {
+				t.Fatalf("history = %#v", snapshot.Items)
+			}
+			recorded = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !recorded {
+		snapshot, _ := h.sessionInputHistory(id)
+		t.Fatalf("echo-confirmed client input not recorded; history=%#v", snapshot.Items)
+	}
+	// The configured startup command writes directly to the SSH PTY, not
+	// through Session.SendInbound. Give it enough time to echo and prove it did
+	// not become a second user-history entry.
+	time.Sleep(250 * time.Millisecond)
+	snapshot, _ := h.sessionInputHistory(id)
+	if len(snapshot.Items) != 1 {
+		t.Fatalf("startup command leaked into history: %#v", snapshot.Items)
+	}
 }

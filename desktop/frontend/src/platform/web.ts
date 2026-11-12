@@ -79,8 +79,8 @@ const sessions: SessionBridge = {
   async listRemoteSessions(): Promise<RemoteSession[]> {
     // /api/sessions returns SessionInfo[] directly, not {items:[...]}.
     // Reuse web's listSessions helper for E2EE-sealed field decryption
-    // (title / cwd / command / current_command); otherwise those fields
-    // stay blank on the sidebar.
+    // (title / cwd / command / current_command / saved-SSH appearance);
+    // otherwise those fields stay blank on the sidebar or terminal pane.
     const { listSessions } = await import('@webshared/api/sessions')
     const items = await listSessions()
     // Map SessionInfo (id) → RemoteSession (session_id) same way

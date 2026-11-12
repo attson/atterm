@@ -54,12 +54,14 @@ describe('openSessionFields (M3b-mobile)', () => {
   const uuid = 'a1b2c3d4-e5f6-7890-1234-567890abcdef'
   const accountKey = new Uint8Array(32).map((_, i) => (i * 11) & 0xff)
 
-  it('recovers all four content fields after sealing', () => {
+  it('recovers session content including saved SSH identity and appearance', () => {
     const original: SealedSessionFields = {
       title: 'atterm - bash',
       cwd: '/Users/alice/secrets',
       command: 'bash',
       current_command: 'rg api_key',
+      ssh_host_alias: 'Ali ECS Atterm',
+      ssh_appearance: { theme_id: 'nord', font_head: 'Source Code Pro', font_size: 14 },
     }
     const env = sealFields(accountKey, uuid, original)
     expect(openSessionFields(env, accountKey, uuid)).toEqual(original)

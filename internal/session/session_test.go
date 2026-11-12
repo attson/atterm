@@ -1280,6 +1280,28 @@ func TestPushOut_OSC2_CodexExecutableTitleDoesNotOverwriteResolvedUserTitle(t *t
 	}
 }
 
+func TestPushOut_OSC2_CodexAnimationOnlyTitleChangeDoesNotBroadcast(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	_ = s.PushOut(1, []byte("\x1b]133;C;codex\x07"))
+	_ = s.PushOut(2, []byte("\x1b]2;⠋ codex\x07"))
+
+	changed := s.PushOut(3, []byte("\x1b]2;⠙ codex\x07"))
+	if changed {
+		t.Fatalf("codex animation-only OSC title change should not report a metadata change")
+	}
+	if got := s.Info().Title; got != "⠋ codex" {
+		t.Fatalf("Title = %q, want the first animation frame to remain stable", got)
+	}
+
+	changed = s.PushOut(4, []byte("\x1b]2;Implement relay traffic fix\x07"))
+	if !changed {
+		t.Fatalf("meaningful codex OSC title change should still report changed=true")
+	}
+	if got := s.Info().Title; got != "Implement relay traffic fix" {
+		t.Fatalf("Title = %q, want meaningful codex title", got)
+	}
+}
+
 func TestPushOut_OSC2_ClaudeTitleStillUpdatesAfterExistingTitle(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cwd: "/Users/attson/code"})
 	_ = s.PushOut(1, []byte("\x1b]133;C;claude\x07"))

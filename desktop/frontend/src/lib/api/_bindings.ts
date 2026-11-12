@@ -123,6 +123,7 @@ export interface AcceptedHostKey {
 // SSHHost mirrors desktop SSHHost — the non-secret part of a saved host.
 // Key auth references an SSHKey by id rather than inlining a private key.
 export interface SSHHost {
+  proxy?: { kind: string; host: string; port: string; username?: string };
   id: string;
   alias?: string;
   host: string;
@@ -131,6 +132,7 @@ export interface SSHHost {
   auth_kind: "password" | "key";
   key_id?: string;
   tags?: string[];
+  group_path?: string[];
   note?: string;
   // startup_command is typed into the shell after login, one line per prompt,
   // with startup_delay_ms (0 → 1500) before each. It exists for bastions that
@@ -295,6 +297,42 @@ export interface SSHConfigImportPreview {
   entries: SSHHost[];
   skipped: SSHConfigImportSkipped[];
   note: string;
+}
+
+export interface TermiusHostPreview {
+  id: string;
+  name: string;
+  host: string;
+  port: string;
+  user: string;
+  key_id: string;
+  has_password: boolean;
+  tags: string[];
+  group_path?: string[];
+  warnings: string[];
+  blocked: boolean;
+  existing: boolean;
+  forward_count: number;
+  jump_ids?: string[];
+  proxy_label?: string;
+}
+
+export interface TermiusKeyPreview {
+  id: string;
+  name: string;
+  valid: boolean;
+}
+
+export interface TermiusImportPreview {
+  token: string;
+  hosts: TermiusHostPreview[];
+  keys: TermiusKeyPreview[];
+}
+
+export interface TermiusImportReport {
+  hosts: number;
+  keys: number;
+  skipped: number;
 }
 
 export interface NewSessionResp {
@@ -760,6 +798,7 @@ export interface AppBindings {
   UpdateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void>;
   DeleteSSHHost(id: string): Promise<void>;
   StartForward(hostID: string, ruleID: string): Promise<void>;
+  StartForwardWithHostKey(hostID: string, ruleID: string, accepted: AcceptedHostKey): Promise<void>;
   StopForward(hostID: string, ruleID: string): Promise<void>;
   ListActiveForwards(): Promise<ActiveForward[]>;
   // The file explorer's SSH data source. ListSFTPHosts is the source list:
@@ -781,6 +820,11 @@ export interface AppBindings {
   SFTPRename(hostID: string, from: string, to: string): Promise<SFTPFileMetaInfo>;
   SFTPRemove(hostID: string, path: string, recursive: boolean): Promise<void>;
   SFTPDisconnect(hostID: string): Promise<void>;
+  DiscoverTermiusProfiles(): Promise<string[]>;
+  SelectTermiusDirectory(): Promise<string>;
+  PreviewTermiusImport(path: string, localKey: string): Promise<TermiusImportPreview>;
+  CancelTermiusImport(token: string): Promise<void>;
+  ImportTermius(token: string, hostIDs: string[], keyIDs: string[]): Promise<TermiusImportReport>;
   PreviewSSHConfigImport(): Promise<SSHConfigImportPreview>;
   ImportSSHHosts(hosts: SSHHost[]): Promise<number>;
   ListSSHKeys(): Promise<SSHKey[]>;

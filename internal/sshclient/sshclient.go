@@ -66,6 +66,9 @@ type Config struct {
 	// dial directly, which is what every caller other than the chain
 	// builder does, and must keep doing.
 	Via *Conn
+
+	// Proxy is an explicit local transport; combining it with Via is refused.
+	Proxy *ProxyConfig
 }
 
 // Conn is an authenticated SSH connection with no remote shell attached.
@@ -126,7 +129,21 @@ func DialConn(ctx context.Context, cfg Config) (*Conn, error) {
 	}
 	addr := net.JoinHostPort(cfg.Host, port)
 	var client *ssh.Client
-	if cfg.Via == nil {
+	if cfg.Proxy != nil {
+		if cfg.Via != nil {
+			return nil, fmt.Errorf("sshclient: network proxy combined with jump host is unsupported")
+		}
+		raw, derr := cfg.Proxy.dial(ctx, addr, timeout)
+		if derr != nil {
+			return nil, derr
+		}
+		cc, chans, reqs, herr := newClientConnBounded(raw, addr, clientCfg, timeout)
+		if herr != nil {
+			_ = raw.Close()
+			return nil, fmt.Errorf("sshclient: SSH handshake through proxy: %w", herr)
+		}
+		client = ssh.NewClient(cc, chans, reqs)
+	} else if cfg.Via == nil {
 		client, err = ssh.Dial("tcp", addr, clientCfg)
 		if err != nil {
 			return nil, fmt.Errorf("sshclient: dial %s: %w", addr, err)

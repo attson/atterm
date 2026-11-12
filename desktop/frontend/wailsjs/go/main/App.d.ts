@@ -25,6 +25,8 @@ export function CancelDownload():Promise<void>;
 
 export function CancelSnippetRun(arg1:string):Promise<void>;
 
+export function CancelTermiusImport(arg1:string):Promise<void>;
+
 export function CheckUpdate():Promise<void>;
 
 export function ClearPromptHistory():Promise<void>;
@@ -52,6 +54,8 @@ export function DeleteSSHKey(arg1:string):Promise<void>;
 export function DiscardPendingPeerConfig():Promise<main.PeerConfigSyncStatus>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
+
+export function DiscoverTermiusProfiles():Promise<Array<string>>;
 
 export function DownloadVersion(arg1:string):Promise<void>;
 
@@ -197,6 +201,8 @@ export function ImportPeerTrustBackup(arg1:string,arg2:string):Promise<main.Peer
 
 export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 
+export function ImportTermius(arg1:string,arg2:Array<string>,arg3:Array<string>):Promise<main.TermiusImportReport>;
+
 export function InstallPeerCloudflared():Promise<main.PeerQuickTunnelStatus>;
 
 export function InstallUpdate():Promise<void>;
@@ -248,6 +254,8 @@ export function PreviewConfigImport(arg1:string):Promise<main.ImportPreview>;
 export function PreviewPeerConnectionBundle(arg1:string):Promise<main.PeerConnectionPreview>;
 
 export function PreviewSSHConfigImport():Promise<main.SSHConfigImportPreview>;
+
+export function PreviewTermiusImport(arg1:string,arg2:string):Promise<main.TermiusImportPreview>;
 
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
@@ -310,6 +318,8 @@ export function SFTPRename(arg1:string,arg2:string,arg3:string):Promise<main.Fil
 export function SFTPWriteFile(arg1:string,arg2:string,arg3:Array<number>,arg4:number,arg5:boolean):Promise<main.FileMetaInfo>;
 
 export function SaveRecoverySnapshot(arg1:string):Promise<void>;
+
+export function SelectTermiusDirectory():Promise<string>;
 
 export function SendFeishuTestCard(arg1:string):Promise<void>;
 
@@ -406,6 +416,8 @@ export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 export function StartDownload():Promise<void>;
 
 export function StartForward(arg1:string,arg2:string):Promise<void>;
+
+export function StartForwardWithHostKey(arg1:string,arg2:string,arg3:main.AcceptedHostKey):Promise<void>;
 
 export function StartNativeDirect(arg1:main.NativeDirectStartRequest):Promise<void>;
 

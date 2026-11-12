@@ -72,6 +72,11 @@ describe("TerminalView submitted input history", () => {
     expect(source).toMatch(/<SessionInputHistoryPanel[\s\S]*?v-if="inputHistoryOpen"/);
   });
 
+  test("resolves historical image placeholders through the pane-scoped preview cache", () => {
+    expect(source).toMatch(/resolveInputHistoryImage[\s\S]*?imagePreviewDisposer\?\.resolveHistoryImage/);
+    expect(source).toContain(':resolve-image="resolveInputHistoryImage"');
+  });
+
   test("loads local history through the platform bridge and remote history through the live connection", () => {
     expect(source).toMatch(/props\.isLocalSession[\s\S]*?platform\.sessions\.getInputHistory/);
     expect(source).toMatch(/conn instanceof SessionConnection[\s\S]*?conn\.requestInputHistory\(\)/);

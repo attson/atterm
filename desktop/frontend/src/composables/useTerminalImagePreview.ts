@@ -106,6 +106,19 @@ export interface UseTerminalImagePreviewDeps {
   sessionId: () => string;
 }
 
+export interface SessionHistoryImagePreview {
+  file: Blob;
+  name: string;
+}
+
+export interface TerminalImagePreviewController extends IDisposable {
+  resolveHistoryImage(
+    text: string,
+    submittedAtUnixMS: number,
+    occurrence: number,
+  ): SessionHistoryImagePreview | null;
+}
+
 interface XtermMouseInternals {
   screenElement?: HTMLElement;
   _mouseService?: {
@@ -146,7 +159,7 @@ function imageLineSignature(text: string): string {
 
 export function useTerminalImagePreview(
   deps: UseTerminalImagePreviewDeps,
-): IDisposable {
+): TerminalImagePreviewController {
   const { term, sessionId } = deps;
   let entries: CachedImage[] = [];
   let disposed = false;
@@ -225,6 +238,13 @@ export function useTerminalImagePreview(
     if (entry) removeEntry(entry, true);
   }
 
+  function retireTerminalBinding(entry: CachedImage): void {
+    const marker = entry.marker;
+    entry.marker = null;
+    entry.reanchorUntil = 0;
+    if (marker && !marker.isDisposed) marker.dispose();
+  }
+
   function enforceCacheLimit(): void {
     let bytes = entries.reduce((sum, entry) => sum + entry.file.size, 0);
     while (entries.length > MAX_CACHED_IMAGES || bytes > MAX_CACHED_BYTES) {
@@ -282,7 +302,11 @@ export function useTerminalImagePreview(
       let marker = entry.marker;
       if (!marker || marker.isDisposed || marker.line < 0) {
         if (Date.now() > entry.reanchorUntil) {
-          removeEntry(entry, false);
+          if (entry.bound && entry.lineSignature) {
+            retireTerminalBinding(entry);
+          } else {
+            removeEntry(entry, false);
+          }
           continue;
         }
         const firstRow = entry.bound
@@ -338,7 +362,11 @@ export function useTerminalImagePreview(
       const marker = entry.marker;
       if (!entry.bound || !marker || marker.isDisposed) continue;
       if (entry.occurrence >= placeholdersOnLogicalLine(buffer, marker.line, term.cols).length) {
-        removeEntry(entry, true);
+        if (entry.lineSignature) {
+          retireTerminalBinding(entry);
+        } else {
+          removeEntry(entry, true);
+        }
       }
     }
 
@@ -429,6 +457,34 @@ export function useTerminalImagePreview(
     hideHover();
   }
 
+  function resolveHistoryImage(
+    text: string,
+    submittedAtUnixMS: number,
+    occurrence: number,
+  ): SessionHistoryImagePreview | null {
+    const signature = imageLineSignature(text);
+    if (!signature || !Number.isFinite(submittedAtUnixMS) || occurrence < 0) return null;
+
+    let best: CachedImage | null = null;
+    let ambiguous = false;
+    for (const entry of entries) {
+      if (!entry.bound
+        || entry.lineSignature !== signature
+        || entry.occurrence !== occurrence
+        || entry.queuedAt > submittedAtUnixMS) {
+        continue;
+      }
+      if (!best || entry.queuedAt > best.queuedAt) {
+        best = entry;
+        ambiguous = false;
+      } else if (entry.queuedAt === best.queuedAt) {
+        ambiguous = true;
+      }
+    }
+    if (!best || ambiguous) return null;
+    return { file: best.file, name: best.name };
+  }
+
   const offPaste = terminalImagePreviewBus.on((event) => {
     if (event.sessionId !== sessionId()) return;
     if (event.kind === "cancel") {
@@ -485,6 +541,7 @@ export function useTerminalImagePreview(
   });
 
   return {
+    resolveHistoryImage,
     dispose() {
       if (disposed) return;
       disposed = true;

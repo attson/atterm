@@ -194,14 +194,14 @@ func (s *Session) applyOSCTitleLocked(data []byte) bool {
 	if newTitle == s.meta.Title {
 		return false
 	}
-	if s.shouldIgnoreCodexFallbackTitleLocked(newTitle) {
+	if s.shouldIgnoreCodexTitleLocked(newTitle) {
 		return false
 	}
 	s.meta.Title = newTitle
 	return true
 }
 
-func (s *Session) shouldIgnoreCodexFallbackTitleLocked(newTitle string) bool {
+func (s *Session) shouldIgnoreCodexTitleLocked(newTitle string) bool {
 	if s.meta.Title == "" {
 		return false
 	}
@@ -211,6 +211,9 @@ func (s *Session) shouldIgnoreCodexFallbackTitleLocked(newTitle string) bool {
 	}
 	newStripped := stripCodexAnimatedTitlePrefix(newTitle)
 	currentStripped := stripCodexAnimatedTitlePrefix(s.meta.Title)
+	if newStripped == currentStripped {
+		return true
+	}
 	if newStripped == "codex" {
 		return currentStripped != "codex"
 	}

@@ -260,7 +260,7 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 
 **Codex 恢复 SID 以 hook 直连绑定为权威**：desktop 给 Codex 安装 `SessionStart` hook；Codex payload 内层 `session_id` 是原生 conversation id，`atterm-hook` 外层 `session_id` 来自该 PTY 独有的 `ATTERM_SESSION_ID`，两者在 localhost HookServer 一次请求内直接绑定。只允许 `SessionStart` 写恢复身份，不能从 `PreToolUse` / subagent 等可能嵌套或延迟的事件更新。hook SID 到达后取消当前 generation 的文件/进程 heuristic，递增 generation 后再发布 `recovery:ai-sid`，这样已经在途的 heuristic 回调也无法覆盖权威值。重复 `SessionStart` 幂等。
 
-**rollout 解析只作 Codex 兼容 fallback 与内容流来源**：旧 Codex 或未启用 hook 时，rollout 只记录 cwd，不记录 atterm `session_id`；多个 pane 同时在一个目录运行时，单靠“哪个 jsonl 刚创建/更新”会让多个 resolver 认领同一会话。Linux desktop 因此从 PTY shell PID 沿 `/proc` 子进程树查找实际打开的 `rollout-*.jsonl`，只在唯一匹配时写入 SID，并只把 rollout 最近用户消息用作旧版 Codex 的标题兜底。新版 Codex 通过 OSC 发布的生成式会话标题优先，rollout tracker 不得与它反复覆盖同一个 `Title` 字段。无进程级归属能力的平台仍可在同 cwd 只有一个活跃 resolver 时使用文件变化启发式；一旦存在多个候选就保持未解析，遵守“抓不到优于抓错”。
+**rollout 解析只作 Codex 兼容 fallback 与内容流来源**：旧 Codex 或未启用 hook 时，rollout 只记录 cwd，不记录 atterm `session_id`；多个 pane 同时在一个目录运行时，单靠“哪个 jsonl 刚创建/更新”会让多个 resolver 认领同一会话。Linux desktop 因此从 PTY shell PID 沿 `/proc` 子进程树查找实际打开的 `rollout-*.jsonl`，只在唯一匹配时写入 SID，并只把 rollout 最近用户消息用作旧版 Codex 的标题兜底。desktop 进程还必须在 generation 生命周期内维护 `cwd + Codex SID` 活跃认领：恢复已有 SID、权威 hook SID 和 fallback 成功解析的 SID 都要同步认领，generation 取消或 PTY 关闭才释放；后续 resolver 的进程归属和文件变化候选都必须排除已认领 SID。只统计“尚未解析”的同 cwd resolver 不足以隔离会话，因为先解析成功的活跃 rollout 仍会继续更新。新版 Codex 通过 OSC 发布的生成式会话标题优先，rollout tracker 不得与它反复覆盖同一个 `Title` 字段。无进程级归属能力的平台仍可在同 cwd 只有一个活跃 resolver 时使用排除认领后的文件变化启发式；没有剩余唯一候选就保持未解析，遵守“抓不到优于抓错”。
 
 ## phase 完成度（截至当前）
 

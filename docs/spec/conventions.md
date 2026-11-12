@@ -617,6 +617,12 @@ remote pane 继续 attach 原 session id，不做迁移。`recovery.json`
 每次落盘前必须 flush 历史 writer，使快照里的 sid 与独立历史文件处在同一
 持久化边界；不要把历史正文塞进 256 KiB 的 `recovery.json`。
 
+历史正文中的 `[Image #N]` 只允许从当前 `TerminalView`、当前 session 的进程内有界
+图片缓存解析 hover/focus 预览。匹配必须同时使用输入签名、行内 occurrence 和提交时间，
+缓存缺失、已淘汰、歧义或来自其他客户端时显示原始文本；面板显示前要重新确认缓存仍命中。
+Blob 和 object URL 不得加入历史 JSON、relay payload、日志或磁盘，刷新、重新 attach、
+重启和换设备后都不恢复图片预览。
+
 ## Commit 风格
 
 参考现有 git log：

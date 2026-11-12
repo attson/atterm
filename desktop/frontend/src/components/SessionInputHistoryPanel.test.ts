@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import source from "./SessionInputHistoryPanel.vue?raw";
 import SessionInputHistoryPanel from "./SessionInputHistoryPanel.vue";
+import type { SessionHistoryImagePreview } from "../composables/useTerminalImagePreview";
 
 const submittedAt = Date.UTC(2026, 10, 10, 12, 34, 56);
 
@@ -10,6 +11,7 @@ function mountPanel(overrides: Partial<{
   items: Array<{ text: string; submitted_at_unix_ms: number }>;
   truncated: boolean;
   error: "locked" | "failed" | null;
+  resolveImage: (text: string, submittedAtUnixMS: number, occurrence: number) => SessionHistoryImagePreview | null;
 }> = {}) {
   return mount(SessionInputHistoryPanel, {
     attachTo: document.body,
@@ -26,6 +28,7 @@ function mountPanel(overrides: Partial<{
 describe("SessionInputHistoryPanel", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     document.body.innerHTML = "";
   });
 
@@ -105,5 +108,71 @@ describe("SessionInputHistoryPanel", () => {
 
     expect(wrapper.emitted("close")).toHaveLength(1);
     expect(wrapper.emitted("retry")).toHaveLength(1);
+  });
+
+  test("previews locally cached history images on hover and keyboard focus", async () => {
+    const image = new Blob(["image"], { type: "image/png" });
+    const resolveImage = vi.fn((text: string, _submittedAtUnixMS: number, occurrence: number) => (
+      text.includes("[Image #1]") && occurrence === 0
+        ? { file: image, name: "history.png" }
+        : null
+    ));
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:history-preview"),
+      revokeObjectURL: vi.fn(),
+    });
+    const wrapper = mountPanel({
+      items: [{ text: "[Image #1] inspect this", submitted_at_unix_ms: submittedAt }],
+      resolveImage,
+    });
+
+    const trigger = wrapper.find("[data-test='session-input-history-image']");
+    expect(trigger.exists()).toBe(true);
+    await trigger.trigger("mouseenter");
+    expect(URL.createObjectURL).toHaveBeenCalledWith(image);
+    expect(document.body.querySelector("[data-test='session-input-history-image-preview'] img")?.getAttribute("alt"))
+      .toBe("history.png");
+
+    await trigger.trigger("mouseleave");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:history-preview");
+    expect(document.body.querySelector("[data-test='session-input-history-image-preview']")).toBeNull();
+
+    await trigger.trigger("focus");
+    expect(document.body.querySelector("[data-test='session-input-history-image-preview']")).not.toBeNull();
+    await wrapper.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  test("keeps unmatched image placeholders as plain history text", () => {
+    const resolveImage = vi.fn(() => null);
+    const wrapper = mountPanel({
+      items: [{ text: "before [Image #1] after", submitted_at_unix_ms: submittedAt }],
+      resolveImage,
+    });
+
+    expect(wrapper.find("[data-test='session-input-history-image']").exists()).toBe(false);
+    expect(wrapper.find(".session-input-history-text").text()).toBe("before [Image #1] after");
+    expect(resolveImage).toHaveBeenCalledWith("before [Image #1] after", submittedAt, 0);
+  });
+
+  test("rechecks the bounded cache before creating a history preview URL", async () => {
+    const image = new Blob(["image"], { type: "image/png" });
+    let available = true;
+    const resolveImage = vi.fn(() => available ? { file: image, name: "history.png" } : null);
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:history-preview"),
+      revokeObjectURL: vi.fn(),
+    });
+    const wrapper = mountPanel({
+      items: [{ text: "[Image #1] inspect this", submitted_at_unix_ms: submittedAt }],
+      resolveImage,
+    });
+
+    expect(wrapper.find("[data-test='session-input-history-image']").exists()).toBe(true);
+    available = false;
+    await wrapper.find("[data-test='session-input-history-image']").trigger("mouseenter");
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(document.body.querySelector("[data-test='session-input-history-image-preview']")).toBeNull();
   });
 });

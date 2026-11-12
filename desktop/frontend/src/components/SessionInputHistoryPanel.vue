@@ -2,6 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { History, LoaderCircle, LockKeyhole, RotateCcw, X } from "lucide-vue-next";
 import type { SessionInputHistoryItem } from "../lib/connection";
+import {
+  detectImagePlaceholders,
+  type SessionHistoryImagePreview,
+} from "../composables/useTerminalImagePreview";
 import { formatPromptHistoryTime } from "../lib/promptHistoryBrowser";
 import { useI18n } from "../i18n/useI18n";
 
@@ -10,6 +14,11 @@ const props = defineProps<{
   items: readonly SessionInputHistoryItem[];
   truncated: boolean;
   error: "locked" | "failed" | null;
+  resolveImage?: (
+    text: string,
+    submittedAtUnixMS: number,
+    occurrence: number,
+  ) => SessionHistoryImagePreview | null;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +30,21 @@ const { t, resolvedLocale } = useI18n();
 const nowMs = ref(Date.now());
 const bodyRef = ref<HTMLElement | null>(null);
 const chronologicalItems = computed(() => [...props.items].reverse());
+type HistoryTextSegment = {
+  text: string;
+  occurrence: number;
+  previewName: string;
+};
+const displayItems = computed(() => chronologicalItems.value.map((item) => ({
+  item,
+  segments: historyTextSegments(item),
+})));
+const imagePreview = ref<{
+  url: string;
+  name: string;
+  left: number;
+  top: number;
+} | null>(null);
 let clock: number | null = null;
 
 function relativeTime(unixMs: number): string {
@@ -29,6 +53,56 @@ function relativeTime(unixMs: number): string {
 
 function exactTime(unixMs: number): string {
   return new Date(unixMs).toLocaleString();
+}
+
+function historyTextSegments(item: SessionInputHistoryItem): HistoryTextSegment[] {
+  const matches = detectImagePlaceholders(item.text);
+  if (matches.length === 0) {
+    return [{ text: item.text, occurrence: -1, previewName: "" }];
+  }
+  const segments: HistoryTextSegment[] = [];
+  let cursor = 0;
+  matches.forEach((match, occurrence) => {
+    if (match.start > cursor) {
+      segments.push({ text: item.text.slice(cursor, match.start), occurrence: -1, previewName: "" });
+    }
+    const preview = props.resolveImage?.(item.text, item.submitted_at_unix_ms, occurrence) ?? null;
+    segments.push({
+      text: match.text,
+      occurrence,
+      previewName: preview?.name ?? "",
+    });
+    cursor = match.end;
+  });
+  if (cursor < item.text.length) {
+    segments.push({ text: item.text.slice(cursor), occurrence: -1, previewName: "" });
+  }
+  return segments;
+}
+
+function hideImagePreview(): void {
+  if (!imagePreview.value) return;
+  URL.revokeObjectURL(imagePreview.value.url);
+  imagePreview.value = null;
+}
+
+function showImagePreview(item: SessionInputHistoryItem, occurrence: number, event: Event): void {
+  hideImagePreview();
+  const preview = props.resolveImage?.(item.text, item.submitted_at_unix_ms, occurrence) ?? null;
+  if (!preview) return;
+  let url: string;
+  try {
+    url = URL.createObjectURL(preview.file);
+  } catch {
+    return;
+  }
+  const target = event.currentTarget as HTMLElement | null;
+  const rect = target?.getBoundingClientRect();
+  const maxWidth = 320;
+  const maxHeight = 260;
+  const left = Math.max(8, Math.min((rect?.right ?? 8) + 8, window.innerWidth - maxWidth - 8));
+  const top = Math.max(8, Math.min(rect?.top ?? 8, window.innerHeight - maxHeight - 8));
+  imagePreview.value = { url, name: preview.name, left, top };
 }
 
 watch(
@@ -48,6 +122,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (clock !== null) window.clearInterval(clock);
+  hideImagePreview();
 });
 </script>
 
@@ -131,7 +206,7 @@ onBeforeUnmount(() => {
         </div>
         <ol class="session-input-history-list">
           <li
-            v-for="(item, index) in chronologicalItems"
+            v-for="({ item, segments }, index) in displayItems"
             :key="`${item.submitted_at_unix_ms}-${index}`"
             data-test="session-input-history-item"
           >
@@ -140,12 +215,38 @@ onBeforeUnmount(() => {
               v-tooltip="exactTime(item.submitted_at_unix_ms)"
               tabindex="0"
             >{{ relativeTime(item.submitted_at_unix_ms) }}</time>
-            <div class="session-input-history-text">{{ item.text }}</div>
+            <div class="session-input-history-text">
+              <template v-for="(segment, segmentIndex) in segments" :key="segmentIndex">
+                <button
+                  v-if="segment.previewName"
+                  type="button"
+                  class="session-input-history-image"
+                  data-test="session-input-history-image"
+                  :aria-label="segment.previewName"
+                  @mouseenter="showImagePreview(item, segment.occurrence, $event)"
+                  @mouseleave="hideImagePreview"
+                  @focus="showImagePreview(item, segment.occurrence, $event)"
+                  @blur="hideImagePreview"
+                >{{ segment.text }}</button>
+                <span v-else>{{ segment.text }}</span>
+              </template>
+            </div>
           </li>
         </ol>
       </template>
     </div>
   </section>
+  <Teleport to="body">
+    <div
+      v-if="imagePreview"
+      class="session-input-history-image-preview"
+      data-test="session-input-history-image-preview"
+      role="tooltip"
+      :style="{ left: `${imagePreview.left}px`, top: `${imagePreview.top}px` }"
+    >
+      <img :src="imagePreview.url" :alt="imagePreview.name" />
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -283,6 +384,45 @@ onBeforeUnmount(() => {
   user-select: text;
   color: var(--fg);
   font: 12px/1.55 var(--font-mono);
+}
+
+.session-input-history-image {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--link, #58a6ff);
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  cursor: zoom-in;
+}
+
+.session-input-history-image:focus-visible {
+  border-radius: 2px;
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+.session-input-history-image-preview {
+  position: fixed;
+  z-index: 1000;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: 260px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(18, 18, 20, 0.96);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.session-input-history-image-preview img {
+  display: block;
+  max-width: 300px;
+  max-height: 240px;
+  object-fit: contain;
 }
 
 .session-input-history-spinner {

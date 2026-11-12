@@ -567,10 +567,15 @@ template bar 同属终端工具面，不是 Settings 表单控件：
 - Codex/Claude 等全屏 TUI 在处理粘贴、提交输入或渲染回复时都可能清屏重绘并 dispose
   marker，或保留 marker 但清空并复用它指向的物理行。未绑定图片按当前输入逻辑行重新
   锚定；已绑定图片在占位符从原行消失时保留旧签名，用从首个图片占位符开始的完整输入
-  内容在原行与当前 viewport 附近选择最近匹配行。两者重锚窗口均为 5 秒，不能只按
-  `[Image #N]` 文本/编号全局搜索，也不能无限保留已离开 scrollback 的绑定。
-- hover 时才创建 object URL，leave、link dispose、marker 滚出 scrollback、cache eviction
-  和组件卸载都必须释放 URL/marker。缓存上限为 32 张或 64 MiB（任一先到即淘汰最旧项）。
+  内容在原行与当前 viewport 附近选择最近匹配行。两者的 marker 重锚窗口均为 5 秒，不能
+  只按 `[Image #N]` 文本/编号全局搜索，也不能无限保留已离开 scrollback 的 marker。
+- 已成功绑定完整输入签名的 Blob 可在 marker 退休后继续留在同一份 32 张 / 64 MiB 有界
+  session cache，供输入历史 hover/focus 使用；取消、未绑定图片、容量淘汰和组件卸载仍要
+  删除缓存。历史映射按首个图片占位符起的签名 + occurrence + 不晚于提交时间的最近入队
+  图片匹配；歧义、跨 session、换设备或已淘汰时保留普通占位符文本。
+- 终端与历史预览都只在 hover/focus 时创建 object URL；leave/blur、切换目标、link dispose
+  或组件卸载时释放。历史面板不能长期持有缓存返回的 Blob，显示前必须重新确认该图片仍在
+  有界 cache 中。
 - 原有 `pasteImageBus` 的即时 5 秒 toast 保持独立；hover 预览使用单独的事务型 bus，避免
   transport 失败改变 toast 时序或留下 stale binding。
 

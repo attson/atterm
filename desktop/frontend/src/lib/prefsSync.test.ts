@@ -80,6 +80,41 @@ describe('PrefsSyncEngine', () => {
     expect(a.meta.get('locale_preference')?.dirty).toBe(true)
   })
 
+  it.each(['pull', 'push'] as const)('%s ignores retired keys while adopting active and pull-only preferences', async (operation) => {
+    const a = new FakeAdapter()
+    a.writeValue('locale_preference', 'en')
+    a.writeMeta('locale_preference', { updatedAtLocal: 100, dirty: operation === 'push' })
+    a.writeValue('ssh_hosts_encrypted', 'old-ssh-hosts')
+    a.writeMeta('ssh_hosts_encrypted', { updatedAtLocal: 100, dirty: operation === 'push' })
+    const access = [
+      vi.spyOn(a, 'readValue'), vi.spyOn(a, 'readMeta'),
+      vi.spyOn(a, 'writeValue'), vi.spyOn(a, 'writeMeta'),
+    ]
+    const items = [
+      { key: 'profiles_encrypted', value: 'retired-profile-data', updated_at: 500 },
+      { key: 'locale_preference', value: 'zh-CN', updated_at: 500 },
+      { key: 'ssh_hosts_encrypted', value: 'new-ssh-hosts', updated_at: 500 },
+    ]
+    const r: RelayClient = { get: vi.fn().mockResolvedValue(items), put: vi.fn().mockResolvedValue(items) }
+
+    await new PrefsSyncEngine(a, r)[operation]()
+
+    expect(a.values.has('profiles_encrypted')).toBe(false)
+    expect(a.meta.has('profiles_encrypted')).toBe(false)
+    for (const method of access) {
+      expect(method.mock.calls.some(([key]) => key === 'profiles_encrypted')).toBe(false)
+    }
+    expect(a.values.get('locale_preference')).toBe('zh-CN')
+    expect(a.values.get('ssh_hosts_encrypted')).toBe('new-ssh-hosts')
+    expect(a.meta.get('locale_preference')).toEqual({ updatedAtLocal: 500, dirty: false })
+    expect(a.meta.get('ssh_hosts_encrypted')).toEqual({ updatedAtLocal: 500, dirty: false })
+    if (operation === 'push') {
+      expect(r.put).toHaveBeenCalledWith([
+        { key: 'locale_preference', value: 'en', client_updated_at: 100 },
+      ])
+    }
+  })
+
   it('markDirty + push sends dirty keys and clears flag', async () => {
     const a = new FakeAdapter()
     a.writeValue('locale_preference', 'zh-CN')

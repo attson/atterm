@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -482,16 +481,13 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				logWarn("uplink", "out chan full; dropping input history response session=%s request_id=%s", f.SessionID, req.RequestID)
 			}
 		case proto.TypeSessionCreate:
-			var req proto.SessionCreatePayload
-			decoder := json.NewDecoder(bytes.NewReader(f.Payload))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&req); err != nil || decoder.Decode(&struct{}{}) != io.EOF || req.RequestID == "" {
-				// Without a valid request id the legacy requester cannot correlate a response.
-				logWarn("uplink", "session_create decode failed or missing request_id: %v", err)
+			response, ok := retiredRelaySessionCreateFrame(f.Payload)
+			if !ok {
+				logWarn("uplink", "session_create dropped: no unambiguous bounded request_id")
 				continue
 			}
 			select {
-			case out <- retiredSessionCreateFrame(req.RequestID):
+			case out <- response:
 			case <-connCtx.Done():
 				return connCtx.Err()
 			}

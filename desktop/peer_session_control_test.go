@@ -43,6 +43,11 @@ func TestPeerSessionCreateControlReturnsFeatureRemovedWithZeroSessions(t *testin
 			t.Fatalf("response=%+v", response)
 		}
 	}
+	channel.mu.Lock()
+	if len(channel.frames) != 0 || len(channel.configs) != 2 {
+		t.Errorf("host-control envelopes: frames=%d configs=%v, want two config records", len(channel.frames), channel.configs)
+	}
+	channel.mu.Unlock()
 	if got := len(fixture.host.server.Registry().List()); got != 0 {
 		t.Fatalf("registry grew to %d sessions", got)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,11 +24,19 @@ func TestUplinkSessionCreateReturnsFeatureRemovedWithoutSessionGrowth(t *testing
 		if err != nil {
 			return
 		}
-		// Malformed legacy requests must be dropped before the valid correlated reply.
+		// Unaddressable legacy requests must be dropped before the correlated replies.
 		for _, payload := range [][]byte{
 			nil,
 			[]byte("{"),
 			[]byte(`{"host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"` + strings.Repeat("x", 257) + `","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"truncated","host_id":`),
+			[]byte(`null`),
+			[]byte(`[{"request_id":"array","host_id":"host-1","profile_id":"p1"}]`),
+			[]byte(`{"request_id":"first","request_id":"second","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"same","request_id":"same","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"case","REQUEST_ID":"alias","host_id":"host-1","profile_id":"p1"}`),
 			[]byte(`{"request_id":"unknown-field","host_id":"host-1","profile_id":"p1","shell":"/bin/sh"}`),
 			append(append([]byte(nil), reqPayload...), []byte(` {}`)...),
 		} {
@@ -90,17 +99,28 @@ func TestUplinkSessionCreateReturnsFeatureRemovedWithoutSessionGrowth(t *testing
 		t.Fatal("IN frame was not processed after the retired create request")
 	}
 
+	expected := map[string]string{"unknown-field": "invalid_request", "retired-1": "feature_removed"}
+	seen := make(map[string]bool)
+	for len(seen) < len(expected) {
+		select {
+		case frame := <-responses:
+			var response proto.SessionCreatedPayload
+			if err := json.Unmarshal(frame.Payload, &response); err != nil {
+				t.Fatal(err)
+			}
+			wantError, ok := expected[response.RequestID]
+			if !ok || seen[response.RequestID] || frame.SessionID != uuid.Nil || response.OK || response.SessionID != "" || response.Error != wantError {
+				t.Fatalf("unexpected or duplicate response frame=%+v payload=%+v", frame, response)
+			}
+			seen[response.RequestID] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("session-create responses missing: got %v, want %v", seen, expected)
+		}
+	}
 	select {
 	case frame := <-responses:
-		var response proto.SessionCreatedPayload
-		if err := json.Unmarshal(frame.Payload, &response); err != nil {
-			t.Fatal(err)
-		}
-		if frame.SessionID != uuid.Nil || response.RequestID != "retired-1" || response.OK || response.SessionID != "" || response.Error != "feature_removed" {
-			t.Fatalf("retired response frame=%+v payload=%+v", frame, response)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("retired session-create response never arrived")
+		t.Fatalf("unaddressable request or duplicate emitted an extra response: %+v", frame)
+	case <-time.After(100 * time.Millisecond):
 	}
 	if got := len(host.server.Registry().List()); got != 1 {
 		t.Fatalf("registry grew to %d sessions", got)

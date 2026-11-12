@@ -486,18 +486,21 @@ func TestPeerHostSessionCreateReturnsFeatureRemovedRequiresControl(t *testing.T)
 				if err == nil {
 					t.Fatal("view-only Peer route accepted session create")
 				}
-				channel.mu.Lock()
-				defer channel.mu.Unlock()
-				for _, kind := range channel.configs {
-					if kind == peertransport.RecordSessionCreated {
-						t.Fatal("view-only route emitted session-created response")
-					}
+				if frames := peerAttachedSessionCreatedFrames(t, channel); len(frames) != 0 {
+					t.Fatal("view-only route emitted session-created response")
 				}
 			} else {
 				if err != nil {
 					t.Fatal(err)
 				}
-				response := waitForControlSessionCreated(t, channel, "peer-create")
+				frames := peerAttachedSessionCreatedFrames(t, channel)
+				if len(frames) != 1 || frames[0].SessionID != uuid.Nil {
+					t.Fatalf("session-created terminal frames=%+v, want one nil-session frame", frames)
+				}
+				var response proto.SessionCreatedPayload
+				if err := json.Unmarshal(frames[0].Payload, &response); err != nil {
+					t.Fatal(err)
+				}
 				if response.RequestID != "peer-create" || response.OK || response.SessionID != "" || response.Error != "feature_removed" {
 					t.Fatalf("response=%+v", response)
 				}
@@ -548,21 +551,24 @@ func TestPeerHostSessionCreateRejectsInvalidRequestsAndRetiresUnknownProfile(t *
 			t.Fatalf("invalid request %d (%d bytes) was accepted", index, len(payload))
 		}
 	}
-	channel.mu.Lock()
-	for _, kind := range channel.configs {
-		if kind == peertransport.RecordSessionCreated {
-			t.Error("malformed request emitted a session-created response")
-		}
+	if frames := peerAttachedSessionCreatedFrames(t, channel); len(frames) != 0 {
+		t.Fatal("malformed request emitted a session-created response")
 	}
-	channel.mu.Unlock()
 
 	if err := attempt.handleRecord(ctx, peertransport.RecordFrame, proto.Marshal(proto.Frame{
 		Type: proto.TypeSessionCreate, SessionID: fixture.session.ID, Payload: valid,
 	})); err != nil {
 		t.Fatal(err)
 	}
-	response := waitForControlSessionCreated(t, channel, "unknown-profile")
-	if response.OK || response.SessionID != "" || response.Error != "feature_removed" {
+	frames := peerAttachedSessionCreatedFrames(t, channel)
+	if len(frames) != 1 || frames[0].SessionID != uuid.Nil {
+		t.Fatalf("session-created terminal frames=%+v, want one nil-session frame", frames)
+	}
+	var response proto.SessionCreatedPayload
+	if err := json.Unmarshal(frames[0].Payload, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.RequestID != "unknown-profile" || response.OK || response.SessionID != "" || response.Error != "feature_removed" {
 		t.Fatalf("retired response = %+v", response)
 	}
 	if got := len(fixture.host.server.Registry().List()); got != 1 {
@@ -604,14 +610,34 @@ func TestPeerHostSessionCreateRejectsSupersededRouteAndPermissionDowngrade(t *te
 		t.Fatal("downgraded route accepted create")
 	}
 	for _, channel := range []*peerNativeTestChannel{oldChannel, replacementChannel} {
-		channel.mu.Lock()
-		for _, kind := range channel.configs {
-			if kind == peertransport.RecordSessionCreated {
-				t.Error("unauthorized route emitted session-created response")
-			}
+		if frames := peerAttachedSessionCreatedFrames(t, channel); len(frames) != 0 {
+			t.Error("unauthorized route emitted session-created response")
 		}
-		channel.mu.Unlock()
 	}
+}
+
+func peerAttachedSessionCreatedFrames(t *testing.T, channel *peerNativeTestChannel) []proto.Frame {
+	t.Helper()
+	channel.mu.Lock()
+	rawFrames := append([][]byte(nil), channel.frames...)
+	configs := append([]peertransport.RecordKind(nil), channel.configs...)
+	channel.mu.Unlock()
+	for _, kind := range configs {
+		if kind == peertransport.RecordSessionCreated {
+			t.Fatal("attached route emitted session-created as a config record instead of a terminal frame")
+		}
+	}
+	var frames []proto.Frame
+	for _, raw := range rawFrames {
+		frame, err := proto.Unmarshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.Type == proto.TypeSessionCreated {
+			frames = append(frames, frame)
+		}
+	}
+	return frames
 }
 
 func TestPeerHostFilesystemRequiresFullPermissionAndInjectsClientIdentity(t *testing.T) {

@@ -852,7 +852,7 @@ func (a *peerHostAttempt) handleSessionCreate(ctx context.Context, frame proto.F
 		return errors.New("invalid Peer session create request")
 	}
 	response := retiredSessionCreateFrame(request.RequestID)
-	return channel.SendConfigMessage(ctx, peertransport.RecordSessionCreated, response.Payload)
+	return channel.SendFrame(ctx, proto.Marshal(response))
 }
 
 func (a *peerHostAttempt) sessionCreateAuthorized() bool {

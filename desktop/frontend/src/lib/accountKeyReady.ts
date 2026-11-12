@@ -1,6 +1,6 @@
-// Mobile settings views (SettingsProfilesMobile.vue, SettingsSSHHostsMobile.vue)
-// need the unlocked account_key before they can open the two sealed prefs-sync
-// blobs. getCurrentAccountKey() (./account-key) is synchronous, but the value
+// The mobile SSH settings view (SettingsSSHHostsMobile.vue)
+// needs the unlocked account_key before it can open the sealed SSH prefs-sync
+// blob. getCurrentAccountKey() (./account-key) is synchronous, but the value
 // it returns depends on capacitor.ts's bootstrapCachedAccountKey — a one-shot
 // async read from secure storage that runs at platform-creation time and can
 // still be in flight the moment a settings view mounts (e.g. the user opens

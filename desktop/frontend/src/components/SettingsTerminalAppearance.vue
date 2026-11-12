@@ -14,8 +14,7 @@ export interface TerminalAppearanceState {
 <script lang="ts" setup>
 // Font / size / line height / cursor / scrollback controls for Settings ->
 // General. Split out of SettingsGeneral.vue (which had grown past 900 lines)
-// because this block has no coupling to the rest of that file and roadmap
-// item 22 (per-profile appearance overrides) will want it already isolated.
+// because this block has no coupling to the rest of that file.
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   getTerminalFontHead,

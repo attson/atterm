@@ -15,9 +15,8 @@ import { formatAgo } from '../lib/formatAgo'
 // swallowed -- but "swallowed" there actually meant a confidently false UI
 // ("Up to date - Never synced" with a live-looking, silently-broken
 // button), which is worse than showing nothing. SettingsDialog.vue also
-// gates mounting this component at all (`v-if="caps.wailsBindings"`,
-// matching SettingsProfiles.vue's precedent) -- that external gate stays
-// as defense in depth, not as the only gate.
+// gates mounting this component at all (`v-if="caps.wailsBindings"`)
+// as defense in depth.
 const { t } = useI18n()
 const platform = usePlatform()
 const enabled = platform.caps.wailsBindings
@@ -54,7 +53,6 @@ const KEY_LABELS: Record<string, MessageKey> = {
   terminal_scrollback: 'sync.keys.terminal_scrollback',
   default_shell: 'sync.keys.default_shell',
   shortcut_bindings: 'sync.keys.shortcut_bindings',
-  profiles_encrypted: 'sync.keys.profiles_encrypted',
 }
 
 // keyLabel turns a raw sync key into the name a user would recognize from

@@ -58,7 +58,7 @@ var AADTags = map[byte]string{
 	AADTagServiceOpen:          "SERVICE_OPEN",
 	AADTagInputHistoryResponse: "INPUT_HISTORY_RESPONSE",
 	AADTagSSHHosts:             "ssh_hosts_encrypted sync",
-	AADTagProfiles:             "profiles_encrypted sync",
+	AADTagProfiles:             "profiles_encrypted sync (retired)",
 	AADTagPeerConfigPayload:    "Peer config payload",
 	AADTagPeerEpochEnvelope:    "Peer epoch envelope",
 }

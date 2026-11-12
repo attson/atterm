@@ -39,13 +39,14 @@ const (
 )
 
 // RelayKeySpec is the compatibility contract for one legacy preference key.
-// Collections is explicit for sealed bundles because profiles and SSH data
-// split portable metadata from capability-gated vault records.
+// Collections includes retired namespaces so old replica records remain valid.
+// Active sealed bundles split metadata from capability-gated vault records.
 type RelayKeySpec struct {
 	Key         string
 	Mode        RelayValueMode
 	Collections []string
 	KeyClasses  []KeyClass
+	Retired     bool
 	shape       relayJSONShape
 }
 
@@ -68,7 +69,7 @@ var relayKeySpecs = []RelayKeySpec{
 	{Key: "locale_preference", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeString},
 	{Key: "notifications_enabled", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "pinned_session_ids", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeStringArray},
-	{Key: "profiles_encrypted", Mode: RelaySealedBundle, Collections: []string{CollectionProfiles, CollectionProfileConfig, CollectionProfileEnv}, KeyClasses: []KeyClass{KeyClassSync, KeyClassVault}, shape: shapeSealed},
+	{Key: "profiles_encrypted", Retired: true, Mode: RelaySealedBundle, Collections: []string{CollectionProfiles, CollectionProfileConfig, CollectionProfileEnv}, KeyClasses: []KeyClass{KeyClassSync, KeyClassVault}, shape: shapeSealed},
 	{Key: "quick_templates", Mode: RelayRecordArray, Collections: []string{CollectionQuickTemplate}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeTemplateList},
 	{Key: "shell_integration_enabled", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "shortcut_bindings", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeStringMap},
@@ -95,11 +96,22 @@ func RelayKeySpecs() []RelayKeySpec {
 }
 
 // RelayKeys returns every legacy Relay key understood by the canonical
-// schema. Keep this contract pinned to prefssync.SyncedKeys in tests.
+// schema, including retired compatibility tombstones.
 func RelayKeys() []string {
 	keys := make([]string, len(relayKeySpecs))
 	for i := range relayKeySpecs {
 		keys[i] = relayKeySpecs[i].Key
+	}
+	return keys
+}
+
+// ActiveRelayKeys excludes compatibility tombstones from current sync.
+func ActiveRelayKeys() []string {
+	var keys []string
+	for _, spec := range relayKeySpecs {
+		if !spec.Retired {
+			keys = append(keys, spec.Key)
+		}
 	}
 	return keys
 }
@@ -221,7 +233,7 @@ type OrderedRecord struct {
 
 // SplitRelayRecordArray converts a validated legacy array into independent
 // canonical records. Currently quick_templates is the only plaintext legacy
-// record array; sealed profiles and SSH bundles are decoded by Desktop codecs.
+// record array; active sealed bundles are decoded by Desktop codecs.
 func SplitRelayRecordArray(key string, raw json.RawMessage) ([]OrderedRecord, error) {
 	spec, ok := RelaySpec(key)
 	if !ok || spec.Mode != RelayRecordArray {

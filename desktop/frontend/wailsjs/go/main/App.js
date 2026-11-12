@@ -30,8 +30,8 @@ export function BroadcastCommandFinished(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['BroadcastCommandFinished'](arg1, arg2, arg3, arg4);
 }
 
-export function BuildConfigExport(arg1) {
-  return window['go']['main']['App']['BuildConfigExport'](arg1);
+export function BuildConfigExport() {
+  return window['go']['main']['App']['BuildConfigExport']();
 }
 
 export function CancelDownload() {
@@ -76,10 +76,6 @@ export function CreatePeerConnectionBundle(arg1) {
 
 export function CreatePeerInvitations(arg1) {
   return window['go']['main']['App']['CreatePeerInvitations'](arg1);
-}
-
-export function CreatePeerSessionWithProfile(arg1, arg2, arg3) {
-  return window['go']['main']['App']['CreatePeerSessionWithProfile'](arg1, arg2, arg3);
 }
 
 export function CreatePeerSpace() {
@@ -164,10 +160,6 @@ export function GetCommandNotifyThresholdSeconds() {
 
 export function GetDebugLoggingConfig() {
   return window['go']['main']['App']['GetDebugLoggingConfig']();
-}
-
-export function GetDefaultProfileID() {
-  return window['go']['main']['App']['GetDefaultProfileID']();
 }
 
 export function GetDefaultShell() {
@@ -276,10 +268,6 @@ export function GetPinnedSessionIds() {
 
 export function GetPluginConfig() {
   return window['go']['main']['App']['GetPluginConfig']();
-}
-
-export function GetProfiles() {
-  return window['go']['main']['App']['GetProfiles']();
 }
 
 export function GetPromptHistoryStatus() {
@@ -428,10 +416,6 @@ export function ListActiveForwards() {
 
 export function ListKnownHosts() {
   return window['go']['main']['App']['ListKnownHosts']();
-}
-
-export function ListPeerHosts() {
-  return window['go']['main']['App']['ListPeerHosts']();
 }
 
 export function ListPeerInvitations() {
@@ -678,10 +662,6 @@ export function SetDebugLoggingConfig(arg1) {
   return window['go']['main']['App']['SetDebugLoggingConfig'](arg1);
 }
 
-export function SetDefaultProfileID(arg1) {
-  return window['go']['main']['App']['SetDefaultProfileID'](arg1);
-}
-
 export function SetDefaultShell(arg1) {
   return window['go']['main']['App']['SetDefaultShell'](arg1);
 }
@@ -736,10 +716,6 @@ export function SetPinnedSessionIds(arg1) {
 
 export function SetPluginConfig(arg1) {
   return window['go']['main']['App']['SetPluginConfig'](arg1);
-}
-
-export function SetProfiles(arg1) {
-  return window['go']['main']['App']['SetProfiles'](arg1);
 }
 
 export function SetPromptHistoryEnabled(arg1) {

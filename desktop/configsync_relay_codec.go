@@ -9,23 +9,11 @@ import (
 	"github.com/attson/atterm/internal/configsync"
 )
 
-const profileConfigRecordID = "default"
-
 // desktopRelaySealedCodec is the only bridge allowed to open legacy Relay
 // whole-value blobs. configsync receives typed plaintext records, never the
 // Relay account_key itself.
 type desktopRelaySealedCodec struct {
 	accountKey func() []byte
-}
-
-type profileConfigRecord struct {
-	ID               string `json:"id"`
-	DefaultProfileID string `json:"default_profile_id,omitempty"`
-}
-
-type profileEnvRecord struct {
-	ID  string            `json:"id"`
-	Env map[string]string `json:"env"`
 }
 
 type sshCredentialRecord struct {
@@ -49,47 +37,6 @@ func (c *desktopRelaySealedCodec) DecodeSealedRelayValue(key string, normalized 
 		return nil, err
 	}
 	switch key {
-	case "profiles_encrypted":
-		profiles, defaultID, err := openProfiles(accountKey, normalized)
-		if err != nil {
-			return nil, err
-		}
-		profiles = filterValidProfiles(profiles)
-		records := make([]configsync.PlainRecord, 0, len(profiles)*2+1)
-		for index, profile := range profiles {
-			env := profile.Env
-			profile.Env = nil
-			value, err := configsync.CanonicalEntityJSON(profile.ID, profile)
-			if err != nil {
-				return nil, err
-			}
-			records = append(records, configsync.PlainRecord{
-				Collection: configsync.CollectionProfiles, RecordID: profile.ID,
-				KeyClass: configsync.KeyClassSync, Position: configsync.PositionForIndex(uint64(index)), Value: value,
-			})
-			if profile.SyncEnv && len(env) != 0 {
-				envValue, err := configsync.CanonicalEntityJSON(profile.ID, profileEnvRecord{ID: profile.ID, Env: env})
-				if err != nil {
-					return nil, err
-				}
-				records = append(records, configsync.PlainRecord{
-					Collection: configsync.CollectionProfileEnv, RecordID: profile.ID,
-					KeyClass: configsync.KeyClassVault, Value: envValue,
-				})
-			}
-		}
-		configValue, err := configsync.CanonicalEntityJSON(profileConfigRecordID, profileConfigRecord{
-			ID: profileConfigRecordID, DefaultProfileID: defaultID,
-		})
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, configsync.PlainRecord{
-			Collection: configsync.CollectionProfileConfig, RecordID: profileConfigRecordID,
-			KeyClass: configsync.KeyClassSync, Value: configValue,
-		})
-		return records, nil
-
 	case "ssh_hosts_encrypted":
 		hosts, credentials, keys, keySecrets, err := openSSHHosts(accountKey, normalized)
 		if err != nil {
@@ -150,45 +97,6 @@ func (c *desktopRelaySealedCodec) EncodeSealedRelayValue(key string, records []c
 		return nil, err
 	}
 	switch key {
-	case "profiles_encrypted":
-		var profiles []positionedProfile
-		environments := make(map[string]map[string]string)
-		defaultID := ""
-		for _, record := range records {
-			switch record.Collection {
-			case configsync.CollectionProfiles:
-				var profile SessionProfile
-				if err := json.Unmarshal(record.Value, &profile); err != nil {
-					return nil, err
-				}
-				profiles = append(profiles, positionedProfile{position: record.Position, profile: profile})
-			case configsync.CollectionProfileEnv:
-				var env profileEnvRecord
-				if err := json.Unmarshal(record.Value, &env); err != nil {
-					return nil, err
-				}
-				environments[record.RecordID] = env.Env
-			case configsync.CollectionProfileConfig:
-				var config profileConfigRecord
-				if err := json.Unmarshal(record.Value, &config); err != nil {
-					return nil, err
-				}
-				defaultID = config.DefaultProfileID
-			}
-		}
-		sort.Slice(profiles, func(i, j int) bool {
-			return orderedBefore(profiles[i].position, profiles[i].profile.ID, profiles[j].position, profiles[j].profile.ID)
-		})
-		plainProfiles := make([]SessionProfile, len(profiles))
-		for i, positioned := range profiles {
-			profile := positioned.profile
-			if profile.SyncEnv {
-				profile.Env = cloneStringMap(environments[profile.ID])
-			}
-			plainProfiles[i] = profile
-		}
-		return sealProfiles(accountKey, plainProfiles, resolveDefaultProfileID(defaultID, plainProfiles))
-
 	case "ssh_hosts_encrypted":
 		var hosts []positionedSSHHost
 		var keys []positionedSSHKey
@@ -242,11 +150,6 @@ func (c *desktopRelaySealedCodec) EncodeSealedRelayValue(key string, records []c
 	}
 }
 
-type positionedProfile struct {
-	position string
-	profile  SessionProfile
-}
-
 type positionedSSHHost struct {
 	position string
 	host     SSHHost
@@ -264,17 +167,6 @@ func orderedBefore(leftPosition, leftID, rightPosition, rightID string) bool {
 		return leftPosition < rightPosition || leftPosition == rightPosition && leftID < rightID
 	}
 	return left < right || left == right && leftID < rightID
-}
-
-func cloneStringMap(source map[string]string) map[string]string {
-	if source == nil {
-		return nil
-	}
-	out := make(map[string]string, len(source))
-	for key, value := range source {
-		out[key] = value
-	}
-	return out
 }
 
 func (c *desktopRelaySealedCodec) key() ([]byte, error) {

@@ -156,7 +156,7 @@ func (a *App) dirtyPrefKeys() []string {
 func dirtyPrefKeysFromMeta(meta map[string]prefsMetaEntry) []string {
 	keys := make([]string, 0, len(meta))
 	for key, entry := range meta {
-		if entry.Dirty && key != "default_shell" {
+		if entry.Dirty && key != "default_shell" && key != "profiles_encrypted" {
 			keys = append(keys, key)
 		}
 	}

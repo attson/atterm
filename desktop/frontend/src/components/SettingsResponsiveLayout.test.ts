@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import profilesSource from "./SettingsProfiles.vue?raw";
 import peerMembersSource from "./PeerMembersSection.vue?raw";
 import receivedFilesSource from "./SettingsReceivedFiles.vue?raw";
 import shortcutsSource from "./SettingsShortcuts.vue?raw";
@@ -10,12 +9,6 @@ describe("settings narrow layout", () => {
     expect(templatesSource).toContain("@media (max-width: 640px)");
     expect(templatesSource).toMatch(/\.row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s);
     expect(templatesSource).toMatch(/\.actions\s*\{[^}]*grid-column:\s*1 \/ -1/s);
-  });
-
-  it("keeps profile details and actions inside the pane", () => {
-    expect(profilesSource).toContain("@media (max-width: 640px)");
-    expect(profilesSource).toMatch(/\.row\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
-    expect(profilesSource).toMatch(/\.actions\s*\{[^}]*grid-column:\s*1 \/ -1/s);
   });
 
   it("allows shortcut capture cells to shrink on narrow screens", () => {

@@ -9,9 +9,8 @@ import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { setAccountKeyProvider } from "../lib/account-key";
 import type { SSHHostView, SSHKeyView } from "../lib/syncedBlobs";
 
-// See SettingsProfilesMobile.test.ts for why the crypto reader is mocked
-// here rather than exercised through a real sealed blob: that contract is
-// task 1's (syncedBlobs.test.ts, pinned against a Go-generated vector).
+// The crypto contract is covered in syncedBlobs.test.ts against a Go-generated
+// vector, so this suite isolates the settings view from envelope decoding.
 const openSSHHostsBlob = vi.fn();
 vi.mock("../lib/syncedBlobs", async () => {
   const actual = await vi.importActual<typeof import("../lib/syncedBlobs")>("../lib/syncedBlobs");

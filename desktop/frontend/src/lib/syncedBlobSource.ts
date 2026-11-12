@@ -1,7 +1,7 @@
 // Reads a prefs-sync value straight out of the localStorage cache that
 // lib/prefsSync.capacitor.ts's localStorageAdapter already maintains — the
 // same store PrefsSyncEngine.pull() writes into for EVERY key the relay
-// returns, including profiles_encrypted and ssh_hosts_encrypted, which are
+// returns, including ssh_hosts_encrypted, which is
 // not in SYNCED_KEYS and therefore never pushed from here, only pulled (see
 // prefsSync.ts's module doc). Mobile settings views read through this
 // instead of adding a second fetch to /api/me/preferences.

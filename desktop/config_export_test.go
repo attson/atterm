@@ -91,7 +91,7 @@ func TestBuildConfigExport_NeverContainsCredentialBytes(t *testing.T) {
 	a := newExportTestApp(t)
 	_, _, password, privateKeyPEM, passphrase := seedSecrets(t, a)
 
-	export, err := a.BuildConfigExport(true)
+	export, err := a.BuildConfigExport()
 	if err != nil {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
@@ -123,14 +123,14 @@ func TestBuildConfigExport_NeverContainsCredentialBytes(t *testing.T) {
 }
 
 // TestBuildConfigExport_HostsAndKeysUnderUnsealedNames pins requirement #3:
-// the ssh_hosts/profiles preference keys are written under their unsealed
+// the ssh_hosts preference key is written under its unsealed
 // names, and the "_encrypted" transport-detail suffix never appears in the
 // output at all.
 func TestBuildConfigExport_HostsAndKeysUnderUnsealedNames(t *testing.T) {
 	a := newExportTestApp(t)
 	h, k, _, _, _ := seedSecrets(t, a)
 
-	export, err := a.BuildConfigExport(true)
+	export, err := a.BuildConfigExport()
 	if err != nil {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
@@ -161,49 +161,7 @@ func TestBuildConfigExport_HostsAndKeysUnderUnsealedNames(t *testing.T) {
 		t.Fatalf("export bytes contain the transport-detail suffix _encrypted: %s", data)
 	}
 	if _, bad := export.Preferences["profiles_encrypted"]; bad {
-		t.Fatal(`Preferences contains "profiles_encrypted"; export must use the unsealed name`)
-	}
-}
-
-// TestBuildConfigExport_StripsUnsyncedEnvByDefault pins requirement/brief
-// bullet: Env is stripped for profiles with SyncEnv: false via
-// stripUnsyncedEnv, and restored when includeLocalEnv is true.
-func TestBuildConfigExport_StripsUnsyncedEnvByDefault(t *testing.T) {
-	a := newExportTestApp(t)
-	cfg := a.cfgStore.Get()
-	cfg.Profiles = []SessionProfile{
-		{ID: "p1", Name: "local-only", SyncEnv: false, Env: map[string]string{"SECRET_TOKEN": "abc123"}},
-		{ID: "p2", Name: "synced", SyncEnv: true, Env: map[string]string{"PATH_EXTRA": "/opt/bin"}},
-	}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-
-	// includeLocalEnv=false: unsynced profile's env must not appear anywhere
-	// in the output bytes.
-	exportStripped, err := a.BuildConfigExport(false)
-	if err != nil {
-		t.Fatalf("BuildConfigExport(false): %v", err)
-	}
-	strippedBytes, _ := json.Marshal(exportStripped)
-	if strings.Contains(string(strippedBytes), "abc123") {
-		t.Fatalf("includeLocalEnv=false: unsynced Env leaked: %s", strippedBytes)
-	}
-	if !strings.Contains(string(strippedBytes), "/opt/bin") {
-		t.Fatalf("includeLocalEnv=false: synced Env missing: %s", strippedBytes)
-	}
-
-	// includeLocalEnv=true: both profiles' Env are present verbatim.
-	exportFull, err := a.BuildConfigExport(true)
-	if err != nil {
-		t.Fatalf("BuildConfigExport(true): %v", err)
-	}
-	fullBytes, _ := json.Marshal(exportFull)
-	if !strings.Contains(string(fullBytes), "abc123") {
-		t.Fatalf("includeLocalEnv=true: unsynced Env missing: %s", fullBytes)
-	}
-	if !strings.Contains(string(fullBytes), "/opt/bin") {
-		t.Fatalf("includeLocalEnv=true: synced Env missing: %s", fullBytes)
+		t.Fatal(`Preferences contains retired "profiles_encrypted"`)
 	}
 }
 
@@ -217,7 +175,7 @@ func TestBuildConfigExport_StripsUnsyncedEnvByDefault(t *testing.T) {
 // naive "ok" or "not null" check would let through as "" / 0.
 func TestBuildConfigExport_FreshStoreHasNoPreferences(t *testing.T) {
 	a := newExportTestApp(t)
-	export, err := a.BuildConfigExport(true)
+	export, err := a.BuildConfigExport()
 	if err != nil {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
@@ -243,7 +201,7 @@ func TestBuildConfigExport_CustomizedScalarsAppear(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 
-	export, err := a.BuildConfigExport(true)
+	export, err := a.BuildConfigExport()
 	if err != nil {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
@@ -267,12 +225,11 @@ func TestBuildConfigExport_PreferencesNeverContainNull(t *testing.T) {
 	a := newExportTestApp(t)
 	cfg := a.cfgStore.Get()
 	cfg.QuickTemplates = []QuickTemplate{{ID: "t1", Label: "n", Text: "echo hi"}}
-	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "default"}}
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 
-	export, err := a.BuildConfigExport(true)
+	export, err := a.BuildConfigExport()
 	if err != nil {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
@@ -289,7 +246,7 @@ func TestBuildConfigExport_PreferencesNeverContainNull(t *testing.T) {
 // struct literal specifies (version/timestamp/app version).
 func TestBuildConfigExport_Metadata(t *testing.T) {
 	a := newExportTestApp(t)
-	export, err := a.BuildConfigExport(true)
+	export, err := a.BuildConfigExport()
 	if err != nil {
 		t.Fatalf("BuildConfigExport: %v", err)
 	}
@@ -333,7 +290,6 @@ func TestBuildConfigExport_HandlesEverySyncedKey(t *testing.T) {
 		"terminal_scrollback",
 		"shortcut_bindings",
 		"ssh_hosts_encrypted", // re-homed as "ssh_hosts", never sealed
-		"profiles_encrypted",  // re-homed as "profiles", never sealed
 	}
 	synced := prefssync.SyncedKeys()
 	for _, key := range synced {
@@ -426,5 +382,25 @@ func TestExportConfig_WriteFailurePropagates(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("ExportConfig on write failure: path = %q, want \"\"", got)
+	}
+}
+
+func TestBuildConfigExportExcludesRetiredProfiles(t *testing.T) {
+	a := newExportTestApp(t)
+	cfg := a.cfgStore.Get()
+	if err := json.Unmarshal([]byte(`{"profiles":[{"id":"old","name":"Old","sync_env":true,"env":{"TOKEN":"legacy-secret"}}],"default_profile_id":"old"}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	export, err := a.BuildConfigExport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"profiles", "profiles_encrypted"} {
+		if _, ok := export.Preferences[key]; ok {
+			t.Fatalf("retired export key %s", key)
+		}
 	}
 }

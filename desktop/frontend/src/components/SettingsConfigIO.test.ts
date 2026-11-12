@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import SettingsConfigIO from "./SettingsConfigIO.vue";
 import { resetI18nForTest } from "../i18n";
-import { en } from "../i18n/messages/en";
+import { exportConfig as exportConfigAtBoundary } from "../lib/api/configio";
+import { __setBindingsForTest, type AppBindings } from "../lib/api/_bindings";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import type { ImportPreview, ImportReport } from "../lib/api";
@@ -61,7 +62,7 @@ function samplePreview(overrides: Partial<ImportPreview> = {}): ImportPreview {
   return {
     changes: [
       { key: "terminal_theme", action: "add" },
-      { key: "profile:abc", action: "replace", detail: "shell" },
+      { key: "ssh_host:abc", action: "replace", detail: "server" },
       { key: "default_shell", action: "unchanged" },
     ],
     skipped: ["default_shell: default shell not found: /usr/bin/fish"],
@@ -103,30 +104,14 @@ describe("SettingsConfigIO", () => {
     expect(w.find('[data-testid="configio-panel"]').exists()).toBe(true);
   });
 
-  // ---- export: env checkbox default ----
-
-  it("the include-local-env checkbox defaults to OFF (unchecked)", async () => {
+  it("exports with one command and no Profile environment option", async () => {
     const w = mountPanel();
     await flushPromises();
-    const checkbox = w.find('[data-testid="configio-env-checkbox"]').element as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
-  });
-
-  it("exporting without touching the checkbox calls exportConfig(false)", async () => {
-    const w = mountPanel();
-    await flushPromises();
+    expect(w.find('[data-testid="configio-env-checkbox"]').exists()).toBe(false);
     await w.find('[data-testid="configio-export-button"]').trigger("click");
     await flushPromises();
-    expect(exportConfig).toHaveBeenCalledWith(false);
-  });
-
-  it("checking the include-local-env box before exporting calls exportConfig(true)", async () => {
-    const w = mountPanel();
-    await flushPromises();
-    await w.find('[data-testid="configio-env-checkbox"]').setValue(true);
-    await w.find('[data-testid="configio-export-button"]').trigger("click");
-    await flushPromises();
-    expect(exportConfig).toHaveBeenCalledWith(true);
+    expect(exportConfig).toHaveBeenCalledTimes(1);
+    expect(exportConfig).toHaveBeenCalledWith();
   });
 
   it("shows the saved path after a successful export", async () => {
@@ -178,8 +163,8 @@ describe("SettingsConfigIO", () => {
     const replaced = w.find('[data-testid="configio-changes-replace"]');
     const unchanged = w.find('[data-testid="configio-changes-unchanged"]');
     expect(added.text()).toContain("terminal_theme");
-    expect(replaced.text()).toContain("profile:abc");
-    expect(replaced.text()).toContain("shell");
+    expect(replaced.text()).toContain("ssh_host:abc");
+    expect(replaced.text()).toContain("server");
     expect(unchanged.text()).toContain("default_shell");
 
     const skipped = w.find('[data-testid="configio-skipped"]');
@@ -257,10 +242,16 @@ describe("SettingsConfigIO", () => {
     await w.find('[data-testid="configio-import-pick-button"]').trigger("click");
     expect(click).toHaveBeenCalled();
   });
+});
 
-  it("uses real i18n copy for the export checkbox label (English fixture)", async () => {
-    const w = mountPanel();
-    await flushPromises();
-    expect(w.text()).toContain(en.settings.configio.export.includeEnvLabel);
-  });
+it("keeps the legacy false argument only at the Wails export boundary", async () => {
+  const legacyExport = vi.fn().mockResolvedValue("/tmp/config.json");
+  __setBindingsForTest({ ExportConfig: legacyExport } as unknown as AppBindings);
+  try {
+    await expect(exportConfigAtBoundary()).resolves.toBe("/tmp/config.json");
+    expect(legacyExport).toHaveBeenCalledTimes(1);
+    expect(legacyExport).toHaveBeenCalledWith(false);
+  } finally {
+    __setBindingsForTest(undefined);
+  }
 });

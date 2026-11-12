@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,34 +13,43 @@ import (
 	"nhooyr.io/websocket"
 )
 
-// TestUplinkWiresSessionCreateOffTheReadLoop pins the wiring, not the
-// handler. Every property asserted in session_create_handler_test.go
-// constructs sessionCreateHandler directly, so all of them would still pass
-// if runOnce regressed to handling TypeSessionCreate inline. That is
-// specifically the shape TestUplinkWiresFSRequestsThroughTheBoundedPool
-// exists to catch for the FS path — this is the same test for the
-// session-create path: a real frame, over a real uplink, must not block a
-// keystroke on the same connection while the PTY fork is still "running".
-func TestUplinkWiresSessionCreateOffTheReadLoop(t *testing.T) {
+func TestUplinkSessionCreateReturnsFeatureRemovedWithoutSessionGrowth(t *testing.T) {
 	sessionID := uuid.New()
-	release := make(chan struct{})
-	started := make(chan struct{}, 1)
-	responses := make(chan proto.SessionCreatedPayload, 4)
+	responses := make(chan proto.Frame, 4)
 
 	addr := startFSTestRelay(t, func(ctx context.Context, c *websocket.Conn) {
 		reqPayload, err := json.Marshal(proto.SessionCreatePayload{
-			RequestID: "slow-1", HostID: "host-1", ProfileID: "p1",
+			RequestID: "retired-1", HostID: "host-1", ProfileID: "p1",
 		})
 		if err != nil {
 			return
+		}
+		// Unaddressable legacy requests must be dropped before the correlated replies.
+		for _, payload := range [][]byte{
+			nil,
+			[]byte("{"),
+			[]byte(`{"host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"` + strings.Repeat("x", 257) + `","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"truncated","host_id":`),
+			[]byte(`null`),
+			[]byte(`[{"request_id":"array","host_id":"host-1","profile_id":"p1"}]`),
+			[]byte(`{"request_id":"first","request_id":"second","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"same","request_id":"same","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"case","REQUEST_ID":"alias","host_id":"host-1","profile_id":"p1"}`),
+			[]byte(`{"request_id":"unknown-field","host_id":"host-1","profile_id":"p1","shell":"/bin/sh"}`),
+			append(append([]byte(nil), reqPayload...), []byte(` {}`)...),
+		} {
+			if err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeSessionCreate, Payload: payload})); err != nil {
+				return
+			}
 		}
 		if err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
 			Type: proto.TypeSessionCreate, Payload: reqPayload,
 		})); err != nil {
 			return
 		}
-		// The keystroke is written immediately behind the slow create, on an
-		// unrelated, already-existing session.
+		// Retired requests must leave ordinary input processing live.
 		if err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
 			Type: proto.TypeIn, SessionID: sessionID, Payload: []byte("k"),
 		})); err != nil {
@@ -59,18 +69,13 @@ func TestUplinkWiresSessionCreateOffTheReadLoop(t *testing.T) {
 				continue
 			}
 			select {
-			case responses <- p:
+			case responses <- f:
 			default:
 			}
 		}
 	})
 
 	host := newTestRelayHost(t)
-	cfg := host.cfg.Get()
-	cfg.Profiles = []SessionProfile{{ID: "p1", Name: "P1"}}
-	if err := host.cfg.Set(cfg); err != nil {
-		t.Fatal(err)
-	}
 	sess := session.New(sessionID, proto.SessionInfo{ID: sessionID.String(), Cols: 80, Rows: 24})
 	if _, err := host.server.Registry().Add(sess); err != nil {
 		t.Fatalf("registry add: %v", err)
@@ -81,23 +86,9 @@ func TestUplinkWiresSessionCreateOffTheReadLoop(t *testing.T) {
 
 	u := newUplink("ws://"+addr, "tok", proto.RemotePermissionFull, host, nil, nil, false)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {}
-	u.sessionCreateExec = func(ctx context.Context, req NewSessionReq) (uuid.UUID, error) {
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-		<-release
-		return uuid.New(), nil
-	}
 
 	done := make(chan struct{})
 	go func() { defer close(done); _ = u.runOnce(ctx) }()
-
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("session-create request never reached the executor")
-	}
 
 	select {
 	case f := <-sess.Inbound():
@@ -105,23 +96,37 @@ func TestUplinkWiresSessionCreateOffTheReadLoop(t *testing.T) {
 			t.Fatalf("inbound frame = type %v payload %q, want IN %q", f.Type, f.Payload, "k")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("IN frame was not processed while a session-create was in flight: the uplink read loop is blocked on the fork")
+		t.Fatal("IN frame was not processed after the retired create request")
 	}
 
-	select {
-	case resp := <-responses:
-		t.Fatalf("session-create response arrived before the executor was released: %+v", resp)
-	default:
-	}
-
-	close(release)
-	select {
-	case resp := <-responses:
-		if !resp.OK || resp.RequestID != "slow-1" {
-			t.Fatalf("released response = %+v, want ok for slow-1", resp)
+	expected := map[string]string{"unknown-field": "invalid_request", "retired-1": "feature_removed"}
+	seen := make(map[string]bool)
+	for len(seen) < len(expected) {
+		select {
+		case frame := <-responses:
+			var response proto.SessionCreatedPayload
+			if err := json.Unmarshal(frame.Payload, &response); err != nil {
+				t.Fatal(err)
+			}
+			wantError, ok := expected[response.RequestID]
+			if !ok || seen[response.RequestID] || frame.SessionID != uuid.Nil || response.OK || response.SessionID != "" || response.Error != wantError {
+				t.Fatalf("unexpected or duplicate response frame=%+v payload=%+v", frame, response)
+			}
+			seen[response.RequestID] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("session-create responses missing: got %v, want %v", seen, expected)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("session-create response never arrived after the executor was released")
+	}
+	select {
+	case frame := <-responses:
+		t.Fatalf("unaddressable request or duplicate emitted an extra response: %+v", frame)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := len(host.server.Registry().List()); got != 1 {
+		t.Fatalf("registry grew to %d sessions", got)
+	}
+	if got := len(host.Snapshot()); got != 1 {
+		t.Fatalf("host snapshot grew to %d sessions", got)
 	}
 
 	cancel()

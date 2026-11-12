@@ -8,6 +8,40 @@ import (
 	"testing"
 )
 
+func TestRetiredProfileFieldsLoadAndDropOnSave(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	path := configPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"locale_preference":"en","profiles":[{"id":"p1","name":"old"}],"default_profile_id":"p1"}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := loadConfig()
+	if store.Get().LocalePreference != "en" {
+		t.Fatal("active field did not load")
+	}
+	if err := store.Set(store.Get()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]json.RawMessage
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := persisted["profiles"]; ok {
+		t.Fatal("retired profiles survived rewrite")
+	}
+	if _, ok := persisted["default_profile_id"]; ok {
+		t.Fatal("retired default_profile_id survived rewrite")
+	}
+}
+
 // TestAppConfig_DeserializeOldJSON_RelayPausedDefaultsFalse verifies that old
 // config.json files without a "relay_paused" key deserialize with
 // RelayPaused == false. This ensures zero-value semantics are preserved and no

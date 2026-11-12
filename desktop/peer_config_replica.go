@@ -172,6 +172,9 @@ func (r *peerConfigReplica) materializeRelayValuesMatching(codec configsync.Seal
 	values := make([]configsync.RelayValue, 0, len(configsync.RelayKeySpecs()))
 	var errs []error
 	for _, spec := range configsync.RelayKeySpecs() {
+		if spec.Retired {
+			continue
+		}
 		if include != nil && !include(spec.Key) {
 			continue
 		}
@@ -219,7 +222,7 @@ func (r *peerConfigReplica) planRelayExports(store *configsync.DurableRelayCompa
 // canonical materialization can replace the existing Relay sync writer.
 func (r *peerConfigReplica) appendLocalRelayKey(cfg appConfig, relayKey string) (int, error) {
 	spec, ok := configsync.RelaySpec(relayKey)
-	if !ok {
+	if !ok || spec.Retired {
 		return 0, fmt.Errorf("unknown Peer config key %q", relayKey)
 	}
 	current, err := peerLocalRecordsForKey(cfg, relayKey)
@@ -294,6 +297,9 @@ func (r *peerConfigReplica) openRecord(record configsync.Record) (configsync.Pla
 // replica. SSH credentials and private keys deliberately remain outside Peer
 // sync until a separate opt-in policy and lossless Relay sidecar exist.
 func (r *peerConfigReplica) appendRelayValue(value configsync.RelayValue, previous []configsync.RecordRef, codec configsync.SealedRelayCodec) ([]configsync.RecordRef, int, error) {
+	if spec, ok := configsync.RelaySpec(value.Key); ok && spec.Retired {
+		return nil, 0, nil
+	}
 	filteredPrevious := make([]configsync.RecordRef, 0, len(previous))
 	for _, ref := range previous {
 		if r.canImportRelayRecord(value.Key, ref.Collection, ref.KeyClass) {
@@ -333,7 +339,13 @@ func (r *peerConfigReplica) importRelayValues(store *configsync.DurableRelayComp
 	operations := 0
 	var importErrors []error
 	_, err := store.Update(func(compatibility *configsync.RelayCompatibility) error {
-		importErrors = compatibility.Import(values, func(value configsync.RelayValue, previous []configsync.RecordRef) ([]configsync.RecordRef, error) {
+		active := make([]configsync.RelayValue, 0, len(values))
+		for _, value := range values {
+			if spec, ok := configsync.RelaySpec(value.Key); !ok || !spec.Retired {
+				active = append(active, value)
+			}
+		}
+		importErrors = compatibility.Import(active, func(value configsync.RelayValue, previous []configsync.RecordRef) ([]configsync.RecordRef, error) {
 			refs, count, err := r.appendRelayValue(value, previous, codec)
 			if err != nil {
 				return nil, err
@@ -447,7 +459,7 @@ func (m *peerSpaceManager) stableConfigVector(runtime *peerConfigReplica) (confi
 
 func peerLocalCollectionsForKey(relayKey string) ([]string, error) {
 	spec, ok := configsync.RelaySpec(relayKey)
-	if !ok {
+	if !ok || spec.Retired {
 		return nil, fmt.Errorf("unknown Peer config key %q", relayKey)
 	}
 	if relayKey == "ssh_hosts_encrypted" {

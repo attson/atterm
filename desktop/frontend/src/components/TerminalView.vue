@@ -3212,6 +3212,8 @@ watch(
       nextTick(() => {
         focusTerminalForPaneActivation();
       });
+    } else {
+      closeInputHistory();
     }
   }
 );
@@ -3337,7 +3339,7 @@ watch(
         </form>
       </div>
     </Teleport>
-    <Teleport defer :to="inputHistoryTarget">
+    <Teleport v-if="focused" defer :to="inputHistoryTarget">
       <button
         ref="inputHistoryTriggerRef"
         type="button"

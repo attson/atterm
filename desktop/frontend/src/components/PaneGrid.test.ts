@@ -75,7 +75,7 @@ describe("PaneGrid close button", () => {
     expect(source).toMatch(/\.cell-controls\s*\{[\s\S]*?z-index:\s*6;/);
   });
 
-  test("clicking an inactive pane close button does not first activate that pane", async () => {
+  test("renders pane actions only for the focused pane without hidden layout placeholders", async () => {
     const tab: Tab = {
       id: "tab-1",
       layout: "vertical",
@@ -99,12 +99,58 @@ describe("PaneGrid close button", () => {
       },
     });
 
-    const rightClose = wrapper.findAll("button.close-pane")[1];
-    await rightClose.trigger("mousedown");
-    await rightClose.trigger("click");
+    expect(wrapper.findAll(".session-input-history-controls-slot")).toHaveLength(1);
+    expect(wrapper.find(".session-input-history-controls-slot").attributes("id")).toBe(
+      "session-input-history-controls-left",
+    );
+    expect(wrapper.findAll('[data-test="pane-grip"]')).toHaveLength(1);
+    expect(wrapper.findAll("button.close-pane")).toHaveLength(1);
+    expect(source).not.toMatch(/\.close-pane\s*\{[^}]*opacity:\s*0/);
+    expect(source).not.toMatch(/\.pane-grip\s*\{[^}]*opacity:\s*0/);
+
+    await wrapper.setProps({
+      tab: { ...tab, activePaneIdx: 1 },
+    });
+
+    expect(wrapper.findAll(".session-input-history-controls-slot")).toHaveLength(1);
+    expect(wrapper.find(".session-input-history-controls-slot").attributes("id")).toBe(
+      "session-input-history-controls-right",
+    );
+
+    await wrapper.find("button.close-pane").trigger("mousedown");
+    await wrapper.find("button.close-pane").trigger("click");
 
     expect(wrapper.emitted("set-active-pane")).toBeUndefined();
     expect(wrapper.emitted("close-pane")).toEqual([[1]]);
+  });
+
+  test("hides pane actions when the tab itself is not focused", () => {
+    const tab: Tab = {
+      id: "tab-1",
+      layout: "vertical",
+      activePaneIdx: 0,
+      panes: [
+        { sessionId: "left", remote: false },
+        { sessionId: "right", remote: false },
+      ],
+      colRatio: 0.5,
+      rowRatio: 0.5,
+    };
+
+    const wrapper = mount(PaneGrid, {
+      props: {
+        tab,
+        endpointFor: () => ({ url: "ws://127.0.0.1:1", session_token: "token" }),
+        sessionInfoFor: () => null,
+        active: false,
+        terminalTheme: {},
+        commandNotifyThresholdSec: 10,
+      },
+    });
+
+    expect(wrapper.find(".session-input-history-controls-slot").exists()).toBe(false);
+    expect(wrapper.find('[data-test="pane-grip"]').exists()).toBe(false);
+    expect(wrapper.find("button.close-pane").exists()).toBe(false);
   });
 });
 
@@ -396,7 +442,7 @@ describe("PaneGrid detach affordances", () => {
       },
     });
     const grip = w.findAll('[data-test="pane-grip"]');
-    expect(grip).toHaveLength(2);
+    expect(grip).toHaveLength(1);
     expect(grip[0].attributes("draggable")).toBe("true");
 
     const setData = vi.fn();

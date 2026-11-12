@@ -13,10 +13,11 @@ import type { WidgetState } from "../lib/widgetState";
 interface WidgetBridgeMethods {
   Activate(sessionId: string): Promise<void>;
   SetCollapsed(collapsed: boolean): Promise<void>;
+  SetMinimized(minimized: boolean): Promise<void>;
   ReportPosition(): Promise<void>;
   Mute(untilUnix: number): Promise<void>;
   Hide(): Promise<void>;
-  Resize(height: number): Promise<void>;
+  Resize(width: number, height: number): Promise<void>;
   Ready(): Promise<void>;
   SetAIOnly(aiOnly: boolean): Promise<void>;
 }
@@ -76,15 +77,17 @@ export const widgetBridge = {
   setCollapsed(collapsed: boolean): void {
     call((m) => m.SetCollapsed(collapsed));
   },
+  setMinimized(minimized: boolean): void {
+    call((m) => m.SetMinimized(minimized));
+  },
   /**
-   * Report the rendered widget height so the OS window matches it exactly.
-   * The window used to use hardcoded heights, which clipped the card's bottom
-   * edge (rounded corner included) whenever the guess was short — and any
-   * constant is wrong for most states, since height varies with row count,
-   * font and locale.
+   * Report the rendered widget dimensions so the OS window matches it exactly.
+   * Height varies with content, while icon-only mode also changes the width.
+   * Measuring both prevents transparent native-window space from intercepting
+   * clicks outside the visible card.
    */
-  resize(height: number): Promise<void> {
-    return callAndWait((m) => m.Resize(height));
+  resize(width: number, height: number): Promise<void> {
+    return callAndWait((m) => m.Resize(width, height));
   },
   reportPosition(): void {
     call((m) => m.ReportPosition());
@@ -102,6 +105,7 @@ export const widgetBridge = {
 
 export interface WidgetBootstrap {
   collapsed: boolean;
+  minimized: boolean;
   x: number;
   y: number;
   locale: string;

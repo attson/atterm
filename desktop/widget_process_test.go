@@ -215,7 +215,7 @@ func TestWidgetBootstrapCarriesNoCredentials(t *testing.T) {
 	// Red line #21: nothing secret may reach the child. Assert on the encoded
 	// shape so adding a token field to widgetBootstrap fails loudly here.
 	blob, err := json.Marshal(widgetBootstrap{
-		Type: "bootstrap", Collapsed: true, X: 10, Y: 20, Locale: "zh-CN",
+		Type: "bootstrap", Collapsed: true, Minimized: true, X: 10, Y: 20, Locale: "zh-CN",
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -225,7 +225,10 @@ func TestWidgetBootstrapCarriesNoCredentials(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	allowed := map[string]bool{"type": true, "collapsed": true, "x": true, "y": true, "locale": true}
+	allowed := map[string]bool{"type": true, "collapsed": true, "minimized": true, "x": true, "y": true, "locale": true}
+	if len(fields) != len(allowed) {
+		t.Fatalf("bootstrap fields = %v, want exactly %v", fields, allowed)
+	}
 	for k := range fields {
 		if !allowed[k] {
 			t.Fatalf("unexpected field %q in widget bootstrap — the companion process must never receive credentials", k)

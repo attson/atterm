@@ -45,6 +45,7 @@ func TestWidgetConfigJSONRoundtrip(t *testing.T) {
 	orig.applyDefaults()
 	orig.Widget.Enabled = true
 	orig.Widget.Collapsed = true
+	orig.Widget.Minimized = true
 	orig.Widget.WindowX = -1600 // a display left of the primary one
 	orig.Widget.WindowY = 40
 	orig.Widget.MutedUntilUnix = 1_800_000_000
@@ -60,6 +61,25 @@ func TestWidgetConfigJSONRoundtrip(t *testing.T) {
 	}
 	if back.Widget != orig.Widget {
 		t.Fatalf("roundtrip mismatch:\n got %+v\nwant %+v", back.Widget, orig.Widget)
+	}
+}
+
+func TestWidgetConfigJSONPreservesMinimized(t *testing.T) {
+	var config PluginConfig
+	if err := json.Unmarshal([]byte(`{"widget":{"minimized":true}}`), &config); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	blob, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var encoded map[string]map[string]any
+	if err := json.Unmarshal(blob, &encoded); err != nil {
+		t.Fatalf("decode encoded config: %v", err)
+	}
+	if minimized, ok := encoded["widget"]["minimized"].(bool); !ok || !minimized {
+		t.Fatalf("minimized preference was not preserved: %s", blob)
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -52,5 +53,27 @@ func TestHandleWidgetActivateIgnoresEmptySessionID(t *testing.T) {
 
 	if activated || emitted {
 		t.Fatalf("empty session id activated=%v emitted=%v; want both false", activated, emitted)
+	}
+}
+
+func TestHandleWidgetMinimizePersistsPreference(t *testing.T) {
+	app := &App{cfgStore: newTestConfigStore(t)}
+	var event widgetEvent
+	if err := json.Unmarshal([]byte(`{"type":"minimize","minimized":true}`), &event); err != nil {
+		t.Fatalf("decode event: %v", err)
+	}
+
+	app.handleWidgetEvent(event)
+
+	blob, err := json.Marshal(app.cfgStore.Get().Plugins.Widget)
+	if err != nil {
+		t.Fatalf("encode widget config: %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(blob, &persisted); err != nil {
+		t.Fatalf("decode widget config: %v", err)
+	}
+	if minimized, ok := persisted["minimized"].(bool); !ok || !minimized {
+		t.Fatalf("minimized preference was not persisted: %s", blob)
 	}
 }

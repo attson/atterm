@@ -58,12 +58,14 @@ const widgetPushInterval = 200 * time.Millisecond
 
 // widgetEvent is a message from the widget window back to the main app.
 type widgetEvent struct {
-	// Type is "activate" | "collapse" | "move" | "mute" | "hide".
+	// Type is "activate" | "collapse" | "minimize" | "move" | "mute" | "hide".
 	Type string `json:"type"`
 	// SessionID is set for "activate": the row the user clicked.
 	SessionID string `json:"sessionId,omitempty"`
 	// Collapsed is set for "collapse".
 	Collapsed bool `json:"collapsed,omitempty"`
+	// Minimized is set for "minimize".
+	Minimized bool `json:"minimized,omitempty"`
 	// X / Y are set for "move": the window's new screen position.
 	X int `json:"x,omitempty"`
 	Y int `json:"y,omitempty"`
@@ -78,6 +80,7 @@ type widgetEvent struct {
 type widgetBootstrap struct {
 	Type      string `json:"type"` // always "bootstrap"
 	Collapsed bool   `json:"collapsed"`
+	Minimized bool   `json:"minimized"`
 	X         int    `json:"x"`
 	Y         int    `json:"y"`
 	Locale    string `json:"locale"`

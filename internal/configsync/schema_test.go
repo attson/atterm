@@ -46,7 +46,6 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 
 	invalid := map[string]string{
 		"locale_preference":                `12`,
-		"traffic_time_zone":                `12`,
 		"quick_templates":                  `[{"id":"dup","label":"a","text":"a"},{"id":"dup","label":"b","text":"b"}]`,
 		"notifications_enabled":            `"true"`,
 		"command_notify_threshold_seconds": `1.5`,
@@ -54,6 +53,7 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 		"profiles_encrypted":               `"not base64!"`,
 		"shortcut_bindings":                `{"tab.new":4}`,
 		"terminal_font_size":               `16 true`,
+		"traffic_time_zone":                `12`,
 	}
 	for key, raw := range invalid {
 		t.Run("invalid_"+key, func(t *testing.T) {

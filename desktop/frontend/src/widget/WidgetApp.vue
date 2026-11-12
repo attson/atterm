@@ -37,7 +37,6 @@ const cardEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 let cardObserver: ResizeObserver | null = null;
 let resizeFrame: number | null = null;
-let finishViewportWait: (() => void) | null = null;
 let unmounted = false;
 
 const state = ref<WidgetState>(EMPTY);
@@ -79,45 +78,18 @@ function resizeToRenderedCard(): Promise<void> {
   return reportWidgetSize(rect.width, rect.height);
 }
 
-async function resizeToFitMenu(): Promise<number> {
+function resizeToFitMenu(): Promise<void> {
   const card = cardEl.value;
   const menu = menuEl.value;
-  if (!card || !menu) return window.innerHeight;
+  if (!card || !menu) return Promise.resolve();
   const cardRect = card.getBoundingClientRect();
   const menuRect = menu.getBoundingClientRect();
-  const targetHeight = Math.ceil(Math.max(cardRect.height, menuRect.bottom - cardRect.top));
-  await reportWidgetSize(cardRect.width, targetHeight);
-  return targetHeight;
+  return reportWidgetSize(cardRect.width, Math.max(cardRect.height, menuRect.bottom - cardRect.top));
 }
 
 function resizeToRenderedWidget(): Promise<void> {
-  if (menuOpen.value && menuEl.value) return resizeToFitMenu().then(() => undefined);
+  if (menuOpen.value && menuEl.value) return resizeToFitMenu();
   return resizeToRenderedCard();
-}
-
-function waitForViewportHeight(targetHeight: number): Promise<void> {
-  finishViewportWait?.();
-  if (window.innerHeight >= targetHeight) return Promise.resolve();
-
-  return new Promise((resolve) => {
-    let timeout: number | null = null;
-    const finish = () => {
-      window.removeEventListener("resize", onResize);
-      if (timeout !== null) window.clearTimeout(timeout);
-      if (finishViewportWait === finish) finishViewportWait = null;
-      resolve();
-    };
-    const onResize = () => {
-      if (window.innerHeight >= targetHeight) finish();
-    };
-    window.addEventListener("resize", onResize);
-    timeout = window.setTimeout(finish, 1500);
-    finishViewportWait = finish;
-
-    // The native resize can land between the bridge promise resolving and the
-    // listener above being installed, so check once after both are in place.
-    onResize();
-  });
 }
 
 /**
@@ -314,14 +286,12 @@ async function openMenu(e: MouseEvent) {
   menuVisible.value = false;
   await nextTick();
   if (unmounted || !menuOpen.value) return;
-  const targetHeight = await resizeToFitMenu();
-  await waitForViewportHeight(targetHeight);
+  await resizeToFitMenu();
   if (!unmounted && menuOpen.value) menuVisible.value = true;
 }
 
 function closeMenu() {
   if (!menuOpen.value) return;
-  finishViewportWait?.();
   menuOpen.value = false;
   menuVisible.value = false;
   menuOpenedFromCollapsed = false;
@@ -366,7 +336,6 @@ onMounted(() => {
 onUnmounted(() => {
   unmounted = true;
   cardObserver?.disconnect();
-  finishViewportWait?.();
   if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
   if (clockTimer !== null) window.clearInterval(clockTimer);
   if (autoPeekTimer !== null) window.clearTimeout(autoPeekTimer);
@@ -379,6 +348,7 @@ onUnmounted(() => {
   <div
     class="widget-shell"
     :class="{ minimized }"
+    style="height: 100vh"
     @contextmenu="openMenu"
     @mouseenter="onPeekEnter"
     @mouseleave="onPeekLeave"

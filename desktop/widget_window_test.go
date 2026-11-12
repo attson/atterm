@@ -114,3 +114,28 @@ func TestWidgetResizeBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestWaitForWidgetSizeWaitsForNativeFrame(t *testing.T) {
+	reads := 0
+	waits := 0
+	confirmed := waitForWidgetSize(
+		252,
+		224,
+		5,
+		func() (int, int) {
+			reads++
+			if reads < 3 {
+				return 252, 83
+			}
+			return 252, 224
+		},
+		func() { waits++ },
+	)
+
+	if !confirmed {
+		t.Fatal("native target size was reached but not confirmed")
+	}
+	if reads != 3 || waits != 2 {
+		t.Fatalf("resize confirmation used %d reads and %d waits, want 3 reads and 2 waits", reads, waits)
+	}
+}

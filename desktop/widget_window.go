@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -35,6 +36,11 @@ const (
 	// widgetScreenMargin insets the default bottom-right placement so the window
 	// does not butt against the screen edge (or sit under a macOS Dock).
 	widgetScreenMargin = 24
+	// Wails dispatches macOS WindowSetSize to the AppKit main queue and returns
+	// before the native frame changes. Polling the native size makes the bound
+	// Resize promise an actual completion signal for the frontend.
+	widgetResizeConfirmAttempts = 151
+	widgetResizeConfirmInterval = 10 * time.Millisecond
 )
 
 // WidgetBridge is the Wails-bound API for the companion window's frontend.
@@ -48,6 +54,9 @@ type WidgetBridge struct {
 	mu        sync.Mutex
 	collapsed bool
 	minimized bool
+	// resizeMu prevents a newer geometry request from superseding the target an
+	// older request is still waiting to observe.
+	resizeMu sync.Mutex
 	// ready flips once the webview has mounted and subscribed to events.
 	//
 	// Wails events emitted before that are dropped, and the parent writes both
@@ -234,6 +243,8 @@ func (p *WidgetBridge) Resize(width, height int) {
 	if w == 0 || h == 0 {
 		return
 	}
+	p.resizeMu.Lock()
+	defer p.resizeMu.Unlock()
 	// Info rather than Debug: the widget branches out of main() before any
 	// --log-level parsing, so Debug is always below threshold here. Window
 	// geometry is otherwise unobservable from outside the process (no
@@ -242,6 +253,33 @@ func (p *WidgetBridge) Resize(width, height int) {
 	// changes, including the minimized width transition.
 	logInfo("widget", "resize to %dx%d (requested %dx%d)", w, h, width, height)
 	wailsruntime.WindowSetSize(p.ctx, w, h)
+	if !waitForWidgetSize(
+		w,
+		h,
+		widgetResizeConfirmAttempts,
+		func() (int, int) { return wailsruntime.WindowGetSize(p.ctx) },
+		func() { time.Sleep(widgetResizeConfirmInterval) },
+	) {
+		actualW, actualH := wailsruntime.WindowGetSize(p.ctx)
+		logWarn("widget", "resize confirmation timed out target=%dx%d actual=%dx%d", w, h, actualW, actualH)
+	}
+}
+
+func waitForWidgetSize(
+	targetW, targetH, attempts int,
+	getSize func() (int, int),
+	wait func(),
+) bool {
+	for attempt := 0; attempt < attempts; attempt++ {
+		width, height := getSize()
+		if width == targetW && height == targetH {
+			return true
+		}
+		if attempt+1 < attempts {
+			wait()
+		}
+	}
+	return false
 }
 
 // clampWidgetSize returns the dimensions to apply, or (0, 0) when either value

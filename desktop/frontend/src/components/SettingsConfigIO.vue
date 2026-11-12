@@ -31,11 +31,6 @@ const enabled = platform.caps.wailsBindings;
 
 // ---- export ----
 
-// Defaults OFF: env vars frequently hold API tokens, and a profile with
-// sync_env === false has already told atterm once that its env should stay
-// on this machine -- exporting it anyway by default would go behind that
-// choice. See desktop/config_export.go's BuildConfigExport doc comment.
-const includeLocalEnv = ref(false);
 const exporting = ref(false);
 const exportStatus = ref("");
 const exportError = ref("");
@@ -46,7 +41,7 @@ async function doExport(): Promise<void> {
   exportStatus.value = "";
   exportError.value = "";
   try {
-    const path = await exportConfig(includeLocalEnv.value);
+    const path = await exportConfig();
     // ExportConfig mirrors ExportDiagnostics's cancel semantics: an empty
     // path with no thrown error means the user dismissed the save dialog,
     // not a failure worth reporting (see SettingsDiagnostics.vue's
@@ -174,10 +169,6 @@ function cancelImport(): void {
     <section class="configio-section">
       <h4 class="section-title">{{ t("settings.configio.export.title") }}</h4>
       <p class="hint">{{ t("settings.configio.export.hint") }}</p>
-      <label class="checkbox">
-        <input type="checkbox" v-model="includeLocalEnv" data-testid="configio-env-checkbox" />
-        {{ t("settings.configio.export.includeEnvLabel") }}
-      </label>
       <div class="row">
         <button type="button" data-testid="configio-export-button" :disabled="exporting" @click="doExport">
           {{ exporting ? t("settings.configio.export.exporting") : t("settings.configio.export.button") }}
@@ -273,7 +264,6 @@ function cancelImport(): void {
 .configio-section { display: flex; flex-direction: column; gap: 8px; }
 .section-title { margin: 0; font-size: 13px; }
 .hint { font-size: 12px; color: var(--fg-dim); margin: 0; line-height: 1.5; }
-.checkbox { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .status { font-size: 12px; color: var(--fg-dim); }
 .status.error { color: var(--bad); }

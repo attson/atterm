@@ -10,10 +10,9 @@
 // A key belongs in SYNCED_KEYS iff this adapter's `keys()` needs to offer it
 // to Push — i.e. some setter on this platform can mark it dirty via
 // notifyLocalChange. Desktop-only keys are never marked dirty here, so they
-// don't need to be in this list to work correctly: `pull()` above writes
-// whatever the server returns straight into local storage keyed by the
-// server's own item.key, without consulting SYNCED_KEYS at all — an unlisted
-// key just rides along unused in localStorage instead of failing.
+// don't need to be in this list to work correctly: pull and PUT reconciliation
+// adopt non-retired server keys independently of SYNCED_KEYS. This preserves
+// pull-only preferences such as ssh_hosts_encrypted while ignoring retired data.
 //
 // The Go list (internal/prefssync/sync.go::syncedKeys) is the superset source
 // of truth. Keep this list a subset of it — the drift-check test at the
@@ -30,6 +29,10 @@ export const SYNCED_KEYS = [
 ] as const
 
 export type SyncedKey = (typeof SYNCED_KEYS)[number]
+
+function isRetiredKey(key: string): boolean {
+  return key === 'profiles_encrypted'
+}
 
 export interface Meta {
   updatedAtLocal: number
@@ -67,6 +70,7 @@ export class PrefsSyncEngine {
   async pull(): Promise<void> {
     const items = await this.relay.get()
     for (const it of items) {
+      if (isRetiredKey(it.key)) continue
       const local = this.adapter.readMeta(it.key)
       if (it.updated_at > local.updatedAtLocal) {
         if (local.dirty) continue
@@ -92,6 +96,7 @@ export class PrefsSyncEngine {
     if (items.length === 0) return
     const resp = await this.relay.put(items)
     for (const it of resp) {
+      if (isRetiredKey(it.key)) continue
       await this.adapter.writeValue(it.key, it.value)
       await this.adapter.writeMeta(it.key, { updatedAtLocal: it.updated_at, dirty: false })
     }

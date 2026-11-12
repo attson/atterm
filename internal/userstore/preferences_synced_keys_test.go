@@ -31,7 +31,6 @@ var expectedSyncedKeyKinds = map[string]preferenceKind{
 	"terminal_scrollback":              preferenceKindInt,
 	"default_shell":                    preferenceKindString,
 	"shortcut_bindings":                preferenceKindObject,
-	"profiles_encrypted":               preferenceKindString, // base64 ciphertext string, see desktop/profiles.go sealProfiles
 }
 
 // TestAllowedPreferenceKeys_CoversSyncedKeys is the structural test the
@@ -87,6 +86,17 @@ func TestAllowedPreferenceKeys_CoversSyncedKeys(t *testing.T) {
 					"400 invalid_value on every PUT of this key.",
 				key, kind, want,
 			)
+		}
+	}
+}
+
+func TestRetiredProfilesRemainOpaqueStringWhitelistEntry(t *testing.T) {
+	if got, ok := allowedPreferenceKeys["profiles_encrypted"]; !ok || got != preferenceKindString {
+		t.Fatalf("retired whitelist kind=%v ok=%t", got, ok)
+	}
+	for _, key := range prefssync.SyncedKeys() {
+		if key == "profiles_encrypted" {
+			t.Fatal("retired profiles key is actively synced")
 		}
 	}
 }

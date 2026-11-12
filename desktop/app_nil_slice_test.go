@@ -25,7 +25,6 @@ func TestBoundSliceMethodsNeverMarshalNull(t *testing.T) {
 		name string
 		call func() any
 	}{
-		{"GetProfiles", func() any { return a.GetProfiles() }},
 		{"GetPinnedSessionIds", func() any { return a.GetPinnedSessionIds() }},
 		{"ListSSHHosts", func() any { return a.ListSSHHosts() }},
 		{"ListSSHKeys", func() any { return a.ListSSHKeys() }},
@@ -48,31 +47,5 @@ func TestBoundSliceMethodsNeverMarshalNull(t *testing.T) {
 				t.Fatalf("%s should marshal to a JSON array, got %s", tc.name, raw)
 			}
 		})
-	}
-}
-
-// A store with nothing saved is the case that matters — a populated store
-// hides the bug, which is precisely why it survived so long.
-func TestGetProfilesEmptyStoreMarshalsEmptyArray(t *testing.T) {
-	a := &App{cfgStore: newTestConfigStore(t)}
-	raw, err := json.Marshal(a.GetProfiles())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != "[]" {
-		t.Fatalf("want [], got %s", raw)
-	}
-}
-
-// The nil-App / nil-store guard path must honour the same contract as the
-// happy path; it is the one a caller hits before the store is wired.
-func TestGetProfilesNilStoreMarshalsEmptyArray(t *testing.T) {
-	var a *App
-	raw, err := json.Marshal(a.GetProfiles())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != "[]" {
-		t.Fatalf("want [], got %s", raw)
 	}
 }

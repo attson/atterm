@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,15 @@ func TestAADTagsAreUnique(t *testing.T) {
 	}
 	// map keys are bytes, so duplicate bytes are impossible by construction —
 	// that is the point of keying by byte rather than listing pairs.
+}
+
+func TestAADProfilesNamespaceRetired(t *testing.T) {
+	if AADTagProfiles != 0xF1 {
+		t.Fatalf("retired profiles AAD tag = 0x%02x, want reserved 0xF1", AADTagProfiles)
+	}
+	if label := AADTags[AADTagProfiles]; !strings.Contains(label, "retired") {
+		t.Errorf("profiles AAD label %q must contain retired", label)
+	}
 }
 
 func TestAADTagsMatchProtocolDoc(t *testing.T) {

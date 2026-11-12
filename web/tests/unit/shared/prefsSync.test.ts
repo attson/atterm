@@ -57,6 +57,41 @@ describe('web prefsSync', () => {
     expect(JSON.parse(localStorage.getItem('atterm.locale_preference.value') ?? '""')).toBe('zh-CN')
   })
 
+  it.each(['pull', 'push'] as const)('%s ignores retired keys while adopting active and pull-only preferences', async (operation) => {
+    const a = localStorageAdapter()
+    a.writeValue('locale_preference', 'en')
+    a.writeMeta('locale_preference', { updatedAtLocal: 100, dirty: operation === 'push' })
+    a.writeValue('ssh_hosts_encrypted', 'old-ssh-hosts')
+    a.writeMeta('ssh_hosts_encrypted', { updatedAtLocal: 100, dirty: operation === 'push' })
+    const access = [
+      vi.spyOn(a, 'readValue'), vi.spyOn(a, 'readMeta'),
+      vi.spyOn(a, 'writeValue'), vi.spyOn(a, 'writeMeta'),
+    ]
+    const items = [
+      { key: 'profiles_encrypted', value: 'retired-profile-data', updated_at: 500 },
+      { key: 'locale_preference', value: 'zh-CN', updated_at: 500 },
+      { key: 'ssh_hosts_encrypted', value: 'new-ssh-hosts', updated_at: 500 },
+    ]
+    const r = { get: vi.fn().mockResolvedValue(items), put: vi.fn().mockResolvedValue(items) }
+
+    await new PrefsSyncEngine(a, r)[operation]()
+
+    expect(localStorage.getItem('atterm.profiles_encrypted.value')).toBeNull()
+    expect(localStorage.getItem('atterm.profiles_encrypted.meta')).toBeNull()
+    for (const method of access) {
+      expect(method.mock.calls.some(([key]) => key === 'profiles_encrypted')).toBe(false)
+    }
+    expect(JSON.parse(localStorage.getItem('atterm.locale_preference.value') ?? 'null')).toBe('zh-CN')
+    expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.value') ?? 'null')).toBe('new-ssh-hosts')
+    expect(JSON.parse(localStorage.getItem('atterm.locale_preference.meta') ?? 'null')).toEqual({ updatedAtLocal: 500, dirty: false })
+    expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.meta') ?? 'null')).toEqual({ updatedAtLocal: 500, dirty: false })
+    if (operation === 'push') {
+      expect(r.put).toHaveBeenCalledWith([
+        { key: 'locale_preference', value: 'en', client_updated_at: 100 },
+      ])
+    }
+  })
+
   it('push routes through apiFetch with Bearer token', async () => {
     localStorage.setItem('atterm.relay', JSON.stringify({
       baseURL: '', sessionToken: 'tok-1', expiresAt: 0,

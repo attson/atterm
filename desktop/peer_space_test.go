@@ -279,13 +279,8 @@ func TestCreatePeerSpaceBootstrapsPortableConfigOnce(t *testing.T) {
 	app.cfgStore = &configStore{cfg: appConfig{
 		TerminalTheme:  "nord",
 		QuickTemplates: []QuickTemplate{{ID: "template-1", Label: "Build", Text: "go test ./..."}},
-		Profiles: []SessionProfile{
-			{ID: "profile-local", Name: "Local env", Env: map[string]string{"LOCAL_ONLY": "secret"}},
-			{ID: "profile-shared", Name: "Shared env", SyncEnv: true, Env: map[string]string{"SHARED": "yes"}},
-		},
-		DefaultProfileID: "profile-shared",
-		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Production", Host: "example.com", User: "alice", AuthKind: "key", KeyID: "key-1"}},
-		SSHKeys:          []SSHKey{{ID: "key-1", Name: "Primary", KeyType: "ED25519"}},
+		SSHHosts:       []SSHHost{{ID: "host-1", Alias: "Production", Host: "example.com", User: "alice", AuthKind: "key", KeyID: "key-1"}},
+		SSHKeys:        []SSHKey{{ID: "key-1", Name: "Primary", KeyType: "ED25519"}},
 	}}
 	if err := sshCredentialSlot("host-1").Save(sshCredential{Password: "must-not-sync"}); err != nil {
 		t.Fatal(err)
@@ -299,46 +294,11 @@ func TestCreatePeerSpaceBootstrapsPortableConfigOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := app.peerSpace.configReplica
-	if got := runtime.replica.Vector()[status.PeerID]; got != 8 {
-		t.Fatalf("bootstrap operation count=%d want=8", got)
+	if got := runtime.replica.Vector()[status.PeerID]; got != 4 {
+		t.Fatalf("bootstrap operation count=%d want=4", got)
 	}
 	if len(runtime.replica.Records(configsync.CollectionSSHCredential)) != 0 || len(runtime.replica.Records(configsync.CollectionSSHKeySecret)) != 0 {
 		t.Fatal("SSH secrets entered the Peer bootstrap replica")
-	}
-	if got := len(runtime.replica.Records(configsync.CollectionProfileEnv)); got != 1 {
-		t.Fatalf("profile env record count=%d want=1", got)
-	}
-
-	profileRecord, ok := runtime.replica.Get(configsync.CollectionProfiles, "profile-local")
-	if !ok {
-		t.Fatal("local profile metadata missing")
-	}
-	plainProfile, err := configsync.OpenPlainRecord(profileRecord, runtime.keys[configsync.KeyClassSync])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var profile SessionProfile
-	if err := json.Unmarshal(plainProfile.Value, &profile); err != nil {
-		t.Fatal(err)
-	}
-	if len(profile.Env) != 0 {
-		t.Fatalf("non-opted profile env leaked into metadata: %+v", profile.Env)
-	}
-
-	envRecord, ok := runtime.replica.Get(configsync.CollectionProfileEnv, "profile-shared")
-	if !ok {
-		t.Fatal("opted-in profile env missing")
-	}
-	plainEnv, err := configsync.OpenPlainRecord(envRecord, runtime.keys[configsync.KeyClassVault])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var environment profileEnvRecord
-	if err := json.Unmarshal(plainEnv.Value, &environment); err != nil {
-		t.Fatal(err)
-	}
-	if environment.Env["SHARED"] != "yes" {
-		t.Fatalf("opted-in profile env=%+v", environment.Env)
 	}
 	codec := newDesktopRelaySealedCodec(func() []byte { return bytes.Repeat([]byte{7}, 32) })
 	materialized, materializeErrors := runtime.materializeRelayValues(codec)
@@ -349,16 +309,24 @@ func TestCreatePeerSpaceBootstrapsPortableConfigOnce(t *testing.T) {
 	for _, value := range materialized {
 		materializedByKey[value.Key] = value
 	}
-	for _, key := range []string{"terminal_theme", "quick_templates", "profiles_encrypted", "ssh_hosts_encrypted"} {
+	for _, key := range []string{"terminal_theme", "quick_templates", "ssh_hosts_encrypted"} {
 		if _, ok := materializedByKey[key]; !ok {
 			t.Fatalf("materialized Relay value %s missing: %+v", key, materializedByKey)
 		}
 	}
 
+	if _, present := materializedByKey["profiles_encrypted"]; present {
+		t.Fatal("retired profiles materialized")
+	}
+	for _, collection := range []string{configsync.CollectionProfiles, configsync.CollectionProfileConfig, configsync.CollectionProfileEnv} {
+		if len(runtime.replica.Records(collection)) != 0 {
+			t.Fatalf("retired bootstrap records: %s", collection)
+		}
+	}
 	if _, err := app.CreatePeerSpace(); err != nil {
 		t.Fatal(err)
 	}
-	if got := runtime.replica.Vector()[status.PeerID]; got != 8 {
+	if got := runtime.replica.Vector()[status.PeerID]; got != 4 {
 		t.Fatalf("idempotent bootstrap advanced vector to %d", got)
 	}
 }
@@ -368,11 +336,6 @@ func TestPeerConfigReplicaAppendsOnlyChangedLocalRecords(t *testing.T) {
 	cfg := appConfig{
 		TerminalTheme:    "nord",
 		TerminalFontSize: 17,
-		Profiles: []SessionProfile{{
-			ID: "profile-1", Name: "Shared", SyncEnv: true,
-			Env: map[string]string{"TOKEN": "shared"},
-		}},
-		DefaultProfileID: "profile-1",
 		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Before", Host: "example.com", User: "alice"}},
 	}
 	app.cfgStore = &configStore{cfg: cfg}
@@ -393,18 +356,6 @@ func TestPeerConfigReplicaAppendsOnlyChangedLocalRecords(t *testing.T) {
 	}
 	if font, ok := runtime.replica.Get(configsync.CollectionPreferences, "terminal_font_size"); !ok || font.Deleted {
 		t.Fatal("updating one scalar deleted another preference")
-	}
-
-	changed.Profiles = append([]SessionProfile(nil), cfg.Profiles...)
-	changed.Profiles[0].SyncEnv = false
-	if operations, err := runtime.appendLocalRelayKey(changed, "profiles_encrypted"); err != nil || operations != 2 {
-		t.Fatalf("disable profile env operations=%d err=%v", operations, err)
-	}
-	if env, ok := runtime.replica.Get(configsync.CollectionProfileEnv, "profile-1"); !ok || !env.Deleted {
-		t.Fatalf("disabled profile env was not tombstoned: ok=%t record=%+v", ok, env)
-	}
-	if operations, err := runtime.appendLocalRelayKey(changed, "profiles_encrypted"); err != nil || operations != 0 {
-		t.Fatalf("repeated profile update operations=%d err=%v", operations, err)
 	}
 
 	secretValue, err := configsync.CanonicalEntityJSON("host-1", sshCredentialRecord{ID: "host-1", Password: "relay-only"})
@@ -435,8 +386,8 @@ func TestPeerConfigReplicaAppendsOnlyChangedLocalRecords(t *testing.T) {
 	if secret, ok := runtime.replica.Get(configsync.CollectionSSHCredential, "host-1"); !ok || secret.Deleted {
 		t.Fatal("SSH metadata update deleted Relay-only credential")
 	}
-	if got := runtime.replica.Vector()[status.PeerID]; got != before+5 {
-		t.Fatalf("local diff advanced vector to %d want=%d", got, before+5)
+	if got := runtime.replica.Vector()[status.PeerID]; got != before+3 {
+		t.Fatalf("local diff advanced vector to %d want=%d", got, before+3)
 	}
 }
 
@@ -574,25 +525,6 @@ func TestPeerConfigReplicaRelayImportFiltersSecretsAndCapabilities(t *testing.T)
 		t.Fatal("Relay SSH secrets entered the Peer replica")
 	}
 
-	delete(runtime.keys, configsync.KeyClassVault)
-	profileValue, err := sealProfiles(accountKey, []SessionProfile{{
-		ID: "profile-1", Name: "Shared", SyncEnv: true, Env: map[string]string{"TOKEN": "relay-secret"},
-	}}, "profile-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	refs, operations, err = runtime.appendRelayValue(configsync.RelayValue{
-		Key: "profiles_encrypted", Value: profileValue, UpdatedAt: 11,
-	}, nil, codec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if operations != 2 || len(refs) != 2 {
-		t.Fatalf("non-vault Profile import operations=%d refs=%+v", operations, refs)
-	}
-	if len(runtime.replica.Records(configsync.CollectionProfileEnv)) != 0 {
-		t.Fatal("device without vault capability imported profile env")
-	}
 }
 
 func TestPeerConfigReplicaPersistsRelayImportAcknowledgement(t *testing.T) {
@@ -689,41 +621,14 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 		TerminalTheme:        "nord",
 		NotificationsEnabled: &enabled,
 		QuickTemplates:       []QuickTemplate{{ID: "template-1", Label: "Build", Text: "go test ./..."}},
-		Profiles: []SessionProfile{
-			{ID: "profile-local-env", Name: "Local env", Env: map[string]string{"LOCAL": "creator"}},
-			{ID: "profile-shared-env", Name: "Shared env", SyncEnv: true, Env: map[string]string{"SHARED": "canonical"}},
-		},
-		DefaultProfileID: "profile-shared-env",
-		SSHHosts:         []SSHHost{{ID: "host-1", Alias: "Canonical", Host: "example.com", User: "alice", KeyID: "key-1"}},
-		SSHKeys:          []SSHKey{{ID: "key-1", Name: "Canonical key", KeyType: "ED25519"}},
+		SSHHosts:             []SSHHost{{ID: "host-1", Alias: "Canonical", Host: "example.com", User: "alice", KeyID: "key-1"}},
+		SSHKeys:              []SSHKey{{ID: "key-1", Name: "Canonical key", KeyType: "ED25519"}},
 	}
 	app.cfgStore = &configStore{cfg: cfg}
 	if _, err := app.CreatePeerSpace(); err != nil {
 		t.Fatal(err)
 	}
 	runtime := app.peerSpace.configReplica
-	staleEnv, err := configsync.CanonicalEntityJSON("profile-local-env", profileEnvRecord{
-		ID: "profile-local-env", Env: map[string]string{"LOCAL": "stale-canonical"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	staleMutation, err := configsync.SetRecordMutation(configsync.PlainRecord{
-		Collection: configsync.CollectionProfileEnv, RecordID: "profile-local-env",
-		KeyClass: configsync.KeyClassVault, Value: staleEnv,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := runtime.replica.AppendEncrypted(runtime.identity, runtime.keys[configsync.KeyClassVault], configsync.Mutation{
-		SchemaVersion: configsync.SchemaVersion,
-		Collection:    staleMutation.Collection,
-		RecordID:      staleMutation.RecordID,
-		Kind:          staleMutation.Kind,
-		Payload:       staleMutation.Payload,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	withoutCollections := cfg
 	withoutCollections.NotificationsEnabled = nil
 	withoutCollections.QuickTemplates = nil
@@ -742,14 +647,8 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 		TerminalTheme:        "light",
 		NotificationsEnabled: &disabled,
 		QuickTemplates:       []QuickTemplate{{ID: "old", Label: "Old", Text: "old"}},
-		Profiles: []SessionProfile{
-			{ID: "profile-local-env", Name: "Old local", Env: map[string]string{"LOCAL": "device"}},
-			{ID: "profile-shared-env", Name: "Old shared", SyncEnv: true, Env: map[string]string{"SHARED": "stale"}},
-			{ID: "local-only", Name: "Pending import", Env: map[string]string{"ONLY": "here"}},
-		},
-		DefaultProfileID: "local-only",
-		SSHHosts:         []SSHHost{{ID: "old-host", Alias: "Old", Host: "old.example.com"}},
-		SSHKeys:          []SSHKey{{ID: "old-key", Name: "Old key"}},
+		SSHHosts:             []SSHHost{{ID: "old-host", Alias: "Old", Host: "old.example.com"}},
+		SSHKeys:              []SSHKey{{ID: "old-key", Name: "Old key"}},
 	}
 	projected, projectionErrors := runtime.projectLocalConfig(base)
 	if len(projectionErrors) != 0 {
@@ -758,12 +657,6 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 	if projected.TerminalTheme != "nord" || projected.NotificationsEnabled != nil || len(projected.QuickTemplates) != 0 {
 		t.Fatalf("projected portable config=%+v", projected)
 	}
-	if len(projected.Profiles) != 2 || projected.DefaultProfileID != "profile-shared-env" {
-		t.Fatalf("projected profiles=%+v default=%q", projected.Profiles, projected.DefaultProfileID)
-	}
-	if projected.Profiles[0].Env["LOCAL"] != "device" || projected.Profiles[1].Env["SHARED"] != "canonical" {
-		t.Fatalf("projected profile env=%+v", projected.Profiles)
-	}
 	if len(projected.SSHHosts) != 1 || projected.SSHHosts[0].Alias != "Canonical" || len(projected.SSHKeys) != 1 || projected.SSHKeys[0].Name != "Canonical key" {
 		t.Fatalf("projected SSH metadata hosts=%+v keys=%+v", projected.SSHHosts, projected.SSHKeys)
 	}
@@ -771,7 +664,7 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 	if err != nil || credential.Password != "local-secret" {
 		t.Fatalf("projection changed SSH credential=%+v err=%v", credential, err)
 	}
-	if base.TerminalTheme != "light" || base.Profiles[0].Env["LOCAL"] != "device" {
+	if base.TerminalTheme != "light" || base.SSHHosts[0].Alias != "Old" {
 		t.Fatal("projection mutated its base snapshot")
 	}
 
@@ -780,8 +673,8 @@ func TestPeerConfigReplicaProjectsCanonicalConfigWithoutSecrets(t *testing.T) {
 	if len(projectionErrors) != 0 {
 		t.Fatalf("project without vault capability: %v", projectionErrors)
 	}
-	if withoutVault.Profiles[1].Env["SHARED"] != "stale" {
-		t.Fatalf("projection without vault capability replaced local env: %+v", withoutVault.Profiles[1].Env)
+	if withoutVault.TerminalTheme != "nord" || len(withoutVault.SSHHosts) != 1 || withoutVault.SSHHosts[0].Alias != "Canonical" {
+		t.Fatalf("projection without vault capability lost portable metadata: %+v", withoutVault)
 	}
 }
 
@@ -790,22 +683,17 @@ func TestPendingPeerConfigIsWriteOnceCapabilityGatedAndMergeOnly(t *testing.T) {
 	app.cfgStore = &configStore{cfg: appConfig{
 		QuickTemplates: []QuickTemplate{{ID: "peer-template", Label: "Peer", Text: "peer"}},
 	}}
-	status, err := app.CreatePeerSpace()
+	_, err := app.CreatePeerSpace()
 	if err != nil {
 		t.Fatal(err)
 	}
 	pendingConfig := appConfig{
 		TerminalTheme:  "local-theme",
 		QuickTemplates: []QuickTemplate{{ID: "local-template", Label: "Local", Text: "local"}},
-		Profiles: []SessionProfile{{
-			ID: "local-profile", Name: "Local profile", SyncEnv: true,
-			Env: map[string]string{"TOKEN": "pending-local-secret"},
-		}},
-		DefaultProfileID: "local-profile",
-		SSHHosts:         []SSHHost{{ID: "local-host", Alias: "Local host", Host: "local.example.com"}},
+		SSHHosts:       []SSHHost{{ID: "local-host", Alias: "Local host", Host: "local.example.com"}},
 	}
 	count, captured, err := app.peerSpace.capturePendingPeerConfig(pendingConfig)
-	if err != nil || !captured || count != 6 {
+	if err != nil || !captured || count != 3 {
 		t.Fatalf("capture pending config count=%d captured=%t err=%v", count, captured, err)
 	}
 	pending, ok, err := app.peerSpace.loadPendingPeerConfig()
@@ -817,7 +705,7 @@ func TestPendingPeerConfigIsWriteOnceCapabilityGatedAndMergeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(disk, []byte("pending-local-secret")) || bytes.Contains(disk, []byte("local-theme")) {
+	if bytes.Contains(disk, []byte("local.example.com")) || bytes.Contains(disk, []byte("local-theme")) {
 		t.Fatal("pending local config was written outside the encrypted Peer store")
 	}
 	if repeatedCount, repeatedCapture, err := app.peerSpace.capturePendingPeerConfig(pendingConfig); err != nil || repeatedCapture || repeatedCount != count {
@@ -832,17 +720,17 @@ func TestPendingPeerConfigIsWriteOnceCapabilityGatedAndMergeOnly(t *testing.T) {
 	runtime := app.peerSpace.configReplica
 	vaultKey := runtime.keys[configsync.KeyClassVault]
 	delete(runtime.keys, configsync.KeyClassVault)
-	before := runtime.replica.Vector()[status.PeerID]
-	if _, err := runtime.appendPendingPeerConfig(pending.plainRecords()); err == nil {
+	before := runtime.replica.Vector()[runtime.identity.PeerID()]
+	vaultRecord := configsync.PlainRecord{Collection: configsync.CollectionSSHCredential, RecordID: "vault-check", KeyClass: configsync.KeyClassVault, Value: json.RawMessage(`{"id":"vault-check","password":"secret"}`)}
+	if _, err := runtime.appendPendingPeerConfig([]configsync.PlainRecord{vaultRecord}); err == nil {
 		t.Fatal("pending vault config imported without vault capability")
 	}
-	if got := runtime.replica.Vector()[status.PeerID]; got != before {
+	if got := runtime.replica.Vector()[runtime.identity.PeerID()]; got != before {
 		t.Fatalf("failed pending import advanced vector to %d want=%d", got, before)
 	}
 	if _, ok, err := app.peerSpace.loadPendingPeerConfig(); err != nil || !ok {
 		t.Fatalf("failed import removed pending config: ok=%t err=%v", ok, err)
 	}
-
 	runtime.keys[configsync.KeyClassVault] = vaultKey
 	operations, err := app.peerSpace.acceptPendingPeerConfig()
 	if err != nil || operations != count {
@@ -1193,5 +1081,59 @@ func TestRedeemPeerJoinRequestIsIdempotentAndRejectsReplay(t *testing.T) {
 	}
 	if _, err := app.peerSpace.redeemJoinRequest(replay); !errors.Is(err, peerstore.ErrInviteConsumed) {
 		t.Fatalf("cross-device replay error = %v", err)
+	}
+}
+
+func TestPeerSpaceRetiredProfilesIgnoredAcrossActiveBoundaries(t *testing.T) {
+	app, _ := newTestPeerApp(t)
+	app.cfgStore = &configStore{cfg: appConfig{}}
+	if _, err := app.CreatePeerSpace(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := app.peerSpace.configReplica
+	var retired []configsync.PlainRecord
+	for _, collection := range []string{configsync.CollectionProfiles, configsync.CollectionProfileConfig, configsync.CollectionProfileEnv} {
+		class := configsync.KeyClassSync
+		if collection == configsync.CollectionProfileEnv {
+			class = configsync.KeyClassVault
+		}
+		record := configsync.PlainRecord{Collection: collection, RecordID: "legacy", KeyClass: class, Value: json.RawMessage(`{"id":"legacy","name":"Retired"}`)}
+		if collection == configsync.CollectionProfiles {
+			record.Position = configsync.PositionForIndex(0)
+		}
+		retired = append(retired, record)
+	}
+	before := runtime.replica.Vector()[runtime.identity.PeerID()]
+	if count, err := runtime.appendPendingPeerConfig(retired); err != nil || count != 0 {
+		t.Fatalf("retired pending count=%d err=%v", count, err)
+	}
+	if got := runtime.replica.Vector()[runtime.identity.PeerID()]; got != before {
+		t.Fatalf("retired pending advanced vector=%d", got)
+	}
+	// Generic replica storage can retain legacy encrypted records.
+	var mutations []configsync.RecordMutation
+	for _, record := range retired {
+		mutation, err := configsync.SetRecordMutation(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutations = append(mutations, mutation)
+	}
+	if _, err := runtime.appendPeerConfigMutations("legacy fixture", mutations); err != nil {
+		t.Fatal(err)
+	}
+	codec := newDesktopRelaySealedCodec(func() []byte { return testRelayAccountKey() })
+	values, errs := runtime.materializeRelayValues(codec)
+	if len(values) != 0 || len(errs) != 0 {
+		t.Fatalf("retired materialization values=%v errors=%v", values, errs)
+	}
+	if _, errs := runtime.projectLocalConfig(appConfig{}); len(errs) != 0 {
+		t.Fatalf("retired projection errors=%v", errs)
+	}
+	if count, err := runtime.appendLocalRelayKey(appConfig{}, "profiles_encrypted"); err == nil || count != 0 {
+		t.Fatalf("retired local append count=%d err=%v", count, err)
+	}
+	if refs, count, err := runtime.appendRelayValue(configsync.RelayValue{Key: "profiles_encrypted", Value: json.RawMessage(`"YWJj"`)}, nil, codec); err != nil || count != 0 || len(refs) != 0 {
+		t.Fatalf("retired Relay append refs=%v count=%d err=%v", refs, count, err)
 	}
 }

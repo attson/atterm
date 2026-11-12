@@ -27,7 +27,7 @@ type ImportChange struct {
 // ImportPreview is what PreviewConfigImport returns: what WOULD happen if
 // the file were applied, computed without touching the config store.
 // Changes is built in a deterministic order — top-level preference keys
-// sorted lexically, list entries (hosts/keys/profiles) within a key in the
+// sorted lexically, list entries (hosts/keys) within a key in the
 // order the file's own JSON arrays list them — so running Preview twice on
 // the same file byte-for-byte always produces the same slice, and a test
 // (or a UI list) never needs set gymnastics to compare two previews.
@@ -259,8 +259,8 @@ func validateSSHHostsPayload(raw json.RawMessage) (hosts []SSHHost, keys []SSHKe
 			skipped = append(skipped, fmt.Sprintf("ssh_hosts: host id=%s missing host", id))
 			continue
 		case seenHosts[id]:
-			// Mirrors filterValidProfiles' duplicate-in-payload rule (see
-			// profiles.go): first occurrence wins, later ones are malformed
+			// Keep the first occurrence so duplicate IDs cannot hide an
+			// earlier entry in the same file.
 			// input rather than a legitimate second entry with the same ID.
 			skipped = append(skipped, fmt.Sprintf("ssh_hosts: host id=%s duplicate in file, first occurrence kept", id))
 			continue
@@ -298,19 +298,8 @@ func validateSSHHostsPayload(raw json.RawMessage) (hosts []SSHHost, keys []SSHKe
 	return hosts, keys, skipped, nil
 }
 
-// previewSSHHosts diffs an incoming "ssh_hosts" payload (sshHostsExportPayload)
-// against cfg.SSHHosts/cfg.SSHKeys by ID.
-//
-// A local host/key whose ID does not appear in the file produces no change
-// at all — it is neither "unchanged" (it was never compared) nor removed.
-// That silence is the point: import only ever adds or replaces entries the
-// file actually mentions, so PreviewConfigImport never has to special-case
-// "this host wasn't in the file" as a kind of change, and ApplyConfigImport
-// (task 3) has nothing here suggesting a delete is ever appropriate.
-//
-// Hosts and keys are exported verbatim (unlike profiles — see
-// previewProfiles for why that one needs a merge-aware comparison), so a
-// straight reflect.DeepEqual against the local record is honest here.
+// previewSSHHosts compares incoming metadata by stable ID without deleting
+// entries that exist only on this device.
 func previewSSHHosts(cfg appConfig, raw json.RawMessage) ([]ImportChange, []string) {
 	hosts, keys, skipped, err := validateSSHHostsPayload(raw)
 	if err != nil {
@@ -345,162 +334,7 @@ func previewSSHHosts(cfg appConfig, raw json.RawMessage) ([]ImportChange, []stri
 	return changes, skipped
 }
 
-// profileMergeCandidate returns what incoming would look like after the
-// Env-preservation rule ApplyConfigImport is expected to apply (mirroring
-// mergeProfiles's rule in profiles.go, minus its delete-if-absent half,
-// which does not apply here — see previewProfiles). If incoming has no Env
-// and did not opt into syncing it, local's Env survives; otherwise
-// incoming's Env (possibly empty) is authoritative.
-//
-// This exists because BuildConfigExport strips Env for SyncEnv==false
-// profiles by default (stripUnsyncedEnv), so the raw file entry for such a
-// profile looks like it has no Env at all — comparing that raw entry
-// against local directly would report "replace" (env wiped) for a profile
-// where env-preserving apply would in fact leave Env untouched. A "replace"
-// there reads to a user as "my API tokens get overwritten", which is the
-// opposite of what happens.
-func profileMergeCandidate(local, incoming SessionProfile) SessionProfile {
-	if len(incoming.Env) == 0 && !incoming.SyncEnv {
-		incoming.Env = local.Env
-	}
-	return incoming
-}
-
-// profileDiffFields lists the SessionProfile fields that differ between
-// local and merged (the profileMergeCandidate result), by JSON field name,
-// for ImportChange.Detail on a "replace" — so a UI (or a human reading
-// Skipped/Changes) can tell "just the shell changed" from "everything did"
-// without a full struct dump.
-func profileDiffFields(local, merged SessionProfile) []string {
-	var diffs []string
-	if local.Name != merged.Name {
-		diffs = append(diffs, "name")
-	}
-	if local.Shell != merged.Shell {
-		diffs = append(diffs, "shell")
-	}
-	if local.Cwd != merged.Cwd {
-		diffs = append(diffs, "cwd")
-	}
-	if local.StartupCmd != merged.StartupCmd {
-		diffs = append(diffs, "startup_cmd")
-	}
-	if local.SyncEnv != merged.SyncEnv {
-		diffs = append(diffs, "sync_env")
-	}
-	if !reflect.DeepEqual(local.Env, merged.Env) {
-		diffs = append(diffs, "env")
-	}
-	return diffs
-}
-
-// validateProfilesPayload parses raw as a profilesExportPayload and applies
-// the same "empty id/name and duplicate id are malformed" rule
-// filterValidProfiles (profiles.go) applies to an inbound sync payload —
-// same rule, reimplemented rather than called, because filterValidProfiles
-// logs and returns a filtered slice while callers here need a per-entry
-// reason string for ImportPreview.Skipped. DefaultProfileID travels back
-// unfiltered: it is validated against the merged profile list downstream
-// (resolveDefaultProfileID), not here.
-//
-// Factored out of previewProfiles so ApplyConfigImport (task 3) validates
-// and dedupes the exact same way Preview classified the file — see
-// validateSSHHostsPayload's comment for why a second copy of this rule is
-// the wrong move.
-func validateProfilesPayload(raw json.RawMessage) (profiles []SessionProfile, defaultProfileID string, skipped []string, err error) {
-	var payload profilesExportPayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, "", nil, err
-	}
-
-	seen := make(map[string]bool, len(payload.Profiles))
-	for _, p := range payload.Profiles {
-		id := strings.TrimSpace(p.ID)
-		name := strings.TrimSpace(p.Name)
-		switch {
-		case id == "":
-			skipped = append(skipped, fmt.Sprintf("profiles: profile %q missing id", p.Name))
-			continue
-		case name == "":
-			skipped = append(skipped, fmt.Sprintf("profiles: profile id=%s missing name", id))
-			continue
-		case seen[id]:
-			skipped = append(skipped, fmt.Sprintf("profiles: profile id=%s duplicate in file, first occurrence kept", id))
-			continue
-		}
-		seen[id] = true
-		p.ID = id
-		profiles = append(profiles, p)
-	}
-
-	return profiles, payload.DefaultProfileID, skipped, nil
-}
-
-// previewProfiles diffs an incoming "profiles" payload (profilesExportPayload)
-// against cfg.Profiles by ID, applying the same "absent from file == kept,
-// not removed" rule previewSSHHosts does.
-//
-// Comparison goes through profileMergeCandidate rather than a literal
-// reflect.DeepEqual against the file entry: BuildConfigExport strips Env
-// for SyncEnv==false profiles by default, so the file's own content for
-// such a profile is not what apply would actually produce (see
-// profileMergeCandidate's comment). Preview reports what apply DOES, not
-// what the file happens to say.
-func previewProfiles(cfg appConfig, raw json.RawMessage) ([]ImportChange, []string) {
-	profiles, defaultProfileID, skipped, err := validateProfilesPayload(raw)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("profiles: %v", err)}
-	}
-
-	localByID := make(map[string]SessionProfile, len(cfg.Profiles))
-	for _, p := range cfg.Profiles {
-		localByID[p.ID] = p
-	}
-
-	var changes []ImportChange
-	for _, p := range profiles {
-		if existing, ok := localByID[p.ID]; ok {
-			merged := profileMergeCandidate(existing, p)
-			if reflect.DeepEqual(existing, merged) {
-				changes = append(changes, ImportChange{Key: "profile:" + p.ID, Action: "unchanged", Detail: p.Name})
-			} else {
-				changes = append(changes, ImportChange{
-					Key:    "profile:" + p.ID,
-					Action: "replace",
-					Detail: strings.Join(profileDiffFields(existing, merged), ", "),
-				})
-			}
-		} else {
-			changes = append(changes, ImportChange{Key: "profile:" + p.ID, Action: "add", Detail: p.Name})
-		}
-	}
-
-	if defaultProfileID != "" {
-		action := "unchanged"
-		switch {
-		case cfg.DefaultProfileID == "":
-			action = "add"
-		case cfg.DefaultProfileID != defaultProfileID:
-			action = "replace"
-		}
-		changes = append(changes, ImportChange{
-			Key:    "profiles:default_profile_id",
-			Action: action,
-			Detail: defaultProfileID,
-		})
-	}
-
-	return changes, skipped
-}
-
-// listAction is the shared "add vs replace vs unchanged" rule for a
-// by-ID list entry: absent locally -> add, present and identical ->
-// unchanged, present and different -> replace. T is compared via
-// reflect.DeepEqual (SSHHost, SSHKey are plain structs of comparable/slice
-// fields, no funcs or channels), so a shallow == can't be used here — a
-// struct with a slice field isn't comparable with ==. Profiles do NOT use
-// this — see previewProfiles/profileMergeCandidate for why their comparison
-// needs an extra merge step first.
+// listAction compares metadata structs whose slice fields prevent ==.
 func listAction[T any](local map[string]T, id string, incoming T) string {
 	existing, ok := local[id]
 	if !ok {
@@ -544,7 +378,7 @@ func hostTargetChanged(old, incoming SSHHost) bool {
 // knownImportKeys lists every top-level key PreviewConfigImport can
 // classify: every prefssync synced key except the two sealed ones (which
 // never appear in a plaintext export — see BuildConfigExport), plus the two
-// unsealed re-homed names ("ssh_hosts", "profiles") that replace them on
+// unsealed SSH metadata key and the retired plaintext Profile key on
 // disk.
 //
 // Derived from prefssync.SyncedKeys() rather than a second hand-written
@@ -559,10 +393,10 @@ func hostTargetChanged(old, incoming SSHHost) bool {
 func knownImportKeys() map[string]bool {
 	keys := map[string]bool{
 		"ssh_hosts": true,
-		"profiles":  true,
+		"profiles":  true, // Retained solely for the stable retired-preference reason.
 	}
 	for _, k := range prefssync.SyncedKeys() {
-		if k == "ssh_hosts_encrypted" || k == "profiles_encrypted" {
+		if k == "ssh_hosts_encrypted" {
 			continue
 		}
 		keys[k] = true
@@ -610,8 +444,8 @@ func (a *App) PreviewConfigImport(jsonText string) (ImportPreview, error) {
 	customized := isPrefCustomized(cfg)
 	// accountKey is fixed to nil for the same reason BuildConfigExport fixes
 	// it to nil (see its comment): a plaintext export never carries
-	// ssh_hosts_encrypted/profiles_encrypted, only their unsealed
-	// replacements "ssh_hosts"/"profiles", handled below by their own
+	// ssh_hosts_encrypted, only its unsealed replacement "ssh_hosts",
+	// handled below by its own
 	// preview functions instead of this adapter.
 	adapter := newAppConfigAdapter(a.cfgStore, func() []byte { return nil })
 	known := knownImportKeys()
@@ -635,9 +469,8 @@ func (a *App) PreviewConfigImport(jsonText string) (ImportPreview, error) {
 			preview.Changes = append(preview.Changes, changes...)
 			preview.Skipped = append(preview.Skipped, skipped...)
 		case "profiles":
-			changes, skipped := previewProfiles(cfg, raw)
-			preview.Changes = append(preview.Changes, changes...)
-			preview.Skipped = append(preview.Skipped, skipped...)
+			preview.Skipped = append(preview.Skipped, "profiles: retired preference")
+			continue
 		default:
 			change, err := previewScalarPref(adapter.ReadValue, customized, key, raw)
 			if err != nil {
@@ -676,7 +509,7 @@ func newImportReport() ImportReport {
 // rest of the import, see ApplyConfigImport) rather than silently dropped,
 // so that disagreement cannot pass silently. It is a method on *App (not a
 // free function taking *App, as originally written) purely for symmetry
-// with applySSHHostsImport/applyProfilesImport, its two siblings.
+// with applySSHHostsImport.
 func (a *App) applyScalarPref(key string, raw json.RawMessage) error {
 	switch key {
 	case "locale_preference":
@@ -926,7 +759,7 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 	// A failure here is REPORTED, not returned. Returning it aborted the
 	// rest of the import — and by this point the host records are already
 	// written and already pushed to every other device, so aborting bought
-	// nothing and left profiles and scalar prefs unapplied with an empty
+	// nothing and left scalar prefs unapplied with an empty
 	// report: the "a config that is neither the file nor the original"
 	// outcome this feature spent a whole review round eliminating. The user
 	// still has to know, because a credential left attached to a host whose
@@ -940,146 +773,6 @@ func (a *App) applySSHHostsImport(raw json.RawMessage, actionable map[string]Imp
 	for _, id := range credentialsToClear {
 		if err := clear(id); err != nil {
 			skipped = append(skipped, fmt.Sprintf("ssh_hosts: could not clear the stored credential for host id=%s after its address changed — it is still attached to the new address: %v", id, err))
-		}
-	}
-	return applied, skipped, nil
-}
-
-// applyProfilesImport writes the add/replace entries validateProfilesPayload
-// finds in raw through mergeProfiles (profiles.go) — the SAME function the
-// real cross-device pull path (appConfigAdapter.WriteValue's
-// "profiles_encrypted" case) uses, so a local profile's Env, for a profile
-// with SyncEnv == false, survives an import exactly the way it survives a
-// pull (see profileMergeCandidate's comment for why the raw file entry is
-// not what apply should compare against or write).
-//
-// mergeProfiles's own doc comment states a rule that looks like it
-// contradicts import's contract: "ID absent from incoming -> the profile
-// was deleted on the other machine; delete it here too." That is correct
-// for a PULL, where "incoming" is the complete, authoritative profile list
-// for the account (openProfiles decodes the full sealed list every time,
-// nothing is ever partial). It is wrong for IMPORT: previewProfiles's own
-// contract (design doc §3) is "a local entry absent from the file is KEPT,
-// never deleted" — an imported file is a merge input, not assumed to be a
-// complete inventory of every profile the user owns.
-//
-// The reconciliation: this function does not hand mergeProfiles the file's
-// list directly as "incoming". It builds that argument as the file's
-// validated profiles PLUS every local profile whose ID the file does not
-// mention, carried over verbatim. Every local ID is then present in
-// "incoming" one way or another, so mergeProfiles's delete-if-absent branch
-// never actually triggers — nothing is ever missing from incoming — while
-// its Env-preservation branch still runs exactly as it does for a pull, for
-// the ids the file DOES mention.
-//
-// Whole-branch review round: SyncEnv travels WITH the Env it governs.
-// mergeProfiles keeps a local profile's Env when the incoming entry has none
-// (profiles.go:226), but it only touches the Env field — SyncEnv comes from
-// incoming untouched. That is exactly right for a PULL, where SyncEnv is
-// itself part of the synced, sealed record. It is wrong for IMPORT: a file
-// entry with SyncEnv:true and no Env (the ordinary shape of a profile whose
-// SOURCE machine never had that env var, not one that opted out of syncing
-// it) would otherwise silently flip a local SyncEnv:false profile's
-// never-sync flag to true while keeping its local secret Env — and the very
-// next plaintext export of THIS machine (default includeLocalEnv=false)
-// would then ship that Env, because stripUnsyncedEnv only strips
-// SyncEnv==false profiles. Reproduced by the reviewer: machine A's profile
-// SyncEnv:true/no-Env imported onto machine B's same-ID
-// SyncEnv:false/Env:{OPENAI_API_KEY:...} promotes the key into B's next
-// export. Fixed below by re-pointing each file profile's SyncEnv at its
-// local counterpart's SyncEnv whenever mergeProfiles is about to preserve
-// that counterpart's Env — the same condition mergeProfiles itself checks,
-// duplicated here rather than threaded through mergeProfiles because the
-// pull path's promotion behavior is correct for pull and out of scope (see
-// mergeProfiles's own doc comment); what changed is that import now feeds a
-// plaintext file, so only the import path needs the extra guard.
-func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]ImportChange) ([]string, []string, error) {
-	fileProfiles, defaultProfileID, _, err := validateProfilesPayload(raw)
-	if err != nil {
-		// PreviewConfigImport already reported this as Skipped.
-		return nil, nil, nil
-	}
-
-	fileByID := make(map[string]bool, len(fileProfiles))
-	var applied []string
-	for _, p := range fileProfiles {
-		fileByID[p.ID] = true
-		if c, ok := actionable["profile:"+p.ID]; ok && c.Action != "unchanged" {
-			applied = append(applied, "profile:"+p.ID)
-		}
-	}
-	defaultChange, hasDefaultChange := actionable["profiles:default_profile_id"]
-	if hasDefaultChange && defaultChange.Action == "unchanged" {
-		hasDefaultChange = false
-	}
-	if len(applied) == 0 && !hasDefaultChange {
-		return nil, nil, nil
-	}
-
-	cfg := a.cfgStore.Get()
-
-	// SyncEnv-travels-with-Env guard (see doc comment above): for every file
-	// profile mergeProfiles is about to preserve local Env for — same
-	// condition mergeProfiles checks, len(p.Env)==0 && local has Env — pin
-	// its SyncEnv to the local value too, so the merged record's SyncEnv and
-	// Env always describe the same machine's choice, never a mix of file
-	// SyncEnv with local Env.
-	localByID := make(map[string]SessionProfile, len(cfg.Profiles))
-	for _, p := range cfg.Profiles {
-		localByID[p.ID] = p
-	}
-	for i := range fileProfiles {
-		p := &fileProfiles[i]
-		if len(p.Env) == 0 {
-			if l, ok := localByID[p.ID]; ok && len(l.Env) > 0 {
-				p.SyncEnv = l.SyncEnv
-			}
-		}
-	}
-
-	// incoming = every file-derived profile, plus every local-only profile
-	// (id not mentioned by the file) carried over verbatim — see the
-	// reconciliation note above.
-	incoming := make([]SessionProfile, 0, len(fileProfiles)+len(cfg.Profiles))
-	incoming = append(incoming, fileProfiles...)
-	for _, local := range cfg.Profiles {
-		if !fileByID[local.ID] {
-			incoming = append(incoming, local)
-		}
-	}
-	merged := mergeProfiles(cfg.Profiles, incoming)
-
-	if err := a.SetProfiles(merged); err != nil {
-		return nil, nil, fmt.Errorf("apply profiles: %w", err)
-	}
-
-	var skipped []string
-	if hasDefaultChange {
-		resolved := resolveDefaultProfileID(defaultProfileID, merged)
-		if resolved == "" {
-			// defaultProfileID was requested (hasDefaultChange only becomes
-			// true when previewProfiles saw a non-empty file
-			// default_profile_id — see its own doc comment) but does not
-			// name any profile present in the merged result: e.g. the file's
-			// referenced profile was itself skipped upstream for a missing
-			// name, or the file was hand-edited to reference an id that
-			// doesn't exist. Preview's classification of this key is purely
-			// "does the file's default_profile_id string differ from the
-			// current one" (previewProfiles never checks it resolves), so
-			// Preview can promise "replace -> X" for an X that can never
-			// actually be written. Silently calling SetDefaultProfileID("")
-			// here would CLEAR the local default — the same "import never
-			// wipes" rule design doc §3 states for list entries, extended to
-			// this scalar-shaped field. Keep the local default untouched and
-			// report why, naming the id that didn't resolve, instead of the
-			// generic "not applied" ApplyConfigImport's fallback would
-			// otherwise produce.
-			skipped = append(skipped, fmt.Sprintf("profiles:default_profile_id: %q not present in the merged profile list, local default kept", defaultProfileID))
-		} else {
-			if err := a.SetDefaultProfileID(resolved); err != nil {
-				return applied, skipped, fmt.Errorf("apply default profile id: %w", err)
-			}
-			applied = append(applied, "profiles:default_profile_id")
 		}
 	}
 	return applied, skipped, nil
@@ -1106,8 +799,7 @@ func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]Imp
 // to do. Every other entry is dispatched to its write path below: scalar
 // keys each go through their own named setter (applyScalarPref); every
 // ssh_host:*/ssh_key:* entry is batched into one applySSHHostsImport call;
-// every profile:*/profiles:default_profile_id entry is batched into one
-// applyProfilesImport call. That batching is what keeps this function from
+// That batching keeps this function from
 // producing more markPrefDirtyAndPush/markSSHHostsDirty calls than
 // necessary on its own — but ApplyConfigImport does NOT attempt to reduce
 // that count to a single push itself. It still calls one setter per changed
@@ -1117,15 +809,6 @@ func (a *App) applyProfilesImport(raw json.RawMessage, actionable map[string]Imp
 // Apply relies on that machinery rather than reimplementing batching, so a
 // regression in enqueueSync's coalescing shows up here too (see
 // TestApplyConfigImport_CoalescesIntoOnePush in config_import_test.go).
-//
-// There is no includeLocalEnv parameter (an earlier draft had one, mirroring
-// ExportConfig's — removed in review round 1). Preview takes no such
-// parameter, and what a profile's Env ends up as is fully determined by
-// mergeProfiles from what the FILE actually contains and the profile's own
-// SyncEnv, exactly as profileMergeCandidate already predicted during
-// Preview. A lever here that could pick a different outcome than the one
-// Preview already promised the caller is exactly the Preview/Apply drift
-// this whole feature is designed to avoid.
 //
 // A single scalar key whose setter refuses the imported value does not
 // abort the rest of the import: its error is appended to report.Skipped and
@@ -1158,7 +841,6 @@ func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
 
 	actionable := make(map[string]ImportChange, len(preview.Changes))
 	needSSH := false
-	needProfiles := false
 	for _, c := range preview.Changes {
 		if c.Action == "unchanged" {
 			continue
@@ -1167,12 +849,10 @@ func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
 		switch {
 		case strings.HasPrefix(c.Key, "ssh_host:"), strings.HasPrefix(c.Key, "ssh_key:"):
 			needSSH = true
-		case strings.HasPrefix(c.Key, "profile:"), c.Key == "profiles:default_profile_id":
-			needProfiles = true
 		}
 	}
 
-	// appliedKeys records what applySSHHostsImport/applyProfilesImport
+	// appliedKeys records what applySSHHostsImport
 	// actually wrote, keyed the same way as ImportChange.Key. The report
 	// below is built from this, not from blindly echoing every actionable
 	// preview.Changes entry with a list-key prefix — otherwise report.Applied
@@ -1197,42 +877,16 @@ func (a *App) ApplyConfigImport(jsonText string) (ImportReport, error) {
 			report.Skipped = append(report.Skipped, sshSkips...)
 		}
 	}
-	// explicitSkips holds keys applyProfilesImport already gave a specific,
-	// named-reason Skipped entry for (currently only an unresolvable
-	// profiles:default_profile_id — see its doc comment), so the generic
-	// "not applied" fallback below doesn't also fire for the same key and
-	// produce two Skipped lines describing one thing.
-	explicitSkips := make(map[string]bool)
-	if needProfiles {
-		if raw, ok := export.Preferences["profiles"]; ok {
-			keys, skipped, err := a.applyProfilesImport(raw, actionable)
-			if err != nil {
-				return report, err
-			}
-			for _, k := range keys {
-				appliedKeys[k] = true
-			}
-			for _, s := range skipped {
-				report.Skipped = append(report.Skipped, s)
-				if strings.HasPrefix(s, "profiles:default_profile_id:") {
-					explicitSkips["profiles:default_profile_id"] = true
-				}
-			}
-		}
-	}
 
 	for _, c := range preview.Changes {
 		if c.Action == "unchanged" {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(c.Key, "ssh_host:"), strings.HasPrefix(c.Key, "ssh_key:"),
-			strings.HasPrefix(c.Key, "profile:"), c.Key == "profiles:default_profile_id":
+		case strings.HasPrefix(c.Key, "ssh_host:"), strings.HasPrefix(c.Key, "ssh_key:"):
 			switch {
 			case appliedKeys[c.Key]:
 				report.Applied = append(report.Applied, c)
-			case explicitSkips[c.Key]:
-				// Already reported above with a specific reason.
 			default:
 				report.Skipped = append(report.Skipped, fmt.Sprintf("%s: not applied", c.Key))
 			}

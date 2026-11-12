@@ -75,11 +75,6 @@ func peerBootstrapRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
 		return nil, err
 	}
 
-	profiles, err := peerLocalRecordsForKey(cfg, "profiles_encrypted")
-	if err != nil {
-		return nil, err
-	}
-	records = append(records, profiles...)
 	ssh, err := peerLocalRecordsForKey(cfg, "ssh_hosts_encrypted")
 	if err != nil {
 		return nil, err
@@ -93,12 +88,10 @@ func peerBootstrapRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
 // secrets stay in the legacy account/keychain path until users can opt in to
 // a dedicated Peer secret-sync policy.
 func peerLocalRecordsForKey(cfg appConfig, key string) ([]configsync.PlainRecord, error) {
-	if _, ok := configsync.RelaySpec(key); !ok {
+	if spec, ok := configsync.RelaySpec(key); !ok || spec.Retired {
 		return nil, fmt.Errorf("unknown Peer config key %q", key)
 	}
 	switch key {
-	case "profiles_encrypted":
-		return peerLocalProfileRecords(cfg)
 	case "ssh_hosts_encrypted":
 		return peerLocalSSHMetadataRecords(cfg)
 	default:
@@ -113,47 +106,6 @@ func peerLocalRecordsForKey(cfg appConfig, key string) ([]configsync.PlainRecord
 		}
 		return records, nil
 	}
-}
-
-func peerLocalProfileRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
-	var records []configsync.PlainRecord
-	profiles := filterValidProfiles(cfg.Profiles)
-	for index, source := range profiles {
-		profile := source
-		environment := profile.Env
-		profile.Env = nil
-		value, err := configsync.CanonicalEntityJSON(profile.ID, profile)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, configsync.PlainRecord{
-			Collection: configsync.CollectionProfiles, RecordID: profile.ID,
-			KeyClass: configsync.KeyClassSync, Position: configsync.PositionForIndex(uint64(index)), Value: value,
-		})
-		if profile.SyncEnv && len(environment) != 0 {
-			envValue, err := configsync.CanonicalEntityJSON(profile.ID, profileEnvRecord{ID: profile.ID, Env: environment})
-			if err != nil {
-				return nil, err
-			}
-			records = append(records, configsync.PlainRecord{
-				Collection: configsync.CollectionProfileEnv, RecordID: profile.ID,
-				KeyClass: configsync.KeyClassVault, Value: envValue,
-			})
-		}
-	}
-	if len(profiles) != 0 {
-		value, err := configsync.CanonicalEntityJSON(profileConfigRecordID, profileConfigRecord{
-			ID: profileConfigRecordID, DefaultProfileID: resolveDefaultProfileID(cfg.DefaultProfileID, profiles),
-		})
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, configsync.PlainRecord{
-			Collection: configsync.CollectionProfileConfig, RecordID: profileConfigRecordID,
-			KeyClass: configsync.KeyClassSync, Value: value,
-		})
-	}
-	return records, nil
 }
 
 func peerLocalSSHMetadataRecords(cfg appConfig) ([]configsync.PlainRecord, error) {
@@ -185,7 +137,7 @@ func peerBootstrapLegacyRecords(cfg appConfig) ([]configsync.PlainRecord, error)
 	customized := isPrefCustomized(cfg)
 	var records []configsync.PlainRecord
 	for _, spec := range configsync.RelayKeySpecs() {
-		if spec.Mode == configsync.RelaySealedBundle || !customized(spec.Key) {
+		if spec.Retired || spec.Mode == configsync.RelaySealedBundle || !customized(spec.Key) {
 			continue
 		}
 		decoded, err := peerLocalRecordsForKey(cfg, spec.Key)

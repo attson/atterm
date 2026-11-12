@@ -13,13 +13,11 @@ import type { ImportChange, ImportPreview, ImportReport } from "./_bindings";
 
 export type { ImportChange, ImportPreview, ImportReport } from "./_bindings";
 
-// exportConfig opens a native save dialog and writes the current config
-// (SSH hosts, session profiles, and every customized synced preference) to
-// the chosen path. includeLocalEnv=false (the default the UI should offer)
-// strips profile Env for profiles that never opted into syncing it.
+// Opens a native save dialog for the current configuration.
+// The boolean passed to Wails is an ignored IPC compatibility argument.
 // Resolves to "" (not a rejection) when the user dismisses the dialog.
-export function exportConfig(includeLocalEnv: boolean): Promise<string> {
-  return bindings().ExportConfig(includeLocalEnv);
+export function exportConfig(): Promise<string> {
+  return bindings().ExportConfig(false);
 }
 
 // previewConfigImport reports what applying jsonText WOULD change, without

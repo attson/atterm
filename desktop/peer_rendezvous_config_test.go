@@ -93,7 +93,7 @@ func TestPeerRendezvousConfigStaysOutOfReplicationAndExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exported, err := app.BuildConfigExport(false)
+	exported, err := app.BuildConfigExport()
 	if err != nil {
 		t.Fatal(err)
 	}

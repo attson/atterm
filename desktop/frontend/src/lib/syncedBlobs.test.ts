@@ -5,17 +5,17 @@
 // contract fsCrypto.vectors.test.ts holds for the FS request/response
 // envelopes. Never hand-edit desktop/testdata/synced_blob_vectors.json;
 // regenerate it with `go test ./desktop/ -run TestSyncedBlobVectors -update`
-// after any change to sealProfiles/sealSSHHosts on the Go side.
+// after any change to sealSSHHosts on the Go side.
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { b64ToBytes } from './opaque'
-import { openProfilesBlob, openSSHHostsBlob } from './syncedBlobs'
+import * as syncedBlobs from './syncedBlobs'
+import { openSSHHostsBlob } from './syncedBlobs'
 
 interface Fixture {
   account_key_b64: string
-  profiles_value: string
   ssh_hosts_value: string
 }
 
@@ -39,47 +39,8 @@ const accountKey = b64ToBytes(fixture.account_key_b64)
 // output catches the leak regardless of what the leaking field is called.
 const CANARIES = ['CANARY-password-must-not-leak', 'CANARY-private-key-must-not-leak', 'CANARY-passphrase-must-not-leak']
 
-describe('openProfilesBlob — Go-generated vector', () => {
-  it('opens the Go-sealed blob and decodes both profiles', () => {
-    const { profiles, defaultProfileId } = openProfilesBlob(accountKey, fixture.profiles_value)
-    expect(defaultProfileId).toBe('p-synced')
-    expect(profiles).toHaveLength(2)
-
-    const synced = profiles.find((p) => p.id === 'p-synced')
-    expect(synced).toBeDefined()
-    expect(synced!.name).toBe('Synced Profile')
-    expect(synced!.shell).toBe('/bin/zsh')
-    expect(synced!.cwd).toBe('/home/u/work')
-    expect(synced!.startupCmd).toBe('tmux attach')
-    expect(synced!.syncEnv).toBe(true)
-    expect(synced!.env).toEqual({ FOO: 'bar' })
-
-    const unsynced = profiles.find((p) => p.id === 'p-unsynced')
-    expect(unsynced).toBeDefined()
-    expect(unsynced!.syncEnv).toBe(false)
-  })
-
-  it('distinguishes "SyncEnv=false" from "no env vars set"', () => {
-    // stripUnsyncedEnv (desktop/profiles.go) clears Env unconditionally
-    // before sealing for any profile with SyncEnv==false, so the sealed
-    // payload never carries env for p-unsynced at all. The view's `env`
-    // must therefore be undefined here — a caller checks `syncEnv` to know
-    // *why*, rather than reading an empty object and concluding "the user
-    // configured zero env vars".
-    const { profiles } = openProfilesBlob(accountKey, fixture.profiles_value)
-    const unsynced = profiles.find((p) => p.id === 'p-unsynced')!
-    expect(unsynced.syncEnv).toBe(false)
-    expect(unsynced.env).toBeUndefined()
-
-    const synced = profiles.find((p) => p.id === 'p-synced')!
-    expect(synced.syncEnv).toBe(true)
-    expect(synced.env).toEqual({ FOO: 'bar' })
-  })
-
-  it('fails cleanly on a wrong account key', () => {
-    const wrongKey = new Uint8Array(32).fill(0xff)
-    expect(() => openProfilesBlob(wrongKey, fixture.profiles_value)).toThrow()
-  })
+it('does not expose the retired Profile blob reader', () => {
+  expect(syncedBlobs).not.toHaveProperty('openProfilesBlob')
 })
 
 describe('openSSHHostsBlob — Go-generated vector', () => {

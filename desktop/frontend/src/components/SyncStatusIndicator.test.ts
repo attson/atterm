@@ -269,8 +269,8 @@ describe("SyncStatusIndicator", () => {
   // (design doc §6 "No mobile indicator"; mobile syncs prefs over HTTP via
   // lib/prefsSync.capacitor.ts, a wholly separate path with no engine for
   // this status to describe). SettingsDialog.vue also gates mounting this
-  // component at all (`v-if="caps.wailsBindings"`, see SettingsDialog.test.ts,
-  // matching SettingsProfiles.vue's precedent) -- that stays as defense in
+  // component at all (`v-if="caps.wailsBindings"`, see SettingsDialog.test.ts)
+  // as defense in
   // depth. This test is the component's own internal gate: even if some
   // future caller mounts it unguarded on a wailsBindings=false shape (the
   // exact mistake item 29 made for the relay-embed settings button), it must

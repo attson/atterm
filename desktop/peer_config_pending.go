@@ -99,6 +99,23 @@ func (m *peerSpaceManager) acceptPendingPeerConfig() (int, error) {
 }
 
 func (r *peerConfigReplica) appendPendingPeerConfig(records []configsync.PlainRecord) (int, error) {
+	// Captures from released clients may retain retired collections. Keep
+	// their storage readable without replaying them into the active replica.
+	retired := make(map[string]bool)
+	for _, spec := range configsync.RelayKeySpecs() {
+		if spec.Retired {
+			for _, collection := range spec.Collections {
+				retired[collection] = true
+			}
+		}
+	}
+	active := make([]configsync.PlainRecord, 0, len(records))
+	for _, record := range records {
+		if !retired[record.Collection] {
+			active = append(active, record)
+		}
+	}
+	records = active
 	previous := make([]configsync.PlainRecord, 0, len(records))
 	for _, record := range records {
 		if _, available := r.keys[record.KeyClass]; !available {

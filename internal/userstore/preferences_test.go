@@ -195,3 +195,35 @@ func errorsIs(err, target error) bool {
 	}
 	return false
 }
+
+func TestSetUserPreferences_RetiredProfilesDoNotRejectActiveBatch(t *testing.T) {
+	s := NewInMemory(t)
+	ctx := context.Background()
+	u, err := s.CreateOpaqueUser(ctx, "retired@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []PreferenceItem{
+		{Key: "profiles_encrypted", ValueJSON: json.RawMessage(`"opaque old ciphertext"`), UpdatedAt: 1000},
+		{Key: "terminal_theme", ValueJSON: json.RawMessage(`"nord"`), UpdatedAt: 1000},
+	}
+	if _, err := s.SetUserPreferences(ctx, u.ID, 1000, input); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetUserPreferences(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("stored=%+v", stored)
+	}
+	values := map[string]string{}
+	for _, item := range stored {
+		values[item.Key] = string(item.ValueJSON)
+	}
+	for _, item := range input {
+		if values[item.Key] != string(item.ValueJSON) {
+			t.Fatalf("stored values=%v", values)
+		}
+	}
+}

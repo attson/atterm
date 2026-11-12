@@ -562,6 +562,97 @@ func TestStartCodexFileResolve_SequentialSameCwdResolversBothCapture(t *testing.
 	}
 }
 
+func TestStartCodexFileResolve_DoesNotCaptureAnotherActiveSameCwdBinding(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	first := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer first.Close()
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	firstCaptured := make(chan string, 1)
+	go startCodexFileResolve(firstCtx, first, cwd, 0, func(sid string) {
+		firstCaptured <- sid
+	})
+
+	time.Sleep(codexResolveInterval * 2)
+	firstSID := "019fae77-52c1-7201-bbdc-078634559f19"
+	firstPath := filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+firstSID+".jsonl")
+	writeJsonl(t, firstPath,
+		`{"type":"session_meta","payload":{"id":"`+firstSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"first pane"}}`,
+	)
+	select {
+	case got := <-firstCaptured:
+		if got != firstSID {
+			t.Fatalf("first captured sid = %q, want %q", got, firstSID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first codex sid capture")
+	}
+
+	second := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer second.Close()
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	secondCaptured := make(chan string, 1)
+	go startCodexFileResolve(secondCtx, second, cwd, 0, func(sid string) {
+		secondCaptured <- sid
+	})
+
+	// The second resolver snapshots the first rollout, then observes it advance.
+	// That update still belongs to the first live PTY and must not be claimed.
+	time.Sleep(codexResolveInterval * 2)
+	appendJsonl(t, firstPath, `{"type":"event_msg","payload":{"type":"user_message","message":"still first pane"}}`)
+	select {
+	case got := <-secondCaptured:
+		t.Fatalf("second resolver captured active first-pane sid %q", got)
+	case <-time.After(codexResolveInterval * 3):
+	}
+
+	secondSID := "019fae77-52c1-7201-bbdc-078634559f20"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-22-23-"+secondSID+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+secondSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"second pane"}}`,
+	)
+	select {
+	case got := <-secondCaptured:
+		if got != secondSID {
+			t.Fatalf("second captured sid = %q, want %q", got, secondSID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for second codex sid capture")
+	}
+}
+
+func TestHoldCodexBindingReleasesWhenGenerationIsCanceled(t *testing.T) {
+	cwd := t.TempDir()
+	sid := "019fae77-52c1-7201-bbdc-078634559f19"
+	ctx, cancel := context.WithCancel(context.Background())
+	holdCodexBinding(ctx, cwd, sid)
+
+	if release, ok := tryRegisterCodexBinding(cwd, sid); ok {
+		release()
+		t.Fatal("active generation binding was available to a second resolver")
+	}
+
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if release, ok := tryRegisterCodexBinding(cwd, sid); ok {
+			release()
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("canceled generation did not release its Codex binding")
+}
+
 func TestStartCodexKnownTitleResolve_FindsPreviousDaySidAndMirrorsUserTitle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

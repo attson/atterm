@@ -47,7 +47,11 @@ import {
 } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
-import { useTerminalImagePreview } from "../composables/useTerminalImagePreview";
+import {
+  useTerminalImagePreview,
+  type SessionHistoryImagePreview,
+  type TerminalImagePreviewController,
+} from "../composables/useTerminalImagePreview";
 import {
   isPathWithinRoot,
   linkSegmentsAtBufferRow,
@@ -629,7 +633,14 @@ const menuLinkHit = ref<LinkMatch | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
 let oscLinkController: TerminalOscLinkController | null = null;
-let imagePreviewDisposer: { dispose(): void } | null = null;
+let imagePreviewDisposer: TerminalImagePreviewController | null = null;
+function resolveInputHistoryImage(
+  text: string,
+  submittedAtUnixMS: number,
+  occurrence: number,
+): SessionHistoryImagePreview | null {
+  return imagePreviewDisposer?.resolveHistoryImage(text, submittedAtUnixMS, occurrence) ?? null;
+}
 let cachedHomeDir = "";
 // Press origin of the most recent left mousedown on the terminal grid, used to
 // distinguish a plain link click from the end of a drag-select in mouseup.
@@ -3349,6 +3360,7 @@ watch(
         :items="inputHistoryResult?.items ?? []"
         :truncated="inputHistoryResult?.truncated ?? false"
         :error="inputHistoryError"
+        :resolve-image="resolveInputHistoryImage"
         @close="closeInputHistory"
         @retry="loadInputHistory"
       />

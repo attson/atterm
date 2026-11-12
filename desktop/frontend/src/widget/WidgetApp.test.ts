@@ -90,7 +90,7 @@ describe("WidgetApp", () => {
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 60);
   });
 
-  it("remeasures the rendered card after manual collapse and expansion", async () => {
+  it("remeasures the rendered card after menu collapse and expansion", async () => {
     const w = mount(WidgetApp);
     const card = w.get<HTMLElement>(".widget-window").element;
     vi.spyOn(card, "getBoundingClientRect").mockImplementation(() => {
@@ -110,14 +110,21 @@ describe("WidgetApp", () => {
     await flushAnimationFrames();
     vi.mocked(widgetBridge.resize).mockClear();
 
-    await w.get(".widget-header").trigger("click");
+    await w.get(".widget-window").trigger("contextmenu");
+    await w.vm.$nextTick();
+    await w.get('[data-test="widget-toggle-collapse"]').trigger("click");
     await flushAnimationFrames();
 
     expect(w.find(".rows").exists()).toBe(false);
     expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(true);
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 60);
 
-    await w.get(".widget-header").trigger("click");
+    await w.get(".widget-window").trigger("contextmenu");
+    await w.vm.$nextTick();
+
+    expect(w.find(".rows").exists()).toBe(false);
+
+    await w.get('[data-test="widget-toggle-collapse"]').trigger("click");
     await flushAnimationFrames();
 
     expect(w.find(".rows").exists()).toBe(true);
@@ -125,7 +132,7 @@ describe("WidgetApp", () => {
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 140);
   });
 
-  it("expands and resizes a collapsed widget before revealing its context menu", async () => {
+  it("resizes a collapsed widget for its context menu without changing collapse state", async () => {
     let finishResize!: () => void;
     const resizeDone = new Promise<void>((resolve) => {
       finishResize = resolve;
@@ -156,13 +163,13 @@ describe("WidgetApp", () => {
     await w.get(".widget-window").trigger("contextmenu");
     await w.vm.$nextTick();
 
-    expect(w.find(".rows").exists()).toBe(true);
-    expect(widgetBridge.setCollapsed).toHaveBeenLastCalledWith(false);
+    expect(w.find(".rows").exists()).toBe(false);
+    expect(widgetBridge.setCollapsed).not.toHaveBeenCalled();
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 200);
     expect(w.get(".menu").classes()).toContain("measuring");
 
-    // Expanding queued a card remeasure. It must remain menu-aware instead of
-    // shrinking the native window back to the shorter card on the next frame.
+    // Opening the menu queued a card remeasure. It must remain menu-aware
+    // instead of shrinking the native window back to the shorter card.
     await flushAnimationFrames();
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 200);
 
@@ -177,7 +184,7 @@ describe("WidgetApp", () => {
     await flushAnimationFrames();
 
     expect(w.find(".menu").exists()).toBe(false);
-    expect(w.find(".rows").exists()).toBe(true);
+    expect(w.find(".rows").exists()).toBe(false);
     expect(widgetBridge.resize).toHaveBeenLastCalledWith(252, 90);
   });
 
@@ -219,6 +226,29 @@ describe("WidgetApp", () => {
     const w = mount(WidgetApp);
 
     expect(getComputedStyle(w.get(".widget-shell").element).height).toBe("100vh");
+  });
+
+  it("toggles between the current shape and icon-only mode on header click", async () => {
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: false, minimized: false, x: 0, y: 0, locale: "zh-CN" });
+    await w.vm.$nextTick();
+    vi.mocked(widgetBridge.setCollapsed).mockClear();
+
+    await w.get(".widget-header").trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.get(".widget-window").classes()).toContain("minimized");
+    expect(w.find(".rows").exists()).toBe(false);
+    expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(true);
+    expect(widgetBridge.setCollapsed).not.toHaveBeenCalled();
+
+    await w.get(".widget-header").trigger("click");
+    await w.vm.$nextTick();
+
+    expect(w.get(".widget-window").classes()).not.toContain("minimized");
+    expect(w.find(".rows").exists()).toBe(true);
+    expect(widgetBridge.setMinimized).toHaveBeenLastCalledWith(false);
+    expect(widgetBridge.setCollapsed).not.toHaveBeenCalled();
   });
 
   it("minimizes from the menu and restores the previous collapsed shape on click", async () => {

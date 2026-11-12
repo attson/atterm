@@ -206,7 +206,7 @@ function onHeaderClick() {
     restoreMinimized();
     return;
   }
-  toggleCollapsed();
+  minimizeWidget();
 }
 
 // Peek tracks the pointer over the WHOLE card, not just the header: opening
@@ -225,15 +225,7 @@ function onPeekLeave() {
   peeking.value = false;
 }
 
-let menuOpenedFromCollapsed = false;
-
 function minimizeWidget() {
-  // Opening a menu from the collapsed card expands it so the native window can
-  // fit the menu. Restore that prior shape before persisting icon-only mode.
-  if (menuOpenedFromCollapsed && !collapsed.value) {
-    collapsed.value = true;
-    widgetBridge.setCollapsed(true);
-  }
   peeking.value = false;
   highlightedIds.value = new Set();
   minimized.value = true;
@@ -276,12 +268,8 @@ async function openMenu(e: MouseEvent) {
   if (minimized.value) return;
 
   // A collapsed native window is only as tall as the header, so an absolute
-  // menu is clipped by the OS window regardless of its CSS z-index. Expand and
-  // measure both layers and resize the native window before revealing the menu.
-  menuOpenedFromCollapsed = collapsed.value;
-  if (collapsed.value) {
-    toggleCollapsed();
-  }
+  // menu is clipped by the OS window regardless of its CSS z-index. Measure
+  // both layers and resize the native window before revealing the menu.
   menuOpen.value = true;
   menuVisible.value = false;
   await nextTick();
@@ -294,7 +282,6 @@ function closeMenu() {
   if (!menuOpen.value) return;
   menuOpen.value = false;
   menuVisible.value = false;
-  menuOpenedFromCollapsed = false;
   scheduleCardResize();
 }
 
@@ -428,7 +415,7 @@ onUnmounted(() => {
       :class="{ measuring: !menuVisible }"
       @click.stop
     >
-      <button type="button" @click="toggleCollapsed(); closeMenu()">
+      <button data-test="widget-toggle-collapse" type="button" @click="toggleCollapsed(); closeMenu()">
         {{ collapsed ? "展开" : "折叠" }}
       </button>
       <button data-test="widget-minimize" type="button" @click="minimizeWidget">

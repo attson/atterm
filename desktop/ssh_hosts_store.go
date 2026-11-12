@@ -30,19 +30,26 @@ func (a *App) markSSHHostsDirty() {
 	}
 }
 
-// SSHHost is the non-secret part of a saved host, persisted in config.json.
-// Credentials (password / private key / passphrase) live in the keyring keyed
-// by ID, never here.
+// SSHProxy stores a native proxy endpoint without its password.
+type SSHProxy struct {
+	Kind     string `json:"kind"`
+	Host     string `json:"host"`
+	Port     string `json:"port"`
+	Username string `json:"username,omitempty"`
+}
+
+// SSHHost is the non-secret saved host. Credentials live in the keyring by ID.
 type SSHHost struct {
-	ID       string   `json:"id"`
-	Alias    string   `json:"alias,omitempty"`
-	Host     string   `json:"host"`
-	Port     string   `json:"port,omitempty"`
-	User     string   `json:"user"`
-	AuthKind string   `json:"auth_kind"`        // "password" | "key"
-	KeyID    string   `json:"key_id,omitempty"` // referenced SSHKey when auth_kind=="key"
-	Tags     []string `json:"tags,omitempty"`
-	Note     string   `json:"note,omitempty"`
+	ID        string   `json:"id"`
+	Alias     string   `json:"alias,omitempty"`
+	Host      string   `json:"host"`
+	Port      string   `json:"port,omitempty"`
+	User      string   `json:"user"`
+	AuthKind  string   `json:"auth_kind"`        // "password" | "key"
+	KeyID     string   `json:"key_id,omitempty"` // referenced SSHKey when auth_kind=="key"
+	Tags      []string `json:"tags,omitempty"`
+	GroupPath []string `json:"group_path,omitempty"`
+	Note      string   `json:"note,omitempty"`
 
 	// StartupCommand is typed into the shell after login, one line per
 	// prompt, and StartupDelayMs is the pause before each line (0 → the
@@ -56,9 +63,9 @@ type SSHHost struct {
 	StartupCommand string `json:"startup_command,omitempty"`
 	StartupDelayMs int    `json:"startup_delay_ms,omitempty"`
 
-	// IdentityFile, ProxyJump and ProxyCommand are populated by ssh_config
-	// import (see ssh_config_import.go) and are otherwise empty for
-	// manually-added hosts.
+	// IdentityFile, ProxyJump and ProxyCommand carry imported routes. Native
+	// network proxies use a reserved ProxyCommand marker so older clients
+	// refuse rather than silently dropping the route (see ssh_proxy.go).
 	//
 	// IdentityFile is the private key *path* only — atterm never reads the
 	// file as part of import; AuthKind is set to "key" but KeyID is left
@@ -69,9 +76,10 @@ type SSHHost struct {
 	// through (see ssh_jump.go); ProxyCommand marks a host atterm refuses to
 	// connect at all, because it never runs that command — as a destination
 	// (hostRunsProxyCommand) and as somebody else's hop alike.
-	IdentityFile string `json:"identity_file,omitempty"`
-	ProxyJump    string `json:"proxy_jump,omitempty"`
-	ProxyCommand string `json:"proxy_command,omitempty"`
+	IdentityFile string    `json:"identity_file,omitempty"`
+	ProxyJump    string    `json:"proxy_jump,omitempty"`
+	ProxyCommand string    `json:"proxy_command,omitempty"`
+	Proxy        *SSHProxy `json:"proxy,omitempty"`
 
 	// Forwards are this host's port-forwarding rules (see ssh_tunnels.go).
 	// They are configuration only: nothing here starts on connect, because a
@@ -87,7 +95,8 @@ type SSHHost struct {
 // sshCredential is JSON-encoded into a single keyring entry keyed by host ID.
 // Private keys are no longer inlined here — key auth references an SSHKey by ID.
 type sshCredential struct {
-	Password string `json:"password,omitempty"`
+	Password      string `json:"password,omitempty"`
+	ProxyPassword string `json:"proxy_password,omitempty"`
 }
 
 // sshCredentialService is the OS-keychain service name under which SSH host
@@ -205,13 +214,24 @@ func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
 		return fmt.Errorf("no such host: %s", h.ID)
 	}
 	if cred != nil {
-		if err := sshCredentialSlot(h.ID).Save(*cred); err != nil {
+		// Editing the SSH password must preserve the independently imported proxy secret.
+		next := *cred
+		if cfg.SSHHosts[idx].Proxy != nil {
+			old, err := sshCredentialSlot(h.ID).Load()
+			if err != nil {
+				return fmt.Errorf("load proxy credential: %w", err)
+			}
+			next.ProxyPassword = old.ProxyPassword
+		}
+		if err := sshCredentialSlot(h.ID).Save(next); err != nil {
 			return fmt.Errorf("store credential: %w", err)
 		}
 	}
+	h.GroupPath = cfg.SSHHosts[idx].GroupPath
 	h.IdentityFile = cfg.SSHHosts[idx].IdentityFile
 	h.ProxyJump = cfg.SSHHosts[idx].ProxyJump
 	h.ProxyCommand = cfg.SSHHosts[idx].ProxyCommand
+	h.Proxy = cfg.SSHHosts[idx].Proxy
 	cfg.SSHHosts[idx] = h
 	if err := a.cfgStore.Set(cfg); err != nil {
 		return err

@@ -26,6 +26,7 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 		"terminal_scrollback":              `9000`,
 		"shortcut_bindings":                `{"tab.new":"Mod+T"}`,
 		"profiles_encrypted":               `"ZGVm"`,
+		"traffic_time_zone":                `"Asia/Shanghai"`,
 	}
 	if len(valid) != len(RelayKeys()) {
 		t.Fatalf("valid fixture keys=%d schema keys=%d", len(valid), len(RelayKeys()))
@@ -52,6 +53,7 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 		"profiles_encrypted":               `"not base64!"`,
 		"shortcut_bindings":                `{"tab.new":4}`,
 		"terminal_font_size":               `16 true`,
+		"traffic_time_zone":                `12`,
 	}
 	for key, raw := range invalid {
 		t.Run("invalid_"+key, func(t *testing.T) {

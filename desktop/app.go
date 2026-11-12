@@ -27,6 +27,7 @@ import (
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/sshclient"
 	"github.com/google/uuid"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -134,8 +135,9 @@ type SSHConnectReq struct {
 	// host record the user saved. NewSshSession is a bound method the
 	// frontend can call with any request it likes, and a marshalled field
 	// here would make "type this into that machine" part of that surface.
-	StartupCommand string `json:"-"`
-	StartupDelayMs int    `json:"-"`
+	StartupCommand string                 `json:"-"`
+	StartupDelayMs int                    `json:"-"`
+	NetworkProxy   *sshclient.ProxyConfig `json:"-"`
 }
 
 // acceptedHostKey is the (host, fingerprint) pair the user agreed to, in the
@@ -279,6 +281,7 @@ type App struct {
 	cfgStore      *configStore
 	logger        *loggingManager
 	promptHistory *PromptHistoryStore
+	termiusImport atomic.Pointer[termiusImportState]
 
 	mu               sync.Mutex
 	uplink           *uplink

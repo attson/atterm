@@ -96,6 +96,17 @@ type ActiveForward struct {
 // one on connect would let opening a terminal grab 5432 while the user was not
 // thinking about tunnels at all.
 func (a *App) StartForward(hostID, ruleID string) error {
+	err := a.StartForwardWithHostKey(hostID, ruleID, AcceptedHostKey{})
+	var unknown *HostKeyUnknownError
+	if errors.As(err, &unknown) {
+		return tunnelHostKeyError(unknown)
+	}
+	return err
+}
+
+// StartForwardWithHostKey accepts only the exact host and fingerprint confirmed
+// by the user. Unknown keys on other hops still require their own confirmation.
+func (a *App) StartForwardWithHostKey(hostID, ruleID string, accepted AcceptedHostKey) error {
 	if a.cfgStore == nil {
 		return fmt.Errorf("config store not ready")
 	}
@@ -118,15 +129,15 @@ func (a *App) StartForward(hostID, ruleID string) error {
 	switch rule.Kind {
 	case forwardKindLocal:
 		return a.tunnels.startLocal(host, rule, func() (*jumpChain, error) {
-			return a.dialTunnelConn(host)
+			return a.dialTunnelConnWithHostKey(host, acceptedHostKey{Host: accepted.Host, Fingerprint: accepted.Fingerprint})
 		})
 	case forwardKindRemote:
 		return a.tunnels.startRemote(host, rule, func() (*jumpChain, error) {
-			return a.dialTunnelConn(host)
+			return a.dialTunnelConnWithHostKey(host, acceptedHostKey{Host: accepted.Host, Fingerprint: accepted.Fingerprint})
 		})
 	case forwardKindDynamic:
 		return a.tunnels.startDynamic(host, rule, func() (*jumpChain, error) {
-			return a.dialTunnelConn(host)
+			return a.dialTunnelConnWithHostKey(host, acceptedHostKey{Host: accepted.Host, Fingerprint: accepted.Fingerprint})
 		})
 	default:
 		return fmt.Errorf("unknown forward kind %q", rule.Kind)
@@ -213,7 +224,7 @@ func sshAuthForHost(h SSHHost) (sshclient.AuthMethod, error) {
 		return sshclient.PrivateKeyAuth{PEM: []byte(sec.PrivateKey), Passphrase: sec.Passphrase}, nil
 	default: // "password"
 		cred, err := sshCredentialSlot(h.ID).Load()
-		if err != nil || cred == (sshCredential{}) {
+		if err != nil || cred.Password == "" {
 			return nil, errors.New(errCredentialMissing)
 		}
 		return sshclient.PasswordAuth{Password: cred.Password}, nil
@@ -224,27 +235,21 @@ func sshAuthForHost(h SSHHost) (sshclient.AuthMethod, error) {
 // on: the host's jump hosts, if it has any, and the host itself last. A host
 // with no ProxyJump yields a one-element chain, so there is one shape here
 // rather than two.
-//
-// Unlike the terminal path there is no TOFU dialog behind this call, so nothing
-// is ever accepted (the zero acceptedHostKey) and an unknown host key is
-// refused outright with a message telling the user where the fingerprint can be
-// accepted. Silently trusting it would mean a background action pinning a key
-// the user never saw — and on a chain, pinning it for a machine they were never
-// even shown.
 func (a *App) dialTunnelConn(h SSHHost) (*jumpChain, error) {
+	chain, err := a.dialTunnelConnWithHostKey(h, acceptedHostKey{})
+	var unknown *HostKeyUnknownError
+	if errors.As(err, &unknown) {
+		return nil, tunnelHostKeyError(unknown)
+	}
+	return chain, err
+}
+
+func (a *App) dialTunnelConnWithHostKey(h SSHHost, accepted acceptedHostKey) (*jumpChain, error) {
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	chain, err := a.dialThroughJumps(ctx, h, acceptedHostKey{})
-	if err != nil {
-		var unknown *HostKeyUnknownError
-		if errors.As(err, &unknown) {
-			return nil, tunnelHostKeyError(unknown)
-		}
-		return nil, err
-	}
-	return chain, nil
+	return a.dialThroughJumps(ctx, h, accepted)
 }
 
 // tunnelHostKeyError turns the terminal path's TOFU prompt into the tunnel

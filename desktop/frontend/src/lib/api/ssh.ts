@@ -12,6 +12,8 @@ import type {
   SSHHost,
   SSHKey,
   SSHKeySecret,
+  TermiusImportPreview,
+  TermiusImportReport,
 } from "./_bindings";
 
 export type {
@@ -29,6 +31,10 @@ export type {
   SSHHost,
   SSHKey,
   SSHKeySecret,
+  TermiusHostPreview,
+  TermiusKeyPreview,
+  TermiusImportPreview,
+  TermiusImportReport,
 } from "./_bindings";
 
 // ACCEPT_NO_HOST_KEY is what a connection that has not been through a TOFU
@@ -85,15 +91,9 @@ export function importSSHHosts(hosts: SSHHost[]): Promise<number> {
   return bindings().ImportSSHHosts(hosts);
 }
 
-// startForward brings up one saved rule. Tunnels are only ever started
-// explicitly — a tunnel occupies a local port, so nothing auto-starts one on
-// connect. A ProxyJump host is fine as of roadmap item 27 — the tunnel rides
-// the same chain the terminal does. Rejects for a ProxyCommand host, for an
-// invalid rule, for a local port that is already taken, and for an unknown host
-// key on any hop (there is no dialog behind this call, so nothing is accepted
-// here — the message says to accept the fingerprints in a terminal first).
-export function startForward(hostID: string, ruleID: string): Promise<void> {
-  return bindings().StartForward(hostID, ruleID);
+// Unknown keys require explicit confirmation of the exact host/fingerprint pair.
+export function startForward(hostID: string, ruleID: string, accepted: AcceptedHostKey = { host: "", fingerprint: "" }): Promise<void> {
+  return bindings().StartForwardWithHostKey(hostID, ruleID, accepted);
 }
 
 // stopForward closes a running tunnel, and also clears an entry that already
@@ -196,4 +196,20 @@ export function deleteSSHKey(id: string): Promise<void> {
 // separately in the first place.
 export function revealSSHKey(id: string): Promise<SSHKeySecret> {
   return bindings().RevealSSHKey(id);
+}
+
+export function discoverTermiusProfiles(): Promise<string[]> {
+  return bindings().DiscoverTermiusProfiles();
+}
+export function selectTermiusDirectory(): Promise<string> {
+  return bindings().SelectTermiusDirectory();
+}
+export function previewTermiusImport(path: string, localKey: string): Promise<TermiusImportPreview> {
+  return bindings().PreviewTermiusImport(path, localKey);
+}
+export function cancelTermiusImport(token: string): Promise<void> {
+  return bindings().CancelTermiusImport(token);
+}
+export function importTermius(token: string, hostIDs: string[], keyIDs: string[]): Promise<TermiusImportReport> {
+  return bindings().ImportTermius(token, hostIDs, keyIDs);
 }

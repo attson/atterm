@@ -1,9 +1,12 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import {
-  Server, Plus, X, Pencil, Trash2, Search, Zap, KeyRound, Upload, FileUp, FileDown,
-  Network, Play, Square, RefreshCw, Eye, EyeOff, Copy,
+  Server, Plus, X, Pencil, Trash2, Search, KeyRound, Upload, FileUp, FileDown,
+  Network, LayoutGrid, List, ArrowDownWideNarrow, Square, RefreshCw, Eye, EyeOff, Copy, Folder, ChevronRight, ChevronDown, ArrowLeft,
 } from "lucide-vue-next";
+import { browseTunnels, type TunnelSort } from "../lib/sshTunnelBrowser";
+import TermiusImportDrawer from "./TermiusImportDrawer.vue";
+import type { TermiusImportReport } from "../lib/api";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
 import { readPrivateKeyFile } from "../lib/sshKeyFile";
@@ -84,29 +87,42 @@ onBeforeUnmount(() => {
 });
 
 // ---- Hosts ----
-// Tag filter narrows first (AND across the selected tags), then the free-text
-// query, which also searches tag names.
-const selectedTags = ref<string[]>([]);
+// A path is an array: labels containing slashes remain a single group name.
+const selectedGroupPath = ref<string[]>([]);
 const availableTags = computed(() => allHostTags(hosts.value));
-
+const sameGroupPath = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((part, i) => part === b[i]);
+const withinGroup = (path: string[], parent: string[]) =>
+  parent.every((part, i) => path[i] === part);
+const hostGroups = computed(() => {
+  const groups = new Map<string, number>();
+  for (const host of hosts.value) {
+    if (host.group_path?.length) {
+      if (!withinGroup(host.group_path, selectedGroupPath.value)) continue;
+      const child = host.group_path[selectedGroupPath.value.length];
+      if (child !== undefined) groups.set(child, (groups.get(child) ?? 0) + 1);
+    } else if (!selectedGroupPath.value.length) {
+      // Existing manually tagged hosts keep their previous flat navigation.
+      for (const tag of normalizeTags(host.tags ?? [])) groups.set(tag, (groups.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...groups].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name));
+});
 const filteredHosts = computed(() => {
   const q = query.value.trim().toLowerCase();
   return hosts.value.filter((h) => {
-    if (!hostHasAllTags(h.tags, selectedTags.value)) return false;
+    if (h.group_path?.length) {
+      if (q ? !withinGroup(h.group_path, selectedGroupPath.value) : !sameGroupPath(h.group_path, selectedGroupPath.value)) return false;
+    } else if (!hostHasAllTags(h.tags, selectedGroupPath.value)) return false;
     if (q === "") return true;
-    const haystack = `${h.alias ?? ""} ${h.host} ${h.user} ${(h.tags ?? []).join(" ")}`;
-    return haystack.toLowerCase().includes(q);
+    return `${h.alias ?? ""} ${h.host} ${h.user} ${(h.tags ?? []).join(" ")} ${(h.group_path ?? []).join(" ")}`.toLowerCase().includes(q);
   });
 });
-
-function toggleTagFilter(tag: string) {
-  const at = selectedTags.value.indexOf(tag);
-  selectedTags.value = at >= 0
-    ? selectedTags.value.filter((t) => t !== tag)
-    : [...selectedTags.value, tag];
+function enterGroup(tag: string) {
+  selectedGroupPath.value = [...selectedGroupPath.value, tag];
 }
-function clearTagFilters() {
-  selectedTags.value = [];
+function goToRoot() {
+  selectedGroupPath.value = [];
 }
 
 const keyOptions = computed<SelectOption[]>(() =>
@@ -183,28 +199,38 @@ function hostSubtitle(h: SSHHost): string {
 // ProxyCommand is still refused, and always will be: running an arbitrary
 // command to open a connection is an RCE surface atterm does not offer. This is
 // the one the list still has to stop before the click reaches Go.
-type ProxyFields = Pick<SSHHost, "proxy_jump" | "proxy_command">;
+type ProxyFields = Pick<SSHHost, "proxy_jump" | "proxy_command" | "proxy">;
 
 // runsProxyCommand is the *blocking* check, and the only one. It deliberately
 // does not look at proxy_jump: this predicate used to be `jump || command`, and
 // while it stayed that way the chain support was unreachable from the UI — the
 // panel short-circuited before the RPC, so a working backend never got asked.
 function runsProxyCommand(h: ProxyFields): boolean {
-  return !!h.proxy_command;
+  // Older desktop clients refuse this marker; current clients use metadata.
+  return !!h.proxy_command && !(h.proxy_command === "atterm:native-proxy:v1" && h.proxy);
 }
 // Whether the row carries a proxy marker at all — a chain to show, or a refusal.
 function hasProxyMarker(h: ProxyFields): boolean {
-  return !!(h.proxy_jump || h.proxy_command);
+  return !!(h.proxy_jump || h.proxy_command || h.proxy);
 }
 // Short pill text for the host row / preview row. Checks proxy_command first,
 // via runsProxyCommand: a host can carry both fields (sshconfig parses them
 // separately, and the importer keeps both), and ProxyCommand is the one that
 // blocks the connection. Reading proxy_jump first on such a host would show
 // the affirmative "via bastion" badge on a row Connect refuses to open.
+function jumpRouteLabel(route: string): string {
+  return route.split(',').map(part => {
+    const token = part.trim();
+    if (!token.startsWith('atterm-id:')) return token;
+    const host = hosts.value.find(h => h.id === token.slice('atterm-id:'.length));
+    return host?.alias || host?.host || t('ssh.termius.missingHop');
+  }).join(' → ');
+}
 function proxyLabel(h: ProxyFields): string {
+  if (!runsProxyCommand(h) && h.proxy) return `${h.proxy.kind.toUpperCase()} · ${h.proxy.host}:${h.proxy.port}`;
   return runsProxyCommand(h)
     ? t("ssh.proxy.commandBadge")
-    : t("ssh.proxy.jumpBadge", { target: h.proxy_jump ?? "" });
+    : t("ssh.proxy.jumpBadge", { target: jumpRouteLabel(h.proxy_jump ?? "") });
 }
 // Full sentence for tooltips and the error line. Same ordering as
 // proxyLabel, and for the same reason: a host with both fields set must read
@@ -214,27 +240,32 @@ function proxyReason(h: ProxyFields): string {
   if (runsProxyCommand(h)) {
     return t("ssh.proxy.commandReason", { command: h.proxy_command ?? "" });
   }
+  if (h.proxy) return t("ssh.termius.proxyRoute", { route: proxyLabel(h) });
   if (h.proxy_jump) {
-    return t("ssh.proxy.jumpReason", { target: h.proxy_jump });
+    return t("ssh.proxy.jumpReason", { target: jumpRouteLabel(h.proxy_jump) });
   }
   return "";
 }
 
 // ---- Unknown host keys (TOFU) ----
-// Until item 27 this panel had no answer to an unknown host key: the rejection
-// arrived, its message was the bare `ssh_host_key_unknown` sentinel, and it went
-// into the error line as that literal string. The flow dead-ended there, and so
-// did the tunnel tab — StartForward refuses unknown keys and tells the user to
-// accept the fingerprint in a terminal first, advice a saved host made
-// impossible to follow.
-//
-// A chain raises the stakes: every hop is verified separately, so every hop can
-// ask, and the user sees an unfamiliar fingerprint with no way to tell the
-// destination from a bastion on the way to it. Accepting a key without knowing
-// whose it is turns TOFU into a formality — permanently, because the accepted
-// key is written into known_hosts and never asked about again. Hence the
-// wording below names the machine.
-const hostKey = ref<{ host: SSHHost; prompt: HostKeyPrompt } | null>(null);
+// Each hop asks separately; retain the intended action across confirmations.
+type HostKeyConfirmation = { host: SSHHost; prompt: HostKeyPrompt; rule?: ForwardRule };
+// Concurrent tunnel attempts can each ask about a different host. Keep every
+// question until answered rather than letting the last response replace it.
+const hostKeyQueue = ref<HostKeyConfirmation[]>([]);
+const hostKey = computed(() => hostKeyQueue.value[0] ?? null);
+function queueHostKey(state: HostKeyConfirmation) {
+  const index = hostKeyQueue.value.findIndex((pending) => pending.host.id === state.host.id && pending.rule?.id === state.rule?.id);
+  if (index >= 0) hostKeyQueue.value[index] = state;
+  else hostKeyQueue.value.push(state);
+}
+function clearHostKey(hostID: string, ruleID?: string) {
+  hostKeyQueue.value = hostKeyQueue.value.filter((pending) => pending.host.id !== hostID || pending.rule?.id !== ruleID);
+}
+const hostKeyBusy = computed(() => {
+  const state = hostKey.value;
+  return state?.rule ? isForwardBusy(state.host.id, state.rule.id) : !!connectingId.value;
+});
 
 // jumpLabel mirrors Go's sshHostLabel (desktop/ssh_jump.go): the alias when
 // there is one, the hostname otherwise. HopName comes out of that function, so
@@ -267,14 +298,17 @@ const hostKeyMessage = computed(() => {
 // which looks exactly like the dialog refusing to go away.
 function acceptHostKey() {
   const state = hostKey.value;
-  if (!state) return;
-  void connect(state.host.id, {
+  if (!state || hostKeyBusy.value) return;
+  hostKeyQueue.value.shift();
+  const accepted = {
     host: state.prompt.host,
     fingerprint: state.prompt.fingerprint,
-  });
+  };
+  if (state.rule) void startRule(state.host, state.rule, accepted);
+  else void connect(state.host.id, accepted);
 }
 function rejectHostKey() {
-  hostKey.value = null;
+  hostKeyQueue.value.shift();
 }
 
 // accepted defaults to the pair that matches nothing, so every affordance that
@@ -290,20 +324,19 @@ async function connect(id: string, accepted: AcceptedHostKey = { host: "", finge
     errorMsg.value = proxyReason(target);
     return;
   }
+  clearHostKey(id);
   connectingId.value = id;
   try {
     const resp = await newSshSessionByID(id, accepted);
-    hostKey.value = null;
     emit("connected", resp.session_id);
   } catch (e) {
     // A prompt arriving *after* an acceptance is the next hop asking, not the
     // one just answered — so replace the question rather than closing it.
     const prompt = parseHostKeyPrompt(e);
     if (prompt && target) {
-      hostKey.value = { host: target, prompt };
+      queueHostKey({ host: target, prompt });
       return;
     }
-    hostKey.value = null;
     errorMsg.value = e instanceof Error ? e.message : String(e);
   } finally {
     connectingId.value = "";
@@ -486,6 +519,7 @@ async function saveHost() {
     port: fPort.value.trim() || "22",
     user: fUser.value.trim(),
     tags: fTags.value,
+    group_path: editingHost.value?.group_path ?? [...selectedGroupPath.value],
     auth_kind: fAuthKind.value,
     key_id: fAuthKind.value === "key" ? fKeyID.value : undefined,
     // Same ownership rule as forwards below: the drawer has a control for
@@ -622,7 +656,10 @@ function forwardBindWarning(r: ForwardRule): string {
 
 // ---- Port forwarding: active tunnels (Tunnels tab) ----
 const activeForwards = ref<ActiveForward[]>([]);
-const forwardBusyKey = ref("");
+const forwardOperations = ref(new Map<string, "starting" | "stopping">());
+function isForwardBusy(hostID: string, ruleID: string): boolean {
+  return forwardOperations.value.has(forwardKey(hostID, ruleID));
+}
 
 function forwardKey(hostID: string, ruleID: string): string {
   return `${hostID}/${ruleID}`;
@@ -653,8 +690,35 @@ function isForwardRunning(hostID: string, ruleID: string): boolean {
   return forwardState(hostID, ruleID)?.running === true;
 }
 
-const forwardHosts = computed(() => hosts.value.filter((h) => (h.forwards?.length ?? 0) > 0));
-const runningForwardCount = computed(() => activeForwards.value.filter((a) => a.running).length);
+const forwardRows = computed(() => hosts.value.flatMap((host) =>
+  (host.forwards ?? []).map((rule) => ({ host, rule })),
+));
+const savedForwardCount = computed(() => forwardRows.value.length);
+
+const tunnelQuery = ref("");
+function readTunnelPreference(key: string, allowed: string[], fallback: string): string {
+  try { const saved = localStorage.getItem(key); return saved && allowed.includes(saved) ? saved : fallback; }
+  catch { return fallback; }
+}
+const tunnelLayout = ref(readTunnelPreference("atterm.ssh.tunnels.layout", ["grid", "list"], "grid"));
+const tunnelSort = ref(readTunnelPreference("atterm.ssh.tunnels.sort", ["newest", "oldest", "name-asc", "name-desc"], "newest"));
+watch([tunnelLayout, tunnelSort], ([layout, sort]) => {
+  try {
+    localStorage.setItem("atterm.ssh.tunnels.layout", layout);
+    localStorage.setItem("atterm.ssh.tunnels.sort", sort);
+  } catch { /* Browsing remains available when browser storage is disabled. */ }
+});
+const tunnelLayoutOptions = computed<SelectOption[]>(() => [
+  { value: "grid", label: t("ssh.forwards.layoutGrid") },
+  { value: "list", label: t("ssh.forwards.layoutList") },
+]);
+const tunnelSortOptions = computed<SelectOption[]>(() => [
+  { value: "name-asc", label: t("ssh.forwards.sortNameAsc") },
+  { value: "name-desc", label: t("ssh.forwards.sortNameDesc") },
+  { value: "newest", label: t("ssh.forwards.sortNewest") },
+  { value: "oldest", label: t("ssh.forwards.sortOldest") },
+]);
+const visibleForwardRows = computed(() => browseTunnels(forwardRows.value, tunnelQuery.value, tunnelSort.value as TunnelSort));
 
 function forwardKindLabel(kind: string): string {
   if (kind === "remote") return t("ssh.forwards.kindRemote");
@@ -683,11 +747,15 @@ function forwardTargetText(h: SSHHost, r: ForwardRule): string {
   return `${(r.target_host ?? "").trim()}:${(r.target_port ?? "").trim()}`;
 }
 function forwardStateLabel(h: SSHHost, r: ForwardRule): string {
+  const operation = forwardOperations.value.get(forwardKey(h.id, r.id));
+  if (operation) return t(operation === "starting" ? "ssh.forwards.stateConnecting" : "ssh.forwards.stateStopping");
+  if (hostKeyQueue.value.some((pending) => pending.host.id === h.id && pending.rule?.id === r.id)) return t("ssh.forwards.stateConfirm");
   const a = forwardState(h.id, r.id);
   if (!a) return t("ssh.forwards.stateIdle");
   return a.running ? t("ssh.forwards.stateRunning") : t("ssh.forwards.stateStopped");
 }
 function forwardStateClass(h: SSHHost, r: ForwardRule): string {
+  if (isForwardBusy(h.id, r.id)) return "connecting";
   const a = forwardState(h.id, r.id);
   if (!a) return "idle";
   return a.running ? "running" : "stopped";
@@ -696,37 +764,43 @@ function forwardStateClass(h: SSHHost, r: ForwardRule): string {
 // startRule is the only thing that brings a tunnel up — nothing starts on
 // connect (§5.3), because a tunnel occupies a local port and opening a
 // terminal must not silently grab 5432.
-async function startRule(h: SSHHost, r: ForwardRule) {
+async function startRule(h: SSHHost, r: ForwardRule, accepted?: AcceptedHostKey) {
   // Only ProxyCommand is refused here. A ProxyJump host's tunnel rides the same
   // chain the terminal does (item 27), and this guard blocking it would make
   // the UI refuse something the backend does — the greyed button would be the
   // whole reason the feature looked unimplemented.
-  if (runsProxyCommand(h) || forwardBusyKey.value) return;
+  if (runsProxyCommand(h) || isForwardBusy(h.id, r.id) || isForwardRunning(h.id, r.id)) return;
   errorMsg.value = "";
-  forwardBusyKey.value = forwardKey(h.id, r.id);
+  clearHostKey(h.id, r.id);
+  forwardOperations.value.set(forwardKey(h.id, r.id), "starting");
   try {
-    await startForward(h.id, r.id);
+    await startForward(h.id, r.id, accepted);
   } catch (e) {
+    const prompt = parseHostKeyPrompt(e);
+    if (prompt) {
+      queueHostKey({ host: h, rule: r, prompt });
+      return;
+    }
     errorMsg.value = e instanceof Error ? e.message : String(e);
   } finally {
-    forwardBusyKey.value = "";
     await refreshActiveForwards();
+    forwardOperations.value.delete(forwardKey(h.id, r.id));
   }
 }
 
 // stopRule closes a running tunnel and also clears an entry that already
 // stopped by itself, which is why the dead-tunnel row offers it as "dismiss".
 async function stopRule(h: SSHHost, r: ForwardRule) {
-  if (forwardBusyKey.value) return;
+  if (isForwardBusy(h.id, r.id)) return;
   errorMsg.value = "";
-  forwardBusyKey.value = forwardKey(h.id, r.id);
+  forwardOperations.value.set(forwardKey(h.id, r.id), "stopping");
   try {
     await stopForward(h.id, r.id);
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : String(e);
   } finally {
-    forwardBusyKey.value = "";
     await refreshActiveForwards();
+    forwardOperations.value.delete(forwardKey(h.id, r.id));
   }
 }
 
@@ -1017,6 +1091,30 @@ async function removeKey(id: string) {
   }
 }
 
+const importMenu = ref({ open: false, x: 0, y: 0 });
+const importMenuItems = computed<MenuItem[]>(() => [
+  { key: "ssh-config", label: t("ssh.configImport.open") },
+  { key: "termius", label: t("ssh.termius.open") },
+]);
+function toggleImportMenu(event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  importMenu.value = { open: !importMenu.value.open, x: rect.left, y: rect.bottom + 6 };
+}
+function selectImportSource(source: string) {
+  importMenu.value.open = false;
+  if (source === "ssh-config") void openConfigImport();
+  else if (source === "termius") termiusDrawer.value = true;
+}
+watch(activeTab, () => { importMenu.value.open = false; });
+
+const termiusDrawer = ref(false);
+const termiusResult = ref<TermiusImportReport | null>(null);
+async function onTermiusImported(report: TermiusImportReport) {
+  termiusDrawer.value = false;
+  termiusResult.value = report;
+  await reload();
+}
+
 // ---- ssh_config import ----
 // Two-step preview/import (design doc §5.1): PreviewSSHConfigImport only
 // reads ~/.ssh/config, ImportSSHHosts only writes what the user explicitly
@@ -1123,7 +1221,7 @@ async function confirmConfigImport() {
           <button
             class="tab" :class="{ on: activeTab === 'tunnels' }"
             data-test="ssh-tab-tunnels" @click="openTunnelsTab"
-          ><Network :size="14" /> {{ t("ssh.forwards.tab") }} <span class="tab-count">{{ runningForwardCount }}</span></button>
+          ><Network :size="14" /> {{ t("ssh.forwards.tab") }} <span class="tab-count">{{ savedForwardCount }}</span></button>
         </div>
         <div v-if="activeTab === 'hosts'" class="search">
           <Search :size="13" class="search-icon" />
@@ -1132,9 +1230,10 @@ async function confirmConfigImport() {
         <div v-else class="search-spacer" />
         <button
           v-if="activeTab === 'hosts'" class="new-btn ghost"
-          data-test="ssh-config-import-open" @click="openConfigImport"
+          data-test="ssh-import-open" aria-haspopup="menu" :aria-expanded="importMenu.open"
+          @click="toggleImportMenu"
         >
-          <FileDown :size="14" /> {{ t("ssh.configImport.open") }}
+          <FileDown :size="14" /> {{ t("ssh.import") }} <ChevronDown :size="12" />
         </button>
         <button v-if="activeTab === 'hosts'" class="new-btn" data-test="ssh-new-host" @click="openNewHost">
           <Plus :size="14" /> {{ t("ssh.newHost") }}
@@ -1163,17 +1262,21 @@ async function confirmConfigImport() {
       <div v-if="hostKey" class="ssh-tofu" data-test="ssh-host-tofu">
         <p class="tofu-title">{{ t("ssh.hostKey.title") }}</p>
         <p class="tofu-msg">{{ hostKeyMessage }}</p>
+        <code class="tofu-host">{{ hostKey.prompt.host }}</code>
         <code class="tofu-fp">{{ hostKey.prompt.fingerprint }}</code>
         <p v-if="hostKey.prompt.hopIndex > 0" class="tofu-note">{{ t("ssh.hostKey.chainNote") }}</p>
         <div class="tofu-actions">
-          <button data-test="ssh-host-reject-hostkey" @click="rejectHostKey">
+          <button data-test="ssh-host-reject-hostkey" :disabled="hostKeyBusy" @click="rejectHostKey">
             {{ t("ssh.hostKey.reject") }}
           </button>
-          <button class="new-btn" data-test="ssh-host-accept-hostkey" @click="acceptHostKey">
+          <button class="new-btn" data-test="ssh-host-accept-hostkey" :disabled="hostKeyBusy" @click="acceptHostKey">
             {{ t("ssh.hostKey.accept") }}
           </button>
         </div>
       </div>
+      <p v-if="termiusResult" class="ssh-success" data-test="ssh-termius-import-result">
+        {{ t("ssh.termius.result", { hosts: termiusResult.hosts, keys: termiusResult.keys, skipped: termiusResult.skipped }) }}
+      </p>
       <p v-if="configImportResult !== null" class="ssh-success" data-test="ssh-config-import-result">
         {{ t("ssh.importedHosts", { count: configImportResult }) }}
       </p>
@@ -1187,27 +1290,44 @@ async function confirmConfigImport() {
           <button class="new-btn ghost" @click="openNewHost"><Plus :size="14" /> {{ t("ssh.newHost") }}</button>
         </div>
         <template v-else>
-          <div v-if="availableTags.length" class="tag-bar" data-test="ssh-tag-filter-bar">
-            <button
-              v-for="tag in availableTags" :key="tag"
-              class="tag-pill" :class="{ on: selectedTags.includes(tag) }"
-              :data-test="`ssh-tag-filter-${tag}`" @click="toggleTagFilter(tag)"
-            >{{ tag }}</button>
-            <button
-              v-if="selectedTags.length" class="tag-clear"
-              data-test="ssh-tag-filter-clear" @click="clearTagFilters"
-            ><X :size="11" /> {{ t("ssh.hosts.clearTags") }}</button>
-          </div>
-          <div v-if="filteredHosts.length === 0" class="empty" data-test="ssh-hosts-no-match">
+          <nav v-if="selectedGroupPath.length" class="host-breadcrumb" :aria-label="t('ssh.hosts.groups')">
+            <button data-test="ssh-tag-filter-clear" @click="goToRoot">
+              <ArrowLeft :size="14" /> {{ t("ssh.hosts.allHosts") }}
+            </button>
+            <template v-for="(part, index) in selectedGroupPath" :key="index">
+              <ChevronRight :size="14" />
+              <span v-if="index === selectedGroupPath.length - 1" aria-current="page">{{ part }}</span>
+              <button v-else :data-test="`ssh-group-ancestor-${index}`" @click="selectedGroupPath = selectedGroupPath.slice(0, index + 1)">{{ part }}</button>
+            </template>
+          </nav>
+          <section v-if="hostGroups.length" class="host-groups" data-test="ssh-tag-filter-bar">
+            <h3 class="host-section-title">{{ t("ssh.hosts.groups") }} <span>{{ hostGroups.length }}</span></h3>
+            <div class="group-grid">
+              <button
+                v-for="group in hostGroups" :key="group.name" class="group-card"
+                :data-test="`ssh-tag-filter-${group.name}`" @click="enterGroup(group.name)"
+              >
+                <span class="group-glyph"><Folder :size="20" /></span>
+                <span class="group-main">
+                  <span class="group-name" v-tooltip="group.name">{{ group.name }}</span>
+                  <span class="group-count">{{ t("ssh.hosts.hostCount", { count: group.count }) }}</span>
+                </span>
+                <ChevronRight :size="14" class="group-chevron" />
+              </button>
+            </div>
+          </section>
+          <h3 class="host-section-title">{{ t("ssh.hosts.hostList") }} <span>{{ filteredHosts.length }}</span></h3>
+          <div v-if="filteredHosts.length === 0 && (!hostGroups.length || query.trim())" class="empty" data-test="ssh-hosts-no-match">
             <Server :size="40" class="empty-icon" />
             <p class="empty-title">{{ t("ssh.hosts.noMatchTitle") }}</p>
             <p class="empty-sub">{{ t("ssh.hosts.noMatchSub") }}</p>
           </div>
-            <div v-else class="card-grid">
+            <div v-if="filteredHosts.length" class="card-grid host-grid">
               <article
-                v-for="h in filteredHosts" :key="h.id" class="card"
+                v-for="h in filteredHosts" :key="h.id" class="card host-card"
                 :data-test="`ssh-host-card-${h.id}`"
-                :class="{ busy: connectingId === h.id }" @dblclick="connect(h.id)"
+                :class="{ busy: connectingId === h.id }" tabindex="0"
+                @keydown.enter.self.prevent="connect(h.id)" @dblclick="connect(h.id)"
                 @contextmenu.prevent="openHostMenu($event, h)"
               >
                 <div class="card-glyph">
@@ -1215,7 +1335,7 @@ async function confirmConfigImport() {
                   <Server v-else :size="16" />
                 </div>
                 <div class="card-main">
-                  <div class="card-label">{{ hostLabel(h) }}</div>
+                  <div class="card-label" v-tooltip="hostLabel(h)">{{ hostLabel(h) }}</div>
                   <div class="card-sub">{{ hostSubtitle(h) }}</div>
                   <div v-if="hasProxyMarker(h)" class="card-proxy">
                     <span
@@ -1231,14 +1351,7 @@ async function confirmConfigImport() {
                     >{{ tag }}</span>
                   </div>
                 </div>
-                <div class="card-actions">
-                  <button
-                    class="act connect" :data-test="`ssh-connect-${h.id}`"
-                    :disabled="connectingId === h.id || runsProxyCommand(h)"
-                    v-tooltip="proxyReason(h) || t('common.connect')"
-                    :aria-label="proxyReason(h) || t('common.connect')"
-                    @click.stop="connect(h.id)"
-                  ><Zap :size="13" /></button>
+                <div class="card-actions" @dblclick.stop>
                   <button class="act" v-tooltip="t('ssh.edit')" :aria-label="t('ssh.edit')" @click.stop="openEditHost(h)"><Pencil :size="13" /></button>
                   <button class="act danger" :data-test="`ssh-delete-${h.id}`" v-tooltip="t('common.delete')" :aria-label="t('common.delete')" @click.stop="removeHost(h.id)"><Trash2 :size="13" /></button>
                 </div>
@@ -1256,15 +1369,15 @@ async function confirmConfigImport() {
           <button class="new-btn ghost" @click="openNewKey"><Plus :size="14" /> {{ t("ssh.newKey") }}</button>
         </div>
         <div v-else class="card-grid">
-          <article v-for="k in keys" :key="k.id" class="card">
+          <article v-for="k in keys" :key="k.id" class="card key-card" tabindex="0">
             <div class="card-glyph"><KeyRound :size="16" /></div>
             <div class="card-main">
               <div class="card-label">{{ k.name }}</div>
               <div class="card-sub">{{ k.key_type ? t("ssh.keys.typeLabel", { type: k.key_type }) : t("ssh.keys.genericSubtitle") }}</div>
             </div>
             <div class="card-actions">
-              <button class="act" :data-test="`ssh-key-edit-${k.id}`" v-tooltip="t('ssh.edit')" :aria-label="t('ssh.edit')" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
-              <button class="act danger" :data-test="`ssh-key-delete-${k.id}`" v-tooltip="t('common.delete')" :aria-label="t('common.delete')" @click.stop="removeKey(k.id)"><Trash2 :size="13" /></button>
+              <button class="act hover-action" :data-test="`ssh-key-edit-${k.id}`" v-tooltip="t('ssh.edit')" :aria-label="t('ssh.edit')" @click.stop="openEditKey(k)"><Pencil :size="13" /></button>
+              <button class="act danger hover-action" :data-test="`ssh-key-delete-${k.id}`" v-tooltip="t('common.delete')" :aria-label="t('common.delete')" @click.stop="removeKey(k.id)"><Trash2 :size="13" /></button>
             </div>
           </article>
         </div>
@@ -1272,7 +1385,24 @@ async function confirmConfigImport() {
 
       <!-- TUNNELS TAB -->
       <div v-show="activeTab === 'tunnels'" class="ssh-body">
-        <div v-if="forwardHosts.length === 0" class="empty" data-test="ssh-tunnels-empty">
+        <div v-if="forwardRows.length" class="tunnel-toolbar">
+          <div class="search tunnel-search">
+            <Search :size="13" class="search-icon" />
+            <input v-model="tunnelQuery" data-test="ssh-tunnel-search" :placeholder="t('ssh.forwards.searchPlaceholder')" :aria-label="t('ssh.forwards.searchPlaceholder')" autocomplete="off" spellcheck="false" />
+            <button v-if="tunnelQuery" class="close-x" :aria-label="t('ssh.forwards.clearSearch')" @click="tunnelQuery = ''"><X :size="13" /></button>
+          </div>
+          <div class="tunnel-view-controls">
+            <div class="tunnel-view-control">
+              <LayoutGrid v-if="tunnelLayout === 'grid'" :size="14" /><List v-else :size="14" />
+              <SelectDropdown v-model="tunnelLayout" :options="tunnelLayoutOptions" :aria-label="t('ssh.forwards.layout')" data-test="ssh-tunnel-layout" />
+            </div>
+            <div class="tunnel-view-control tunnel-sort-control">
+              <ArrowDownWideNarrow :size="14" />
+              <SelectDropdown v-model="tunnelSort" :options="tunnelSortOptions" :aria-label="t('ssh.forwards.sort')" data-test="ssh-tunnel-sort" />
+            </div>
+          </div>
+        </div>
+        <div v-if="forwardRows.length === 0" class="empty" data-test="ssh-tunnels-empty">
           <Network :size="40" class="empty-icon" />
           <p class="empty-title">{{ t("ssh.forwards.emptyTitle") }}</p>
           <p class="empty-sub">{{ t("ssh.forwards.emptySub") }}</p>
@@ -1281,47 +1411,34 @@ async function confirmConfigImport() {
             data-test="ssh-tunnel-new-empty" @click="openNewTunnel"
           ><Plus :size="14" /> {{ t("ssh.forwards.new") }}</button>
         </div>
-        <section
-          v-for="h in forwardHosts" :key="h.id" class="fwd-host"
-          :data-test="`ssh-tunnel-host-${h.id}`"
-        >
-          <header class="fwd-host-head">
-            <span class="fwd-host-name">{{ hostLabel(h) }}</span>
-            <span class="fwd-host-sub">{{ h.user }}@{{ h.host }}</span>
-            <span
-              v-if="hasProxyMarker(h)" class="proxy-badge"
-              :class="{ blocked: runsProxyCommand(h) }"
-              :data-test="`ssh-tunnel-proxy-${h.id}`"
-              v-tooltip="proxyReason(h)"
-            >{{ proxyLabel(h) }}</span>
-          </header>
-          <!-- Spelled out, not just a tooltip on a greyed button: the reason a
-               tunnel cannot start here has nothing to do with the rule. Only a
-               ProxyCommand host is blocked now — a ProxyJump host's tunnel goes
-               through the same chain the terminal does, so saying it cannot
-               start would be false. -->
-          <p
-            v-if="runsProxyCommand(h)" class="fwd-proxy-reason"
-            :data-test="`ssh-tunnel-proxy-reason-${h.id}`"
-          >{{ t("ssh.forwards.proxyBlocked") }} {{ proxyReason(h) }}</p>
-          <!-- One card per rule, same grid the Hosts and Keys tabs use. The
-               host heading above stays: a rule is only meaningful together
-               with the machine its tunnel rides, and the cards alone would
-               not say which one that is. -->
-          <div class="card-grid">
+        <div v-else-if="!visibleForwardRows.length" class="empty tunnel-no-match" data-test="ssh-tunnels-no-match">
+          <Search :size="32" class="empty-icon" />
+          <p class="empty-title">{{ t("ssh.forwards.noMatch") }}</p>
+          <button class="new-btn ghost" @click="tunnelQuery = ''">{{ t("ssh.forwards.clearSearch") }}</button>
+        </div>
+        <div v-else class="card-grid" :class="{ 'tunnel-list': tunnelLayout === 'list' }" data-test="ssh-tunnel-grid">
             <article
-              v-for="r in h.forwards" :key="r.id" class="card fwd-card"
-              :data-test="`ssh-tunnel-row-${h.id}-${r.id}`"
+              v-for="{ host: h, rule: r } in visibleForwardRows" :key="`${h.id}:${r.id}`" class="card fwd-card"
+              :data-test="`ssh-tunnel-row-${h.id}-${r.id}`" :aria-busy="isForwardBusy(h.id, r.id)" tabindex="0"
+              @dblclick="startRule(h, r)" @keydown.enter.self.prevent="startRule(h, r)"
             >
               <div class="card-glyph"><Network :size="16" /></div>
               <div class="card-main">
                 <div class="card-label">
-                  <span class="fwd-kind">{{ forwardKindLabel(r.kind) }}</span>
-                  <span v-if="r.note" class="fwd-note">{{ r.note }}</span>
+                  <span class="fwd-note" v-tooltip="r.note">{{ r.note || t("ssh.forwards.tab") }}</span>
+                  <span v-if="r.kind !== 'local'" class="fwd-kind">{{ forwardKindLabel(r.kind) }}</span>
                 </div>
-                <div class="card-sub fwd-route">
-                  {{ forwardListenText(h, r) }} → {{ forwardTargetText(h, r) }}
+                <div class="card-sub fwd-route" v-tooltip="`${forwardListenText(h, r)} → ${hostLabel(h)} (${h.user}@${h.host}) → ${forwardTargetText(h, r)}`">
+                  {{ forwardListenText(h, r) }} → {{ hostLabel(h) }} → {{ forwardTargetText(h, r) }}
                 </div>
+                <div v-if="hasProxyMarker(h)" class="card-proxy">
+                  <span class="proxy-badge" :class="{ blocked: runsProxyCommand(h) }"
+                    :data-test="`ssh-tunnel-proxy-${h.id}`" v-tooltip="proxyReason(h)"
+                  >{{ proxyLabel(h) }}</span>
+                </div>
+                <p v-if="runsProxyCommand(h)" class="fwd-proxy-reason"
+                  :data-test="`ssh-tunnel-proxy-reason-${h.id}`"
+                >{{ t("ssh.forwards.proxyBlocked") }} {{ proxyReason(h) }}</p>
                 <div v-if="forwardState(h.id, r.id)" class="fwd-row-conns">
                   {{ t("ssh.forwards.conns", { count: forwardState(h.id, r.id)?.conns ?? 0 }) }}
                 </div>
@@ -1331,11 +1448,11 @@ async function confirmConfigImport() {
                 >{{ forwardState(h.id, r.id)?.error }}</p>
               </div>
               <div class="fwd-card-side">
-                <span
-                  class="fwd-state" :class="forwardStateClass(h, r)"
-                  :data-test="`ssh-tunnel-state-${h.id}-${r.id}`"
-                >{{ forwardStateLabel(h, r) }}</span>
-                <div class="card-actions">
+                <div class="fwd-status" @dblclick.stop>
+                  <span
+                    class="fwd-state" :class="forwardStateClass(h, r)"
+                    :data-test="`ssh-tunnel-state-${h.id}-${r.id}`"
+                  >{{ forwardStateLabel(h, r) }}</span>
                   <!-- A stopped-with-an-error entry gets a restart and a
                        dismiss, never a stop: its listener is already gone. -->
                   <button
@@ -1343,41 +1460,39 @@ async function confirmConfigImport() {
                     :data-test="`ssh-tunnel-stop-${h.id}-${r.id}`"
                     v-tooltip="t('ssh.forwards.stop')"
                     :aria-label="t('ssh.forwards.stop')"
-                    :disabled="forwardBusyKey !== ''"
+                    :disabled="isForwardBusy(h.id, r.id)"
                     @click="stopRule(h, r)"
                   ><Square :size="13" /></button>
                   <template v-else>
-                    <button
-                      class="act connect"
-                      :data-test="`ssh-tunnel-start-${h.id}-${r.id}`"
-                      v-tooltip="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
-                      :aria-label="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
-                      :disabled="runsProxyCommand(h) || forwardBusyKey !== ''"
-                      @click="startRule(h, r)"
-                    ><Play :size="13" /></button>
                     <button
                       v-if="forwardState(h.id, r.id)" class="act"
                       :data-test="`ssh-tunnel-dismiss-${h.id}-${r.id}`"
                       v-tooltip="t('ssh.forwards.dismiss')"
                       :aria-label="t('ssh.forwards.dismiss')"
-                      :disabled="forwardBusyKey !== ''"
+                      :disabled="isForwardBusy(h.id, r.id)"
                       @click="stopRule(h, r)"
                     ><X :size="13" /></button>
                   </template>
+                </div>
+                <div class="card-actions" @dblclick.stop>
                   <button
-                    class="act" :data-test="`ssh-tunnel-edit-${h.id}-${r.id}`"
+                    class="act hover-action" :data-test="`ssh-tunnel-edit-${h.id}-${r.id}`"
                     v-tooltip="t('ssh.edit')" :aria-label="t('ssh.edit')" @click="openEditTunnel(h, r)"
                   ><Pencil :size="13" /></button>
                   <button
-                    class="act danger" :data-test="`ssh-tunnel-delete-${h.id}-${r.id}`"
+                    class="act danger hover-action" :data-test="`ssh-tunnel-delete-${h.id}-${r.id}`"
                     v-tooltip="t('common.delete')" :aria-label="t('common.delete')" @click="removeTunnelRule(h, r)"
                   ><Trash2 :size="13" /></button>
                 </div>
               </div>
             </article>
-          </div>
-        </section>
+        </div>
       </div>
+
+      <SessionRowMenu
+        :open="importMenu.open" :x="importMenu.x" :y="importMenu.y" :items="importMenuItems"
+        @close="importMenu.open = false" @select="selectImportSource"
+      />
 
       <SessionRowMenu
         :open="hostMenu.open" :x="hostMenu.x" :y="hostMenu.y" :items="hostMenuItems"
@@ -1838,6 +1953,7 @@ async function confirmConfigImport() {
           </div>
         </aside>
       </transition>
+      <TermiusImportDrawer v-if="termiusDrawer" @close="termiusDrawer = false" @imported="onTermiusImported" />
     </div>
   </div>
 </template>
@@ -1857,7 +1973,7 @@ async function confirmConfigImport() {
   display: flex; flex-direction: column;
 }
 .ssh-header {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
 }
 .tabs { display: flex; gap: 4px; }
@@ -1870,10 +1986,10 @@ async function confirmConfigImport() {
 .tab:hover { color: var(--fg); }
 .tab.on { color: var(--fg); background: var(--bg); border-color: var(--border); }
 .tab-count { font-size: 10px; color: var(--fg-dim); background: rgba(139,148,158,0.16); padding: 1px 6px; border-radius: 999px; }
-.search { flex: 1; max-width: 360px; display: flex; align-items: center; gap: 7px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 0 10px; }
+.search { flex: 1 1 180px; min-width: 120px; max-width: 360px; display: flex; align-items: center; gap: 7px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 0 10px; }
 .search-spacer { flex: 1; }
 .search-icon { color: var(--fg-dim); flex: none; }
-.search input { flex: 1; background: transparent; border: none; outline: none; color: var(--fg); font-size: 13px; padding: 7px 0; }
+.search input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--fg); font-size: 13px; padding: 7px 0; }
 .new-btn { display: inline-flex; align-items: center; gap: 5px; background: var(--accent); color: #04101f; border: none; font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 7px; cursor: pointer; transition: filter 120ms; }
 .new-btn:hover { filter: brightness(1.1); }
 .new-btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
@@ -1890,24 +2006,43 @@ async function confirmConfigImport() {
 .ssh-tofu .tofu-title { font-weight: 600; color: var(--warn, #d29922); }
 .ssh-tofu .tofu-msg { color: var(--fg); }
 .ssh-tofu .tofu-note { color: var(--fg-dim); font-size: 11px; }
+.ssh-tofu .tofu-host { font-size: 12px; word-break: break-all; color: var(--fg-dim); }
 .ssh-tofu .tofu-fp { font-size: 12px; word-break: break-all; color: var(--fg); }
 .ssh-tofu .tofu-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .ssh-success { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--good, #3fb950); background: rgba(63, 185, 80, 0.08); border-bottom: 1px solid rgba(63, 185, 80, 0.2); }
 .ssh-body { flex: 1; overflow-y: auto; padding: 18px 16px 24px; }
-.tag-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 2px 14px; }
-.tag-pill {
-  background: var(--panel); border: 1px solid var(--border); color: var(--fg-dim);
-  font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
-  transition: color 120ms, border-color 120ms, background 120ms;
+.host-section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--fg); }
+.host-section-title > span { color: var(--fg-dim); font-size: 12px; font-weight: 400; }
+.host-groups { margin-bottom: 26px; }
+.group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 10px; }
+.group-card { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; color: var(--fg); text-align: left; cursor: pointer; }
+.group-card:hover { border-color: var(--accent); }
+.group-glyph { display: flex; align-items: center; justify-content: center; flex: none; width: 38px; height: 38px; border-radius: 8px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.group-main { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.group-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group-count { font-size: 12px; color: var(--fg-dim); }
+.group-chevron { flex: none; color: var(--fg-dim); }
+.host-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 22px; color: var(--fg-dim); font-size: 13px; }
+.host-breadcrumb button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; background: transparent; border: none; padding: 0 4px; color: var(--fg-dim); font: inherit; cursor: pointer; }
+.host-breadcrumb button:hover { color: var(--fg); }
+.host-breadcrumb > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.group-card:focus-visible, .host-card:focus-visible, .host-breadcrumb button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.host-grid { grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); }
+.host-card { min-height: 74px; align-items: flex-start; border-radius: 8px; }
+.host-card:hover { transform: none; box-shadow: none; }
+.host-card .card-glyph { width: 38px; height: 38px; border: none; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.host-card .card-sub { font-size: 12px; }
+.host-card .card-tags { max-height: 20px; overflow: hidden; }
+.host-card .card-actions { position: absolute; right: 10px; top: 12px; flex-direction: column; }
+.host-card .card-actions .act { display: none; }
+.host-card:hover .card-actions, .host-card:focus-within .card-actions { flex-direction: row; padding-left: 6px; background: var(--panel); }
+.host-card:hover .card-actions .act, .host-card:focus-within .card-actions .act { display: inline-flex; }
+.host-grid + .empty, .host-groups ~ .empty, .host-breadcrumb ~ .empty { min-height: 140px; height: auto; }
+@media (hover: none) {
+  .host-card { padding-bottom: 46px; }
+  .host-card .card-actions { top: auto; bottom: 10px; flex-direction: row; }
+  .host-card .card-actions .act { display: inline-flex; }
 }
-.tag-pill:hover { color: var(--fg); border-color: var(--neutral); }
-.tag-pill.on { color: #04101f; background: var(--accent); border-color: var(--accent); font-weight: 600; }
-.tag-clear {
-  display: inline-flex; align-items: center; gap: 3px;
-  background: transparent; border: none; color: var(--fg-dim);
-  font-size: 11px; padding: 4px 6px; cursor: pointer;
-}
-.tag-clear:hover { color: var(--fg); }
 .card-proxy { display: flex; margin-top: 5px; }
 .card-proxy .proxy-badge { max-width: 100%; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
@@ -1927,8 +2062,6 @@ async function confirmConfigImport() {
 .act { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); cursor: pointer; transition: color 120ms, background 120ms, border-color 120ms; }
 .act svg { display: block; flex: none; width: 15px; height: 15px; }
 .act:hover { color: #fff; border-color: var(--neutral); background: rgba(139, 148, 158, 0.18); }
-.act.connect { background: var(--accent); border-color: var(--accent); color: #04101f; }
-.act.connect:hover:not(:disabled) { filter: brightness(1.12); }
 .act.danger { color: var(--fg-dim); }
 .act.danger:hover { color: #fff; border-color: var(--bad); background: rgba(248, 81, 73, 0.2); }
 .act:disabled { opacity: 0.5; cursor: default; }
@@ -2065,26 +2198,45 @@ async function confirmConfigImport() {
 }
 
 /* --- port forwarding: active tunnels --- */
-.fwd-host { margin-bottom: 16px; }
-.fwd-host-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-.fwd-host-name { font-size: 13px; font-weight: 600; color: var(--fg); }
-.fwd-host-sub { font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); }
 .fwd-proxy-reason { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: var(--warn, #d29922); }
-/* A tunnel card is a .card whose right-hand column stacks the state pill
-   over the buttons: the row layout put them side by side, which at card
-   width pushed the route text into a two-line wrap on every rule. */
+
+.tunnel-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.tunnel-search { max-width: none; }
+.tunnel-view-controls { display: flex; gap: 10px; margin-left: auto; }
+.tunnel-view-control { display: flex; align-items: center; gap: 6px; color: var(--fg-dim); }
+.tunnel-view-control > svg { flex: none; }
+.tunnel-view-control .select-dropdown { width: 94px; }
+.tunnel-sort-control .select-dropdown { width: 154px; }
+.tunnel-no-match { height: auto; min-height: 180px; }
+.tunnel-list { grid-template-columns: minmax(0, 1fr); }
+.tunnel-list .fwd-card { align-items: center; padding-top: 10px; padding-bottom: 10px; }
+.tunnel-list .fwd-card-side { flex-direction: row; align-items: center; }
+.tunnel-list .card-main { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr); gap: 4px 16px; align-items: center; }
+.tunnel-list .fwd-route { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tunnel-list .card-proxy, .tunnel-list .fwd-proxy-reason, .tunnel-list .fwd-row-conns, .tunnel-list .fwd-row-error { grid-column: 1 / -1; }
+@media (max-width: 640px) {
+  .tunnel-search { flex-basis: 100%; }
+  .tunnel-view-controls { margin-left: 0; }
+  .tunnel-list .card-main { grid-template-columns: minmax(0, 1fr); }
+}
 .fwd-card { align-items: flex-start; }
+.key-card:focus-visible, .fwd-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card .hover-action { visibility: hidden; }
+.card:hover .hover-action, .card:focus-within .hover-action { visibility: visible; }
+@media (hover: none) { .card .hover-action { visibility: visible; } }
+.fwd-status { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .fwd-card-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .fwd-card .card-label { display: flex; align-items: baseline; gap: 6px; }
 /* The route is the one thing on the card you actually read, so it wraps
    instead of inheriting .card-sub's ellipsis — a truncated address is not
    worth having on screen. */
-.fwd-route { white-space: normal; overflow: visible; word-break: break-all; }
-.fwd-kind { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.fwd-route { color: color-mix(in srgb, var(--fg-dim) 70%, var(--panel)); white-space: normal; overflow: visible; word-break: break-all; }
+.fwd-kind { flex: none; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
 .fwd-note { font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fwd-row-conns { margin-top: 2px; font-size: 10px; color: var(--fg-dim); }
 .fwd-row-error { margin: 5px 0 0; font-size: 11px; line-height: 1.5; color: var(--bad); }
 .fwd-state { flex: none; font-size: 10px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); background: rgba(139, 148, 158, 0.14); }
+.fwd-state.connecting { color: var(--accent); border-color: var(--accent); }
 .fwd-state.running { color: var(--good, #3fb950); border-color: rgba(63, 185, 80, 0.35); background: rgba(63, 185, 80, 0.12); }
 .fwd-state.stopped { color: var(--bad); border-color: rgba(248, 81, 73, 0.35); background: rgba(248, 81, 73, 0.12); }
 

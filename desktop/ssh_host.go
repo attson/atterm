@@ -32,7 +32,7 @@ import (
 // and not the other gives "the terminal connects but the tunnel says
 // unsupported", which is worse than a uniform refusal.
 func hostRunsProxyCommand(h SSHHost) (bool, string) {
-	if h.ProxyCommand != "" {
+	if h.ProxyCommand != "" && !isNativeProxy(h) {
 		return true, fmt.Sprintf(
 			"host %q is configured with a ProxyCommand (%q); atterm never runs that command, so this host cannot be connected directly",
 			h.Alias, h.ProxyCommand)
@@ -149,7 +149,7 @@ func (a *App) NewSshSessionByID(id string, accepted AcceptedHostKey) (NewSession
 		req.Passphrase = sec.Passphrase
 	default: // "password"
 		cred, err := sshCredentialSlot(id).Load()
-		if err != nil || cred == (sshCredential{}) {
+		if err != nil || cred.Password == "" {
 			return NewSessionResp{}, errors.New(errCredentialMissing)
 		}
 		req.Password = cred.Password
@@ -182,6 +182,11 @@ func (a *App) NewSshSession(req SSHConnectReq) (NewSessionResp, error) {
 	var chain *jumpChain
 	hopName := ""
 	if h, ok := a.findSSHHost(req.SSHHostID); ok {
+		proxy, err := sshProxyForHost(h)
+		if err != nil {
+			return NewSessionResp{}, err
+		}
+		req.NetworkProxy = proxy
 		hopName = sshHostLabel(h)
 		c, err := a.dialJumpHops(a.ctx, h, req.acceptedHostKey())
 		if err != nil {
@@ -257,6 +262,7 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 		HostKeyCb: hostKeyCb,
 		Cols:      cols, Rows: rows,
 		Timeout: 15 * time.Second,
+		Proxy:   req.NetworkProxy,
 		Via:     chain.Target(), // nil for a direct connection
 	})
 	if err != nil {

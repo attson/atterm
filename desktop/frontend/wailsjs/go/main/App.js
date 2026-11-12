@@ -42,6 +42,10 @@ export function CancelSnippetRun(arg1) {
   return window['go']['main']['App']['CancelSnippetRun'](arg1);
 }
 
+export function CancelTermiusImport(arg1) {
+  return window['go']['main']['App']['CancelTermiusImport'](arg1);
+}
+
 export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
 }
@@ -100,6 +104,10 @@ export function DiscardPendingPeerConfig() {
 
 export function DiscardRecoverySnapshot() {
   return window['go']['main']['App']['DiscardRecoverySnapshot']();
+}
+
+export function DiscoverTermiusProfiles() {
+  return window['go']['main']['App']['DiscoverTermiusProfiles']();
 }
 
 export function DownloadVersion(arg1) {
@@ -398,6 +406,10 @@ export function ImportSSHHosts(arg1) {
   return window['go']['main']['App']['ImportSSHHosts'](arg1);
 }
 
+export function ImportTermius(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ImportTermius'](arg1, arg2, arg3);
+}
+
 export function InstallPeerCloudflared() {
   return window['go']['main']['App']['InstallPeerCloudflared']();
 }
@@ -504,6 +516,10 @@ export function PreviewPeerConnectionBundle(arg1) {
 
 export function PreviewSSHConfigImport() {
   return window['go']['main']['App']['PreviewSSHConfigImport']();
+}
+
+export function PreviewTermiusImport(arg1, arg2) {
+  return window['go']['main']['App']['PreviewTermiusImport'](arg1, arg2);
 }
 
 export function ProbeRelayVersion(arg1, arg2) {
@@ -628,6 +644,10 @@ export function SFTPWriteFile(arg1, arg2, arg3, arg4, arg5) {
 
 export function SaveRecoverySnapshot(arg1) {
   return window['go']['main']['App']['SaveRecoverySnapshot'](arg1);
+}
+
+export function SelectTermiusDirectory() {
+  return window['go']['main']['App']['SelectTermiusDirectory']();
 }
 
 export function SendFeishuTestCard(arg1) {
@@ -828,6 +848,10 @@ export function StartDownload() {
 
 export function StartForward(arg1, arg2) {
   return window['go']['main']['App']['StartForward'](arg1, arg2);
+}
+
+export function StartForwardWithHostKey(arg1, arg2, arg3) {
+  return window['go']['main']['App']['StartForwardWithHostKey'](arg1, arg2, arg3);
 }
 
 export function StartNativeDirect(arg1) {

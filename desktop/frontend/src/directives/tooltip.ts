@@ -31,6 +31,7 @@ function normalize(value: TooltipValue): string {
 
 function removeGlobalListeners(): void {
   document.removeEventListener("keydown", onDocumentKeydown, true);
+  document.removeEventListener("pointermove", onDocumentPointerMove, true);
   document.removeEventListener("scroll", onViewportChange, true);
   window.removeEventListener("resize", onViewportChange);
 }
@@ -103,6 +104,7 @@ function show(state: TooltipState): void {
   position(state);
 
   document.addEventListener("keydown", onDocumentKeydown, true);
+  document.addEventListener("pointermove", onDocumentPointerMove, true);
   document.addEventListener("scroll", onViewportChange, true);
   window.addEventListener("resize", onViewportChange);
 }
@@ -118,6 +120,18 @@ function hideUnlessActive(state: TooltipState): void {
 
 function onDocumentKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape" && active) hide(active);
+}
+
+function onDocumentPointerMove(event: Event): void {
+  const state = active;
+  if (!state) return;
+  const target = event.target;
+  if (target instanceof Node && state.el.contains(target)) {
+    state.hovered = true;
+    return;
+  }
+  state.hovered = false;
+  hideUnlessActive(state);
 }
 
 function onViewportChange(): void {
@@ -178,8 +192,6 @@ function updateTooltip(el: HTMLElement, binding: DirectiveBinding<TooltipValue>)
   } else if (state.tooltip) {
     state.tooltip.textContent = state.value;
     position(state);
-  } else if (state.hovered || state.focused) {
-    schedule(state);
   }
 }
 

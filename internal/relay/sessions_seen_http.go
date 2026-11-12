@@ -28,11 +28,19 @@ func (s *Server) handleSessionsSeenHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var ids []string
+	seenAtNow := time.Now().Unix()
+	idsBySeenAt := make(map[int64][]string)
+	record := func(id string, attentionAt int64) {
+		seenAt := seenAtNow
+		if attentionAt > seenAt {
+			seenAt = attentionAt
+		}
+		idsBySeenAt[seenAt] = append(idsBySeenAt[seenAt], id)
+	}
 	if body.All {
 		for _, ss := range s.registry.List() {
 			if ss.OwnerUserID == u.ID {
-				ids = append(ids, ss.ID.String())
+				record(ss.ID.String(), ss.Info().AttentionAt)
 			}
 		}
 	} else {
@@ -42,13 +50,13 @@ func (s *Server) handleSessionsSeenHTTP(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			if ss, ok := s.registry.Get(id); ok && ss.OwnerUserID == u.ID {
-				ids = append(ids, ss.ID.String())
+				record(ss.ID.String(), ss.Info().AttentionAt)
 			}
 		}
 	}
 
-	if len(ids) > 0 {
-		if err := s.cfg.Store.SetSeen(r.Context(), u.ID, ids, time.Now().Unix()); err != nil {
+	for seenAt, ids := range idsBySeenAt {
+		if err := s.cfg.Store.SetSeen(r.Context(), u.ID, ids, seenAt); err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

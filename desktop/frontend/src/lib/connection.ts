@@ -1718,6 +1718,8 @@ export interface SessionInfo {
   last_output_at?: number;
   type?: string; // "shell" | "ai" | "test" | "build" | "deploy" — absent on older publishers
   summary?: SessionSummary;
+  /** Unix seconds for the latest attention-worthy state transition. */
+  attention_at?: number;
   unread?: boolean;
   /** Base64 (std) AEAD envelope over {title, cwd, command, current_command}
    *  sealed by the agent under HKDF(account_key, session_uuid). The relay

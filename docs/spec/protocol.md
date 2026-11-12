@@ -183,6 +183,11 @@ session_id 同时填到帧 header 的 `session_id` 字段（冗余但便于路�
 
 `client_name` 是人类可读的客户端标识（典型来自 `getHostInfo().host` 也就是本机 hostname）。relay 把它存在 `Subscriber` 上，并在 `META.driver_client_name` 里回放，让 viewer 在遮罩里显示 "by &lt;name&gt;"。该字段可选。
 
+对已认证用户，relay 处理 ATTACH 时把该 session 的 `seen_at` 持久化为
+`max(relay_now, attention_at)`；连接结束时若 attached 期间 `attention_at` 又前进，则在
+unsubscribe 前再持久化一次。这样 subscriber count 从 1 降到 0 后，用户已在连接期间看到的
+attention 不会在重连窗口短暂恢复成未读；取 max 同时容忍 host 时钟领先 relay。
+
 ### `LIST` (0x11) / `LIST_RESP` (0x12)
 
 LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
@@ -206,6 +211,8 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
   "command_duration_ms": 12500,
   "command_exit_code": 0,
   "last_output_at": 1715234579,
+  "attention_at": 1715234579,
+  "unread": true,
   "type": "test",
   "summary": {
     "recent_output": "PASS\nok  ./internal/foo  0.123s\n",
@@ -217,7 +224,7 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
 
 `remote_permission` 是 owner desktop 发布的可选字段；缺省表示 `full`，保持旧客户端兼容。
 
-任务字段均为可选 additive metadata。缺失 `task_state` 的旧 publisher 按 `idle` 处理。`type` / `summary` 字段与 META 帧同语义（详见 §`META`），新增于 P2.11 / P2.12。
+任务字段均为可选 additive metadata。缺失 `task_state` 的旧 publisher 按 `idle` 处理。`type` / `summary` 字段与 META 帧同语义（详见 §`META`），新增于 P2.11 / P2.12。`attention_at` 是最近一次需要用户关注的状态转换时间；`unread` 由 relay 按当前认证用户的 `attention_at > seen_at` 且 session 无 subscriber 计算，客户端不得自行重算。显式标记已读也把 `seen_at` 写为 `max(relay_now, attention_at)`，避免 host 时钟领先时写入后仍显示未读。
 
 **E2EE（`sealed` 字段）**：M3b 之后 agent 在 ANNOUNCE 时把 `title` / `cwd` / `command` / `current_command` 写零，等价的 `SealedSessionFields { title, cwd, command, current_command }` 封装进 [§E2EE 信封](#e2ee-信封) 并 base64 存进 `sealed` 字段。AAD 鉴别字节 = `0x12`（LIST_RESP 帧类型）。`summary.error_lines` 在 sealed 路径下也由 agent 直接擦零，避免泄漏失败行内容；客户端解开 `sealed` 后把字段 overlay 回 list 渲染。
 

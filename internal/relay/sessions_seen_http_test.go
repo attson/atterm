@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
@@ -83,6 +84,28 @@ func TestSessionsSeen_MarkAll(t *testing.T) {
 	}
 	if val <= 0 {
 		t.Errorf("seen timestamp should be >0, got %d", val)
+	}
+}
+
+func TestSessionsSeen_UsesObservedAttentionWhenHostClockIsAhead(t *testing.T) {
+	srv, store := newTestSeenServer(t)
+	_, userID := createUserWithSession(t, store, "seenskew@example.com")
+	token := issueSessionToken(t, store, userID)
+	attentionAt := time.Now().Unix() + 60
+	sessionID := addOwnedSession(t, srv, userID, attentionAt)
+
+	w := postJSONWithBearer(srv, "/api/sessions/seen",
+		map[string]any{"session_ids": []string{sessionID.String()}}, token)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	seen, err := store.SeenAt(context.Background(), userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen[sessionID.String()] < attentionAt {
+		t.Fatalf("seen_at = %d, want >= observed attention %d", seen[sessionID.String()], attentionAt)
 	}
 }
 

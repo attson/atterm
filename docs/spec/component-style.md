@@ -95,6 +95,10 @@
 
 - hover 延迟 320ms；键盘 focus 立即显示。pointer leave / blur 后关闭，`Escape`、滚动或
   viewport resize 也必须关闭，避免浮层脱离目标。
+- 响应式 binding 更新只允许刷新当前可见 tooltip 的文案和位置，不能重新打开已被
+  pointer leave、blur、`Escape`、滚动或 resize 关闭的 tooltip。WebKit 漏发 `pointerleave`
+  时，下一次 document capture-phase `pointermove` 必须按真实 event target 清理陈旧 hover
+  状态，避免单例 tooltip 在多个会话行之间反复抢占。
 - 默认显示在目标上方并水平居中；上方空间不足时翻到下方，左右至少留 8px viewport
   间距。浮层通过 `document.body` portal 渲染，不能被 pane、dialog 或滚动容器裁切。
 - 最大宽度 320px，允许长词和多行文本换行；使用 `--panel` / `--border` / `--fg`，
@@ -357,6 +361,10 @@ header 必须可键盘操作：
   set；切换分组维度不需要保留折叠状态。
 - 不要给 group 顶部加滑动展开/收起的高度动画——session 列表数量变化时高度
   动画会和 flex column 的 layout 抢主线程，引起明显抖动。直接 `v-if` 切换即可。
+- 标记已读成功后，前端用“请求发出时已观察到的 `attention_at`”建立临时已读水位线；
+  相同或更旧的在途列表快照不得把 `unread` 重新置回 true。严格更新的
+  `attention_at` 必须穿透并移除旧水位线，保持新事件未读；不能用请求响应时的最新列表
+  建水位线，否则响应期间到达的新事件会被误标已读。
 
 ### 📌 置顶虚拟组（pinned virtual group）
 

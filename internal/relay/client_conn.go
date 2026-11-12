@@ -34,12 +34,16 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 	targetedOut := make(chan proto.Frame, 16)
 
 	var (
-		sess     *session.Session
-		sub      *session.Subscriber
-		clientID string
+		sess           *session.Session
+		sub            *session.Subscriber
+		clientID       string
+		seenAtOnAttach int64
 	)
 	defer func() {
 		if sess != nil && sub != nil {
+			if sess.Info().AttentionAt > seenAtOnAttach {
+				s.markClientSessionSeen(ownerUserID, sess)
+			}
 			sess.Unsubscribe(sub)
 		}
 	}()
@@ -262,12 +266,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			clientID = ap.ClientID
 			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID, ap.ClientName)
 			s.debugf("client attached session=%s since_seq=%d client_id=%q client_name=%q", id, ap.SinceSeq, ap.ClientID, ap.ClientName)
-			if ownerUserID != "" && s.cfg.Store != nil {
-				// Attaching == viewing == read. Best-effort; a failed write
-				// just leaves the item unread, which is safe.
-				_ = s.cfg.Store.SetSeen(context.Background(), ownerUserID,
-					[]string{sess.ID.String()}, time.Now().Unix())
-			}
+			seenAtOnAttach = s.markClientSessionSeen(ownerUserID, sess)
 			attachSignal <- sub
 
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage, proto.TypePasteFile:
@@ -546,6 +545,23 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			logging.Warn("relay-client", "unexpected frame type 0x%02x", f.Type)
 		}
 	}
+}
+
+// markClientSessionSeen persists the latest attention the client could have
+// observed. Taking the session timestamp also tolerates host/relay clock skew.
+func (s *Server) markClientSessionSeen(ownerUserID string, sess *session.Session) int64 {
+	if ownerUserID == "" || sess == nil || s.cfg.Store == nil {
+		return 0
+	}
+	seenAt := time.Now().Unix()
+	if attentionAt := sess.Info().AttentionAt; attentionAt > seenAt {
+		seenAt = attentionAt
+	}
+	// Viewing is best-effort: a failed write leaves the item unread, which is
+	// safer than hiding attention that was not durably acknowledged.
+	_ = s.cfg.Store.SetSeen(context.Background(), ownerUserID,
+		[]string{sess.ID.String()}, seenAt)
+	return seenAt
 }
 
 func (s *Server) sendInputHistoryError(out chan<- proto.Frame, sessionID uuid.UUID, requestID, code string) {

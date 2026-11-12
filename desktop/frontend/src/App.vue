@@ -75,6 +75,7 @@ import type { RemoteSession } from "./platform/types";
 import { type SessionFSConnection, type SessionInfo } from "./lib/connection";
 import { buildRelayWebSocketEndpoint } from "./lib/relayEndpoint";
 import { mergeLocalSessions } from "./lib/localListMerge";
+import { SeenReceiptOverlay } from "./lib/seenReceiptOverlay";
 import { mergeVisibleRemoteSessions } from "./lib/routeCandidates";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir, type TerminalAppearance } from "./lib/types";
@@ -158,6 +159,7 @@ const remoteMissingSince = new Map<string, number>();
 // mergeLocalSessions. Drained as Go acknowledges each id, or when the pane
 // holding it is closed.
 const pendingLocalIds = new Set<string>();
+const seenReceiptOverlay = new SeenReceiptOverlay();
 
 // Adapt SessionInfo (uses `id`) → RemoteSession (uses `session_id`) for useSessions.
 function adaptSession(s: SessionInfo): RemoteSession {
@@ -312,20 +314,14 @@ function requestCloseSession(s: RemoteSession) {
 
 async function onMarkSeen(payload: MarkSessionsSeenOpts) {
   if (!$platform.sessions.markSessionsSeen) return;
+  // Bind the receipt to what the user had actually observed when the request
+  // started. New attention may arrive before the response and must stay unread.
+  const observedSessions = [...localList.value, ...remoteRawList.value];
   try {
     await $platform.sessions.markSessionsSeen(payload);
-    const ids = "all" in payload ? null : new Set(payload.ids);
-    const clearUnread = (list: SessionInfo[]) => {
-      let changed = false;
-      const next = list.map((session) => {
-        if (session.unread !== true || (ids !== null && !ids.has(session.id))) return session;
-        changed = true;
-        return { ...session, unread: false };
-      });
-      return changed ? next : list;
-    };
-    localList.value = clearUnread(localList.value);
-    remoteRawList.value = clearUnread(remoteRawList.value);
+    seenReceiptOverlay.confirm(observedSessions, payload);
+    localList.value = seenReceiptOverlay.apply(localList.value);
+    remoteRawList.value = seenReceiptOverlay.apply(remoteRawList.value);
     refreshVisibleRemoteSessions();
   } catch {
     logWarn("app", "markSessionsSeen failed", { payload: JSON.stringify(payload) });
@@ -804,7 +800,11 @@ function applyLocalSessions(sessions: SessionInfo[]) {
   // broadcast the first one) doesn't drop seeded sessions that the sweep
   // would then null. mergeLocalSessions also drains pendingLocalIds for
   // ids Go has now confirmed.
-  const merged = mergeLocalSessions(sessions, localList.value, pendingLocalIds);
+  const merged = mergeLocalSessions(
+    seenReceiptOverlay.apply(sessions),
+    localList.value,
+    pendingLocalIds,
+  );
   localList.value = merged.localList;
   pendingLocalIds.clear();
   for (const id of merged.pending) pendingLocalIds.add(id);
@@ -814,7 +814,7 @@ function applyLocalSessions(sessions: SessionInfo[]) {
 }
 
 function applyRemoteSessions(sessions: SessionInfo[]) {
-  remoteRawList.value = sessions;
+  remoteRawList.value = seenReceiptOverlay.apply(sessions);
   refreshVisibleRemoteSessions();
   pruneMissingRemoteTabs();
 }

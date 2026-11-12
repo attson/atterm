@@ -409,6 +409,66 @@ func TestAttachMarksSeen(t *testing.T) {
 	}
 }
 
+func TestDetachMarksAttentionThatArrivedWhileAttachedSeen(t *testing.T) {
+	store, userID, token, _, _ := newClientTestStore(t)
+	srv := NewServer(Config{
+		Resolver: NewIdentityResolver(store),
+		Store:    store,
+	})
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	sid := uuid.New()
+	sess := session.New(sid, proto.SessionInfo{
+		Type:        session.SessionTypeAI,
+		TaskState:   proto.TaskStateRunning,
+		AttentionAt: 1,
+	})
+	sess.OwnerUserID = userID
+	if _, err := srv.registry.Add(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := dialClientWSBearer(t, ctx, httpSrv, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String(), ClientID: "client-a"})
+	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+		Type: proto.TypeAttach, SessionID: sid, Payload: payload,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	drainAttachIntro(t, ctx, conn)
+
+	attachedAt := time.Now().Unix()
+	for time.Now().Unix() <= attachedAt {
+		time.Sleep(10 * time.Millisecond)
+	}
+	sess.ApplyHookState(proto.TaskStateWaitingInput)
+	latestAttention := sess.Info().AttentionAt
+	if err := conn.Close(websocket.StatusNormalClosure, "done"); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		seen, err := store.SeenAt(ctx, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[sid.String()] >= latestAttention {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("seen_at = %d, want >= latest attention %d", seen[sid.String()], latestAttention)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestClient_RejectsInvalidBearer: invalid bearer token at /client → 401.
 func TestClient_RejectsInvalidBearer(t *testing.T) {
 	store, _, _, _, _ := newClientTestStore(t)

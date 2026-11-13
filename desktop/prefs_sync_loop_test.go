@@ -799,6 +799,80 @@ func TestGetSyncStatus_ErrorClearsOnNextSuccess(t *testing.T) {
 	}
 }
 
+func TestGetSyncStatus_PushErrorSurvivesSuccessfulPull(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+
+	fake.mu.Lock()
+	fake.pushErr = errors.New("unknown key default_shell")
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "failing push to run", func() bool {
+		_, push := fake.counts()
+		return push == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	a.enqueueSync(syncRequest{pull: true})
+	waitFor(t, time.Second, "succeeding pull to run", func() bool {
+		pull, _ := fake.counts()
+		return pull == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	status := a.GetSyncStatus()
+	if status.State != "error" {
+		t.Fatalf("State after successful pull = %q, want %q", status.State, "error")
+	}
+	if !strings.Contains(status.LastError, "unknown key default_shell") {
+		t.Fatalf("LastError after successful pull = %q, want the push failure", status.LastError)
+	}
+}
+
+func TestGetSyncStatus_PushErrorReappearsAfterPullRecovers(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+
+	fake.mu.Lock()
+	fake.pushErr = errors.New("push remains broken")
+	fake.mu.Unlock()
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "failing push to run", func() bool {
+		_, push := fake.counts()
+		return push == 1
+	})
+
+	fake.mu.Lock()
+	fake.pullErr = errors.New("pull temporarily broken")
+	fake.mu.Unlock()
+	a.enqueueSync(syncRequest{pull: true})
+	waitFor(t, time.Second, "failing pull to run", func() bool {
+		pull, _ := fake.counts()
+		return pull == 1
+	})
+
+	fake.mu.Lock()
+	fake.pullErr = nil
+	fake.mu.Unlock()
+	a.enqueueSync(syncRequest{pull: true})
+	waitFor(t, time.Second, "recovered pull to run", func() bool {
+		pull, _ := fake.counts()
+		return pull == 2
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	status := a.GetSyncStatus()
+	if status.State != "error" {
+		t.Fatalf("State after pull recovered = %q, want %q", status.State, "error")
+	}
+	if !strings.Contains(status.LastError, "push remains broken") {
+		t.Fatalf("LastError after pull recovered = %q, want the unresolved push failure", status.LastError)
+	}
+}
+
 // TestGetSyncStatus_PendingKeysCountsDirtyKeys pins that PendingKeys is the
 // same number dirtyPrefKeys() would report -- the brief's instruction to
 // reuse that helper rather than growing a second way to count the same

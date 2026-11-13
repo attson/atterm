@@ -58,6 +58,76 @@ type syncRequest struct {
 	push bool
 }
 
+type syncOperation string
+
+const (
+	syncOperationPull syncOperation = "pull"
+	syncOperationPush syncOperation = "push"
+)
+
+type syncErrorState struct {
+	pull   string
+	push   string
+	other  string
+	latest syncOperation
+}
+
+func (s *syncErrorState) record(operation syncOperation, err error) {
+	if err != nil {
+		s.latest = operation
+		s.set(operation, err.Error())
+		return
+	}
+
+	// A recovered loop panic is not tied to Pull or Push. Preserve the old
+	// behavior where the next successful engine operation clears it.
+	s.other = ""
+	s.set(operation, "")
+	if s.messageFor(s.latest) == "" {
+		s.latest = ""
+		if s.push != "" {
+			s.latest = syncOperationPush
+		} else if s.pull != "" {
+			s.latest = syncOperationPull
+		}
+	}
+}
+
+func (s *syncErrorState) set(operation syncOperation, message string) {
+	switch operation {
+	case syncOperationPull:
+		s.pull = message
+	case syncOperationPush:
+		s.push = message
+	default:
+		s.other = message
+	}
+}
+
+func (s syncErrorState) messageFor(operation syncOperation) string {
+	switch operation {
+	case syncOperationPull:
+		return s.pull
+	case syncOperationPush:
+		return s.push
+	default:
+		return s.other
+	}
+}
+
+func (s syncErrorState) current() string {
+	if message := s.messageFor(s.latest); message != "" {
+		return message
+	}
+	if s.push != "" {
+		return s.push
+	}
+	if s.pull != "" {
+		return s.pull
+	}
+	return s.other
+}
+
 // startPrefsSyncLoop starts the one goroutine that is ever allowed to call
 // into a.prefsSync. Call once, immediately after a.prefsSync is constructed
 // (see app.go's startup) — enqueueSync and enqueuePostLoginSeed are no-ops
@@ -181,12 +251,12 @@ func (a *App) runSyncRequest(req syncRequest) {
 			// last was leaves the indicator saying "Up to date" about a sync
 			// that blew up. Invisible failure is the thing this status
 			// exists to end.
-			a.recordSyncOutcome(fmt.Errorf("sync panicked: %v", r))
+			a.recordSyncOutcome("", fmt.Errorf("sync panicked: %v", r))
 		}
 	}()
 	if req.pull {
 		result, err := engine.Pull(a.ctx)
-		a.recordSyncOutcome(err)
+		a.recordSyncOutcome(syncOperationPull, err)
 		if err != nil {
 			logWarn("prefssync", "pull: %v", err)
 		} else {
@@ -211,7 +281,7 @@ func (a *App) runSyncRequest(req syncRequest) {
 		// months after joining syncedKeys — nothing ever surfaced the 400.
 		dirty := a.dirtyPrefKeys()
 		err := engine.Push(a.ctx)
-		a.recordSyncOutcome(err)
+		a.recordSyncOutcome(syncOperationPush, err)
 		if err != nil {
 			logWarn("prefssync", "push failed (dirty: %v): %v", dirty, err)
 		} else {
@@ -232,7 +302,7 @@ func (a *App) runSyncTask(task func(prefsSyncEngine)) {
 			logWarn("prefssync", "sync loop: recovered panic in task: %v", r)
 			// Same reason as runSyncRequest's recover: a survived panic that
 			// leaves the status untouched is an invisible failure.
-			a.recordSyncOutcome(fmt.Errorf("sync task panicked: %v", r))
+			a.recordSyncOutcome("", fmt.Errorf("sync task panicked: %v", r))
 		}
 	}()
 	task(engine)
@@ -297,7 +367,7 @@ func (a *App) enqueuePostLoginSeed() {
 	}
 	task := func(engine prefsSyncEngine) {
 		result, err := engine.Pull(a.ctx)
-		a.recordSyncOutcome(err)
+		a.recordSyncOutcome(syncOperationPull, err)
 		if err != nil {
 			return
 		}
@@ -317,7 +387,7 @@ func (a *App) enqueuePostLoginSeed() {
 		// relay (nothing, if this Push never landed) over the local values
 		// that never got a second chance to upload.
 		err = engine.Push(a.ctx)
-		a.recordSyncOutcome(err)
+		a.recordSyncOutcome(syncOperationPush, err)
 		if err != nil {
 			logWarn("prefssync", "seed push for user %s: %v", userID, err)
 			a.emitPrefsChanged()
@@ -381,7 +451,7 @@ func (a *App) GetSyncStatus() SyncStatus {
 	a.syncStatusMu.Lock()
 	busy := a.syncBusy
 	lastSyncedAt := a.syncLastSyncedAt
-	lastError := a.syncLastError
+	lastError := a.syncErrors.current()
 	a.syncStatusMu.Unlock()
 
 	state := "idle"
@@ -434,12 +504,10 @@ func (a *App) SyncNow() error {
 
 // recordSyncOutcome updates the stored result of one engine call (a single
 // Pull or Push, not a whole coalesced request) and emits "sync:status" if
-// that changed the externally visible state. err == nil clears any
-// previously stored error and stamps LastSyncedAt with now; a non-nil err
-// overwrites LastError with its text. Called once per engine call rather
-// than once per request so that, within one pull-then-push request, a
-// failing push after a successful pull still ends the request in the
-// "error" state -- the later call's outcome always wins.
+// that changed the externally visible state. A successful operation clears
+// only an error from the same operation and stamps LastSyncedAt with now; a
+// non-nil error overwrites LastError with its text. This keeps a successful
+// background Pull from hiding a Push failure while local keys remain dirty.
 // syncOfflineChanged is called whenever the relay configuration changes in a
 // way that can flip sync between offline and online: pausing, unpausing,
 // logging in, logging out, or pointing at a different relay.
@@ -454,17 +522,15 @@ func (a *App) SyncNow() error {
 // relay tab would go on seeing "Up to date".
 func (a *App) syncOfflineChanged() {
 	a.syncStatusMu.Lock()
-	a.syncLastError = ""
+	a.syncErrors = syncErrorState{}
 	a.syncStatusMu.Unlock()
 	a.emitSyncStatusIfChanged()
 }
 
-func (a *App) recordSyncOutcome(err error) {
+func (a *App) recordSyncOutcome(operation syncOperation, err error) {
 	a.syncStatusMu.Lock()
-	if err != nil {
-		a.syncLastError = err.Error()
-	} else {
-		a.syncLastError = ""
+	a.syncErrors.record(operation, err)
+	if err == nil {
 		a.syncLastSyncedAt = time.Now().UnixMilli()
 	}
 	a.syncStatusMu.Unlock()

@@ -356,6 +356,29 @@ func TestPush_SendsDirtyAndClearsFlag(t *testing.T) {
 	}
 }
 
+func TestPush_IgnoresResponseKeysThatWereNotSent(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"zh-CN"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 800, Dirty: true})
+	a.writeValueErr = map[string]error{
+		"default_shell": errors.New("unknown key default_shell"),
+	}
+
+	r := &fakeRelay{putReturn: []ServerItem{
+		{Key: "default_shell", Value: json.RawMessage(`"/bin/zsh"`), UpdatedAt: 840},
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 850},
+	}}
+	e := NewEngine(a, r)
+	if err := e.Push(context.Background()); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	m := a.ReadMeta("locale_preference")
+	if m.Dirty || m.UpdatedAtLocal != 850 {
+		t.Fatalf("meta after push: %+v", m)
+	}
+}
+
 func TestPush_ServerRejectionOverwritesLocal(t *testing.T) {
 	a := newFake()
 	a.WriteValue("locale_preference", json.RawMessage(`"en"`))

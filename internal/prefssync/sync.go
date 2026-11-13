@@ -242,13 +242,20 @@ func (e *Engine) Push(ctx context.Context) error {
 	}
 
 	for _, it := range resp {
+		sentTimestamp, sent := sentAt[it.Key]
+		if !sent {
+			// The relay returns the user's full preference state, including
+			// retired keys and active keys that were not part of this PUT.
+			// Pull owns reconciliation for those values.
+			continue
+		}
 		// A PUT to a remote relay can take seconds. If the user changed this
 		// key in the meantime (MarkDirty stamped a newer UpdatedAtLocal),
 		// applying the echo would overwrite the newer local value AND clear
 		// its Dirty flag, so the edit would be lost locally and never pushed
 		// — the pin the user just clicked would silently undo itself. Leave
 		// the key alone; it is still dirty, so the next Push reconciles it.
-		if e.adapter.ReadMeta(it.Key).UpdatedAtLocal != sentAt[it.Key] {
+		if e.adapter.ReadMeta(it.Key).UpdatedAtLocal != sentTimestamp {
 			continue
 		}
 		// Always trust server's updated_at; if it accepted our push, server.value == ours.

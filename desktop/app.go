@@ -377,13 +377,9 @@ type App struct {
 	// syncLastSyncedAt is the ms timestamp of the most recent Pull or Push
 	// that returned no error. Zero means never.
 	syncLastSyncedAt int64
-	// syncLastError is the Error() text of the most recent failed Pull or
-	// Push. Cleared (set back to "") the next time either succeeds -- see
-	// recordSyncOutcome. This is deliberately not sticky: the whole point
-	// of this field, per markPrefDirtyAndPush's comment about
-	// ssh_hosts_encrypted staying silently broken for months, is that a
-	// failure must surface, and a success must be able to say so too.
-	syncLastError string
+	// syncErrors keeps unresolved Pull and Push failures independent, so a
+	// background Pull cannot hide a Push failure while dirty keys remain.
+	syncErrors syncErrorState
 	// syncLastEmitted is the last full SyncStatus value actually sent over
 	// the "sync:status" event, so emitSyncStatusIfChanged only fires on an
 	// observable change to *any* field -- not just State. Deduping on State

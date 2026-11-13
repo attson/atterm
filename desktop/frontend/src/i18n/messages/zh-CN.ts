@@ -122,6 +122,10 @@ export const zhCN = {
     },
     inputHistory: {
       title: "用户输入记录",
+      copied: "已复制",
+      imagesUnavailable: "原图已不在缓存中",
+      copyTextOnly: "仅复制文本",
+      pasteRouteUnavailable: "当前通道无法粘贴图文，请关闭 Relay 直连后重试。",
       open: "查看用户输入记录",
       loading: "正在加载用户输入记录...",
       empty: "当前会话还没有已提交的输入记录。",

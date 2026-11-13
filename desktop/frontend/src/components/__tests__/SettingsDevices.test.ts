@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { __setPlatformForTests, usePlatform } from '../../platform'
 import { createFakePlatform } from '../../platform/__tests__/_fakePlatform'
 
@@ -37,16 +37,6 @@ afterEach(() => {
 })
 
 describe('SettingsDevices', () => {
-  let confirmSpy: MockInstance<[message?: string], boolean>
-
-  beforeEach(() => {
-    confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-  })
-
-  afterEach(() => {
-    confirmSpy.mockRestore()
-  })
-
   it('renders one row per session; current row shows Current tag; others show Revoke', async () => {
     const w = mount(SettingsDevices)
     await flushPromises()
@@ -93,31 +83,43 @@ describe('SettingsDevices', () => {
     }
   })
 
-  it('revoke confirm=true calls revokeRelaySession then reloads', async () => {
+  it('revokes the selected device only after in-app confirmation, even when native confirm is unavailable', async () => {
     const platform = usePlatform()
     const revokeSpy = (platform.sessions as any).revokeRelaySession as ReturnType<typeof vi.fn>
     const listSpy = (platform.sessions as any).listRelaySessions as ReturnType<typeof vi.fn>
     const w = mount(SettingsDevices)
     await flushPromises()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    listSpy.mockResolvedValueOnce(baseRows().slice(0, 1))
     const revokeBtn = w.findAll('.danger-btn')[0]
     await revokeBtn.trigger('click')
+    expect(revokeSpy).not.toHaveBeenCalled()
+    expect(w.get('[role=alertdialog]').text()).toContain('settings.devices.revokeConfirm[ua=UA-B]')
+    await w.get('[data-testid=device-confirm]').trigger('click')
     await flushPromises()
+    expect(w.find('[role=alertdialog]').exists()).toBe(false)
+    expect(w.findAll('.device-row')).toHaveLength(1)
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(revokeSpy).toHaveBeenCalledWith('h-other')
     expect(listSpy).toHaveBeenCalledTimes(2) // initial + post-revoke
   })
 
-  it('revoke confirm=false does not call revokeRelaySession', async () => {
-    confirmSpy.mockReturnValue(false)
+  it.each(['cancel', 'escape', 'backdrop'])('dismissing revoke via %s keeps the device signed in', async (method) => {
     const platform = usePlatform()
     const revokeSpy = (platform.sessions as any).revokeRelaySession as ReturnType<typeof vi.fn>
     const w = mount(SettingsDevices)
     await flushPromises()
     await w.findAll('.danger-btn')[0].trigger('click')
     await flushPromises()
+    if (method === 'cancel') await w.get('[data-testid=device-cancel]').trigger('click')
+    else if (method === 'escape') await w.get('[role=alertdialog]').trigger('keydown', { key: 'Escape' })
+    else await w.get('.confirmation-backdrop').trigger('click')
+    expect(w.find('[role=alertdialog]').exists()).toBe(false)
+    expect(w.findAll('.device-row')).toHaveLength(2)
     expect(revokeSpy).not.toHaveBeenCalled()
   })
 
-  it('sign-out-others confirm=true calls API then reloads', async () => {
+  it('sign-out-others requires in-app confirmation then reloads', async () => {
     const platform = usePlatform()
     const signSpy = (platform.sessions as any).signOutOtherRelaySessions as ReturnType<typeof vi.fn>
     const listSpy = (platform.sessions as any).listRelaySessions as ReturnType<typeof vi.fn>
@@ -126,9 +128,56 @@ describe('SettingsDevices', () => {
     const btns = w.findAll('button.secondary')
     const signOut = btns.find((b) => b.text().includes('settings.devices.signOutOthers'))!
     await signOut.trigger('click')
+    expect(signSpy).not.toHaveBeenCalled()
+    expect(w.get('[role=alertdialog]').text()).toContain('settings.devices.signOutOthersConfirm')
+    await w.get('[data-testid=device-confirm]').trigger('click')
     await flushPromises()
     expect(signSpy).toHaveBeenCalledTimes(1)
     expect(listSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('canceling sign-out-others leaves all devices signed in', async () => {
+    const platform = usePlatform()
+    const w = mount(SettingsDevices)
+    await flushPromises()
+    await w.get('button.secondary').trigger('click')
+    await w.get('[data-testid=device-cancel]').trigger('click')
+    expect(w.find('[role=alertdialog]').exists()).toBe(false)
+    expect(w.findAll('.device-row')).toHaveLength(2)
+    expect(platform.sessions.signOutOtherRelaySessions).not.toHaveBeenCalled()
+  })
+
+  it('focuses cancel, keeps Tab inside the confirmation, and restores focus on Escape', async () => {
+    const w = mount(SettingsDevices, { attachTo: document.body })
+    await flushPromises()
+    const trigger = w.get<HTMLButtonElement>('.danger-btn')
+    trigger.element.focus()
+    await trigger.trigger('click')
+    const cancel = w.get('[data-testid=device-cancel]')
+    const confirm = w.get('[data-testid=device-confirm]')
+    expect(document.activeElement).toBe(cancel.element)
+    await cancel.trigger('keydown', { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirm.element)
+    await confirm.trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(cancel.element)
+    await cancel.trigger('keydown', { key: 'Escape' })
+    expect(document.activeElement).toBe(trigger.element)
+  })
+
+  it('shows a failed revoke and allows another attempt', async () => {
+    const platform = usePlatform()
+    vi.mocked(platform.sessions.revokeRelaySession!).mockRejectedValueOnce(new Error('relay unavailable'))
+    const w = mount(SettingsDevices)
+    await flushPromises()
+    await w.get('.danger-btn').trigger('click')
+    await w.get('[data-testid=device-confirm]').trigger('click')
+    await flushPromises()
+    expect(w.get('.error').text()).toBe('relay unavailable')
+    await w.get('.icon-btn').trigger('click')
+    await flushPromises()
+    expect(w.get<HTMLButtonElement>('.danger-btn').element.disabled).toBe(false)
+    await w.get('.danger-btn').trigger('click')
+    expect(w.find('[role=alertdialog]').exists()).toBe(true)
   })
 
   it('not-authenticated error switches to hint copy; hides header actions', async () => {

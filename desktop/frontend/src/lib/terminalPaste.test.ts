@@ -10,6 +10,55 @@ function ev(parts: Partial<Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "
 }
 
 describe("pasteFromClipboard", () => {
+  const historyHTML = '<div data-atterm-input-history="1"><span>inspect </span><img src="data:image/png;base64,cG5n" alt="one.png"><span> please\nkeep this line</span></div>';
+
+  it("pastes copied history text and images in order without submitting the input", async () => {
+    const events: string[] = [];
+    const term = { paste: (text: string) => { events.push(text); } };
+    const conn = { sendPasteImage: vi.fn(async (file: Blob, name: string) => {
+      expect(file.type).toBe("image/png");
+      expect(file.size).toBe(3);
+      events.push(name);
+      return true;
+    }) };
+    const result = await pasteFromClipboard({ term, conn, status: "attached", remotePermission: "full",
+      getPayload: async () => ({ kind: "text", text: "inspect [Image #1] please\nkeep this line", html: historyHTML }),
+    });
+    expect(result).toEqual({ ok: true, kind: "mixed" });
+    expect(events).toEqual(["inspect ", "one.png", " please\nkeep this line"]);
+  });
+
+  it("rejects rich history before sending either text or images when full permission is missing", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn() };
+    const result = await pasteFromClipboard({ term, conn, status: "attached", remotePermission: "control",
+      getPayload: async () => ({ kind: "text", text: "inspect [Image #1]", html: historyHTML }),
+    });
+    expect(result).toEqual({ ok: false, reasonKey: "terminal.imagePasteRequiresFull" });
+    expect(term.paste).not.toHaveBeenCalled();
+    expect(conn.sendPasteImage).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsupported routes before writing any part of a rich history entry", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(), beginHistoryPaste: () => null };
+    const result = await pasteFromClipboard({ term, conn, status: "attached", remotePermission: "full",
+      getPayload: async () => ({ kind: "text", html: historyHTML }),
+    });
+    expect(result).toEqual({ ok: false, reasonKey: "terminal.inputHistory.pasteRouteUnavailable" });
+    expect(term.paste).not.toHaveBeenCalled();
+    expect(conn.sendPasteImage).not.toHaveBeenCalled();
+  });
+
+  it("releases the paste route reservation when an image send fails", async () => {
+    const release = vi.fn();
+    const conn = { sendPasteImage: vi.fn().mockRejectedValue(new Error("offline")), beginHistoryPaste: () => release };
+    await expect(pasteFromClipboard({ term: { paste: vi.fn() }, conn, status: "attached", remotePermission: "full",
+      getPayload: async () => ({ kind: "text", html: historyHTML }),
+    })).rejects.toThrow("offline");
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("routes text payloads through term.paste", async () => {
     const term = { paste: vi.fn() };
     const conn = { sendPasteImage: vi.fn(async () => true) };

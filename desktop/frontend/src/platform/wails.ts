@@ -258,6 +258,9 @@ export function createWailsPlatform(): Platform {
       setClipboardText: async (text: string) => {
         await ClipboardSetText(text)
       },
+      // Linux's native bridge cannot publish multiple MIME formats together;
+      // leave rich writes to the browser Clipboard API within the click gesture.
+      ...(!/Linux/i.test(navigator.platform) ? { setClipboardHTML: api.setClipboardHTML } : {}),
       pickLogFilePath: api.pickLogFilePath,
       openExternalURL: async (url: string) => {
         BrowserOpenURL(url)

@@ -658,6 +658,10 @@ export function SetAutoCheckUpdates(arg1) {
   return window['go']['main']['App']['SetAutoCheckUpdates'](arg1);
 }
 
+export function SetClipboardHTML(arg1, arg2) {
+  return window['go']['main']['App']['SetClipboardHTML'](arg1, arg2);
+}
+
 export function SetCommandNotifyThresholdSeconds(arg1) {
   return window['go']['main']['App']['SetCommandNotifyThresholdSeconds'](arg1);
 }

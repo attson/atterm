@@ -172,6 +172,11 @@ export class PeerSessionConnection {
     if (!this.suspended) this.start()
   }
 
+  beginHistoryPaste(): (() => void) | null {
+    if (!this.ready || !this.transport || this.handover || !this.driverConfirmed || !this.isDriverRole) return null
+    return () => {}
+  }
+
   sendInput(value: string): void {
     if (!this.driverConfirmed || !this.isDriverRole ||
         !this.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(value)))) {
@@ -349,6 +354,10 @@ export class PeerSessionConnection {
             this.ready = true
             this.reconnectAttempts = 0
             this.lastFailureReason = undefined
+            // Peer hosts replace REPLAY_PROGRESS end with DIRECT_READY. Keep
+            // the shared terminal's write-drain/scroll completion path intact,
+            // including resumes whose replay contains no new output.
+            this.handlers.onReplayProgress?.({ phase: 'end', bytes: 0, total_bytes: 0, seq: replayedSeq })
             this.handlers.onStatus?.('attached')
             this.emitRoute(this.connectedRoute())
             this.reconcileDriverAuthority()

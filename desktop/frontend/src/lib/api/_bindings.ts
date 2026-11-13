@@ -603,6 +603,7 @@ export interface LogPreview {
 export interface ClipboardPastePayload {
   kind: "none" | "text" | "image";
   text?: string;
+  html?: string;
   filename?: string;
   content_type?: string;
   data_base64?: string;
@@ -789,6 +790,7 @@ export interface ImportReport {
 // without domain-specific casts.
 export interface AppBindings {
   GetClipboardPastePayload(): Promise<ClipboardPastePayload>;
+  SetClipboardHTML(text: string, html: string): Promise<void>;
   GetStartupError?(): Promise<StartupError>;
   GetEndpoint(): Promise<Endpoint>;
   GetHostInfo(): Promise<HostInfo>;

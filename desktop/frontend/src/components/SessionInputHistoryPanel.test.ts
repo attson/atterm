@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import source from "./SessionInputHistoryPanel.vue?raw";
 import SessionInputHistoryPanel from "./SessionInputHistoryPanel.vue";
 import type { SessionHistoryImagePreview } from "../composables/useTerminalImagePreview";
+import type { ClipboardWriter } from "../lib/terminalCopy";
 
 const submittedAt = Date.UTC(2026, 10, 10, 12, 34, 56);
 
@@ -11,6 +12,7 @@ function mountPanel(overrides: Partial<{
   items: Array<{ text: string; submitted_at_unix_ms: number }>;
   truncated: boolean;
   error: "locked" | "failed" | null;
+  clipboard: ClipboardWriter;
   resolveImage: (text: string, submittedAtUnixMS: number, occurrence: number) => SessionHistoryImagePreview | null;
 }> = {}) {
   return mount(SessionInputHistoryPanel, {
@@ -30,6 +32,83 @@ describe("SessionInputHistoryPanel", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
+  });
+
+  test("copies only the selected record's original multiline text through the native clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const text = "  inspect this\n\nkeep spacing  ";
+    const wrapper = mountPanel({
+      items: [
+        { text, submitted_at_unix_ms: submittedAt },
+        { text: "another record", submitted_at_unix_ms: submittedAt - 60_000 },
+      ],
+      clipboard: { writeText },
+    });
+
+    const records = wrapper.findAll("[data-test='session-input-history-item']");
+    await records[1].get("[data-test='session-input-history-copy']").trigger("click");
+    await flushPromises();
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(text);
+    expect(records[1].get('[role="status"]').text()).toBe("Copied");
+    expect(records[0].find('[role="status"]').exists()).toBe(false);
+    expect(wrapper.emitted("close")).toBeUndefined();
+  });
+
+  test("copies through the browser clipboard when no native writer is supplied", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const wrapper = mountPanel({ items: [{ text: "browser input", submitted_at_unix_ms: submittedAt }] });
+
+    await wrapper.get("[data-test='session-input-history-copy']").trigger("click");
+    await flushPromises();
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith("browser input");
+    expect(wrapper.get('[role="status"]').text()).toBe("Copied");
+  });
+
+  test("shows copy failure and lets the user retry", async () => {
+    const writeText = vi.fn().mockRejectedValueOnce(new Error("denied")).mockResolvedValue(undefined);
+    const wrapper = mountPanel({
+      items: [{ text: "retry this input", submitted_at_unix_ms: submittedAt }],
+      clipboard: { writeText },
+    });
+    const button = wrapper.get("[data-test='session-input-history-copy']");
+
+    await button.trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[role="status"]').text()).toBe("copy failed");
+    await button.trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[role="status"]').text()).toBe("Copied");
+    expect(writeText).toHaveBeenCalledTimes(2);
+  });
+
+  test("copies cached images and text together and offers explicit text-only copy if images are gone", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const writeHTML = vi.fn().mockResolvedValue(undefined);
+    const text = "look [Image #1] here";
+    const wrapper = mountPanel({
+      items: [{ text, submitted_at_unix_ms: submittedAt }],
+      clipboard: { writeText, writeHTML },
+      resolveImage: () => ({ file: new Blob(["png"], { type: "image/png" }), name: "cached.png" }),
+    });
+    await wrapper.get("[data-test='session-input-history-copy']").trigger("click");
+    await vi.waitFor(() => expect(writeHTML).toHaveBeenCalledWith(text, expect.stringContaining('data:image/png;base64,cG5n')));
+    await flushPromises();
+    expect(wrapper.get('[role="status"]').text()).toBe("Copied");
+
+    await wrapper.setProps({ resolveImage: () => null });
+    await wrapper.get("[data-test='session-input-history-copy']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[role="status"]').text()).toBe("Original images are no longer cached.");
+    expect(writeText).not.toHaveBeenCalled();
+    await wrapper.get("[data-test='session-input-history-copy-text']").trigger("click");
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith(text);
+    expect(wrapper.get('[role="status"]').text()).toBe("Copied");
   });
 
   test("shows chronological multiline records with relative and exact local time", async () => {

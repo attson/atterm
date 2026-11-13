@@ -593,6 +593,14 @@ template bar 同属终端工具面，不是 Settings 表单控件：
   有界 cache 中。
 - 原有 `pasteImageBus` 的即时 5 秒 toast 保持独立；hover 预览使用单独的事务型 bus，避免
   transport 失败改变 toast 时序或留下 stale binding。
+- 输入历史每条记录提供复制按钮。纯文本保留原始换行与空白；有图片时在用户点击时重新
+  查询上述有界缓存，同时写入 `text/plain` 与带内联图片的 `text/html`。不得缓存一份
+  额外的历史图片副本，也不得用远程 URL 代替原图。原图缺失或富文本剪贴板不可用时明确
+  提示，并让用户显式选择“仅复制文本”，不能把只有占位符的复制误报为图文复制成功。
+- AT Term 只将带 `data-atterm-input-history="1"` 标记的剪贴板 HTML 识别为历史图文，
+  严格校验结构、图片 MIME、大小与数量；仅接受内联 PNG/JPEG/GIF/WebP，禁止请求外部
+  图片或执行 HTML。粘贴时先校验 driver、attached 和 full 权限，再按顺序走原有文本
+  输入与 `PASTE_IMAGE` 路径，不追加提交回车。其它应用按其富文本剪贴板能力接收。
 
 ## 终端链接识别与交互
 

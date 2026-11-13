@@ -16,6 +16,7 @@ import { createReplayInputGuard } from "../lib/replayInputGuard";
 import { createTerminalWriteQueue, type TerminalWriteQueue } from "../lib/terminalWriteQueue";
 import { scheduleTerminalActivation } from "../lib/terminalActivation";
 import { copyTerminalSelection, copyTextToClipboard, isTerminalCopyShortcut, type ClipboardWriter } from "../lib/terminalCopy";
+import { pasteHistoryHTML } from "../lib/terminalPaste";
 import { resolveTerminalFontFamily } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
 import {
@@ -298,7 +299,10 @@ const selectionPopover = ref({
 });
 const platform = usePlatform();
 const clipboardWriter: ClipboardWriter | undefined = platform.system.setClipboardText
-  ? { writeText: (text) => platform.system.setClipboardText!(text) }
+  ? {
+    writeText: (text) => platform.system.setClipboardText!(text),
+    ...(platform.system.setClipboardHTML ? { writeHTML: (text: string, html: string) => platform.system.setClipboardHTML!(text, html) } : {}),
+  }
   : undefined;
 const fileRevealStore = useFileRevealStore();
 const previewBusy = ref(false);
@@ -1385,6 +1389,27 @@ async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
 }
 
 async function handleImagePaste(e: ClipboardEvent) {
+  const html = e.clipboardData?.getData("text/html") ?? "";
+  if (html.includes("data-atterm-input-history")) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!term || !conn || pasteBusy.value) return;
+    if (!isDriver.value) {
+      emit("toast", t("terminal.pasteSessionNotWritable"));
+      return;
+    }
+    pasteBusy.value = true;
+    try {
+      const result = await pasteHistoryHTML({ term, conn, sessionId: props.sessionId,
+        status: status.value, remotePermission: props.remotePermission }, html);
+      if (!result?.ok) emit("toast", t(result?.reasonKey ?? "terminal.pasteFailed"));
+    } catch {
+      emit("toast", t("terminal.pasteFailed"));
+    } finally {
+      pasteBusy.value = false;
+    }
+    return;
+  }
   if (!pasteBlobCanSend.value) return;
   const items = Array.from(e.clipboardData?.items || []);
   const anyFile = items.find((i) => i.kind === "file");
@@ -3369,6 +3394,7 @@ watch(
         :items="inputHistoryResult?.items ?? []"
         :truncated="inputHistoryResult?.truncated ?? false"
         :error="inputHistoryError"
+        :clipboard="clipboardWriter"
         :resolve-image="resolveInputHistoryImage"
         @close="closeInputHistory"
         @retry="loadInputHistory"

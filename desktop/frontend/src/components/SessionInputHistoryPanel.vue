@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { History, LoaderCircle, LockKeyhole, RotateCcw, X } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { Check, Copy, History, LoaderCircle, LockKeyhole, RotateCcw, X } from "lucide-vue-next";
 import type { SessionInputHistoryItem } from "../lib/connection";
 import {
   detectImagePlaceholders,
@@ -8,12 +8,15 @@ import {
 } from "../composables/useTerminalImagePreview";
 import { formatPromptHistoryTime } from "../lib/promptHistoryBrowser";
 import { useI18n } from "../i18n/useI18n";
+import { copyTextToClipboard, type ClipboardWriter } from "../lib/terminalCopy";
+import { copyHistoryToClipboard } from "../lib/historyClipboard";
 
 const props = defineProps<{
   loading: boolean;
   items: readonly SessionInputHistoryItem[];
   truncated: boolean;
   error: "locked" | "failed" | null;
+  clipboard?: ClipboardWriter;
   resolveImage?: (
     text: string,
     submittedAtUnixMS: number,
@@ -29,6 +32,8 @@ const emit = defineEmits<{
 const { t, resolvedLocale } = useI18n();
 const nowMs = ref(Date.now());
 const bodyRef = ref<HTMLElement | null>(null);
+type CopyState = { item: SessionInputHistoryItem; status: "copying" | "copied" | "failed" | "missing" };
+const copyState = shallowRef<CopyState | null>(null);
 const chronologicalItems = computed(() => [...props.items].reverse());
 type HistoryTextSegment = {
   text: string;
@@ -46,6 +51,25 @@ const imagePreview = ref<{
   top: number;
 } | null>(null);
 let clock: number | null = null;
+
+async function copyItem(item: SessionInputHistoryItem, textOnly = false): Promise<void> {
+  if (copyState.value?.status === "copying") return;
+  const pending: CopyState = { item, status: "copying" };
+  copyState.value = pending;
+  let copied = false;
+  let missing = false;
+  try {
+    copied = textOnly
+      ? await copyTextToClipboard(item.text, props.clipboard)
+      : await copyHistoryToClipboard(item.text, (occurrence) => props.resolveImage?.(item.text, item.submitted_at_unix_ms, occurrence) ?? null, props.clipboard);
+  } catch (error) {
+    missing = error instanceof Error && error.message === "history_images_unavailable";
+    // Clipboard permission failures stay local to the selected history row.
+  }
+  if (copyState.value === pending) {
+    copyState.value = { item, status: copied ? "copied" : missing ? "missing" : "failed" };
+  }
+}
 
 function relativeTime(unixMs: number): string {
   return formatPromptHistoryTime(unixMs / 1000, nowMs.value, resolvedLocale.value);
@@ -122,6 +146,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (clock !== null) window.clearInterval(clock);
+  copyState.value = null;
   hideImagePreview();
 });
 </script>
@@ -210,11 +235,31 @@ onBeforeUnmount(() => {
             :key="`${item.submitted_at_unix_ms}-${index}`"
             data-test="session-input-history-item"
           >
-            <time
-              :datetime="new Date(item.submitted_at_unix_ms).toISOString()"
-              v-tooltip="exactTime(item.submitted_at_unix_ms)"
-              tabindex="0"
-            >{{ relativeTime(item.submitted_at_unix_ms) }}</time>
+            <div class="session-input-history-item-header">
+              <time
+                :datetime="new Date(item.submitted_at_unix_ms).toISOString()"
+                v-tooltip="exactTime(item.submitted_at_unix_ms)"
+                tabindex="0"
+              >{{ relativeTime(item.submitted_at_unix_ms) }}</time>
+              <span
+                v-if="copyState?.item === item && copyState.status !== 'copying'"
+                class="session-input-history-copy-status"
+                :class="{ failed: copyState.status !== 'copied' }"
+                role="status"
+              >{{ t(copyState.status === 'copied' ? 'terminal.inputHistory.copied' : copyState.status === 'missing' ? 'terminal.inputHistory.imagesUnavailable' : 'terminal.copyFailed') }}</span>
+              <button
+                type="button"
+                class="session-input-history-icon-button"
+                data-test="session-input-history-copy"
+                v-tooltip="t('common.copy')"
+                :aria-label="t('common.copy')"
+                :disabled="copyState?.status === 'copying'"
+                @click="copyItem(item)"
+              >
+                <Check v-if="copyState?.item === item && copyState.status === 'copied'" :size="14" aria-hidden="true" />
+                <Copy v-else :size="14" aria-hidden="true" />
+              </button>
+            </div>
             <div class="session-input-history-text">
               <template v-for="(segment, segmentIndex) in segments" :key="segmentIndex">
                 <button
@@ -231,6 +276,13 @@ onBeforeUnmount(() => {
                 <span v-else>{{ segment.text }}</span>
               </template>
             </div>
+            <button
+              v-if="copyState?.item === item && (copyState.status === 'missing' || copyState.status === 'failed')"
+              type="button"
+              class="session-input-history-text-only"
+              data-test="session-input-history-copy-text"
+              @click="copyItem(item, true)"
+            >{{ t('terminal.inputHistory.copyTextOnly') }}</button>
           </li>
         </ol>
       </template>
@@ -372,10 +424,41 @@ onBeforeUnmount(() => {
 
 .session-input-history-list time {
   display: inline-block;
-  margin-bottom: 6px;
   color: var(--fg-dim);
   font-size: 10px;
   line-height: 1.3;
+}
+
+.session-input-history-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -5px 0 6px;
+}
+
+.session-input-history-item-header time {
+  flex: 1;
+}
+
+.session-input-history-copy-status {
+  color: var(--good);
+  font-size: 10px;
+}
+
+.session-input-history-copy-status.failed {
+  color: var(--bad);
+}
+
+.session-input-history-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-input-history-text-only {
+  margin-top: 6px;
+  padding: 2px 6px;
+  color: var(--fg-dim);
+  font-size: 11px;
 }
 
 .session-input-history-text {

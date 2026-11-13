@@ -4,6 +4,7 @@ import type { MessageKey } from "../i18n";
 import { pasteImageBus } from "./pasteImageBus";
 import { sendWithTerminalImagePreview } from "./terminalImagePreviewBus";
 import { effectiveRemotePermission, isPasteAllowed } from "./terminalContextMenu";
+import { parseHistoryClipboardHTML } from "./historyClipboard";
 
 export type PastePlatform = "mac" | "linux" | "other";
 
@@ -44,7 +45,7 @@ interface TerminalLike {
 
 export interface PasteFromClipboardOptions {
   term: TerminalLike;
-  conn: Pick<SessionConnection, "sendPasteImage">;
+  conn: Pick<SessionConnection, "sendPasteImage"> & { beginHistoryPaste?: () => (() => void) | null };
   sessionId?: string;
   status: Status;
   remotePermission?: string;
@@ -53,7 +54,7 @@ export interface PasteFromClipboardOptions {
 
 export interface PasteResult {
   ok: boolean;
-  kind?: "text" | "image";
+  kind?: "text" | "image" | "mixed";
   reasonKey?: MessageKey;
   reason?: string;
 }
@@ -76,6 +77,10 @@ export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promi
   }
 
   const payload = await (opts.getPayload ? opts.getPayload() : getClipboardPastePayload());
+  if (payload.html) {
+    const result = await pasteHistoryHTML(opts, payload.html);
+    if (result) return result;
+  }
   if (payload.kind === "text" && payload.text) {
     opts.term.paste(payload.text);
     return { ok: true, kind: "text" };
@@ -102,4 +107,32 @@ export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promi
     return reasonKey ? { ok: false, reasonKey } : { ok: false, reason: payload.reason };
   }
   return { ok: false, reasonKey: "terminal.clipboardEmpty" };
+}
+
+export async function pasteHistoryHTML(opts: PasteFromClipboardOptions, html: string): Promise<PasteResult | null> {
+  const parts = parseHistoryClipboardHTML(html);
+  if (!parts) return null;
+  if (!isPasteAllowed(opts.status, opts.remotePermission)) {
+    return { ok: false, reasonKey: "terminal.pasteSessionNotWritable" };
+  }
+  if (parts.some((part) => part.kind === "image") && effectiveRemotePermission(opts.remotePermission) !== "full") {
+    return { ok: false, reasonKey: "terminal.imagePasteRequiresFull" };
+  }
+  const release = opts.conn.beginHistoryPaste?.();
+  if (release === null) return { ok: false, reasonKey: "terminal.inputHistory.pasteRouteUnavailable" };
+  try {
+    for (const part of parts) {
+      if (part.kind === "text") {
+        if (part.text) opts.term.paste(part.text);
+      } else {
+        pasteImageBus.emit(part.file, part.name);
+        const sent = await sendWithTerminalImagePreview(part.file, part.name, opts.sessionId,
+          () => opts.conn.sendPasteImage(part.file, part.name));
+        if (!sent) return { ok: false, reasonKey: "terminal.pasteFailed" };
+      }
+    }
+    return { ok: true, kind: "mixed" };
+  } finally {
+    release?.();
+  }
 }

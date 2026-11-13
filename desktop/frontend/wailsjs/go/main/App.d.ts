@@ -333,6 +333,8 @@ export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
+export function SetClipboardHTML(arg1:string,arg2:string):Promise<void>;
+
 export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
 
 export function SetDebugLoggingConfig(arg1:main.DebugLoggingConfig):Promise<void>;

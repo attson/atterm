@@ -127,6 +127,10 @@ export function getClipboardPastePayload(): Promise<ClipboardPastePayload> {
   return bindings().GetClipboardPastePayload();
 }
 
+export function setClipboardHTML(text: string, html: string): Promise<void> {
+  return bindings().SetClipboardHTML(text, html);
+}
+
 export function getStartupError(): Promise<StartupError> {
   const b = bindings();
   if (!b.GetStartupError) {

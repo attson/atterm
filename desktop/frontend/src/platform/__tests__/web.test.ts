@@ -224,3 +224,15 @@ describe('web platform', () => {
     })
   })
 })
+
+describe('web background subscription preference', () => {
+  beforeEach(() => localStorage.clear())
+  it('defaults off and persists independently of account preferences', async () => {
+    const p = createWebPlatform()
+    expect(await p.backgroundSubscriptions!.load()).toBe(false)
+    await p.backgroundSubscriptions!.save(true)
+    expect(await createWebPlatform().backgroundSubscriptions!.load()).toBe(true)
+    await p.backgroundSubscriptions!.save(false)
+    expect(await createWebPlatform().backgroundSubscriptions!.load()).toBe(false)
+  })
+})

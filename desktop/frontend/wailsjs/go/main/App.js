@@ -110,6 +110,14 @@ export function DownloadVersion(arg1) {
   return window['go']['main']['App']['DownloadVersion'](arg1);
 }
 
+export function DrainNativeDirect(arg1) {
+  return window['go']['main']['App']['DrainNativeDirect'](arg1);
+}
+
+export function DrainPeerNativeDirect(arg1) {
+  return window['go']['main']['App']['DrainPeerNativeDirect'](arg1);
+}
+
 export function ExportConfig(arg1) {
   return window['go']['main']['App']['ExportConfig'](arg1);
 }
@@ -224,6 +232,10 @@ export function GetNotificationsEnabled() {
 
 export function GetPasteboardFileURLs() {
   return window['go']['main']['App']['GetPasteboardFileURLs']();
+}
+
+export function GetPauseRemoteSubscriptionsInBackground() {
+  return window['go']['main']['App']['GetPauseRemoteSubscriptionsInBackground']();
 }
 
 export function GetPeerConfigSyncStatus() {
@@ -708,6 +720,10 @@ export function SetLoggingConfig(arg1) {
 
 export function SetNotificationsEnabled(arg1) {
   return window['go']['main']['App']['SetNotificationsEnabled'](arg1);
+}
+
+export function SetPauseRemoteSubscriptionsInBackground(arg1) {
+  return window['go']['main']['App']['SetPauseRemoteSubscriptionsInBackground'](arg1);
 }
 
 export function SetPeerLANConfig(arg1) {

@@ -1,7 +1,7 @@
 # Wire 协议规范 (v1)
 
 > **Audience**: 实现 WS 帧或 HTTP API 客户端的工程师
-> **Last updated**: 2026-09-23
+> **Last updated**: 2026-11-14
 > **Status**: stable
 > **See also**: [auth.md](./auth.md) · [architecture.md](./architecture.md)
 
@@ -76,6 +76,9 @@ const (
     TypeAuthInfo        Type = 0x40  // relay → uplink; UTF-8 JSON {user_id}
     TypeInputHistoryRequest  Type = 0x41 // client → relay/direct host
     TypeInputHistoryResponse Type = 0x42 // desktop host → requester client
+    TypeOutCompressed           Type = 0x43 // uplink → relay → client
+    TypeStreamRequestCompressed Type = 0x44 // relay → uplink
+    TypeStreamStopCompressed    Type = 0x45 // relay → uplink
 )
 ```
 
@@ -112,6 +115,36 @@ payload = 8 字节 `seq` (u64 BE) + 原始字节流。
 `seq` 从 1 单调递增，每帧 +1，**不是字节偏移**。重连/续传依赖 seq 而非 byte offset。**不**在 reconnect/reattach 时重置。
 
 **E2EE**：当 agent 持有 `account_key` 时，`原始字节流` 是 [§E2EE 信封](#e2ee-信封) 描述的 AEAD 信封，AAD 鉴别字节 = `0x03`（即帧类型本身）。relay 不解开、不做 OSC 解析，按 `session.MarkContentOpaque()` 关掉 OSC 路径。解密后的明文才是真实 PTY 字节，客户端走原本的 xterm 写入路径。
+
+### `OUT_COMPRESSED` (0x43) — 压缩后加密的 PTY 输出
+
+payload = `seq(u64 BE) || AEAD envelope`。AAD 为 `session_uuid(16B) || 0x43 || seq(u64 BE)`，
+将密文绑定到 session、帧类型与序号。解密后的明文为：
+
+```text
+codec(u8) || original_length(u32 BE) || body
+```
+
+`codec=0` 的 body 是原始 PTY 字节；`codec=1` 是一个完整、独立的 raw DEFLATE level 1
+stream（无 zlib/gzip header）。不足 128 字节或压缩后 body 不短于原始数据时使用 codec 0。
+`original_length` 最大为 64 KiB，解码后长度必须精确相等；拒绝未知 codec、损坏/截断 stream
+与超限展开。Go codec 还拒绝完整 DEFLATE stream 后的尾随数据。浏览器原生 inflater 不暴露
+已消费输入长度，不能保证拒绝尾随数据；浏览器先认证整个加密块，再保证解码长度精确且有界。
+浏览器只有支持原生 `DecompressionStream("deflate-raw")` 才声明能力，解密和解压留在主线程。
+Go codec 实现位于 `internal/terminalcodec/`。
+
+仅当 ANNOUNCE 与 ATTACH 均声明 `output_compression: "deflate-raw-v1"` 时 relay 才选择此流。
+不持有 `account_key` 的 publisher 不声明能力。旧 relay 忽略新增 JSON 字段并沿用 `OUT`；
+旧 client 未声明能力，仍收到 `OUT`。两类订阅共用 session id、driver、权限与 metadata，
+各有独立、按需分配的 scrollback buffer 与首订阅/末订阅生命周期。没有 subscriber 时两类
+流都停止上传；混合新旧 subscriber 时 publisher 可同时上传两类流，纯新 client 只请求压缩流。
+
+`seq` 与 `OUT` 使用相同的 PTY 输出游标。所有远程路径（Relay 与 direct）都保留源帧边界，
+包括本地代理订阅的明文回放与溢出恢复。不能在各路线独立合并帧后只携带最后一个 seq，
+否则路线切换时无法裁掉已接收的前缀，会重复显示输出。压缩不引入额外合帧等待。
+不透明 scrollback 回放保留每个密文信封的原始边界和 seq；缓存溢出时断开重连，不能截断密文。
+回放仍发送 `REPLAY_PROGRESS` 并保留 pacing。客户端须按顺序处理输出、META、回放进度和 CLOSE，
+异步解压完成后再次核对 socket 与 route generation，认证和解码均成功后才提交 seq。
 
 ### `RESIZE` (0x04) — 窗口尺寸变更
 
@@ -173,7 +206,8 @@ agent 发出后 relay 移除 session，所有 subscriber 收到 CLOSE 后断开�
   "session_id": "<uuid string>",
   "since_seq": 0,
   "client_id": "<uuid>",
-  "client_name": "Alice's MacBook"
+  "client_name": "Alice's MacBook",
+  "output_compression": "deflate-raw-v1"
 }
 ```
 
@@ -182,6 +216,9 @@ session_id 同时填到帧 header 的 `session_id` 字段（冗余但便于路�
 `client_id` 是 client 在创建 `SessionConnection` 时自己生成的 UUID，每个 connection 实例一个。relay 把它存在对应 `Subscriber` 上，并在 `META.driver_client_id` 里回放，让 client 通过本地 ID 比对识别自己是不是当前 driver。该字段可选——旧版 client 不发 client_id 时 relay 仍接受订阅，只是 client 永远不会渲染成 driver（始终 viewer 视觉）；服务端 driver 指针仍正确指向该 sub，IN/RESIZE 仍可通过，UI 行为退化为静默 driver。
 
 `client_name` 是人类可读的客户端标识（典型来自 `getHostInfo().host` 也就是本机 hostname）。relay 把它存在 `Subscriber` 上，并在 `META.driver_client_name` 里回放，让 viewer 在遮罩里显示 "by &lt;name&gt;"。该字段可选。
+
+`output_compression` 为可选能力字段；缺省或未知值选择普通 `OUT`，支持 `deflate-raw-v1`
+且 publisher 同样声明能力时选择 `OUT_COMPRESSED`。现有字段和普通帧 payload 均不改变。
 
 对已认证用户，relay 处理 ATTACH 时把该 session 的 `seen_at` 持久化为
 `max(relay_now, attention_at)`；连接结束时若 attached 期间 `attention_at` 又前进，则在
@@ -300,7 +337,8 @@ rtt_ms = now_ms_local() - decoded(payload)
   "host_id": "<uuid>",
   "host": "myhost",
   "user": "alice",
-  "sessions": [SessionInfo, ...]
+  "sessions": [SessionInfo, ...],
+  "output_compression": "deflate-raw-v1"
 }
 ```
 
@@ -310,6 +348,9 @@ rtt_ms = now_ms_local() - decoded(payload)
 - 本地 session 增/删时事件驱动一次（`relayHost.notifyChange`）
 
 relay 收到后 reconcile：新出现的 session 创建 mirror、消失的 session 移除 mirror。
+
+`output_compression` 可选，只有持有已解锁 account key 的 publisher 才声明 `deflate-raw-v1`；
+缺省或未知值仅支持普通 `OUT`。
 
 ### `STREAM_REQUEST` (0x31) — relay → uplink
 
@@ -330,6 +371,13 @@ relay 端 mirror session 最后一个 subscriber 离开时发，请求桌面 app
 ```
 
 桌面 app 收到后取消 forwarder goroutine 并 `UnsubscribeLocal`。session 仍在本地活动，仅停止往远程上传字节。
+
+### `STREAM_REQUEST_COMPRESSED` (0x44) / `STREAM_STOP_COMPRESSED` (0x45)
+
+分别复用 `STREAM_REQUEST` 的 `{ session_id, since_seq? }` 和 `STREAM_STOP` 的
+`{ session_id }` JSON schema，但只控制 `OUT_COMPRESSED` 流。两类流分别在自己的首个
+subscriber 出现/最后一个离开时启动/停止；重复 request/stop 幂等。`since_seq` 为对应 mirror
+buffer 已存的最后序号，publisher 只补发更大的 seq，避免重新上传已经缓存的历史。
 
 ### `PASTE_IMAGE` (0x33) — client → Relay/Peer route → desktop PTY host
 
@@ -897,7 +945,7 @@ fallback 语义。
 
 ## E2EE 信封
 
-agent 持有 `account_key` 时，下列字段以**统一 AEAD 信封**封装：`OUT` 帧的字节流、`META.sealed` / `SessionInfo.sealed` / `CommandEventPayload.sealed_body`。relay 不解开，只按 routing 必需的字段（session_id / 时间戳 / `task_state` / `cols/rows` / `driver_client_id` / `host_id`）做转发与限流。
+agent 持有 `account_key` 时，下列字段以**统一 AEAD 信封**封装：`OUT` / `OUT_COMPRESSED` 帧的字节流、`META.sealed` / `SessionInfo.sealed` / `CommandEventPayload.sealed_body`。relay 不解开，只按 routing 必需的字段（session_id / 时间戳 / `task_state` / `cols/rows` / `driver_client_id` / `host_id`）做转发与限流。
 
 ### 信封 wire 格式
 
@@ -919,7 +967,8 @@ key 派生：每 session 独立 `session_key = HKDF-SHA256(salt=nil, ikm=account
 
 ### AAD 鉴别表（cross-type replay 防线）
 
-Relay session 信封的 AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字段所在帧的 `Type` 字节**，把信封绑死到帧类型上——攻击者就算偷到一条合法信封，也无法把它替换到别的帧里（cipher 解开会因 AAD 不匹配直接失败）。`0xF0..0xF3` 是不上 Relay frame 的合成 namespace，使用表中列出的独立上下文。
+Relay session 信封的 AAD = `uuid(16B) || frame_type(1B)`，`OUT_COMPRESSED` 额外追加
+`seq(u64 BE)`。`frame_type` 字节**等于该 sealed 字段所在帧的 `Type` 字节**，把信封绑死到帧类型上——攻击者就算偷到一条合法信封，也无法把它替换到别的帧里（cipher 解开会因 AAD 不匹配直接失败）。`0xF0..0xF3` 是不上 Relay frame 的合成 namespace，使用表中列出的独立上下文。
 
 | frame_type | 出现位置 | sealed 内容 |
 |------------|----------|-------------|
@@ -935,6 +984,7 @@ Relay session 信封的 AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字�
 | `0x3a` `FS_EVENT` | 分段 payload 的 segment 1（裸二进制） | JSON `SealedFSEventFields { path }` |
 | `0x3d` `SERVICE_OPEN` | `ServiceOpenPayload.sealed`（base64） | JSON `SealedServiceOpenFields { port, scheme }` |
 | `0x42` `INPUT_HISTORY_RESPONSE` | `InputHistoryResponsePayload.sealed`（base64） | JSON `SealedInputHistoryResponse { request_id, items, truncated }` |
+| `0x43` `OUT_COMPRESSED` | OUT_COMPRESSED 帧 `seq` 后的信封，AAD = `uuid(16B) || 0x43 || seq(u64 BE)` | `codec(u8) || original_length(u32 BE) || raw/DEFLATE body` |
 | `0xF0` （合成，不上 wire） | `ssh_hosts_encrypted` 偏好值 | JSON `sshSyncPayload { hosts, keys }` |
 | `0xF1` （合成，不上 wire；retired/reserved，禁止复用） | 已退休的 `profiles_encrypted` 偏好值 | 旧 JSON `profilesSyncPayload { profiles, default_profile_id }`；当前客户端不再读写 |
 | `0xF2` （合成，不上 wire） | Peer config payload | `space_id(16B) || 0xF2 || key_class(1B) || epoch(be64) || len16+collection || len16+record_id || len16+op_id` |
@@ -958,6 +1008,7 @@ Agent seal 成功后**必须**把对应明文字段擦零（[AGENTS.md](../../AG
 | `SessionInfo.sealed` | `SessionInfo.title` / `cwd` / `command` / `current_command` / `ssh_host_alias` 写为 `""`，`ssh_appearance` 写为 `nil`；`summary.error_lines` 清空 |
 | `CommandEventPayload.sealed_body` | `label` 写空、`exit_code` / `elapsed_ms` 写零 |
 | `OUT` 帧 | 整条字节流就是密文（没有明文 fallback） |
+| `OUT_COMPRESSED` 帧 | 压缩 codec header 和 body 一起加密（没有明文 fallback） |
 
 `account_key` 解锁失败 / seal 出错 / 客户端是旧版本 → agent 走 fallback：sealed 字段不发，明文字段照常 publish。这是 "no key = no encryption" 的对称路径，让 dev 模式和未注册账号下的体验不受影响。
 

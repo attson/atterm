@@ -21,6 +21,12 @@ func TestAADTagsAreUnique(t *testing.T) {
 	// that is the point of keying by byte rather than listing pairs.
 }
 
+func TestAADOutCompressedNamespace(t *testing.T) {
+	if AADTagOutCompressed != 0x43 || AADTags[AADTagOutCompressed] != "OUT_COMPRESSED" {
+		t.Fatal("compressed output must have its own registered AAD namespace")
+	}
+}
+
 func TestAADProfilesNamespaceRetired(t *testing.T) {
 	if AADTagProfiles != 0xF1 {
 		t.Fatalf("retired profiles AAD tag = 0x%02x, want reserved 0xF1", AADTagProfiles)

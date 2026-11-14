@@ -845,6 +845,8 @@ export const zhCN = {
     discardRelayTitle: "放弃未保存的 relay 更改？",
     discardRelayBody: "你对 relay URL、token、权限或 insecure mode 的编辑尚未保存。",
     general: {
+      pauseRemoteSubscriptionsInBackground: "后台暂停远程订阅",
+      pauseRemoteSubscriptionsInBackgroundHint: "默认关闭。终端标签页不活跃或应用进入后台时暂停远程更新；传输期间保持连接，返回时恢复缓存历史。仅对当前设备生效。",
       languageLabel: "语言",
       languageHint: "选择跟随系统时，会使用设备语言。",
       terminalTheme: "终端主题",

@@ -83,4 +83,71 @@ describe('NativeDirectClientTransport', () => {
     emit({ kind: 'diagnostics', route: 'quick_tunnel' })
     expect(callbacks.onDiagnostics).toHaveBeenCalledWith({ route: 'quick_tunnel' })
   })
+  it('drains the native send queue before allowing its owner to stop the route', async () => {
+    const { bridge, transport, emit } = setup()
+    let finishSend!: () => void
+    vi.mocked(bridge.send).mockImplementationOnce(() => new Promise<void>((resolve) => { finishSend = resolve }))
+    transport.start()
+    emit({ kind: 'authenticated' })
+    transport.sendFrame(new Uint8Array([1]))
+    transport.sendFrame(new Uint8Array([2]))
+    let drained = false
+    const pending = transport.drain().then(() => { drained = true })
+    await Promise.resolve()
+    expect(bridge.send).toHaveBeenCalledTimes(1)
+    expect(drained).toBe(false)
+    expect(bridge.stop).not.toHaveBeenCalled()
+    finishSend()
+    await pending
+    expect(bridge.send).toHaveBeenNthCalledWith(2, expect.any(String), [2])
+    transport.close()
+    expect(bridge.stop).toHaveBeenCalledOnce()
+  })
+
+  it('rejects drain on native send failure and drops remaining queued writes', async () => {
+    const { bridge, transport, callbacks, emit } = setup()
+    vi.mocked(bridge.send).mockRejectedValueOnce(new Error('native write failed'))
+    transport.start()
+    emit({ kind: 'authenticated' })
+    transport.sendFrame(new Uint8Array([1]))
+    transport.sendFrame(new Uint8Array([2]))
+    await expect(transport.drain()).rejects.toThrow()
+    expect(callbacks.onFailure).toHaveBeenCalledOnce()
+    expect(bridge.stop).toHaveBeenCalledOnce()
+    expect(bridge.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for the actual native buffer drain after all bridge writes settle', async () => {
+    const { bridge, transport, emit } = setup()
+    let finishSend!: () => void
+    let finishDrain!: () => void
+    vi.mocked(bridge.send).mockImplementationOnce(() => new Promise<void>((resolve) => { finishSend = resolve }))
+    bridge.drain = vi.fn(() => new Promise<void>((resolve) => { finishDrain = resolve }))
+    transport.start(); emit({ kind: 'authenticated' })
+    transport.sendFrame(new Uint8Array([1]))
+    let drained = false
+    const pending = transport.drain().then(() => { drained = true })
+    await Promise.resolve()
+    expect(bridge.drain).not.toHaveBeenCalled()
+    finishSend()
+    for (let index = 0; index < 12; index++) await Promise.resolve()
+    expect(bridge.drain).toHaveBeenCalledWith(transport.nativeAttemptId())
+    expect(drained).toBe(false)
+    finishDrain(); await pending
+    expect(drained).toBe(true)
+    transport.close()
+  })
+
+  it('aborts a pending native buffer drain immediately when forcibly closed', async () => {
+    const { bridge, transport, emit } = setup()
+    bridge.drain = vi.fn(() => new Promise<void>(() => {}))
+    transport.start(); emit({ kind: 'authenticated' })
+    const pending = transport.drain()
+    const rejected = expect(pending).rejects.toThrow('cancelled')
+    for (let index = 0; index < 12; index++) await Promise.resolve()
+    expect(bridge.drain).toHaveBeenCalledOnce()
+    transport.close(); await rejected
+    expect(bridge.stop).toHaveBeenCalledOnce()
+  })
+
 })

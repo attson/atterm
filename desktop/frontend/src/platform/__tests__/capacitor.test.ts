@@ -800,3 +800,15 @@ it('does not expose remote profile creation on Capacitor', () => {
   expect(createCapacitorPlatform().sessions).not.toHaveProperty('createSessionWithProfile')
   expect(createCapacitorPlatform().sessions).not.toHaveProperty('listRemoteHosts')
 })
+
+describe('mobile background subscription preference', () => {
+  beforeEach(() => localStorage.clear())
+  it('defaults off and persists on this device', async () => {
+    const p = createCapacitorPlatform()
+    expect(await p.backgroundSubscriptions!.load()).toBe(false)
+    await p.backgroundSubscriptions!.save(true)
+    expect(await createCapacitorPlatform().backgroundSubscriptions!.load()).toBe(true)
+    await p.backgroundSubscriptions!.save(false)
+    expect(await createCapacitorPlatform().backgroundSubscriptions!.load()).toBe(false)
+  })
+})

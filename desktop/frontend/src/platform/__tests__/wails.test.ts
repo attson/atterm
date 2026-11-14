@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock lib/api before the impl import so createWailsPlatform sees the mocks.
 vi.mock('../../lib/api', () => ({
+  getPauseRemoteSubscriptionsInBackground: vi.fn().mockResolvedValue(false),
+  setPauseRemoteSubscriptionsInBackground: vi.fn().mockResolvedValue(undefined),
   getRelayConfig: vi.fn().mockResolvedValue({ url: 'https://r', token: 'atk_x', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false }),
   setRelayConfig: vi.fn().mockResolvedValue(undefined),
   setUplinkPaused: vi.fn().mockResolvedValue(undefined),
@@ -97,6 +99,11 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
     id: 'peer-session-1', host_id: 'peer-host', remote_permission: 'full',
   }])),
   GetPeerSessionRouteStatus: vi.fn().mockResolvedValue({ direct: true, quick_tunnel: true }),
+  StartNativeDirect: vi.fn().mockResolvedValue(undefined),
+  SendNativeDirectFrame: vi.fn().mockResolvedValue(undefined),
+  DrainNativeDirect: vi.fn().mockResolvedValue(undefined),
+  StopNativeDirect: vi.fn().mockResolvedValue(undefined),
+  DrainPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
   StartPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
   SendPeerNativeDirectFrame: vi.fn().mockResolvedValue(undefined),
   StopPeerNativeDirect: vi.fn().mockResolvedValue(undefined),
@@ -113,6 +120,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 }))
 
 import { createWailsPlatform } from '../wails'
+import { setPauseRemoteSubscriptionsInBackground } from '../../lib/api'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, ClipboardSetText, EventsOn, EventsEmit, OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime'
 import {
   AcceptPendingPeerConfig,
@@ -139,6 +147,8 @@ import {
   GetAppVersion,
   StartPeerQuickTunnel,
   StartPeerNativeDirect,
+  DrainNativeDirect,
+  DrainPeerNativeDirect,
   RebindServicePreview,
   StartServicePreview,
   StopPeerNativeDirect,
@@ -478,6 +488,33 @@ describe('createWailsPlatform', () => {
     expect(ListPeerSessions).toHaveBeenCalledOnce()
   })
 
+
+  for (const route of ['relay', 'peer'] as const) it(`waits for the ${route} native Go buffer through the Wails drain binding`, async () => {
+    const p = createWailsPlatform()
+    const drain = route === 'peer' ? DrainPeerNativeDirect : DrainNativeDirect
+    const otherDrain = route === 'peer' ? DrainNativeDirect : DrainPeerNativeDirect
+    let finishDrain!: () => void
+    vi.mocked(drain).mockImplementationOnce(() => new Promise<void>((resolve) => { finishDrain = resolve }))
+    const options = {
+      signalURL: '', sessionId: '11111111-2222-3333-4444-555555555555', sinceSeq: 0,
+      clientInstanceId: 'client', accountKey: new Uint8Array(32),
+      callbacks: { onFrame: vi.fn(), onReady: vi.fn(), onFailure: vi.fn() },
+    }
+    const transport = route === 'peer' ? p.peer!.createSessionTransport!(options) : p.directConnection.createTransport!(options)
+    transport.start()
+    const eventHandler = vi.mocked(EventsOn).mock.calls.at(-1)![1]
+    eventHandler({ kind: 'authenticated' })
+    expect(transport.sendFrame(new Uint8Array([1]))).toBe(true)
+    let completed = false
+    const pending = transport.drain!().then(() => { completed = true })
+    for (let index = 0; index < 12; index++) await Promise.resolve()
+    expect(drain).toHaveBeenCalledWith(transport.nativeAttemptId!())
+    expect(otherDrain).not.toHaveBeenCalled()
+    expect(completed).toBe(false)
+    finishDrain(); await pending
+    expect(completed).toBe(true)
+    transport.close()
+  })
   it('peer transport uses an isolated native event namespace', () => {
     const p = createWailsPlatform()
     const transport = p.peer!.createSessionTransport!({
@@ -574,4 +611,12 @@ describe('createWailsPlatform', () => {
     await p.pluginHost!.fs.revealInOS('/tmp/x')
     expect(RevealInOS).toHaveBeenCalledWith('/tmp/x')
   })
+})
+
+
+it('uses the desktop config store for background subscription preferences', async () => {
+  const p = createWailsPlatform()
+  expect(await p.backgroundSubscriptions!.load()).toBe(false)
+  await p.backgroundSubscriptions!.save(true)
+  expect(setPauseRemoteSubscriptionsInBackground).toHaveBeenCalledWith(true)
 })

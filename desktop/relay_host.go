@@ -47,11 +47,9 @@ type relayHost struct {
 	mu       sync.Mutex
 	sessions map[uuid.UUID]*activeSession
 	changes  chan struct{} // capacity 1; signals "session set has changed"
-	// uplinkSubs remembers, for each session id, the local Subscriber created
-	// in SubscribeLocal. ClaimLocalDriver looks the sub up here when a remote
-	// attacher (behind the uplink) sends CLAIM_DRIVER and we need to promote
-	// that subscription to driver on the local session.
-	uplinkSubs map[uuid.UUID]*session.Subscriber
+	// Output formats have separate proxy subscribers but share one remote
+	// driver. Retaining every proxy lets format changes preserve that lease.
+	uplinkSubs map[uuid.UUID]map[*session.Subscriber]struct{}
 
 	// startSniffFn launches an AI session-id resolution goroutine. Defaults
 	// to startAIResolve in production; tests override with a stub.
@@ -310,7 +308,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		cfg:            cfgStore,
 		sessions:       make(map[uuid.UUID]*activeSession),
 		changes:        make(chan struct{}, 1),
-		uplinkSubs:     make(map[uuid.UUID]*session.Subscriber),
+		uplinkSubs:     make(map[uuid.UUID]map[*session.Subscriber]struct{}),
 		startSniffFn:   startAIResolve,
 		feishuCards:    internalfeishu.NewCardIndex(),
 		feishuSessions: make(map[string]*feishuSession),
@@ -447,9 +445,17 @@ func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subs
 	// placeholder "remote", spuriously kicking the real remote driver back to a
 	// viewer ("remote has taken control" with nobody actually there). A remote
 	// becomes driver only via an explicit end-to-end CLAIM_DRIVER → ClaimLocalDriver.
-	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID, uplinkSubClientName, session.WithoutAutoDrive())
+	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID, uplinkSubClientName, session.WithoutAutoDrive(), session.PreserveOutputFrames())
+	select {
+	case <-sub.Done():
+		return nil, 0, fmt.Errorf("local subscription closed before streaming session %s", id)
+	default:
+	}
 	h.mu.Lock()
-	h.uplinkSubs[id] = sub
+	if h.uplinkSubs[id] == nil {
+		h.uplinkSubs[id] = make(map[*session.Subscriber]struct{})
+	}
+	h.uplinkSubs[id][sub] = struct{}{}
 	h.mu.Unlock()
 	info := sess.Info()
 	logDebug("uplink", "subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d client_id=%q", id, sinceSeq, replayToSeq, info.Cols, info.Rows, uplinkSubClientID)
@@ -458,14 +464,28 @@ func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subs
 
 // UnsubscribeLocal removes a previously-acquired subscriber.
 func (h *relayHost) UnsubscribeLocal(id uuid.UUID, sub *session.Subscriber) {
-	if sess, ok := h.server.Registry().Get(id); ok {
-		sess.Unsubscribe(sub)
-	}
 	h.mu.Lock()
-	if h.uplinkSubs[id] == sub {
+	defer h.mu.Unlock()
+	proxies := h.uplinkSubs[id]
+	delete(proxies, sub)
+	if len(proxies) == 0 {
 		delete(h.uplinkSubs, id)
 	}
-	h.mu.Unlock()
+	if sess, ok := h.server.Registry().Get(id); ok {
+		for remaining := range proxies {
+			select {
+			case <-remaining.Done():
+				continue
+			default:
+			}
+			// The conditional transfer cannot overwrite a concurrent local
+			// driver's claim between observing the old lease and moving it.
+			if sess.TransferDriverIfCurrent(sub, remaining) {
+				break
+			}
+		}
+		sess.Unsubscribe(sub)
+	}
 }
 
 // ClaimLocalDriver promotes the uplink's own local-session subscriber to
@@ -474,14 +494,25 @@ func (h *relayHost) UnsubscribeLocal(id uuid.UUID, sub *session.Subscriber) {
 // sends CLAIM_DRIVER.
 func (h *relayHost) ClaimLocalDriver(id uuid.UUID, clientID, clientName string) error {
 	h.mu.Lock()
-	uplinkSub := h.uplinkSubs[id]
-	h.mu.Unlock()
-	if uplinkSub == nil {
-		return fmt.Errorf("no uplink subscriber for session %s", id)
-	}
+	defer h.mu.Unlock()
 	sess, ok := h.server.Registry().Get(id)
 	if !ok {
 		return fmt.Errorf("no local session %s", id)
+	}
+	var uplinkSub *session.Subscriber
+	for sub := range h.uplinkSubs[id] {
+		select {
+		case <-sub.Done():
+			continue
+		default:
+		}
+		uplinkSub = sub
+		if sess.IsDriver(sub) {
+			break
+		}
+	}
+	if uplinkSub == nil {
+		return fmt.Errorf("no uplink subscriber for session %s", id)
 	}
 	sess.ClaimDriver(uplinkSub, clientID, clientName)
 	return nil

@@ -379,6 +379,14 @@ export function setWebglRendererEnabled(enabled: boolean): Promise<void> {
   return bindings().SetWebglRendererEnabled(enabled);
 }
 
+export function getPauseRemoteSubscriptionsInBackground(): Promise<boolean> {
+  return bindings().GetPauseRemoteSubscriptionsInBackground();
+}
+
+export function setPauseRemoteSubscriptionsInBackground(enabled: boolean): Promise<void> {
+  return bindings().SetPauseRemoteSubscriptionsInBackground(enabled);
+}
+
 export function getDirectP2PEnabled(): Promise<boolean> {
   return bindings().GetDirectP2PEnabled();
 }

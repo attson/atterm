@@ -221,6 +221,8 @@ type appConfig struct {
 	// terminal route. It gates both client upgrade attempts and this desktop's
 	// direct host listener; false keeps the established Relay-only behavior.
 	DirectP2PEnabled bool `json:"direct_p2p_enabled,omitempty"`
+	// This device alone decides whether inactive remote panes retain subscriptions.
+	PauseRemoteSubscriptionsInBackground bool `json:"pause_remote_subscriptions_in_background,omitempty"`
 
 	// Plugins is the plugin-system block. Defaults filled in on first run.
 	Plugins PluginConfig `json:"plugins"`

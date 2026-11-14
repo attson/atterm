@@ -171,14 +171,14 @@ describe("TerminalView async mount lifecycle", () => {
     expect(source).toContain("let isAlive = true;");
     expect(source).toMatch(/await ensureTerm\(\);\s*if \(!isAlive\) return;/);
     expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;/);
-    expect(source).toMatch(/if \(props\.active\) \{[\s\S]*?scheduleTerminalResumeAfterReveal\(/);
+    expect(source).toMatch(/if \(subscriptionActive\.value\) \{[\s\S]*?scheduleTerminalResumeAfterReveal\(/);
     expect(source).toMatch(/onBeforeUnmount\(\(\) => \{\s*isAlive = false;/);
   });
 
   test("suspends hidden tab connections while keeping the xterm component mounted", () => {
     expect(source).toContain("scheduleTerminalActivation");
     expect(source).toMatch(
-      /watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?if \(isActive\)[\s\S]*?scheduleTerminalResumeAfterReveal\([\s\S]*?cancelTerminalResume\(\);[\s\S]*?conn\?\.suspend\(\)/,
+      /watch\(\s*\[\(\) => props\.active, subscriptionActive\],[\s\S]*?if \(isActive\)[\s\S]*?scheduleTerminalResumeAfterReveal\([\s\S]*?cancelTerminalResume\(\);[\s\S]*?conn\?\.suspend\(\)/,
     );
   });
 
@@ -191,10 +191,10 @@ describe("TerminalView async mount lifecycle", () => {
     const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
     expect(mountedBody).not.toBeNull();
     expect(mountedBody![0]).toMatch(
-      /if \(props\.active\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
+      /if \(subscriptionActive\.value\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
     );
 
-    const activeWatch = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
+    const activeWatch = source.match(/watch\(\s*\[\(\) => props\.active, subscriptionActive\],[\s\S]*?\n\);/);
     expect(activeWatch).not.toBeNull();
     expect(activeWatch![0]).toMatch(
       /if \(isActive\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
@@ -1357,7 +1357,7 @@ describe("TerminalView driver-side PTY size reconciliation", () => {
     // conn already exists on tab re-activation, so startConnection() returns
     // early and its expectedCols/expectedRows comparison never runs. The
     // reveal redraw reaches applyViewerSize, whose driver branch reconciles.
-    const watchBody = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
+    const watchBody = source.match(/watch\(\s*\[\(\) => props\.active, subscriptionActive\],[\s\S]*?\n\);/);
     expect(watchBody).not.toBeNull();
     expect(watchBody![0]).toMatch(/redrawTerminalAfterReveal\(\)/);
   });
@@ -1386,7 +1386,7 @@ describe("TerminalView programmatic focus", () => {
     const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
     expect(mountedBody).not.toBeNull();
     expect(mountedBody![0]).toMatch(
-      /if \(props\.active\)[\s\S]*?scheduleTerminalResumeAfterReveal\(\(\) => \{[\s\S]*?focusTerminalForPaneActivation\(\)/,
+      /if \(subscriptionActive\.value\)[\s\S]*?scheduleTerminalResumeAfterReveal\(\(\) => \{[\s\S]*?focusTerminalForPaneActivation\(\)/,
     );
   });
 

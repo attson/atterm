@@ -753,6 +753,14 @@ export function createCapacitorPlatform(): Platform {
         localStorage.removeItem(AUXKEYS_KEY)
       },
     },
+    backgroundSubscriptions: {
+      load: async () => typeof localStorage !== 'undefined' && localStorage.getItem('atterm.pause_remote_subscriptions_in_background') === '1',
+      save: async (enabled: boolean) => {
+        if (typeof localStorage === 'undefined') return
+        if (enabled) localStorage.setItem('atterm.pause_remote_subscriptions_in_background', '1')
+        else localStorage.removeItem('atterm.pause_remote_subscriptions_in_background')
+      },
+    },
     directConnection: {
       load: async () => typeof localStorage !== 'undefined' && localStorage.getItem('atterm.direct_connection.enabled') === '1',
       save: async (enabled: boolean) => {

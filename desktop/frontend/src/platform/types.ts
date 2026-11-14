@@ -275,6 +275,11 @@ export interface AuxKeyBridge {
   clear(): Promise<void>
 }
 
+export interface BackgroundSubscriptionsBridge {
+  load(): Promise<boolean>
+  save(enabled: boolean): Promise<void>
+}
+
 export interface DirectConnectionBridge {
   load(): Promise<boolean>
   save(enabled: boolean): Promise<void>
@@ -455,6 +460,7 @@ export interface Platform {
   events: EventBus
   templates: TemplateBridge
   auxKeys: AuxKeyBridge
+  backgroundSubscriptions?: BackgroundSubscriptionsBridge
   directConnection: DirectConnectionBridge
   trafficPreferences?: TrafficPreferencesBridge
   peer?: PeerBridge

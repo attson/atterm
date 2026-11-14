@@ -875,6 +875,8 @@ export const en = {
     discardRelayTitle: "Discard unsaved relay changes?",
     discardRelayBody: "Your edits to relay URL, token, permissions, or insecure mode are not saved yet.",
     general: {
+      pauseRemoteSubscriptionsInBackground: "Pause remote subscriptions in background",
+      pauseRemoteSubscriptionsInBackgroundHint: "Off by default. Pause remote terminal updates in inactive tabs or when the app is hidden. Active transfers keep the connection open; returning restores cached history. Applies to this device.",
       languageLabel: "Language",
       languageHint: "Use System to follow your device language.",
       terminalTheme: "terminal theme",

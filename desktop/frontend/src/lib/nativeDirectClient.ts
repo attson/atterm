@@ -1,3 +1,4 @@
+import { waitForTransfer } from './transferActivity'
 import type { DirectClientOptions, DirectTransportDiagnostics } from './directClient'
 import type { DirectTransport } from './connection'
 
@@ -15,6 +16,8 @@ export interface NativeDirectBridge {
   on(event: string, handler: (data: unknown) => void): () => void
   start(req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: NativePeerRoute }): Promise<void>
   send(id: string, frame: number[]): Promise<void>
+  /** Wait until native transport buffers empty; no host acknowledgement. */
+  drain?(id: string): Promise<void>
   stop(id: string): Promise<void>
 }
 
@@ -59,6 +62,7 @@ export class NativeDirectClientTransport implements DirectTransport {
   private readonly id = crypto.randomUUID()
   private off: (() => void) | null = null
   private sendChain = Promise.resolve()
+  private readonly closedSignal = new AbortController()
   private started = false
   private authenticated = false
   private closed = false
@@ -86,9 +90,21 @@ export class NativeDirectClientTransport implements DirectTransport {
     if (this.closed || !this.authenticated) return false
     const copy = Array.from(frame)
     this.sendChain = this.sendChain
-      .then(() => this.bridge.send(this.id, copy))
+      .then(() => {
+        if (this.closed) throw new Error('native direct connection closed')
+        return this.bridge.send(this.id, copy)
+      })
       .catch((error) => this.fail(error))
     return true
+  }
+
+  // Go owns backpressure and attempt cancellation. The bridge exposes no byte
+  // progress, so a renderer deadline would also kill healthy slow writes.
+  drain(): Promise<void> {
+    return waitForTransfer(this.sendChain.then(() => {
+      if (this.closed) throw new Error('native direct connection closed')
+      return this.bridge.drain?.(this.id)
+    }), this.closedSignal.signal, null)
   }
 
   nativeAttemptId(): string {
@@ -144,6 +160,7 @@ export class NativeDirectClientTransport implements DirectTransport {
   private finish(): void {
     if (this.closed) return
     this.closed = true
+    this.closedSignal.abort()
     this.authenticated = false
     this.off?.()
     this.off = null

@@ -242,7 +242,27 @@ export function openOutFrame(
   sessionUUID: string,
   seq: number,
 ): Uint8Array | null {
-  if (!envelope) return null
+  return openSequencedOutFrame(envelope, accountKey, sessionUUID, seq, OUT_AAD_FRAME_TYPE)
+}
+
+/** Authenticate compressed output under its own AAD before decoding its codec. */
+export function openCompressedOutFrame(
+  envelope: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+  seq: number,
+): Uint8Array | null {
+  return openSequencedOutFrame(envelope, accountKey, sessionUUID, seq, 0x43)
+}
+
+function openSequencedOutFrame(
+  envelope: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+  seq: number,
+  frameType: number,
+): Uint8Array | null {
+  if (!envelope || !Number.isSafeInteger(seq) || seq < 0) return null
   const env = envelope instanceof Uint8Array ? envelope : new Uint8Array(envelope)
   const minEnvelopeLen = 1 + 24 + 16
   if (env.length < minEnvelopeLen) return null
@@ -262,7 +282,7 @@ export function openOutFrame(
 
   const aad = new Uint8Array(uuidBytes.length + 1 + 8)
   aad.set(uuidBytes, 0)
-  aad[uuidBytes.length] = OUT_AAD_FRAME_TYPE
+  aad[uuidBytes.length] = frameType
   // seq is a JS number (PTY chunk counter, always < 2^53); write it as an
   // 8-byte big-endian uint64 to match Go's binary.BigEndian.PutUint64.
   new DataView(aad.buffer, aad.byteOffset, aad.byteLength).setBigUint64(

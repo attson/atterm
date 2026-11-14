@@ -10,6 +10,8 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+const directClientQueueStallTimeout = 30 * time.Second
+
 // PionClientConfig contains one authorized client attempt.
 type PionClientConfig struct {
 	// API supplies endpoint-specific Pion settings. Nil uses production defaults.
@@ -366,15 +368,79 @@ func (c *PionClientChannel) SendFrame(ctx context.Context, frame []byte) error {
 	return nil
 }
 
-func (c *PionClientChannel) sendRecordLocked(ctx context.Context, kind RecordKind, plaintext []byte) error {
-	for c.dc.BufferedAmount() > directBufferedHighWater {
+// Drain waits for previously submitted frames to leave Pion's local send queue.
+// It does not acknowledge remote processing. Callers must finish submitting
+// their frames first; control records can still be sent while the queue drains.
+// The 30-second timeout measures lack of progress, not total transfer duration.
+func (c *PionClientChannel) Drain(ctx context.Context) error {
+	if c == nil || c.dc == nil || c.sealer == nil || c.attempt == nil {
+		return fmt.Errorf("%w: unauthenticated channel", ErrDirectTransport)
+	}
+	return drainClientDataChannel(ctx, c.attempt.ctx, c.dc, &c.sendMu, directClientQueueStallTimeout)
+}
+
+type bufferedClientDataChannel interface {
+	BufferedAmount() uint64
+	ReadyState() webrtc.DataChannelState
+}
+
+func drainClientDataChannel(ctx, attemptCtx context.Context, dc bufferedClientDataChannel, sendMu *sync.Mutex, stallTimeout time.Duration) error {
+	return waitClientDataChannel(ctx, attemptCtx, dc, sendMu, 0, stallTimeout)
+}
+
+func waitClientDataChannel(ctx, attemptCtx context.Context, dc bufferedClientDataChannel, sendBarrier *sync.Mutex, highWater uint64, stallTimeout time.Duration) error {
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
+	lastBuffered := dc.BufferedAmount()
+	lastProgress := time.Now()
+	passedSendBarrier := sendBarrier == nil
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if attemptCtx.Err() != nil {
+			return fmt.Errorf("%w: attempt closed", ErrDirectTransport)
+		}
+		if dc.ReadyState() != webrtc.DataChannelStateOpen {
+			return fmt.Errorf("%w: data channel is not open", ErrDirectTransport)
+		}
+		// Wait for a fragmented SendFrame without holding the mutex during
+		// network backpressure, which would also block keepalive replies.
+		if !passedSendBarrier && sendBarrier.TryLock() {
+			sendBarrier.Unlock()
+			passedSendBarrier = true
+		}
+		buffered := dc.BufferedAmount()
+		if passedSendBarrier && buffered <= highWater {
+			return nil
+		}
+		if buffered < lastBuffered {
+			lastProgress = time.Now()
+		}
+		lastBuffered = buffered
+		if time.Since(lastProgress) >= stallTimeout {
+			return fmt.Errorf("%w: local send queue stalled", ErrDirectTransport)
+		}
+		if ticker == nil {
+			ticker = time.NewTicker(directBufferedPoll)
+		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-c.attempt.ctx.Done():
-			return fmt.Errorf("%w: attempt closed", ErrDirectTransport)
-		case <-time.After(directBufferedPoll):
+		case <-attemptCtx.Done():
+		case <-ticker.C:
 		}
+	}
+}
+
+func (c *PionClientChannel) sendRecordLocked(ctx context.Context, kind RecordKind, plaintext []byte) error {
+	// The renderer cannot reach Drain until enqueue completes. Apply the same
+	// progress watchdog here so an open but stalled SCTP route cannot pin it.
+	if err := waitClientDataChannel(ctx, c.attempt.ctx, c.dc, nil, directBufferedHighWater, directClientQueueStallTimeout); err != nil {
+		return err
 	}
 	record, err := c.sealer.Seal(kind, plaintext)
 	if err != nil {

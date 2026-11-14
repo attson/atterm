@@ -12,6 +12,7 @@ import (
 	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/terminalcodec"
 	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
 )
@@ -29,8 +30,9 @@ const (
 // in the relay's main registry but are populated by the uplink's frames
 // rather than by an /agent connection.
 type mirrorState struct {
-	sess      *session.Session
-	streaming bool // true once StreamRequest has been sent (first subscriber)
+	sess                *session.Session
+	streaming           bool // ordinary output is active
+	compressedStreaming bool
 
 	idleCancel                 context.CancelFunc
 	idleNotifiedCommandStarted int64
@@ -67,10 +69,11 @@ func newMirrorSession(id uuid.UUID, info proto.SessionInfo, ownerUserID string) 
 // mirrors on defer at the end of handleUplink; the writer goroutine holds
 // no session state directly.
 type uplinkSession struct {
-	server        *Server
-	conn          *websocket.Conn
-	ownerUserID   string
-	trafficClient trafficClient
+	server            *Server
+	conn              *websocket.Conn
+	ownerUserID       string
+	trafficClient     trafficClient
+	outputCompression string
 	// hostID is ANNOUNCE's HostID, captured once at connect so cleanup() can
 	// unregister the same key registerHost used — see sessionCreateRouter in
 	// session_create_router.go.
@@ -142,15 +145,16 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 	defer cancelConn()
 
 	u := &uplinkSession{
-		server:        s,
-		conn:          c,
-		ownerUserID:   ownerUserID,
-		trafficClient: client,
-		hostID:        ann.HostID,
-		ctx:           connCtx,
-		cancel:        cancelConn,
-		out:           make(chan proto.Frame, uplinkOutBuffer),
-		mirrors:       make(map[uuid.UUID]*mirrorState),
+		server:            s,
+		conn:              c,
+		ownerUserID:       ownerUserID,
+		trafficClient:     client,
+		outputCompression: ann.OutputCompression,
+		hostID:            ann.HostID,
+		ctx:               connCtx,
+		cancel:            cancelConn,
+		out:               make(chan proto.Frame, uplinkOutBuffer),
+		mirrors:           make(map[uuid.UUID]*mirrorState),
 	}
 	defer u.cleanup()
 	// Register before reconcile/writeLoop/readLoop start: a TypeSessionCreate
@@ -182,33 +186,50 @@ func (u *uplinkSession) enqueue(f proto.Frame) {
 // NOT wired here — it runs unconditionally (see startInboundForwarder)
 // so relay-injected IN frames (e.g. Feishu card buttons) reach the PTY
 // even when no viewer is subscribed.
-func (u *uplinkSession) startStream(id uuid.UUID) {
+func (u *uplinkSession) startStream(id uuid.UUID, compressed bool) {
 	u.mu.Lock()
-	ms, ok := u.mirrors[id]
-	if !ok || ms.streaming {
-		u.mu.Unlock()
+	defer u.mu.Unlock()
+	ms := u.mirrors[id]
+	if ms == nil || ms.sess.OutputSubscriberCount(compressed) == 0 {
 		return
 	}
-	ms.streaming = true
-	u.mu.Unlock()
-
-	payload, _ := json.Marshal(proto.StreamRequestPayload{SessionID: id.String()})
-	frame := proto.Frame{Type: proto.TypeStreamRequest, SessionID: id, Payload: payload}
+	active := &ms.streaming
+	typ := proto.TypeStreamRequest
+	if compressed {
+		active = &ms.compressedStreaming
+		typ = proto.TypeStreamRequestCompressed
+	}
+	if *active {
+		return
+	}
+	*active = true
+	payload, _ := json.Marshal(proto.StreamRequestPayload{SessionID: id.String(), SinceSeq: ms.sess.LatestOutputSeq(compressed)})
+	frame := proto.Frame{Type: typ, SessionID: id, Payload: payload}
 	u.server.debugFrame("uplink", "enqueue", frame)
+	// Queue while holding mu so a rapid last-unsubscribe cannot enqueue STOP
+	// ahead of its REQUEST and leave an unobserved stream running.
 	u.enqueue(frame)
 }
 
-func (u *uplinkSession) stopStream(id uuid.UUID) {
+func (u *uplinkSession) stopStream(id uuid.UUID, compressed bool) {
 	u.mu.Lock()
-	ms, ok := u.mirrors[id]
-	if !ok || !ms.streaming {
-		u.mu.Unlock()
+	defer u.mu.Unlock()
+	ms := u.mirrors[id]
+	if ms == nil || ms.sess.OutputSubscriberCount(compressed) != 0 {
 		return
 	}
-	ms.streaming = false
-	u.mu.Unlock()
+	active := &ms.streaming
+	typ := proto.TypeStreamStop
+	if compressed {
+		active = &ms.compressedStreaming
+		typ = proto.TypeStreamStopCompressed
+	}
+	if !*active {
+		return
+	}
+	*active = false
 	payload, _ := json.Marshal(proto.StreamStopPayload{SessionID: id.String()})
-	frame := proto.Frame{Type: proto.TypeStreamStop, SessionID: id, Payload: payload}
+	frame := proto.Frame{Type: typ, SessionID: id, Payload: payload}
 	u.server.debugFrame("uplink", "enqueue", frame)
 	u.enqueue(frame)
 }
@@ -365,6 +386,7 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 		existing, ok := u.mirrors[id]
 		u.mu.Unlock()
 		if ok {
+			existing.sess.SetOutputCompressionSupported(u.outputCompression == proto.OutputCompressionDeflate)
 			u.server.services.registerSession(id, u.ownerUserID, u.out)
 			// ANNOUNCE carries no driver_client_id; reconcile advertised
 			// facts without adopting an empty driver and clobbering the
@@ -385,10 +407,14 @@ func (u *uplinkSession) reconcile(sessions []proto.SessionInfo) {
 		sess := newMirrorSession(id, info, u.ownerUserID)
 		// snapshot capture: id is per-iteration, must capture by value
 		sid := id
-		sess.SetSubscriberLifecycle(
-			func() { u.startStream(sid) },
-			func() { u.stopStream(sid) },
-		)
+		sess.SetOutputCompressionSupported(u.outputCompression == proto.OutputCompressionDeflate)
+		for _, compressed := range []bool{false, true} {
+			format := compressed
+			sess.SetOutputSubscriberLifecycle(format,
+				func() { u.startStream(sid, format) },
+				func() { u.stopStream(sid, format) },
+			)
+		}
 		// Report the mirror's remote subscriber count down the uplink so
 		// the desktop owner can render a "N watching" badge. enqueue is
 		// non-blocking (drops if the downlink is saturated).
@@ -526,9 +552,10 @@ func (u *uplinkSession) readLoop() {
 			var p proto.AnnouncePayload
 			if err := json.Unmarshal(f.Payload, &p); err == nil {
 				u.server.debugScopef(DebugScopeStateSync, "announce_received sessions=%d payload_bytes=%d", len(p.Sessions), len(f.Payload))
+				u.outputCompression = p.OutputCompression
 				u.reconcile(p.Sessions)
 			}
-		case proto.TypeOut:
+		case proto.TypeOut, proto.TypeOutCompressed:
 			seq, data, err := proto.DecodeOut(f.Payload)
 			if err != nil {
 				continue
@@ -537,6 +564,13 @@ func (u *uplinkSession) readLoop() {
 			ms := u.mirrors[f.SessionID]
 			u.mu.Unlock()
 			if ms != nil {
+				if f.Type == proto.TypeOutCompressed {
+					if !ms.sess.SupportsOutputCompression() || len(data) > terminalcodec.MaxDecodedBytes+5+e2eecrypto.EnvelopePrefixSize+16 || !looksLikeEncryptedOut(data) {
+						continue
+					}
+					ms.sess.PushCompressedOut(seq, data)
+					continue
+				}
 				if looksLikeEncryptedOut(data) {
 					ms.sess.MarkContentOpaque()
 				}

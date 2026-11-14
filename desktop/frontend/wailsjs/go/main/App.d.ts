@@ -59,6 +59,10 @@ export function DiscoverTermiusProfiles():Promise<Array<string>>;
 
 export function DownloadVersion(arg1:string):Promise<void>;
 
+export function DrainNativeDirect(arg1:string):Promise<void>;
+
+export function DrainPeerNativeDirect(arg1:string):Promise<void>;
+
 export function ExportConfig(arg1:boolean):Promise<string>;
 
 export function ExportDiagnostics(arg1:string):Promise<string>;
@@ -116,6 +120,8 @@ export function GetLoggingConfig():Promise<main.LoggingConfig>;
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPasteboardFileURLs():Promise<Array<string>>;
+
+export function GetPauseRemoteSubscriptionsInBackground():Promise<boolean>;
 
 export function GetPeerConfigSyncStatus():Promise<main.PeerConfigSyncStatus>;
 
@@ -358,6 +364,8 @@ export function SetLocalePreference(arg1:string):Promise<void>;
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
+
+export function SetPauseRemoteSubscriptionsInBackground(arg1:boolean):Promise<void>;
 
 export function SetPeerLANConfig(arg1:main.SetPeerLANConfigReq):Promise<void>;
 

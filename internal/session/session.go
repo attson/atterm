@@ -77,6 +77,11 @@ type Session struct {
 	// Summary accumulation. Set by uplink_conn the first time it sees the
 	// e2eecrypto cipher_id prefix on an inbound chunk. See MarkContentOpaque.
 	contentOpaque bool
+	// Compressed output is an independent opaque stream; metadata, driver and
+	// permissions still belong to this one session. Allocate its ring on demand.
+	compressedScroll           *ringbuf.Buffer
+	outputCompressionSupported bool
+	outputLifecycle            [2]struct{ first, last func() }
 	// oscTitleBuf retains the tail of any unfinished OSC 0/1/2 (icon/window
 	// title) sequence so a terminator that lands on an Append boundary still
 	// parses. Independent from osc133Buf to keep the two parsers from
@@ -268,11 +273,26 @@ type Subscriber struct {
 	// replaces is an existing subscriber that this subscriber atomically
 	// supersedes after replay catch-up. It is used by authenticated route
 	// handover so subscriber lifecycle never passes through zero.
-	replaces *Subscriber
+	replaces             *Subscriber
+	compressedOutput     bool
+	preserveOutputFrames bool
 }
 
 // SubscribeOption configures a subscription created by Subscribe.
 type SubscribeOption func(*Subscriber)
+
+// WithCompressedOutput selects the opaque compressed stream after capability
+// negotiation with the publisher. It does not create another driver lease.
+func WithCompressedOutput() SubscribeOption {
+	return func(sub *Subscriber) { sub.compressedOutput = true }
+}
+
+// PreserveOutputFrames keeps original sequence boundaries for forwarding
+// routes. Independently coalescing their replay would assign the same final
+// sequence to different byte ranges and duplicate output during handover.
+func PreserveOutputFrames() SubscribeOption {
+	return func(sub *Subscriber) { sub.preserveOutputFrames = true }
+}
 
 // WithoutAutoDrive marks the subscriber as a passive proxy/fan-out that must
 // not be auto-promoted to driver when the session currently has no driver. The
@@ -380,6 +400,90 @@ func (s *Session) SetSubscriberLifecycle(first, last func()) {
 	defer s.mu.Unlock()
 	s.onFirstSubscribe = first
 	s.onLastUnsubscribe = last
+}
+
+func outputLane(compressed bool) int {
+	if compressed {
+		return 1
+	}
+	return 0
+}
+
+// SetOutputCompressionSupported records the publisher capability used when
+// selecting a subscriber's output format. Withdrawal disconnects compressed
+// viewers so their next attach negotiates a stream the publisher can supply.
+func (s *Session) SetOutputCompressionSupported(supported bool) {
+	s.mu.Lock()
+	s.outputCompressionSupported = supported
+	var revoked []*Subscriber
+	if !supported {
+		for sub := range s.subs {
+			if sub.compressedOutput {
+				revoked = append(revoked, sub)
+			}
+		}
+	}
+	s.mu.Unlock()
+	for _, sub := range revoked {
+		s.removeSubscriber(sub)
+	}
+}
+
+// SupportsOutputCompression reports whether the publisher can send compressed
+// encrypted output, independently of any currently attached viewers.
+func (s *Session) SupportsOutputCompression() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.outputCompressionSupported
+}
+
+// SetOutputSubscriberLifecycle registers asynchronous first/last hooks for one
+// output format, so mixed viewers upload only the formats they consume.
+func (s *Session) SetOutputSubscriberLifecycle(compressed bool, first, last func()) {
+	s.mu.Lock()
+	s.outputLifecycle[outputLane(compressed)].first = first
+	s.outputLifecycle[outputLane(compressed)].last = last
+	s.mu.Unlock()
+}
+
+func (s *Session) outputSubscriberCountsLocked() (counts [2]int) {
+	for sub := range s.subs {
+		counts[outputLane(sub.compressedOutput)]++
+	}
+	return counts
+}
+
+// OutputSubscriberCount lets asynchronous stream hooks recheck current demand
+// before sending a request that could have raced with another attach/detach.
+func (s *Session) OutputSubscriberCount(compressed bool) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.outputSubscriberCountsLocked()[outputLane(compressed)]
+}
+
+func (s *Session) outputScrollLocked(compressed bool) *ringbuf.Buffer {
+	if !compressed {
+		return s.scroll
+	}
+	if s.compressedScroll == nil {
+		s.compressedScroll = ringbuf.New(scrollbackBytes)
+	}
+	return s.compressedScroll
+}
+
+// LatestOutputSeq is the reconnect cursor for one format. Reading the unused
+// compressed cursor does not allocate a second scrollback ring.
+func (s *Session) LatestOutputSeq(compressed bool) uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	scroll := s.scroll
+	if compressed {
+		scroll = s.compressedScroll
+	}
+	if scroll == nil {
+		return 0
+	}
+	return scroll.LatestSeq()
 }
 
 // SetSubscriberCountHook registers a callback fired with the new subscriber
@@ -690,10 +794,27 @@ func (s *Session) PushOut(seq uint64, data []byte) bool {
 			s.broadcastCurrentMeta()
 		}
 	}
-	s.scroll.Push(ringbuf.Chunk{Seq: seq, Data: append([]byte(nil), data...)})
+	if seq != 0 {
+		s.mu.Lock()
+		s.scroll.Push(ringbuf.Chunk{Seq: seq, Data: append([]byte(nil), data...)})
+		s.mu.Unlock()
+	}
 	frame := proto.EncodeOut(s.ID, seq, data)
 	s.fanout(frame)
 	return metaChanged
+}
+
+// PushCompressedOut stores and forwards a complete encoded envelope. The relay
+// cannot infer terminal state from it or combine it with another envelope.
+func (s *Session) PushCompressedOut(seq uint64, data []byte) {
+	if seq != 0 {
+		s.mu.Lock()
+		s.outputScrollLocked(true).Push(ringbuf.Chunk{Seq: seq, Data: append([]byte(nil), data...)})
+		s.mu.Unlock()
+	}
+	f := proto.EncodeOut(s.ID, seq, data)
+	f.Type = proto.TypeOutCompressed
+	s.fanout(f)
 }
 
 // MarkContentOpaque permanently flags this Session as carrying encrypted
@@ -743,7 +864,11 @@ func (s *Session) fanout(f proto.Frame) {
 	}
 	bufPtr := subsSnapshotPool.Get().(*[]*Subscriber)
 	subs := (*bufPtr)[:0]
+	opaque := s.contentOpaque
 	for sub := range s.subs {
+		if f.Type == proto.TypeOut && sub.compressedOutput || f.Type == proto.TypeOutCompressed && !sub.compressedOutput {
+			continue
+		}
 		subs = append(subs, sub)
 	}
 	s.mu.RUnlock()
@@ -752,6 +877,12 @@ func (s *Session) fanout(f proto.Frame) {
 		select {
 		case sub.out <- f:
 		default:
+			if opaque || sub.compressedOutput {
+				// Reset-plus-tail resync slices and concatenates bytes, which
+				// destroys authenticated envelope boundaries. Reconnect instead.
+				s.removeSubscriber(sub)
+				continue
+			}
 			// The client is behind by a whole queue. Dropping it here — the old
 			// behaviour — closed its websocket, and it reconnected, replayed,
 			// fell behind again and came straight back: a local terminal that
@@ -791,18 +922,30 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 		opt(sub)
 	}
 
-	chunks := s.scroll.Since(sinceSeq)
-	chunks, cappedTail := capReplayTail(chunks)
-	s.mu.RLock()
+	s.mu.Lock()
+	scroll := s.outputScrollLocked(sub.compressedOutput)
+	opaque := s.contentOpaque || sub.compressedOutput
 	altScreen := s.altScreen
-	s.mu.RUnlock()
+	chunks := scroll.Since(sinceSeq)
+	s.mu.Unlock()
+	chunks, cappedTail := capReplayTail(chunks)
+	if (opaque || sub.preserveOutputFrames) && len(chunks) > subscriberQueueDepth-16 {
+		// Leave room for progress, reset and META frames. Tiny envelopes can
+		// exhaust the queue long before they reach the replay byte budget.
+		chunks = chunks[len(chunks)-(subscriberQueueDepth-16):]
+		cappedTail = true
+	}
+	enqueueChunks := enqueueReplayChunks
+	if opaque || sub.preserveOutputFrames {
+		enqueueChunks = enqueuePreservedReplayChunks
+	}
 	totalBytes := replayBytes(chunks)
 	_ = enqueueReplayProgress(sub, s.ID, proto.ReplayProgressStart, 0, totalBytes, 0)
 	// If the replay starts after evicted bytes — or after bytes we chose not to
 	// send — the gap is unrecoverable: send a soft truncation marker so a fresh
 	// xterm doesn't render a torn tail of cursor-addressed output on top of an
 	// unrelated blank state.
-	if cappedTail || replayIsTruncated(s.scroll.OldestSeq(), sinceSeq, len(chunks)) {
+	if cappedTail || replayIsTruncated(scroll.OldestSeq(), sinceSeq, len(chunks)) {
 		marker := proto.EncodeOut(s.ID, 0, replayResetMarker(altScreen))
 		select {
 		case sub.out <- marker:
@@ -818,7 +961,7 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 		nextProgress  uint64 = replayProgressIntervalBytes
 		ok            bool
 	)
-	lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, chunks, lastSeq, replayedBytes, totalBytes, nextProgress)
+	lastSeq, replayedBytes, nextProgress, ok = enqueueChunks(sub, s.ID, chunks, lastSeq, replayedBytes, totalBytes, nextProgress)
 	if !ok {
 		// The subscriber's queue filled before its snapshot finished, so it is
 		// dropped mid-attach: it never joins s.subs, never becomes driver, and
@@ -833,13 +976,19 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 
 	s.mu.Lock()
 	for !s.closed {
-		catchup := s.scroll.Since(lastSeq)
+		catchup := scroll.Since(lastSeq)
 		if len(catchup) == 0 {
 			break
 		}
+		// The first encrypted OUT can mark a mirror opaque while its initial
+		// attach is replaying. Select the encoder under the same lock as the
+		// snapshot so that catch-up never coalesces newly arrived ciphertext.
+		if s.contentOpaque || sub.compressedOutput || sub.preserveOutputFrames {
+			enqueueChunks = enqueuePreservedReplayChunks
+		}
 		totalBytes += replayBytes(catchup)
 		s.mu.Unlock()
-		lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, catchup, lastSeq, replayedBytes, totalBytes, nextProgress)
+		lastSeq, replayedBytes, nextProgress, ok = enqueueChunks(sub, s.ID, catchup, lastSeq, replayedBytes, totalBytes, nextProgress)
 		if !ok {
 			// Same drop, one phase later: the session produced faster than the
 			// replay could drain for long enough to fill the queue. A command
@@ -854,6 +1003,7 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	}
 	closed := s.closed
 	initialCount := len(s.subs)
+	initialOutputCounts := s.outputSubscriberCountsLocked()
 	wasEmpty := initialCount == 0
 	added := false
 	var (
@@ -863,7 +1013,8 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 		snapshotDriverID   string
 		snapshotDriverName string
 	)
-	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
+	formatSupported := !sub.compressedOutput || s.outputCompressionSupported
+	if !closed && formatSupported && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
 		if sub.replaces != nil {
 			if _, exists := s.subs[sub.replaces]; exists {
 				replacedSubscriber = sub.replaces
@@ -891,6 +1042,8 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	countHook := s.onSubscriberCount
 	subCount := len(s.subs)
 	countChanged := subCount != initialCount
+	outputCounts := s.outputSubscriberCountsLocked()
+	lifecycle := s.outputLifecycle
 	s.mu.Unlock()
 
 	if closed || !added {
@@ -908,6 +1061,14 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	}
 	if wasEmpty && firstHook != nil {
 		go firstHook()
+	}
+	for lane := range lifecycle {
+		if initialOutputCounts[lane] == 0 && outputCounts[lane] > 0 && lifecycle[lane].first != nil {
+			go lifecycle[lane].first()
+		}
+		if initialOutputCounts[lane] > 0 && outputCounts[lane] == 0 && lifecycle[lane].last != nil {
+			go lifecycle[lane].last()
+		}
 	}
 	// Synchronous (not goroutine) so successive counts stay ordered — a stale
 	// count arriving after a newer one would mis-render the viewer badge. The
@@ -935,6 +1096,26 @@ func (s *Session) ClaimDriver(sub *Subscriber, clientID, clientName string) {
 	s.mu.Unlock()
 
 	s.broadcastDriverMeta(metaCopy, clientID, clientName)
+}
+
+// TransferDriverIfCurrent moves an existing lease between proxy subscribers
+// without overwriting a local client that claimed control during lane shutdown.
+// Only the subscriber pointer changes; the public driver identity is preserved.
+func (s *Session) TransferDriverIfCurrent(from, to *Subscriber) bool {
+	s.mu.Lock()
+	if s.driverSubscriber != from || from == nil {
+		s.mu.Unlock()
+		return false
+	}
+	if _, ok := s.subs[to]; !ok {
+		s.mu.Unlock()
+		return false
+	}
+	s.driverSubscriber = to
+	s.mu.Unlock()
+	// Public identity stays the same. Broadcasting it after unlocking could
+	// overwrite metadata from a newer local ClaimDriver with stale identity.
+	return true
 }
 
 func (s *Session) broadcastDriverMeta(meta proto.SessionInfo, driverClientID, driverClientName string) {
@@ -1192,6 +1373,10 @@ func appendTrailingBytes(dst, prev, data []byte, max int) []byte {
 // A single chunk over the cap is kept whole: sending nothing would leave the
 // client with a blank terminal, which is worse than sending more than planned.
 func capReplayTail(chunks []ringbuf.Chunk) ([]ringbuf.Chunk, bool) {
+	return capReplayTailBytes(chunks, replayTailCapBytes)
+}
+
+func capReplayTailBytes(chunks []ringbuf.Chunk, maxBytes uint64) ([]ringbuf.Chunk, bool) {
 	if len(chunks) == 0 {
 		return chunks, false
 	}
@@ -1199,16 +1384,16 @@ func capReplayTail(chunks []ringbuf.Chunk) ([]ringbuf.Chunk, bool) {
 	start := len(chunks)
 	for i := len(chunks) - 1; i >= 0; i-- {
 		next := total + uint64(len(chunks[i].Data))
-		if next > replayTailCapBytes && start < len(chunks) {
+		if next > maxBytes && start < len(chunks) {
 			break
 		}
 		total = next
 		start = i
-		if total >= replayTailCapBytes {
+		if total >= maxBytes {
 			break
 		}
 	}
-	return chunks[start:], start > 0 || total > replayTailCapBytes
+	return chunks[start:], start > 0 || total > maxBytes
 }
 
 func replayBytes(chunks []ringbuf.Chunk) uint64 {
@@ -1268,6 +1453,29 @@ func enqueueReplayChunks(sub *Subscriber, id uuid.UUID, chunks []ringbuf.Chunk, 
 	return lastSeq, replayedBytes, nextProgress, true
 }
 
+func enqueuePreservedReplayChunks(sub *Subscriber, id uuid.UUID, chunks []ringbuf.Chunk, lastSeq, replayedBytes, totalBytes, nextProgress uint64) (uint64, uint64, uint64, bool) {
+	for _, chunk := range chunks {
+		f := proto.EncodeOut(id, chunk.Seq, chunk.Data)
+		if sub.compressedOutput {
+			f.Type = proto.TypeOutCompressed
+		}
+		select {
+		case sub.out <- f:
+			lastSeq = chunk.Seq
+			replayedBytes += uint64(len(chunk.Data))
+		default:
+			return lastSeq, replayedBytes, nextProgress, false
+		}
+		for replayedBytes >= nextProgress && nextProgress > 0 {
+			if !enqueueReplayProgress(sub, id, proto.ReplayProgressChunk, replayedBytes, totalBytes, lastSeq) {
+				return lastSeq, replayedBytes, nextProgress, false
+			}
+			nextProgress += replayProgressIntervalBytes
+		}
+	}
+	return lastSeq, replayedBytes, nextProgress, true
+}
+
 func enqueueReplayProgress(sub *Subscriber, id uuid.UUID, phase string, bytes, totalBytes, seq uint64) bool {
 	payload, err := json.Marshal(proto.ReplayProgressPayload{
 		Phase:      phase,
@@ -1306,20 +1514,37 @@ func (s *Session) resyncSubscriber(sub *Subscriber) {
 
 	s.mu.RLock()
 	alt := s.altScreen
+	var chunks []ringbuf.Chunk
+	if sub.preserveOutputFrames {
+		chunks = s.scroll.Since(0)
+	}
 	s.mu.RUnlock()
-
-	tail := s.scroll.TailBytes(resyncTailBytes)
-	seq := s.scroll.LatestSeq()
 
 	select {
 	case sub.out <- proto.EncodeOut(s.ID, 0, replayResetMarker(alt)):
 	default:
 		return
 	}
-	if len(tail) > 0 {
-		select {
-		case sub.out <- proto.EncodeOut(s.ID, seq, tail):
-		default:
+	if sub.preserveOutputFrames {
+		chunks, _ = capReplayTailBytes(chunks, resyncTailBytes)
+		if len(chunks) > subscriberQueueDepth-16 {
+			chunks = chunks[len(chunks)-(subscriberQueueDepth-16):]
+		}
+		for _, chunk := range chunks {
+			select {
+			case sub.out <- proto.EncodeOut(s.ID, chunk.Seq, chunk.Data):
+			default:
+				return
+			}
+		}
+	} else {
+		tail := s.scroll.TailBytes(resyncTailBytes)
+		seq := s.scroll.LatestSeq()
+		if len(tail) > 0 {
+			select {
+			case sub.out <- proto.EncodeOut(s.ID, seq, tail):
+			default:
+			}
 		}
 	}
 
@@ -1351,6 +1576,8 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	}
 	nowEmpty := len(s.subs) == 0
 	lastHook := s.onLastUnsubscribe
+	outputEmpty := s.outputSubscriberCountsLocked()[outputLane(sub.compressedOutput)] == 0
+	outputLastHook := s.outputLifecycle[outputLane(sub.compressedOutput)].last
 	countHook := s.onSubscriberCount
 	subCount := len(s.subs)
 	metaCopy := s.meta
@@ -1361,6 +1588,9 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	}
 	if was && nowEmpty && lastHook != nil {
 		go lastHook()
+	}
+	if was && outputEmpty && outputLastHook != nil {
+		go outputLastHook()
 	}
 	if was && countHook != nil {
 		countHook(subCount)

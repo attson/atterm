@@ -137,6 +137,17 @@ uplink_conn 通过控制连发 STREAM_REQUEST(sid)
 
 最后一个浏览器 detach 时：`removeSubscriber → lifecycle.onLastUnsubscribe → uplink_conn 发 STREAM_STOP → 桌面 uplink 取消 forwarder`。
 
+“后台暂停远程订阅”为设备设置，默认关闭。关闭时远程终端在切换终端标签页或隐藏浏览器
+页面后继续保持连接；开启后，共享 `TerminalView.vue` 通过 `useTerminalSubscriptionActive`
+同时观察 tab active 和 `document.hidden`，只在终端标签页激活且页面可见时正常订阅。
+转入后台就取消待执行的激活动画并请求 `suspend()`；连接中的文件/图片传输、文件请求和
+分块读取事务结束后才执行暂停，重新激活会取消待执行的暂停，显式 detach 仍立即清理。
+切回后保留 xterm 缓存画面，按已接收 seq 和现有历史缓存续传，并重新确认 driver，不
+抢占其他客户端的控制权。可见分屏都保持订阅；本地终端沿用既有标签页生命周期，不受
+该开关影响。会话列表继续更新侧栏，源端 PTY/任务继续运行；只有对应输出格式的最后一个
+远程观看者离开，才会停止该格式的上传流。浏览器/操作系统强制冻结页面或网络断开仍由
+现有重连路径处理，传输保活只推迟应用主动请求的暂停。
+
 ### 流 3：本机两个桌面 app 互相 attach
 
 两个 app 都连同一 relay。各自 ANNOUNCE。一方点 cast 面板选另一方的 session：

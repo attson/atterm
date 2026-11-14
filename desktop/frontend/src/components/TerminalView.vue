@@ -48,6 +48,7 @@ import {
 } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
+import { useTerminalSubscriptionActive } from "../composables/useTerminalSubscriptionActive";
 import {
   useTerminalImagePreview,
   type SessionHistoryImagePreview,
@@ -108,6 +109,7 @@ const props = withDefaults(
     preferDirect?: boolean;
     sessionId: string;
     active?: boolean;
+    pauseRemoteSubscriptionsInBackground?: boolean;
     focused?: boolean;
     avoidTopRightBadge?: boolean;
     sessionLabel?: string;
@@ -145,6 +147,7 @@ const props = withDefaults(
   }>(),
   {
     active: true,
+    pauseRemoteSubscriptionsInBackground: false,
     focused: false,
     avoidTopRightBadge: false,
     commandNotifyThresholdSec: 10,
@@ -162,6 +165,12 @@ const props = withDefaults(
       scrollback: 5000,
     }),
   }
+);
+
+const subscriptionActive = useTerminalSubscriptionActive(
+  () => props.active,
+  () => props.isLocalSession,
+  () => props.pauseRemoteSubscriptionsInBackground,
 );
 
 // The attached session's META stream is authoritative once it reports cwd.
@@ -3024,15 +3033,15 @@ function scheduleTerminalResumeAfterReveal(
 ): void {
   cancelTerminalResume();
   nextTick(() => {
-    if (!isAlive || !props.active) return;
+    if (!isAlive || !subscriptionActive.value) return;
     cancelPendingTerminalResume = scheduleTerminalActivation(
       () => {
-        if (isAlive && props.active) reveal();
+        if (isAlive && subscriptionActive.value && props.active && !document.hidden) reveal();
       },
       () => {
         cancelPendingTerminalResume = null;
-        if (!isAlive || !props.active) return;
-        settle();
+        if (!isAlive || !subscriptionActive.value) return;
+        if (props.active && !document.hidden) settle();
         startConnection();
       },
     );
@@ -3086,8 +3095,12 @@ onMounted(async () => {
   document.addEventListener("keydown", onTemplateHotkey, true);
   // Keep the existing two-frame layout settle, but do not start replay until
   // the blank/cached terminal has had a chance to paint.
-  if (props.active) {
+  if (subscriptionActive.value) {
     ensureConnection();
+    if (!props.active || document.hidden) {
+      startConnection();
+      return;
+    }
     scheduleTerminalResumeAfterReveal(() => {
       // A newly-created tab mounts active, so the active watcher below never
       // sees a transition. Focus here as part of the same reveal path or the
@@ -3196,13 +3209,19 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => props.active,
-  (isActive) => {
+  [() => props.active, subscriptionActive],
+  ([isVisible, isActive]) => {
     if (isActive) {
       // Let Vue reveal the v-show subtree and paint the cached terminal before
       // replaying output. Otherwise a busy session can consume the first frame
       // in xterm's parser and make the tab click itself appear stuck.
       ensureConnection();
+      if (!isVisible || document.hidden) {
+        cancelTerminalResume();
+        closeContextMenu();
+        startConnection();
+        return;
+      }
       scheduleTerminalResumeAfterReveal(() => {
         focusTerminalForPaneActivation();
         // This also reconciles a driver's PTY size via applyViewerSize;

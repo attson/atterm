@@ -229,6 +229,9 @@ func TestNativeDirectClientConnectsToDesktopPionHost(t *testing.T) {
 				if err := client.sendFrame(proto.Marshal(proto.Frame{Type: proto.TypeIn, SessionID: sessionID, Payload: []byte("native input")})); err != nil {
 					t.Fatal(err)
 				}
+				if err := app.DrainNativeDirect(client.id); err != nil {
+					t.Fatalf("drain authenticated native route: %v", err)
+				}
 			case "frame":
 				if event.FrameBase64 == "" {
 					t.Fatal("empty native frame")

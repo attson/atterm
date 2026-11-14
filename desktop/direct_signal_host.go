@@ -381,7 +381,7 @@ func (a *directHostAttempt) startStream(parent context.Context, channel *peertra
 		return errors.New("session or permission changed")
 	}
 	clientID := "direct:" + a.clientInstanceID
-	sub, replayToSeq := sess.Subscribe(a.sinceSeq, clientID, a.clientInstanceID, session.WithoutAutoDrive())
+	sub, replayToSeq := sess.Subscribe(a.sinceSeq, clientID, a.clientInstanceID, session.WithoutAutoDrive(), session.PreserveOutputFrames())
 	streamCtx, cancel := context.WithCancel(parent)
 	a.mu.Lock()
 	if a.closed || a.sub != nil {

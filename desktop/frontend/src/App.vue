@@ -143,6 +143,7 @@ const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
 const directSignalEndpoint = ref<Endpoint | null>(null);
 const preferDirectConnection = ref(false);
+const pauseRemoteSubscriptionsInBackground = ref(false);
 const localHostID = ref<string>("");
 const localHost = ref<string>("");
 
@@ -1807,6 +1808,11 @@ onMounted(async () => {
     preferDirectConnection.value = false;
     logWarn("direct", "failed to load direct connection preference", { error: errText(e) });
   }
+  try {
+    pauseRemoteSubscriptionsInBackground.value = await $platform.backgroundSubscriptions?.load() ?? false;
+  } catch (e) {
+    logWarn("app", "failed to load background subscription preference", { error: errText(e) });
+  }
   if (caps.wailsBindings) {
     try {
       commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
@@ -2062,6 +2068,7 @@ defineExpose({ me });
             :endpoint-for="endpointFor"
             :direct-endpoint="directSignalEndpoint"
             :prefer-direct="preferDirectConnection"
+            :pause-remote-subscriptions-in-background="pauseRemoteSubscriptionsInBackground"
             :session-info-for="paneSessionInfo"
             :viewer-count-for="viewerCountFor"
             :active="t.id === currentTabId"
@@ -2115,6 +2122,7 @@ defineExpose({ me });
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @appearance-changed="onAppearanceChanged"
       @direct-connection-changed="onDirectConnectionChanged"
+      @background-subscriptions-changed="pauseRemoteSubscriptionsInBackground = $event"
       @bindings-changed="onBindingsChanged"
       @relay-config-changed="onRelayConfigChanged"
       @close="onSettingsClose"

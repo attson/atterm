@@ -289,6 +289,32 @@ describe("SessionConnection direct route handover", () => {
     expect(statuses.at(-1)).toBe("attached");
   });
 
+  test("holds the Relay writer during rich paste and rejects a paste reservation after direct activation", () => {
+    const conn = new SessionConnection(relayEndpoint, sessionId, {}, {
+      remote: true, preferDirect: true, directEndpoint, directTransportFactory: directFactory,
+    });
+    conn.attach();
+    const relay = FakeWebSocket.instances[0];
+    relay.open();
+    expect(conn.beginHistoryPaste()).toBeNull();
+    const attach = JSON.parse(decodeText(decodeFrame(relay.sent[0]).payload)) as { client_id: string };
+    relay.emitJSON(TYPE.META, { driver_client_id: attach.client_id });
+    const release = conn.beginHistoryPaste();
+    expect(release).toBeTypeOf("function");
+    relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
+    const direct = directInstances[0];
+    direct.authenticate();
+    direct.ready(0);
+    expect(relay.readyState).toBe(FakeWebSocket.OPEN);
+    conn.sendInput("still on Relay");
+    expect(decodeText(decodeFrame(relay.sent.at(-1)!).payload)).toBe("still on Relay");
+    release!();
+    expect(relay.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(conn.beginHistoryPaste()).toBeNull();
+    release!();
+    conn.detach();
+  });
+
   test("requests and opens input history over the active direct route", async () => {
     const accountKey = new Uint8Array(32).fill(0x42);
     const conn = new SessionConnection(relayEndpoint, sessionId, {}, {

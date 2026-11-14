@@ -264,6 +264,7 @@ export namespace main {
 	export class ClipboardPastePayload {
 	    kind: string;
 	    text?: string;
+	    html?: string;
 	    filename?: string;
 	    content_type?: string;
 	    data_base64?: string;
@@ -277,6 +278,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.kind = source["kind"];
 	        this.text = source["text"];
+	        this.html = source["html"];
 	        this.filename = source["filename"];
 	        this.content_type = source["content_type"];
 	        this.data_base64 = source["data_base64"];

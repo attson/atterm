@@ -19,6 +19,7 @@ import (
 type ClipboardPastePayload struct {
 	Kind        string `json:"kind"`
 	Text        string `json:"text,omitempty"`
+	HTML        string `json:"html,omitempty"`
 	Filename    string `json:"filename,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	DataBase64  string `json:"data_base64,omitempty"`
@@ -111,13 +112,30 @@ func readClipboardPastePayload(
 }
 
 func readClipboardPastePayloadFromRuntime(ctx context.Context) ClipboardPastePayload {
-	return readClipboardPastePayload(
+	return readRichClipboardPastePayload(
 		ctx,
 		func() (string, error) {
 			return wailsruntime.ClipboardGetText(ctx)
 		},
 		nativeClipboardImage,
+		nativeClipboardHTML,
 	)
+}
+
+func readRichClipboardPastePayload(
+	ctx context.Context,
+	textReader func() (string, error),
+	imageReader func(context.Context) (*clipboardImageData, error),
+	htmlReader func(context.Context) (string, error),
+) ClipboardPastePayload {
+	html, err := htmlReader(ctx)
+	// Only our history fragment represents an ordered text/image input. Other
+	// applications may publish both HTML and a screenshot; preserve image priority.
+	if err == nil && len(html) <= maxClipboardHTMLBytes && strings.Contains(html, "data-atterm-input-history") {
+		text, _ := textReader()
+		return ClipboardPastePayload{Kind: "text", Text: text, HTML: html}
+	}
+	return readClipboardPastePayload(ctx, textReader, imageReader)
 }
 
 func nativeClipboardImage(ctx context.Context) (*clipboardImageData, error) {

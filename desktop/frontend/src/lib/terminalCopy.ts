@@ -6,6 +6,7 @@ export interface TerminalSelectionSource {
 
 export interface ClipboardWriter {
   writeText: (text: string) => Promise<void>;
+  writeHTML?: (text: string, html: string) => Promise<void>;
 }
 
 export type ClipboardFallback = (text: string) => boolean;

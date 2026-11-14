@@ -120,6 +120,10 @@ export const en = {
     },
     inputHistory: {
       title: "Submitted inputs",
+      copied: "Copied",
+      imagesUnavailable: "Original images are no longer cached.",
+      copyTextOnly: "Copy text only",
+      pasteRouteUnavailable: "This connection cannot paste images and text together. Disable Relay direct connection and retry.",
       open: "View submitted inputs",
       loading: "Loading submitted inputs...",
       empty: "No submitted inputs in this session yet.",

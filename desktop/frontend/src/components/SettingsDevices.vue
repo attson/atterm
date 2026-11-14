@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { RefreshCw } from "lucide-vue-next";
 import type { RelaySessionRow } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
@@ -15,7 +15,42 @@ const signingOutOthers = ref(false);
 const revoking = ref<Record<string, boolean>>({});
 const error = ref("");
 const notAuthed = ref(false);
+type Confirmation = { kind: "revoke"; row: RelaySessionRow } | { kind: "others" };
+const confirmation = ref<Confirmation | null>(null);
+const cancelButton = ref<HTMLButtonElement | null>(null);
+const confirmButton = ref<HTMLButtonElement | null>(null);
+let confirmationTrigger: HTMLElement | null = null;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+const confirmationMessage = computed(() => confirmation.value?.kind === "revoke"
+  ? t("settings.devices.revokeConfirm", { ua: deviceName(confirmation.value.row.user_agent) })
+  : t("settings.devices.signOutOthersConfirm"));
+const confirmationLabel = computed(() => t(confirmation.value?.kind === "revoke"
+  ? "settings.devices.revoke" : "settings.devices.signOutOthers"));
+
+async function requestConfirmation(action: Confirmation, event: MouseEvent) {
+  confirmationTrigger = event.currentTarget as HTMLElement;
+  confirmation.value = action;
+  await nextTick();
+  cancelButton.value?.focus();
+}
+
+function cancelConfirmation() {
+  confirmation.value = null;
+  confirmationTrigger?.focus();
+  confirmationTrigger = null;
+}
+
+function cycleConfirmationFocus() {
+  (document.activeElement === cancelButton.value ? confirmButton.value : cancelButton.value)?.focus();
+}
+
+async function confirmAction() {
+  const action = confirmation.value;
+  cancelConfirmation();
+  if (action?.kind === "revoke") await onRevoke(action.row);
+  else if (action?.kind === "others") await onSignOutOthers();
+}
 
 const onlineCount = computed(() => rows.value.filter((row) => row.is_online).length);
 const presenceKnown = computed(() => rows.value.some((row) => !!row.last_seen_at));
@@ -66,8 +101,6 @@ async function onRefresh() {
 }
 
 async function onRevoke(row: RelaySessionRow) {
-  const ua = deviceName(row.user_agent);
-  if (!window.confirm(t("settings.devices.revokeConfirm", { ua }))) return;
   revoking.value = { ...revoking.value, [row.id_hash]: true };
   try {
     await platform.sessions.revokeRelaySession?.(row.id_hash);
@@ -82,7 +115,6 @@ async function onRevoke(row: RelaySessionRow) {
 }
 
 async function onSignOutOthers() {
-  if (!window.confirm(t("settings.devices.signOutOthersConfirm"))) return;
   signingOutOthers.value = true;
   try {
     await platform.sessions.signOutOtherRelaySessions?.();
@@ -181,7 +213,7 @@ function activityText(row: RelaySessionRow): string {
             type="button"
             class="secondary"
             :disabled="signingOutOthers || rows.filter((r) => !r.is_current).length === 0"
-            @click="onSignOutOthers"
+            @click="requestConfirmation({ kind: 'others' }, $event)"
           >
             {{
               signingOutOthers
@@ -222,7 +254,7 @@ function activityText(row: RelaySessionRow): string {
               type="button"
               class="danger-btn"
               :disabled="!!revoking[row.id_hash]"
-              @click="onRevoke(row)"
+              @click="requestConfirmation({ kind: 'revoke', row }, $event)"
             >
               {{
                 revoking[row.id_hash]
@@ -234,6 +266,28 @@ function activityText(row: RelaySessionRow): string {
         </div>
       </div>
     </template>
+    <!-- Wails' WKWebView does not implement native JavaScript confirm dialogs. -->
+    <div v-if="confirmation" class="confirmation-backdrop" @click.self="cancelConfirmation">
+      <div
+        class="confirmation-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        :aria-label="confirmationLabel"
+        aria-describedby="device-confirmation-message"
+        @keydown.esc.stop.prevent="cancelConfirmation"
+        @keydown.tab.prevent="cycleConfirmationFocus"
+      >
+        <p id="device-confirmation-message">{{ confirmationMessage }}</p>
+        <div class="confirmation-actions">
+          <button ref="cancelButton" type="button" class="secondary" data-testid="device-cancel" @click="cancelConfirmation">
+            {{ t("common.cancel") }}
+          </button>
+          <button ref="confirmButton" type="button" class="danger-btn" data-testid="device-confirm" @click="confirmAction">
+            {{ confirmationLabel }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -242,6 +296,36 @@ function activityText(row: RelaySessionRow): string {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.confirmation-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.confirmation-dialog {
+  width: 430px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 20px 24px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+}
+.confirmation-dialog p {
+  margin: 0 0 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .dim {
   color: var(--fg-dim);

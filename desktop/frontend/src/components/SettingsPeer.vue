@@ -1990,6 +1990,7 @@ function resetSetupChoice(): void {
 .setup-choice {
   display: flex;
   align-items: flex-start;
+  justify-content: flex-start;
   gap: 11px;
   min-width: 0;
   min-height: 76px;

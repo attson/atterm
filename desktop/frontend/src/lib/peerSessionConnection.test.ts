@@ -4,6 +4,9 @@ import type { DirectTransport } from './connection'
 import { decodeSegments, encodeSegments } from './fsSegments'
 import type { NativeDirectClientOptions } from './nativeDirectClient'
 import { PeerSessionConnection } from './peerSessionConnection'
+import { Terminal } from 'xterm'
+import { createTerminalWriteQueue } from './terminalWriteQueue'
+import { createReplayInputGuard } from './replayInputGuard'
 
 const sessionID = '11111111-2222-3333-4444-555555555555'
 
@@ -55,6 +58,75 @@ class FakeTransport implements DirectTransport {
 }
 
 describe('PeerSessionConnection', () => {
+  for (const route of ['direct', 'quick_tunnel'] as const) {
+    for (const newOutput of [false, true]) {
+      it(`scrolls a resumed ${route} terminal to the latest line ${newOutput ? 'after replay' : 'without new output'}`, async () => {
+        vi.useRealTimers()
+        vi.stubGlobal('matchMedia', () => ({ matches: false, addListener() {}, removeListener() {} }))
+        const terminal = new Terminal({ rows: 5, cols: 40, scrollback: 1000 })
+        const container = document.createElement('div')
+        document.body.append(container)
+        terminal.open(container)
+        const queue = createTerminalWriteQueue(terminal)
+        const guard = createReplayInputGuard()
+        const transports: FakeTransport[] = []
+        const connection = new PeerSessionConnection(sessionID, {
+          onOutput: (data) => queue.write(data),
+          onReplayProgress: (progress) => guard.onProgress(progress.phase, (release) => {
+            queue.drain(() => {
+              terminal.scrollToBottom()
+              release()
+            })
+          }),
+        }, {
+          route,
+          transportFactory: (options) => {
+            const transport = new FakeTransport(options)
+            transports.push(transport)
+            return transport
+          },
+        })
+
+        try {
+          connection.attach()
+          const initial = transports[0]
+          initial.options.callbacks.onAuthenticated?.()
+          initial.options.callbacks.onFrame(out(1, 'older output\r\n'.repeat(20) + 'latest before switching'))
+          initial.options.callbacks.onReady(1)
+          await new Promise<void>((resolve) => queue.drain(resolve))
+          expect(terminal.buffer.active.baseY).toBeGreaterThan(0)
+          terminal.scrollToTop()
+          expect(terminal.buffer.active.viewportY).toBe(0)
+          connection.suspend()
+
+          connection.attach()
+          const resumed = transports[1]
+          resumed.options.callbacks.onAuthenticated?.()
+          if (newOutput) resumed.options.callbacks.onFrame(out(2, '\r\nlatest while hidden'))
+          resumed.options.callbacks.onReady(newOutput ? 2 : 1)
+          await new Promise<void>((resolve) => queue.drain(resolve))
+
+          const buffer = terminal.buffer.active
+          expect(buffer.viewportY).toBe(buffer.baseY)
+          expect(buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true))
+            .toBe(newOutput ? 'latest while hidden' : 'latest before switching')
+
+          // Completing replay is a one-time snap; subsequent output must still
+          // let the user read earlier history without pulling them back down.
+          terminal.scrollToTop()
+          resumed.options.callbacks.onFrame(out(3, '\r\nlive output'))
+          await new Promise<void>((resolve) => queue.drain(resolve))
+          expect(buffer.viewportY).toBe(0)
+        } finally {
+          connection.detach()
+          terminal.dispose()
+          container.remove()
+          vi.unstubAllGlobals()
+        }
+      })
+    }
+  }
+
   it('holds resumed resize and input until a manual driver claim is confirmed', () => {
     const transports: FakeTransport[] = []
     const connection = new PeerSessionConnection(sessionID, {}, {
@@ -72,6 +144,8 @@ describe('PeerSessionConnection', () => {
     initial.options.callbacks.onFrame(meta(clientID, 'this-device'))
     initial.options.callbacks.onReady(0)
 
+    expect(connection.beginHistoryPaste()).toBeTypeOf('function')
+
     connection.suspend()
     connection.sendResize(132, 41)
     connection.sendInput('typed-during-reveal')
@@ -80,6 +154,8 @@ describe('PeerSessionConnection', () => {
     resumed.options.callbacks.onAuthenticated?.()
     resumed.options.callbacks.onFrame(meta('other-client', 'phone'))
     resumed.options.callbacks.onReady(0)
+
+    expect(connection.beginHistoryPaste()).toBeNull()
 
     expect(resumed.sent).toHaveLength(0)
 

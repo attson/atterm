@@ -625,6 +625,7 @@ export class SessionConnection {
   private recoverDriverIfVacant = false;
   private recoverDriverVacant = false;
   private relayDriverConfirmed = false;
+  private historyPasteCount = 0;
   private pendingFSRequests = new Map<
     string,
     {
@@ -961,6 +962,21 @@ export class SessionConnection {
     // flushed immediately after the next ATTACH, before queued input/resize.
     this.pendingDriverClaim = true;
     return false;
+  }
+
+  // Legacy Relay direct channels cannot carry images. Reserve the Relay route
+  // before the first text fragment so a direct upgrade cannot split the paste.
+  beginHistoryPaste(): (() => void) | null {
+    if (this.route.inputRoute() !== DirectRoute.Relay || this.ws?.readyState !== WebSocket.OPEN ||
+        !this.relayDriverConfirmed || !this.isDriverRole) return null;
+    this.historyPasteCount++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.historyPasteCount--;
+      this.maybeActivateDirect(this.route.generation);
+    };
   }
 
   async sendPasteImage(blob: Blob, filename = "clipboard-image"): Promise<boolean> {
@@ -1332,6 +1348,7 @@ export class SessionConnection {
   }
 
   private maybeActivateDirect(generation: number): void {
+    if (this.historyPasteCount > 0) return;
     const transport = this.direct;
     if (!transport || !this.route.canActivateDirect(generation)) return;
     if (this.isDriverRole) {

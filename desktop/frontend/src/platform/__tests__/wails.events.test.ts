@@ -47,6 +47,7 @@ vi.mock('../../lib/api', () => ({
   setUplinkPaused: vi.fn().mockResolvedValue(undefined),
   fetchRelayMe: vi.fn().mockResolvedValue({ user_id: 'u', email: 'e' }),
   getClipboardPastePayload: vi.fn().mockResolvedValue({ kind: 'none' }),
+  setClipboardHTML: vi.fn().mockResolvedValue(undefined),
   showNotification: vi.fn().mockResolvedValue(undefined),
   pickLogFilePath: vi.fn().mockResolvedValue('/tmp/log'),
   newSession: vi.fn().mockResolvedValue({ session_id: 's1' }),

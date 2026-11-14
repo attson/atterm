@@ -40,6 +40,11 @@ function fakePlatform(): Platform {
       loadHidden: async () => false,
       saveHidden: async () => {},
     },
+    snippets: {
+      load: async () => [],
+      save: async () => {},
+      clear: async () => {},
+    },
     auxKeys: {
       load: async () => [],
       save: async () => {},

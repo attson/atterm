@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +53,7 @@ func TestSyncedKeys_MatchesWhitelist(t *testing.T) {
 		"locale_preference",
 		"traffic_time_zone",
 		"quick_templates",
+		"snippets",
 		"notifications_enabled",
 		"ai_notifications_only",
 		"command_notify_threshold_seconds",
@@ -106,6 +108,29 @@ type fakeRelay struct {
 	// the response is handed back — i.e. while the PUT is "in flight". Tests
 	// use it to simulate the user changing a preference during the round trip.
 	onPut func()
+}
+
+type legacyRelayWithoutSnippets struct {
+	putCalls         [][]ClientItem
+	supportsSnippets bool
+}
+
+func (f *legacyRelayWithoutSnippets) Get(context.Context) ([]ServerItem, error) {
+	return nil, nil
+}
+
+func (f *legacyRelayWithoutSnippets) Put(_ context.Context, items []ClientItem) ([]ServerItem, error) {
+	f.putCalls = append(f.putCalls, append([]ClientItem(nil), items...))
+	for _, item := range items {
+		if item.Key == "snippets" && !f.supportsSnippets {
+			return nil, errors.New("put prefs: HTTP 400: unknown_key")
+		}
+	}
+	result := make([]ServerItem, len(items))
+	for i, item := range items {
+		result[i] = ServerItem{Key: item.Key, Value: item.Value, UpdatedAt: item.ClientUpdatedAt + 1}
+	}
+	return result, nil
 }
 
 func (f *fakeRelay) Get(ctx context.Context) ([]ServerItem, error) {
@@ -353,6 +378,58 @@ func TestPush_SendsDirtyAndClearsFlag(t *testing.T) {
 	m := a.ReadMeta("locale_preference")
 	if m.Dirty || m.UpdatedAtLocal != 850 {
 		t.Fatalf("meta after push: %+v", m)
+	}
+}
+
+func TestPush_OldRelaySnippetRejectionDoesNotPoisonEstablishedKeys(t *testing.T) {
+	a := newFake()
+	a.WriteValue("terminal_theme", json.RawMessage(`"nord"`))
+	a.WriteMeta("terminal_theme", Meta{UpdatedAtLocal: 100, Dirty: true})
+	a.WriteValue("snippets", json.RawMessage(`[{"id":"deploy","label":"Deploy","text":"make deploy"}]`))
+	a.WriteMeta("snippets", Meta{UpdatedAtLocal: 200, Dirty: true})
+
+	r := &legacyRelayWithoutSnippets{}
+	err := NewEngine(a, r).Push(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unknown_key") {
+		t.Fatalf("Push error = %v, want unknown_key", err)
+	}
+	if len(r.putCalls) != 2 {
+		t.Fatalf("PUT calls = %+v, want established batch then snippets batch", r.putCalls)
+	}
+	if len(r.putCalls[0]) != 1 || r.putCalls[0][0].Key != "terminal_theme" {
+		t.Fatalf("first PUT = %+v, want only terminal_theme", r.putCalls[0])
+	}
+	if len(r.putCalls[1]) != 1 || r.putCalls[1][0].Key != "snippets" {
+		t.Fatalf("second PUT = %+v, want only snippets", r.putCalls[1])
+	}
+	if meta := a.ReadMeta("terminal_theme"); meta.Dirty || meta.UpdatedAtLocal != 101 {
+		t.Fatalf("established key meta = %+v, want successful reconciliation", meta)
+	}
+	if meta := a.ReadMeta("snippets"); !meta.Dirty || meta.UpdatedAtLocal != 200 {
+		t.Fatalf("snippets meta = %+v, want local dirty value retained", meta)
+	}
+}
+
+func TestPush_RetriesDirtySnippetsAfterRelayUpgrade(t *testing.T) {
+	a := newFake()
+	a.WriteValue("snippets", json.RawMessage(`[{"id":"deploy","label":"Deploy","text":"make deploy"}]`))
+	a.WriteMeta("snippets", Meta{UpdatedAtLocal: 200, Dirty: true})
+	r := &legacyRelayWithoutSnippets{}
+	e := NewEngine(a, r)
+
+	if err := e.Push(context.Background()); err == nil {
+		t.Fatal("old Relay should reject snippets")
+	}
+	r.supportsSnippets = true
+	if err := e.Push(context.Background()); err != nil {
+		t.Fatalf("Push after upgrade: %v", err)
+	}
+
+	if len(r.putCalls) != 2 || r.putCalls[1][0].Key != "snippets" {
+		t.Fatalf("PUT calls = %+v, want snippets retried after upgrade", r.putCalls)
+	}
+	if meta := a.ReadMeta("snippets"); meta.Dirty || meta.UpdatedAtLocal != 201 {
+		t.Fatalf("snippets meta = %+v, want successful retry reconciliation", meta)
 	}
 }
 

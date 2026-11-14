@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/attson/atterm/internal/configsync"
 	"github.com/attson/atterm/internal/prefssync"
 )
 
@@ -83,6 +84,8 @@ func scalarPrefTarget(key string) any {
 		return new(string)
 	case "quick_templates":
 		return new([]QuickTemplate)
+	case "snippets":
+		return new([]Snippet)
 	case "notifications_enabled", "ai_notifications_only", "shell_integration_enabled":
 		return new(bool)
 	case "command_notify_threshold_seconds":
@@ -187,6 +190,8 @@ func validateScalarPrefValue(key string, target any) error {
 		if *target.(**bool) == nil {
 			return errors.New("value is null")
 		}
+	case "snippets":
+		return validateSnippets(*target.(*[]Snippet))
 	}
 	return nil
 }
@@ -211,6 +216,13 @@ func jsonEqual(a, b json.RawMessage) bool {
 // the zero value" are different facts, and only isPrefCustomized can tell
 // them apart.
 func previewScalarPref(current func(string) (json.RawMessage, bool), customized func(string) bool, key string, raw json.RawMessage) (ImportChange, error) {
+	if key == "snippets" {
+		var err error
+		raw, err = configsync.NormalizeRelayValue(key, raw)
+		if err != nil {
+			return ImportChange{}, err
+		}
+	}
 	target := scalarPrefTarget(key)
 	if target == nil {
 		return ImportChange{}, fmt.Errorf("unknown preference key")
@@ -587,6 +599,12 @@ func (a *App) applyScalarPref(key string, raw json.RawMessage) error {
 			return err
 		}
 		return a.SetQuickTemplates(v)
+	case "snippets":
+		var v []Snippet
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		return a.SetSnippets(v)
 	case "notifications_enabled":
 		var v bool
 		if err := json.Unmarshal(raw, &v); err != nil {

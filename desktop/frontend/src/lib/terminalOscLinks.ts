@@ -1,5 +1,10 @@
 import type { IBufferRange, ILinkHandler } from "xterm";
-import { shouldActivateLink, type LinkMatch, type PointerPos } from "./terminalLinks";
+import {
+  detectLinks,
+  shouldActivateLink,
+  type LinkMatch,
+  type PointerPos,
+} from "./terminalLinks";
 
 export interface TerminalOscLinkControllerDeps {
   isMac: boolean;
@@ -56,11 +61,6 @@ export function createTerminalOscLinkController(
 }
 
 function httpMatch(text: string): LinkMatch | null {
-  try {
-    const url = new URL(text);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  } catch {
-    return null;
-  }
-  return { start: 0, end: text.length, text, kind: "http" };
+  const match = detectLinks(text).find((candidate) => candidate.start === 0);
+  return match?.kind === "http" ? match : null;
 }

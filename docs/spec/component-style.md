@@ -478,14 +478,26 @@ header 必须可键盘操作：
 - 复用 Dialog / overlay 一节的阴影语言（深阴影 + 6px radius），但不需要
   backdrop——popover 级别的浮层不挡住其余 UI。
 
-## 快捷模板：bar + hotkey + 隐藏开关
+## 命令模板：Quick + Snippet
 
-桌面 / web / mobile 三端共用 `QuickTemplate { id, label, text, hotkey? }` 模型
-（`desktop/frontend/src/lib/templates.ts`，`hotkey` 仅桌面用），UI 也保持一致：
+桌面 / web / mobile 三端共用两种命令模板（定义在
+`desktop/frontend/src/lib/templates.ts`）：
+
+- `QuickTemplate { id, label, text, hotkey? }`：短命令，一次点击直接执行；
+  `hotkey` 仅桌面使用。
+- `Snippet { id, label, text }`：长命令或多行命令，在固定入口的 popover 中选择
+  Run 或 Paste，不提供变量、cwd、env 或调度语义。
+
+两种类型在同一个 Settings 页面管理，但持久化与 prefs sync 使用独立 key：
+Quick 写入 `quick_templates`，Snippet 写入 `snippets`。Snippet 集合最多 200 项，
+label 最多 80 个 Unicode code point，单项 text 最多 64 KiB，集合按 Go
+`encoding/json` 编码后最多 1 MiB；空集合必须编码为 `[]`，不接受 `null`。
 
 **核心约束**：
 
-- **点击模板按钮 = 直接发送**（`sendInput(text + '\r')`），不弹预览对话框。
+- **点击 Quick 按钮 = 直接发送**，但必须把 `text` 与 `"\r"` 分成两次
+  `sendInput`，不弹预览对话框。不能合并成 `text + '\r'`，raw-mode TUI 会把
+  合并 payload 当作 paste，使 Enter 落进正文。
   mobile 上靠"防误触模式" banner + `canSend` gate 防止误触发，不需要预览。
 - **桌面端 hotkey**：每个模板可配 `Mod+1` / `Alt+Shift+P` 之类字符串。
   `desktop TerminalView` 在 `document` 的 capture 阶段注册 keydown listener，
@@ -493,8 +505,13 @@ header 必须可键盘操作：
   只有 focused pane 响应，避免多个 mount 的 TerminalView 同时触发。
 - **隐藏 bar**：用户可在设置页关掉整个 template-bar。bridge 加
   `loadHidden / saveHidden`，三端都走 localStorage `atterm.templates.hidden`。
-  bar 用 `v-if="!templatesHidden"` 渲染。
+  bar（包括 Snippets 入口）用 `v-if="!templatesHidden"` 渲染。
 - **默认 9 项**：`yes / ok / continue / commit / push / release / 1 / 2 / 3`。
+- **Snippet wins**：Quick 和 Snippet 出现相同 id 时，Snippet 是唯一可执行项。
+  Settings 隐藏 Quick 副本并在下次保存时清理；运行时同时禁用 Quick 的按钮、
+  二次确认和 hotkey，避免部分写入或混合版本把长命令退化为一键 Quick。
+- **类型转换先保目标**：Quick 与 Snippet 互转时保留 id，并先写目标集合、再删
+  来源集合。目标写入失败必须保留来源，不能丢失唯一副本。
 
 
 
@@ -510,6 +527,11 @@ web / Capacitor 都走同一个组件。
 - `:disabled` 直接绑 `canSend`（driver + controlMode + 非 view-only），与
   paste 按钮同一 gate；**不要**为模板单独写权限分支。
 - 横向溢出 `overflow-x: auto`，按钮 `flex: 0 0 auto`；不要换行。
+- Quick 按钮放进独立的横向滚动容器；只要 Snippet 非空，Snippets 入口固定在
+  最右侧、滚动容器之外，不能随 Quick 横向滚走。
+- template bar 的 stacking context 必须高于 xterm viewport（当前分别为
+  `z-index: 6` / `5`）。Snippet popover 会向上覆盖终端区域；若 bar 更低，透明的
+  viewport 会截获视觉上落在 Run / Paste 按钮上的 pointer / touch 事件。
 - **隐藏 scrollbar gutter**：bar 只有 30px 高，scrollbar 占 12-15px 视觉 noisy。
   加 `scrollbar-width: none` + `::-webkit-scrollbar { display: none }`，滚动行
   为保留（鼠标 wheel / 触控板 swipe 都还能用）。
@@ -518,31 +540,60 @@ web / Capacitor 都走同一个组件。
   `deltaY` 折成 `scrollLeft`（`el.scrollLeft += e.deltaY !== 0 ? e.deltaY : e.deltaX`）。
   passive listener 不 `preventDefault`，xterm 自己的 wheel pipeline 不受影响。
 
-### Settings → Templates tab（desktop）
+### Snippets popover
 
-桌面端 Settings 的 Templates tab 容器结构：
+- 桌面端 hover、focus 或 click Snippets 入口均可打开；触摸端点击打开。
+  `Escape`、外部 pointer down、终端重新聚焦会关闭。鼠标从入口移向 popover
+  时用短延迟避免穿过间隙即关闭。
+- 入口和 Run / Paste 按钮都复用 terminal keyboard-control 的 touch start / move /
+  end 链，并抑制随后产生的 compatibility click，避免一次触摸执行两次或在 action
+  触发前被 popover 的延迟关闭计时器移除。
+- 每项显示截断后的 label 与 command，完整内容通过 tooltip 查看；列表超过可用
+  高度时只在 popover 内纵向滚动。触摸设备始终显示操作按钮，桌面端在 row
+  hover / focus-within 时显示。
+- `Paste` 调 `term.paste(text)`，不发送 Enter；`Run` 先调 `term.paste(text)`，
+  再单独通过 session input 发送 `"\r"`。两者都不得把多行文本改写或插值。
+- attached driver 且当前权限可写时才能操作；viewer、非 driver、断线或
+  view-only 状态下按钮 disabled，但仍允许浏览内容。发送失败时保留 popover 并
+  展示错误，不能静默关闭。
+
+### Settings → Templates tab
+
+共享 Settings 的 Templates tab 用两个内部 tab 分别管理 Quick 与 Snippet：
 
 1. 顶部一个 `<label class="show-toggle">`：「显示快捷模板栏」复选框，绑
    `platform.templates.loadHidden/saveHidden`，改后 emit
    `quickTemplates:changed` 让所有打开的 TerminalView 立即同步。
-2. 列表 `<ul class="list">`：每行 grid `7rem 1fr 5rem auto`
-   = 标签 / 发送文本 / **hotkey** / actions（↑↓编辑删除）。hotkey 列空时
-   显示 `—`。
-3. 内联编辑行 `<div class="edit-row">`：三个输入（label / text / hotkey）+
-   Save / Cancel。hotkey 输入框 placeholder `Mod+1` 之类。
-4. 底部 footer：「新增」+「恢复默认」，reset 走二级确认 dialog（同 reset 模式）。
+2. Quick / Snippets 使用 `role="tablist"` + `role="tab"` + `aria-selected`，默认
+   选中 Quick。每个 tab 只显示当前类型的标签、发送文本、hotkey 与 actions；
+   空集合显示对应空状态。排序只在当前类型内部生效。
+3. 「新增」直接创建当前 tab 的类型。内联编辑仍用 segmented control 选择
+   Quick / Snippet，再编辑 label 和 text；类型转换成功后切到目标 tab；
+   Quick 显示 hotkey 输入，Snippet 使用多行 textarea 并隐藏 hotkey。
+4. 底部 footer 的新增文案随 tab 显示「新增 Quick / 新增 Snippet」；只有 Quick
+   tab 显示「恢复默认」。reset 走二级确认，只重置 Quick 默认项，必须保留用户的
+   Snippet。
+5. Snippet 校验或保存失败时保留编辑状态并显示错误，不能关闭编辑器或写入
+   部分非法集合。
 
 testid 契约（**不要**改，自动测试依赖）：
 
 - `template-show-toggle`（顶部开关）
+- `template-kind-tabs` / `template-tab-quick` / `template-tab-snippet`
 - `template-row-${id}` / `template-edit-${id}` / `template-delete-${id}`
+- `template-kind-quick` / `template-kind-snippet`
 - `template-edit-label` / `template-edit-text` / `template-edit-hotkey` / `template-edit-save`
 - `template-add` / `template-reset` / `template-reset-confirm`
 
 mobile 设置页有独立的模板编辑器（见下方 §移动端设置页），逻辑相同，但
 样式适配触屏（行高更高、按钮更大）。web 主 App 复用桌面 Settings 的
 Templates tab，读写 `platform.templates`（当前 web bridge 落到 localStorage +
-prefs sync）；不要在 `web/src/` 另起第二套模板编辑 UI。
+prefs sync）与 `platform.snippets`；不要在 `web/src/` 另起第二套模板编辑 UI。
+
+`snippets` 是为兼容旧 relay 单独 push 的 prefs 批次：先 push 既有 preferences，
+再 push snippets。旧 relay 返回 `unknown_key` 时不得阻塞其他 preferences，也不得
+清除 snippets 的 dirty 状态；relay 升级后由后续同步自动重试。处理 relay 响应时
+只允许清除本次实际发送且发送期间未再次修改的 key，避免用全量旧响应覆盖新本地值。
 
 ## Web 终端辅助键与文件选择
 
@@ -607,7 +658,9 @@ POSIX 路径；新增 scheme 或 Windows 路径需要单独设计安全与打开
   跨硬逻辑行只允许重建显式 `(...://` 链接，并同时要求稳定列 lane 和最终闭合 `)`；裸 URL
   不跨硬换行猜测，避免把下一条命令或相邻表格列拼进目标。
 - 同一 cell 上，完成结构校验的可见完整链接优先于普通单行前缀；OSC 8 与可见链接重叠时
-  同样使用可见完整目标，只有纯 OSC 8 标签才回退到再次校验为 HTTP(S) 的 URI。
+  同样使用可见完整目标，只有纯 OSC 8 标签才回退到共享 recognizer 再次解析出的
+  HTTP(S) URI。不能只用 `new URL()` 校验整段 OSC 文本；它会把误带的 `), 通过` 等
+  尾随内容容错编码进点击目标。
 - hover 命中、Ctrl+点击、右键打开和“复制链接”必须共享同一目标解析。普通点击、Shift/Alt
   点击和拖动选择不能打开链接；一次 Ctrl+点击最多触发一次打开，并在打开前清除 xterm 选择。
 - 回归测试至少覆盖软换行、Markdown 硬行与软行混合、并排列、防误拼、宽字符 cell 范围、

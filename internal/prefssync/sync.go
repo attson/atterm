@@ -69,6 +69,7 @@ var syncedKeys = []string{
 	"terminal_cursor_blink",
 	"terminal_scrollback",
 	"shortcut_bindings",
+	"snippets",
 }
 
 // SyncedKeys returns the canonical list of keys this engine syncs.
@@ -203,11 +204,12 @@ func (e *Engine) SeedFromLocal(isCustomized func(key string) bool, updatedAtLoca
 	}
 }
 
-// Push collects all dirty keys, sends them as a single PUT, and
-// reconciles per-key with the server response (LWW: server's
-// updated_at is authoritative).
+// Push sends established preferences before optional extension keys. Keeping
+// snippets in its own request lets a newer client sync every established key
+// to an older relay even when that relay rejects the unknown extension.
 func (e *Engine) Push(ctx context.Context) error {
-	var items []ClientItem
+	var established []ClientItem
+	var snippets []ClientItem
 	for _, k := range e.adapter.Keys() {
 		if !slices.Contains(syncedKeys, k) {
 			continue
@@ -220,10 +222,22 @@ func (e *Engine) Push(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		items = append(items, ClientItem{
+		item := ClientItem{
 			Key: k, Value: v, ClientUpdatedAt: m.UpdatedAtLocal,
-		})
+		}
+		if k == "snippets" {
+			snippets = append(snippets, item)
+		} else {
+			established = append(established, item)
+		}
 	}
+	if err := e.pushItems(ctx, established); err != nil {
+		return err
+	}
+	return e.pushItems(ctx, snippets)
+}
+
+func (e *Engine) pushItems(ctx context.Context, items []ClientItem) error {
 	if len(items) == 0 {
 		return nil
 	}

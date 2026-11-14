@@ -54,6 +54,31 @@ describe("createTerminalOscLinkController", () => {
     expect(clearSelection).toHaveBeenCalledOnce();
   });
 
+  it("strips prose accidentally included after an OSC 8 URL", () => {
+    const openLink = vi.fn();
+    const controller = createTerminalOscLinkController({
+      isMac: false,
+      getDownPos: () => ({ x: 10, y: 10 }),
+      resolveVisibleLink: () => null,
+      openLink,
+      clearSelection: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    controller.handler.activate(
+      new MouseEvent("click", { ctrlKey: true, clientX: 10, clientY: 10 }),
+      "http://git.example.test/project/merge_requests/876), 通过验证",
+      range,
+    );
+
+    expect(openLink).toHaveBeenCalledWith({
+      start: 0,
+      end: 50,
+      text: "http://git.example.test/project/merge_requests/876",
+      kind: "http",
+    });
+  });
+
   it("prefers a complete visible link over an overlapping OSC 8 prefix", () => {
     const openLink = vi.fn();
     const complete = {

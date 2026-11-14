@@ -588,6 +588,15 @@ describe('createCapacitorPlatform — templates', () => {
     expect(await p.templates.load()).toEqual([])
   })
 
+  it('snippets save and load through the independent synced key', async () => {
+    const p = createCapacitorPlatform()
+    const list = [{ id: 'deploy', label: 'Deploy', text: 'make build\nmake deploy' }]
+    await p.snippets.save(list)
+    expect(await p.snippets.load()).toEqual(list)
+    expect(localStorage.getItem('atterm.snippets.value')).toBe(JSON.stringify(list))
+    expect(localStorage.getItem('atterm.quick_templates.value')).toBeNull()
+  })
+
   it('auxKeys.load returns [] when localStorage is empty', async () => {
     const p = createCapacitorPlatform()
     expect(await p.auxKeys.load()).toEqual([])

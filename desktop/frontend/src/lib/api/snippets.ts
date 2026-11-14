@@ -1,6 +1,15 @@
 import { bindings } from "./_bindings";
+import type { Snippet } from "../templates";
 
 export type { SnippetHostResult, SnippetHostState, SnippetRunProgress } from "./_bindings";
+
+export function getSnippets(): Promise<Snippet[]> {
+  return bindings().GetSnippets();
+}
+
+export function setSnippets(list: Snippet[]): Promise<void> {
+  return bindings().SetSnippets(list);
+}
 
 // runSnippetOnHosts starts a batch run of `snippetText` (labelled
 // `snippetLabel` for anything that needs a human-readable name) on every

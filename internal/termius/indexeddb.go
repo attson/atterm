@@ -12,7 +12,7 @@ import (
 
 type tables map[string][]map[string]interface{}
 
-var wantedTables = map[string]bool{"hosts": true, "keys": true, "ssh_identities": true, "ssh_configs": true, "groups": true, "tags": true, "tag_hosts": true, "pf_rules": true, "proxies": true, "host_chains": true}
+var wantedTables = map[string]bool{"hosts": true, "keys": true, "ssh_identities": true, "ssh_configs": true, "groups": true, "tags": true, "tag_hosts": true, "pf_rules": true, "proxies": true, "host_chains": true, "snippets": true}
 
 func utf16String(b []byte, order binary.ByteOrder) (string, error) {
 	if len(b)%2 != 0 {

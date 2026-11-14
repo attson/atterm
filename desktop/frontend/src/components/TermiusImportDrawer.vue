@@ -4,6 +4,7 @@ import { FolderOpen, Search, KeyRound, LockKeyhole, X } from 'lucide-vue-next';
 import SelectDropdown from './SelectDropdown.vue';
 import type { MessageKey } from '../i18n';
 import { useI18n } from '../i18n/useI18n';
+import { useOptionalPlatform } from '../platform';
 import {
   cancelTermiusImport, discoverTermiusProfiles, importTermius,
   previewTermiusImport, selectTermiusDirectory,
@@ -12,17 +13,20 @@ import {
 
 const emit = defineEmits<{ close: []; imported: [report: TermiusImportReport] }>();
 const { t } = useI18n();
+const platform = useOptionalPlatform();
 const path = ref('');
 const localKey = ref('');
 const profiles = ref<string[]>([]);
 const preview = ref<TermiusImportPreview | null>(null);
 const selectedHosts = ref<string[]>([]);
 const selectedKeys = ref<string[]>([]);
+const selectedSnippets = ref<string[]>([]);
 const busy = ref(false);
 const importing = ref(false);
 const error = ref('');
 const query = ref('');
-const section = ref<'hosts' | 'keys'>('hosts');
+type Section = 'hosts' | 'keys' | 'snippets';
+const section = ref<Section>('hosts');
 type HostStatus = 'all' | 'available' | 'blocked' | 'existing';
 const hostStatus = ref<HostStatus>('all');
 function statusOf(host: TermiusImportPreview['hosts'][number]): Exclude<HostStatus, 'all'> {
@@ -36,15 +40,23 @@ const statusFilters = computed(() => {
 });
 const filteredHosts = computed(() => preview.value?.hosts.filter(h => (hostStatus.value === 'all' || statusOf(h) === hostStatus.value) && matches([h.name, h.host, h.user, ...h.tags])) ?? []);
 const filteredKeys = computed(() => preview.value?.keys.filter(k => matches([k.name])) ?? []);
+const filteredSnippets = computed(() => preview.value?.snippets.filter(snippet => matches([snippet.name])) ?? []);
 function matches(values: string[]) {
   const terms = query.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   const text = values.join(' ').toLocaleLowerCase();
   return terms.every(term => text.includes(term));
 }
-const selectableIDs = computed(() => section.value === 'hosts'
-  ? filteredHosts.value.filter(h => !h.blocked && !h.existing).map(h => h.id)
-  : filteredKeys.value.filter(k => k.valid).map(k => k.id));
-const visibleSelected = computed(() => selectableIDs.value.filter(id => (section.value === 'hosts' ? selectedHosts.value : selectedKeys.value).includes(id)).length);
+const selectableIDs = computed(() => {
+  if (section.value === 'hosts') return filteredHosts.value.filter(h => !h.blocked && !h.existing).map(h => h.id);
+  if (section.value === 'keys') return filteredKeys.value.filter(k => k.valid).map(k => k.id);
+  return filteredSnippets.value.filter(snippet => !snippet.blocked && !snippet.existing).map(snippet => snippet.id);
+});
+const selectedForSection = computed(() => {
+  if (section.value === 'hosts') return selectedHosts.value;
+  if (section.value === 'keys') return selectedKeys.value;
+  return selectedSnippets.value;
+});
+const visibleSelected = computed(() => selectableIDs.value.filter(id => selectedForSection.value.includes(id)).length);
 const allVisibleSelected = computed(() => selectableIDs.value.length > 0 && visibleSelected.value === selectableIDs.value.length);
 const effectiveHosts = computed(() => {
   const included = new Set<string>();
@@ -65,19 +77,20 @@ const keyCount = computed(() => new Set([...selectedKeys.value, ...linkedKeys.va
 const existingCount = computed(() => preview.value?.hosts.filter(h => h.existing).length ?? 0);
 const blockedCount = computed(() => preview.value?.hosts.filter(h => h.blocked && !h.existing).length ?? 0);
 function toggleVisible() {
-  const target = section.value === 'hosts' ? selectedHosts : selectedKeys;
+  const target = section.value === 'hosts' ? selectedHosts : section.value === 'keys' ? selectedKeys : selectedSnippets;
   target.value = allVisibleSelected.value
     ? target.value.filter(id => !selectableIDs.value.includes(id))
     : [...new Set([...target.value, ...selectableIDs.value])];
 }
-function changeSection(value: 'hosts' | 'keys') { section.value = value; query.value = ''; }
+function changeSection(value: Section) { section.value = value; query.value = ''; }
 let alive = true;
 let request = 0;
 const options = computed(() => [
   { value: '', label: t('ssh.termius.chooseProfile') },
   ...profiles.value.map(value => ({ value, label: value })),
 ]);
-const canImport = computed(() => !busy.value && selectedHosts.value.length + selectedKeys.value.length > 0);
+const canImport = computed(() => !busy.value && selectedHosts.value.length + selectedKeys.value.length + selectedSnippets.value.length > 0);
+const sectionTabID = computed(() => `termius-${section.value}-tab`);
 const keyNames = computed(() => new Map(preview.value?.keys.map(k => [k.id, k.name]) ?? []));
 const warningKeys: Record<string, MessageKey> = {
   invalid_address: 'ssh.termius.warnings.invalid_address',
@@ -93,6 +106,7 @@ const warningKeys: Record<string, MessageKey> = {
   forward_skipped: 'ssh.termius.warnings.forward_skipped',
   invalid_key: 'ssh.termius.warnings.invalid_key',
   invalid_jump: 'ssh.termius.warnings.invalid_jump',
+  invalid_snippet: 'ssh.termius.warnings.invalid_snippet',
 };
 function warningMessage(code: string): string {
   return warningKeys[code] ? t(warningKeys[code]) : code;
@@ -120,6 +134,7 @@ function discard() {
   hostStatus.value = 'all';
   selectedHosts.value = [];
   selectedKeys.value = [];
+  selectedSnippets.value = [];
   if (token) void cancelTermiusImport(token).catch(() => {});
 }
 function close() {
@@ -161,8 +176,9 @@ async function confirm() {
   importing.value = true;
   error.value = '';
   try {
-    const report = await importTermius(preview.value.token, selectedHosts.value, selectedKeys.value);
+    const report = await importTermius(preview.value.token, selectedHosts.value, selectedKeys.value, selectedSnippets.value);
     preview.value = null;
+    if (report.snippets > 0) platform?.events.emit('quickTemplates:changed', null);
     emit('imported', report);
   } catch (e) { error.value = message(e); }
   finally { busy.value = false; importing.value = false; }
@@ -188,6 +204,7 @@ onBeforeUnmount(() => { alive = false; request++; discard(); localKey.value = ''
       <div class="tabs" role="tablist" :aria-label="t('ssh.termius.items')">
         <button id="termius-hosts-tab" class="tab" role="tab" :aria-selected="section === 'hosts'" aria-controls="termius-items" data-test="termius-hosts-tab" @click="changeSection('hosts')">{{ t('ssh.termius.hosts', { count: preview.hosts.length }) }}</button>
         <button id="termius-keys-tab" class="tab" role="tab" :aria-selected="section === 'keys'" aria-controls="termius-items" data-test="termius-keys-tab" @click="changeSection('keys')">{{ t('ssh.termius.keys', { count: preview.keys.length }) }}</button>
+        <button id="termius-snippets-tab" class="tab" role="tab" :aria-selected="section === 'snippets'" aria-controls="termius-items" data-test="termius-snippets-tab" @click="changeSection('snippets')">{{ t('ssh.termius.snippets', { count: preview.snippets.length }) }}</button>
       </div>
       <div class="search-row"><Search :size="15" aria-hidden="true" /><input v-model="query" type="search" :placeholder="t('ssh.termius.search')" :aria-label="t('ssh.termius.search')" data-test="termius-search" /></div>
       <div v-if="section === 'hosts'" class="status-filters" role="group" :aria-label="t('ssh.termius.filterStatus')">
@@ -197,7 +214,7 @@ onBeforeUnmount(() => { alive = false; request++; discard(); localKey.value = ''
         <label class="bulk"><input type="checkbox" :checked="allVisibleSelected" :indeterminate="visibleSelected > 0 && !allVisibleSelected" :disabled="busy || !selectableIDs.length" data-test="termius-select-visible" @change="toggleVisible" />{{ t('ssh.termius.selectVisible', { count: selectableIDs.length }) }}</label>
         <span v-if="existingCount || blockedCount" class="hint">{{ t('ssh.termius.unavailable', { existing: existingCount, blocked: blockedCount }) }}</span>
       </div>
-      <p class="hint">{{ section === 'keys' ? t('ssh.termius.keysHint') : t('ssh.termius.selectionHint') }}</p>
+      <p class="hint">{{ section === 'keys' ? t('ssh.termius.keysHint') : section === 'snippets' ? t('ssh.termius.snippetsHint') : t('ssh.termius.selectionHint') }}</p>
     </div>
     <div class="body" :class="{ 'preview-body': preview }">
       <p v-if="!preview" class="hint">{{ t('ssh.termius.description') }}</p>
@@ -222,7 +239,7 @@ onBeforeUnmount(() => { alive = false; request++; discard(); localKey.value = ''
         <button class="button primary" :disabled="busy || !path.trim()" data-test="termius-preview" @click="scan">{{ busy ? t('ssh.termius.scanning') : t('ssh.termius.preview') }}</button>
       </template>
       <template v-else>
-        <div id="termius-items" class="items" role="tabpanel" :aria-labelledby="section === 'hosts' ? 'termius-hosts-tab' : 'termius-keys-tab'">
+        <div id="termius-items" class="items" role="tabpanel" :aria-labelledby="sectionTabID">
           <template v-if="section === 'hosts'">
             <p v-if="!filteredHosts.length" class="empty hint">{{ query.trim() || hostStatus !== 'all' ? t('ssh.termius.noMatches') : t('ssh.termius.noHosts') }}</p>
             <label v-for="host in filteredHosts" :key="host.id" class="entry" :class="{ blocked: host.blocked || host.existing, selected: effectiveHosts.has(host.id) }">
@@ -243,11 +260,21 @@ onBeforeUnmount(() => { alive = false; request++; discard(); localKey.value = ''
               </span>
             </label>
           </template>
-          <template v-else>
+          <template v-else-if="section === 'keys'">
             <p v-if="!filteredKeys.length" class="empty hint">{{ t('ssh.termius.noMatches') }}</p>
             <label v-for="key in filteredKeys" :key="key.id" class="entry" :class="{ blocked: !key.valid, selected: selectedKeys.includes(key.id) || linkedKeys.has(key.id) }">
               <input v-model="selectedKeys" type="checkbox" :value="key.id" :disabled="busy || !key.valid" :data-test="`termius-key-${key.id}`" />
               <span class="entry-body"><span class="entry-title"><KeyRound :size="14" aria-hidden="true" /><strong>{{ key.name || 'Termius' }}</strong><span v-if="linkedKeys.has(key.id)" class="badge">{{ t('ssh.termius.autoIncluded') }}</span></span><span v-if="!key.valid" class="warning">{{ t('ssh.termius.invalidKey') }}</span></span>
+            </label>
+          </template>
+          <template v-else>
+            <p v-if="!filteredSnippets.length" class="empty hint">{{ query.trim() ? t('ssh.termius.noMatches') : t('ssh.termius.noSnippets') }}</p>
+            <label v-for="snippet in filteredSnippets" :key="snippet.id" class="entry" :class="{ blocked: snippet.blocked || snippet.existing, selected: selectedSnippets.includes(snippet.id) }">
+              <input v-model="selectedSnippets" type="checkbox" :value="snippet.id" :disabled="busy || snippet.blocked || snippet.existing" :data-test="`termius-snippet-${snippet.id}`" />
+              <span class="entry-body">
+                <span class="entry-title"><strong>{{ snippet.name || t('ssh.termius.untitledSnippet') }}</strong><span v-if="snippet.existing" class="badge">{{ t('ssh.termius.existing') }}</span><span v-else-if="snippet.blocked" class="badge warning">{{ t('ssh.termius.blocked') }}</span></span>
+                <span v-for="warning in snippet.warnings" :key="warning" class="warning">{{ warningMessage(warning) }}</span>
+              </span>
             </label>
           </template>
         </div>
@@ -255,7 +282,7 @@ onBeforeUnmount(() => { alive = false; request++; discard(); localKey.value = ''
       <p v-if="error" class="warning" role="alert" data-test="termius-error">{{ error }}</p>
     </div>
     <footer>
-      <span v-if="preview" class="selection-count" aria-live="polite" data-test="termius-selection-count">{{ t('ssh.termius.selectedCount', { hosts: effectiveHosts.size, keys: keyCount }) }}</span>
+      <span v-if="preview" class="selection-count" aria-live="polite" data-test="termius-selection-count">{{ t('ssh.termius.selectedCount', { hosts: effectiveHosts.size, keys: keyCount, snippets: selectedSnippets.length }) }}</span>
       <button class="button" :disabled="importing" @click="close">{{ t('common.cancel') }}</button>
       <button v-if="preview" class="button" :disabled="busy" data-test="termius-back" @click="discard">{{ t('ssh.termius.rescan') }}</button>
       <button v-if="preview" class="button primary" :disabled="!canImport" data-test="termius-confirm" @click="confirm">{{ importing ? t('ssh.configImport.importing') : t('ssh.termius.confirm') }}</button>

@@ -27,6 +27,13 @@ export function createMockGoApp() {
   return {
     // ---- boot chain 致命方法 ----
     GetTerminalTheme: async () => 'vscode-dark',
+    GetTerminalFontHead: async () => '',
+    GetTerminalFontSize: async () => 14,
+    GetTerminalLineHeight: async () => 1.2,
+    GetTerminalCursorStyle: async () => 'block',
+    GetTerminalCursorBlink: async () => true,
+    GetTerminalScrollback: async () => 10_000,
+    GetShortcutBindings: async () => ({}),
     GetEndpoint: async () => ({ url: LOCAL_ENDPOINT_URL, session_token: 'demo-token' }),
     GetHostInfo: async () => ({ host_id: LOCAL_HOST, host: LOCAL_HOST, user: 'you' }),
     LoadRecoverySnapshot: async () => ({

@@ -102,6 +102,7 @@ import {
 } from "./lib/terminalThemes";
 import { useI18n } from "./i18n/useI18n";
 import type { MessageKey } from "./i18n";
+import type { SnippetSessionTargetRegistry } from "./lib/snippetSessionTargets";
 
 const { t: i18nT } = useI18n();
 
@@ -170,6 +171,7 @@ const localListAdapted = computed<RemoteSession[]>(() => localList.value.map(ada
 const remoteListAdapted = computed<RemoteSession[]>(() => remoteList.value.map(adaptSession));
 
 const sessions = useSessions(localListAdapted, remoteListAdapted);
+provide("atterm:snippetSessions", sessions.all);
 
 // The companion window ("桌面挂件" / Desk Widget). This must be fed from the MERGED list, not
 // from either stream alone: remote sessions arrive on their own WS and may be
@@ -670,6 +672,12 @@ const currentTitleForBar = computed<string>(() => {
 // would be a viewer and the relay would drop its IN frames.
 const pluginInputSenders = new Map<string, (text: string) => void>();
 provide("atterm:pluginInputSenders", pluginInputSenders);
+
+// Snippet batch-run needs both the existing driver-side sender and its live
+// writability. Keeping this separate from the plugin fallback prevents a
+// viewer attachment from looking runnable while the relay drops its input.
+const snippetSessionTargets = reactive(new Map()) as SnippetSessionTargetRegistry;
+provide("atterm:snippetSessionTargets", snippetSessionTargets);
 
 // TerminalView owns these connections. Plugins must reuse an entry instead of
 // opening another /client attachment for the active session.

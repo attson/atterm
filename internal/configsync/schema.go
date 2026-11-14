@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -15,6 +17,7 @@ const (
 
 	CollectionPreferences   = "preferences"
 	CollectionQuickTemplate = "quick_templates"
+	CollectionSnippet       = "snippets"
 	CollectionProfiles      = "profiles"
 	CollectionProfileConfig = "profile_config"
 	CollectionProfileEnv    = "profile_env"
@@ -60,6 +63,7 @@ const (
 	shapeStringArray  relayJSONShape = "string_array"
 	shapeStringMap    relayJSONShape = "string_map"
 	shapeTemplateList relayJSONShape = "template_list"
+	shapeSnippetList  relayJSONShape = "snippet_list"
 	shapeSealed       relayJSONShape = "sealed"
 )
 
@@ -73,6 +77,7 @@ var relayKeySpecs = []RelayKeySpec{
 	{Key: "quick_templates", Mode: RelayRecordArray, Collections: []string{CollectionQuickTemplate}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeTemplateList},
 	{Key: "shell_integration_enabled", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "shortcut_bindings", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeStringMap},
+	{Key: "snippets", Mode: RelayRecordArray, Collections: []string{CollectionSnippet}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeSnippetList},
 	{Key: "ssh_hosts_encrypted", Mode: RelaySealedBundle, Collections: []string{CollectionSSHHosts, CollectionSSHKeys, CollectionSSHCredential, CollectionSSHKeySecret}, KeyClasses: []KeyClass{KeyClassSync, KeyClassVault}, shape: shapeSealed},
 	{Key: "terminal_cursor_blink", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeBool},
 	{Key: "terminal_cursor_style", Mode: RelayScalar, Collections: []string{CollectionPreferences}, KeyClasses: []KeyClass{KeyClassSync}, shape: shapeString},
@@ -152,6 +157,8 @@ func NormalizeRelayValue(key string, raw json.RawMessage) (json.RawMessage, erro
 		value = new(map[string]string)
 	case shapeTemplateList:
 		value = new([]relayTemplate)
+	case shapeSnippetList:
+		value = new([]relaySnippet)
 	case shapeSealed:
 		value = new(string)
 	default:
@@ -162,6 +169,15 @@ func NormalizeRelayValue(key string, raw json.RawMessage) (json.RawMessage, erro
 	}
 	if spec.shape == shapeTemplateList {
 		if err := validateTemplates(*value.(*[]relayTemplate)); err != nil {
+			return nil, fmt.Errorf("%w: %s: %v", ErrInvalidSchemaValue, key, err)
+		}
+	}
+	if spec.shape == shapeSnippetList {
+		snippets := *value.(*[]relaySnippet)
+		if snippets == nil {
+			return nil, fmt.Errorf("%w: %s: value must be an array", ErrInvalidSchemaValue, key)
+		}
+		if err := validateSnippets(snippets); err != nil {
 			return nil, fmt.Errorf("%w: %s: %v", ErrInvalidSchemaValue, key, err)
 		}
 	}
@@ -188,6 +204,12 @@ type relayTemplate struct {
 	Hotkey string `json:"hotkey,omitempty"`
 }
 
+type relaySnippet struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Text  string `json:"text"`
+}
+
 func validateTemplates(templates []relayTemplate) error {
 	seen := make(map[string]struct{}, len(templates))
 	for _, template := range templates {
@@ -198,6 +220,39 @@ func validateTemplates(templates []relayTemplate) error {
 			return fmt.Errorf("duplicate template id %q", template.ID)
 		}
 		seen[template.ID] = struct{}{}
+	}
+	return nil
+}
+
+func validateSnippets(snippets []relaySnippet) error {
+	if len(snippets) > 200 {
+		return errors.New("at most 200 snippets are allowed")
+	}
+	seen := make(map[string]struct{}, len(snippets))
+	for _, snippet := range snippets {
+		if strings.TrimSpace(snippet.ID) == "" || strings.TrimSpace(snippet.Label) == "" || strings.TrimSpace(snippet.Text) == "" {
+			return errors.New("snippet id, label and text are required")
+		}
+		if !utf8.ValidString(snippet.Label) || !utf8.ValidString(snippet.Text) {
+			return fmt.Errorf("snippet %q must be valid UTF-8", snippet.ID)
+		}
+		if utf8.RuneCountInString(snippet.Label) > 80 {
+			return fmt.Errorf("snippet %q label exceeds 80 Unicode code points", snippet.ID)
+		}
+		if len(snippet.Text) > 64<<10 {
+			return fmt.Errorf("snippet %q text exceeds 65536 bytes", snippet.ID)
+		}
+		if _, duplicate := seen[snippet.ID]; duplicate {
+			return fmt.Errorf("duplicate snippet id %q", snippet.ID)
+		}
+		seen[snippet.ID] = struct{}{}
+	}
+	encoded, err := json.Marshal(snippets)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > 1<<20 {
+		return errors.New("snippets collection exceeds 1048576 bytes")
 	}
 	return nil
 }
@@ -232,8 +287,7 @@ type OrderedRecord struct {
 }
 
 // SplitRelayRecordArray converts a validated legacy array into independent
-// canonical records. Currently quick_templates is the only plaintext legacy
-// record array; active sealed bundles are decoded by Desktop codecs.
+// canonical records. Active sealed bundles are decoded by Desktop codecs.
 func SplitRelayRecordArray(key string, raw json.RawMessage) ([]OrderedRecord, error) {
 	spec, ok := RelaySpec(key)
 	if !ok || spec.Mode != RelayRecordArray {
@@ -243,22 +297,28 @@ func SplitRelayRecordArray(key string, raw json.RawMessage) ([]OrderedRecord, er
 	if err != nil {
 		return nil, err
 	}
-	var templates []relayTemplate
-	if err := json.Unmarshal(normalized, &templates); err != nil {
+	switch spec.shape {
+	case shapeTemplateList:
+		return splitOrderedRecords(normalized, CollectionQuickTemplate, func(item relayTemplate) string { return item.ID })
+	case shapeSnippetList:
+		return splitOrderedRecords(normalized, CollectionSnippet, func(item relaySnippet) string { return item.ID })
+	default:
+		return nil, fmt.Errorf("%w: %q has unsupported record shape", ErrInvalidSchemaValue, key)
+	}
+}
+
+func splitOrderedRecords[T any](normalized json.RawMessage, collection string, id func(T) string) ([]OrderedRecord, error) {
+	var items []T
+	if err := json.Unmarshal(normalized, &items); err != nil {
 		return nil, err
 	}
-	records := make([]OrderedRecord, len(templates))
-	for i, template := range templates {
-		payload, err := json.Marshal(template)
+	records := make([]OrderedRecord, len(items))
+	for i, item := range items {
+		payload, err := json.Marshal(item)
 		if err != nil {
 			return nil, err
 		}
-		records[i] = OrderedRecord{
-			Collection: CollectionQuickTemplate,
-			RecordID:   template.ID,
-			Position:   uint64(i),
-			Payload:    payload,
-		}
+		records[i] = OrderedRecord{Collection: collection, RecordID: id(item), Position: uint64(i), Payload: payload}
 	}
 	return records, nil
 }
@@ -277,27 +337,38 @@ func JoinRelayRecordArray(key string, records []OrderedRecord) (json.RawMessage,
 		}
 		return ordered[i].RecordID < ordered[j].RecordID
 	})
-	templates := make([]relayTemplate, 0, len(ordered))
+	switch spec.shape {
+	case shapeTemplateList:
+		return joinOrderedRecords(ordered, CollectionQuickTemplate, func(item relayTemplate) string { return item.ID }, validateTemplates)
+	case shapeSnippetList:
+		return joinOrderedRecords(ordered, CollectionSnippet, func(item relaySnippet) string { return item.ID }, validateSnippets)
+	default:
+		return nil, fmt.Errorf("%w: %q has unsupported record shape", ErrInvalidSchemaValue, key)
+	}
+}
+
+func joinOrderedRecords[T any](ordered []OrderedRecord, collection string, id func(T) string, validate func([]T) error) (json.RawMessage, error) {
+	items := make([]T, 0, len(ordered))
 	seen := make(map[string]struct{}, len(ordered))
 	for _, record := range ordered {
-		if record.Collection != CollectionQuickTemplate {
+		if record.Collection != collection {
 			return nil, fmt.Errorf("%w: record %q belongs to %q", ErrInvalidSchemaValue, record.RecordID, record.Collection)
 		}
-		var template relayTemplate
-		if err := decodeStrictJSON(record.Payload, &template); err != nil {
+		var item T
+		if err := decodeStrictJSON(record.Payload, &item); err != nil {
 			return nil, fmt.Errorf("%w: record %q: %v", ErrInvalidSchemaValue, record.RecordID, err)
 		}
-		if template.ID != record.RecordID {
+		if id(item) != record.RecordID {
 			return nil, fmt.Errorf("%w: payload id does not match record id %q", ErrInvalidSchemaValue, record.RecordID)
 		}
 		if _, duplicate := seen[record.RecordID]; duplicate {
 			return nil, fmt.Errorf("%w: duplicate record id %q", ErrInvalidSchemaValue, record.RecordID)
 		}
 		seen[record.RecordID] = struct{}{}
-		templates = append(templates, template)
+		items = append(items, item)
 	}
-	if err := validateTemplates(templates); err != nil {
+	if err := validate(items); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSchemaValue, err)
 	}
-	return json.Marshal(templates)
+	return json.Marshal(items)
 }

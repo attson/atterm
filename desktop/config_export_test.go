@@ -276,6 +276,7 @@ func TestBuildConfigExport_HandlesEverySyncedKey(t *testing.T) {
 		"locale_preference",
 		"traffic_time_zone",
 		"quick_templates",
+		"snippets",
 		"notifications_enabled",
 		"ai_notifications_only",
 		"command_notify_threshold_seconds",

@@ -32,6 +32,7 @@ var allowedPreferenceKeys = map[string]preferenceKind{
 	"locale_preference":                preferenceKindString,
 	"traffic_time_zone":                preferenceKindString,
 	"quick_templates":                  preferenceKindArray,
+	"snippets":                         preferenceKindArray,
 	"notifications_enabled":            preferenceKindBool,
 	"ai_notifications_only":            preferenceKindBool,
 	"command_notify_threshold_seconds": preferenceKindInt,

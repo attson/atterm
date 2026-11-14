@@ -325,15 +325,25 @@ export interface TermiusKeyPreview {
   valid: boolean;
 }
 
+export interface TermiusSnippetPreview {
+  id: string;
+  name: string;
+  existing: boolean;
+  blocked: boolean;
+  warnings: string[];
+}
+
 export interface TermiusImportPreview {
   token: string;
   hosts: TermiusHostPreview[];
   keys: TermiusKeyPreview[];
+  snippets: TermiusSnippetPreview[];
 }
 
 export interface TermiusImportReport {
   hosts: number;
   keys: number;
+  snippets: number;
   skipped: number;
 }
 
@@ -828,7 +838,7 @@ export interface AppBindings {
   SelectTermiusDirectory(): Promise<string>;
   PreviewTermiusImport(path: string, localKey: string): Promise<TermiusImportPreview>;
   CancelTermiusImport(token: string): Promise<void>;
-  ImportTermius(token: string, hostIDs: string[], keyIDs: string[]): Promise<TermiusImportReport>;
+  ImportTermius(token: string, hostIDs: string[], keyIDs: string[], snippetIDs: string[]): Promise<TermiusImportReport>;
   PreviewSSHConfigImport(): Promise<SSHConfigImportPreview>;
   ImportSSHHosts(hosts: SSHHost[]): Promise<number>;
   ListSSHKeys(): Promise<SSHKey[]>;
@@ -950,6 +960,8 @@ export interface AppBindings {
   SetHookInstallEnabled(on: boolean): Promise<void>;
   GetQuickTemplates(): Promise<import('../templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('../templates').QuickTemplate[]): Promise<void>;
+  GetSnippets(): Promise<import('../templates').Snippet[]>;
+  SetSnippets(list: import('../templates').Snippet[]): Promise<void>;
   GetPromptHistoryStatus(): Promise<PromptHistoryStatus>;
   QueryPromptHistory(prefix: string, limit: number): Promise<string[]>;
   QueryPromptHistoryPage(prefix: string, cursor: string, limit: number): Promise<PromptHistoryPage>;

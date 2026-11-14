@@ -251,7 +251,7 @@ export interface PluginHostBridge {
   }
 }
 
-import type { QuickTemplate } from '../lib/templates'
+import type { QuickTemplate, Snippet } from '../lib/templates'
 
 export interface TemplateBridge {
   load(): Promise<QuickTemplate[]>
@@ -262,6 +262,12 @@ export interface TemplateBridge {
   // localStorage, wails uses appConfig).
   loadHidden(): Promise<boolean>
   saveHidden(hidden: boolean): Promise<void>
+}
+
+export interface SnippetBridge {
+  load(): Promise<Snippet[]>
+  save(list: Snippet[]): Promise<void>
+  clear(): Promise<void>
 }
 
 import type { AuxKey } from '../lib/auxKeys'
@@ -459,6 +465,7 @@ export interface Platform {
   system: SystemBridge
   events: EventBus
   templates: TemplateBridge
+  snippets: SnippetBridge
   auxKeys: AuxKeyBridge
   backgroundSubscriptions?: BackgroundSubscriptionsBridge
   directConnection: DirectConnectionBridge

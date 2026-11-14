@@ -1,5 +1,5 @@
 import type { Platform, Capabilities } from '@/platform/types'
-import { DEFAULT_TEMPLATES } from '@/lib/templates'
+import { DEFAULT_TEMPLATES, type Snippet } from '@/lib/templates'
 import { fakeSessions } from './fakeSessions'
 import { createMockPluginFs } from './mockFs'
 import { MockSocket } from './mockSocket'
@@ -28,6 +28,24 @@ const mem = new Map<string, string>()
 
 export function createMockPlatform(): Platform {
   const events = makeEventBus()
+  let directConnectionEnabled = false
+  let snippets = [
+    {
+      id: 'ports',
+      label: '查看监听端口',
+      text: 'lsof -nP -iTCP -sTCP:LISTEN',
+    },
+    {
+      id: 'release',
+      label: '构建并发布当前版本',
+      text: 'npm run build\nnpm test\nnpm run release',
+    },
+    {
+      id: 'logs',
+      label: '跟踪最近一小时内所有错误日志并保留完整上下文',
+      text: 'journalctl --since "1 hour ago" --priority err --output short-iso --follow',
+    },
+  ]
 
   const platform = {
     caps: CAPS,
@@ -105,6 +123,14 @@ export function createMockPlatform(): Platform {
       },
     },
     events,
+    directConnection: {
+      async load() {
+        return directConnectionEnabled
+      },
+      async save(enabled: boolean) {
+        directConnectionEnabled = enabled
+      },
+    },
     templates: {
       async load() {
         // 默认快捷模板(yes / ok / continue / commit / push …),让模板条显示出来。
@@ -116,6 +142,17 @@ export function createMockPlatform(): Platform {
         return false
       },
       async saveHidden() {},
+    },
+    snippets: {
+      async load() {
+        return snippets.map((snippet) => ({ ...snippet }))
+      },
+      async save(next: Snippet[]) {
+        snippets = next.map((snippet) => ({ ...snippet }))
+      },
+      async clear() {
+        snippets = []
+      },
     },
     auxKeys: {
       async load() {

@@ -210,6 +210,6 @@ export function previewTermiusImport(path: string, localKey: string): Promise<Te
 export function cancelTermiusImport(token: string): Promise<void> {
   return bindings().CancelTermiusImport(token);
 }
-export function importTermius(token: string, hostIDs: string[], keyIDs: string[]): Promise<TermiusImportReport> {
-  return bindings().ImportTermius(token, hostIDs, keyIDs);
+export function importTermius(token: string, hostIDs: string[], keyIDs: string[], snippetIDs: string[]): Promise<TermiusImportReport> {
+  return bindings().ImportTermius(token, hostIDs, keyIDs, snippetIDs);
 }

@@ -1500,6 +1500,22 @@ export namespace main {
 	        this.hotkey = source["hotkey"];
 	    }
 	}
+	export class Snippet {
+	    id: string;
+	    label: string;
+	    text: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Snippet(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.text = source["text"];
+	    }
+	}
 	export class ReceivedFileEntry {
 	    name: string;
 	    bytes: number;
@@ -2414,10 +2430,31 @@ export namespace main {
 	        this.valid = source["valid"];
 	    }
 	}
+	export class TermiusSnippetPreview {
+	    id: string;
+	    name: string;
+	    existing: boolean;
+	    blocked: boolean;
+	    warnings: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new TermiusSnippetPreview(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.existing = source["existing"];
+	        this.blocked = source["blocked"];
+	        this.warnings = source["warnings"];
+	    }
+	}
 	export class TermiusImportPreview {
 	    token: string;
 	    hosts: TermiusHostPreview[];
 	    keys: TermiusKeyPreview[];
+	    snippets: TermiusSnippetPreview[];
 
 	    static createFrom(source: any = {}) {
 	        return new TermiusImportPreview(source);
@@ -2428,6 +2465,7 @@ export namespace main {
 	        this.token = source["token"];
 	        this.hosts = this.convertValues(source["hosts"], TermiusHostPreview);
 	        this.keys = this.convertValues(source["keys"], TermiusKeyPreview);
+	        this.snippets = this.convertValues(source["snippets"], TermiusSnippetPreview);
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -2451,6 +2489,7 @@ export namespace main {
 	export class TermiusImportReport {
 	    hosts: number;
 	    keys: number;
+	    snippets: number;
 	    skipped: number;
 
 	    static createFrom(source: any = {}) {
@@ -2461,6 +2500,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.hosts = source["hosts"];
 	        this.keys = source["keys"];
+	        this.snippets = source["snippets"];
 	        this.skipped = source["skipped"];
 	    }
 	}

@@ -109,6 +109,11 @@ export function createFakePlatform(): Platform {
       loadHidden: vi.fn().mockResolvedValue(false),
       saveHidden: vi.fn().mockResolvedValue(undefined),
     },
+    snippets: {
+      load: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    },
     auxKeys: {
       load: vi.fn().mockResolvedValue([]),
       save: vi.fn().mockResolvedValue(undefined),

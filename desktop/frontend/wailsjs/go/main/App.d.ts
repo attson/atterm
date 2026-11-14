@@ -161,6 +161,8 @@ export function GetShellIntegrationEnabled():Promise<boolean>;
 
 export function GetShortcutBindings():Promise<Record<string, string>>;
 
+export function GetSnippets():Promise<Array<main.Snippet>>;
+
 export function GetStartupError():Promise<main.StartupError>;
 
 export function GetSyncStatus():Promise<main.SyncStatus>;
@@ -207,7 +209,7 @@ export function ImportPeerTrustBackup(arg1:string,arg2:string):Promise<main.Peer
 
 export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 
-export function ImportTermius(arg1:string,arg2:Array<string>,arg3:Array<string>):Promise<main.TermiusImportReport>;
+export function ImportTermius(arg1:string,arg2:Array<string>,arg3:Array<string>,arg4:Array<string>):Promise<main.TermiusImportReport>;
 
 export function InstallPeerCloudflared():Promise<main.PeerQuickTunnelStatus>;
 
@@ -390,6 +392,8 @@ export function SetRelayDisableE2EE(arg1:boolean):Promise<void>;
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
 
 export function SetShortcutBindings(arg1:Record<string, string>):Promise<void>;
+
+export function SetSnippets(arg1:Array<main.Snippet>):Promise<void>;
 
 export function SetTaskGroupBy(arg1:string):Promise<void>;
 

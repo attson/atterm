@@ -43,6 +43,47 @@ func TestLatestBusinessRevisionAndDeletion(t *testing.T) {
 		t.Fatal("old or deleted business revision was imported", e)
 	}
 }
+
+func TestBuildDataIncludesCurrentSnippetsWithoutSSHData(t *testing.T) {
+	data, err := buildData(tables{"snippets": {
+		{"id": "deploy", "updated_at": "1", "label": "Deploy", "script": "make deploy"},
+		{"id": "deploy", "updated_at": "2", "label": "Deploy", "script": "make deploy --force"},
+		{"local_id": "logs", "label": "Logs", "script": "tail -f app.log"},
+		{"id": "deleted", "label": "Gone", "script": "echo no", "deleted": true},
+		{"id": "empty-label", "label": "", "script": "echo no"},
+		{"id": "empty-script", "label": "Empty", "script": ""},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Hosts) != 0 || len(data.Keys) != 0 || len(data.Snippets) != 3 {
+		t.Fatalf("unexpected migration data: %+v", data)
+	}
+	if got := data.Snippets[0]; got.ID != "id:deploy" || got.Label != "Deploy" || got.Script != "make deploy --force" {
+		t.Fatalf("latest snippet revision not preserved: %+v", got)
+	}
+	if got := data.Snippets[1]; got.ID != "id:empty-label" || got.Label != "" || got.Script != "echo no" {
+		t.Fatalf("untitled snippet not preserved: %+v", got)
+	}
+	if got := data.Snippets[2]; got.ID != "local:logs" || got.Label != "Logs" || got.Script != "tail -f app.log" {
+		t.Fatalf("local snippet identity not preserved: %+v", got)
+	}
+}
+
+func TestBuildDataGivesKeylessSnippetAStableIdentity(t *testing.T) {
+	raw := tables{"snippets": {{"label": "Legacy", "script": "echo legacy"}}}
+	first, err := buildData(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildData(tables{"snippets": {{"label": "Legacy", "script": "echo legacy"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Snippets) != 1 || len(second.Snippets) != 1 || first.Snippets[0].ID == "" || first.Snippets[0].ID != second.Snippets[0].ID {
+		t.Fatalf("keyless snippet identity is not stable: %+v / %+v", first.Snippets, second.Snippets)
+	}
+}
 func TestUnsupportedProxyIsNotImportedAsDirectConnection(t *testing.T) {
 	data, e := buildData(tables{"hosts": {{"id": "1", "address": "192.0.2.1", "ssh_config": "2"}}, "ssh_configs": {{"id": "2", "identity": "3", "proxycommand": map[string]interface{}{"id": "4"}}}, "ssh_identities": {{"id": "3", "username": "root", "password": "pw"}}})
 	if e != nil || !data.Hosts[0].Blocked {

@@ -328,6 +328,18 @@ export function createWailsPlatform(): Platform {
         else localStorage.removeItem('atterm.templates.hidden')
       },
     },
+    snippets: {
+      load: async () => {
+        const raw = await api.getSnippets()
+        return Array.isArray(raw) ? raw : []
+      },
+      save: async (list) => {
+        await api.setSnippets(list)
+      },
+      clear: async () => {
+        await api.setSnippets([])
+      },
+    },
     promptHistory: {
       status: () => api.getPromptHistoryStatus(),
       query: (prefix, limit) => api.queryPromptHistory(prefix, limit),

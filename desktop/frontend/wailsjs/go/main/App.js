@@ -314,6 +314,10 @@ export function GetShortcutBindings() {
   return window['go']['main']['App']['GetShortcutBindings']();
 }
 
+export function GetSnippets() {
+  return window['go']['main']['App']['GetSnippets']();
+}
+
 export function GetStartupError() {
   return window['go']['main']['App']['GetStartupError']();
 }
@@ -406,8 +410,8 @@ export function ImportSSHHosts(arg1) {
   return window['go']['main']['App']['ImportSSHHosts'](arg1);
 }
 
-export function ImportTermius(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ImportTermius'](arg1, arg2, arg3);
+export function ImportTermius(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ImportTermius'](arg1, arg2, arg3, arg4);
 }
 
 export function InstallPeerCloudflared() {
@@ -772,6 +776,10 @@ export function SetShellIntegrationEnabled(arg1) {
 
 export function SetShortcutBindings(arg1) {
   return window['go']['main']['App']['SetShortcutBindings'](arg1);
+}
+
+export function SetSnippets(arg1) {
+  return window['go']['main']['App']['SetSnippets'](arg1);
 }
 
 export function SetTaskGroupBy(arg1) {

@@ -1,13 +1,77 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/attson/atterm/internal/prefssync"
 )
+
+func TestAdapterSnippetsRoundTrip(t *testing.T) {
+	sourceStore := newTestConfigStore(t)
+	source := newAppConfigAdapter(sourceStore, func() []byte { return nil })
+	want := []Snippet{{ID: "deploy", Label: "Deploy", Text: "make build\nmake deploy"}}
+	cfg := sourceStore.Get()
+	cfg.Snippets = want
+	if err := sourceStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, ok := source.ReadValue("snippets")
+	if !ok {
+		t.Fatal("ReadValue(snippets) returned ok=false")
+	}
+	targetStore := newTestConfigStore(t)
+	target := newAppConfigAdapter(targetStore, func() []byte { return nil })
+	if err := target.WriteValue("snippets", raw); err != nil {
+		t.Fatalf("WriteValue(snippets): %v", err)
+	}
+	if got := targetStore.Get().Snippets; !slices.Equal(got, want) {
+		t.Fatalf("snippets = %#v, want %#v", got, want)
+	}
+}
+
+func TestAdapterEmptySnippetsUsesArrayShape(t *testing.T) {
+	adapter := newAppConfigAdapter(newTestConfigStore(t), func() []byte { return nil })
+	raw, ok := adapter.ReadValue("snippets")
+	if !ok {
+		t.Fatal("ReadValue(snippets) returned ok=false")
+	}
+	if string(raw) != `[]` {
+		t.Fatalf("empty snippets = %s, want []", raw)
+	}
+}
+
+func TestHTTPRelayClientPutIncludesRelayErrorCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"unknown_key"}`))
+	}))
+	defer server.Close()
+
+	store := newTestConfigStore(t)
+	cfg := store.Get()
+	cfg.RelayURL = server.URL
+	cfg.RelaySessionToken = "token"
+	if err := store.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	client := newHTTPRelayClient(store)
+	client.http = server.Client()
+	_, err := client.Put(context.Background(), []prefssync.ClientItem{{
+		Key: "snippets", Value: json.RawMessage(`[]`), ClientUpdatedAt: 1,
+	}})
+	if err == nil || !strings.Contains(err.Error(), "unknown_key") {
+		t.Fatalf("Put error = %v, want Relay error code", err)
+	}
+}
 
 func newTestConfigStore(t *testing.T) *configStore {
 	tmp := t.TempDir()
@@ -332,6 +396,7 @@ func TestIsPrefCustomizedNamesEverySyncedKey(t *testing.T) {
 		LocalePreference:              "zh-CN",
 		TrafficTimeZone:               "Asia/Shanghai",
 		QuickTemplates:                []QuickTemplate{{ID: "t", Label: "t", Text: "t"}},
+		Snippets:                      []Snippet{{ID: "s", Label: "s", Text: "echo s"}},
 		NotificationsEnabled:          &enabled,
 		AINotificationsOnly:           &enabled,
 		CommandNotifyThresholdSeconds: &thresh,

@@ -13,6 +13,21 @@ export interface QuickTemplate {
   hotkey?: string // desktop-only; free-form e.g. "Alt+1" or "Mod+Shift+P"
 }
 
+export interface Snippet {
+  id: string
+  label: string
+  text: string
+}
+
+// Relay validation measures the canonical encoding produced by Go's
+// encoding/json, which escapes these HTML-sensitive runes by default.
+export function snippetCollectionJSONBytes(snippets: readonly Snippet[]): number {
+  const encoded = JSON.stringify(snippets).replace(/[<>&\u2028\u2029]/g, (rune) => (
+    `\\u${rune.codePointAt(0)!.toString(16).padStart(4, '0')}`
+  ))
+  return new TextEncoder().encode(encoded).byteLength
+}
+
 // DEFAULT_TEMPLATES seeds the list on first use. IDs are deterministic
 // "default-X" strings so resetting and re-seeding doesn't churn DOM keys.
 // Order defines the initial button arrangement.

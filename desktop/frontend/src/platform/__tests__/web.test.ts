@@ -170,6 +170,17 @@ describe('web platform', () => {
       expect(await p.templates.load()).toEqual([])
     })
 
+    it('snippets load/save/clear via an independent synced key', async () => {
+      const p = createWebPlatform()
+      const list = [{ id: 'deploy', label: 'Deploy', text: 'make build\nmake deploy' }]
+      await p.snippets.save(list)
+      expect(await p.snippets.load()).toEqual(list)
+      expect(localStorage.getItem('atterm.snippets.value')).toBe(JSON.stringify(list))
+      expect(localStorage.getItem('atterm.quick_templates.value')).toBeNull()
+      await p.snippets.clear()
+      expect(await p.snippets.load()).toEqual([])
+    })
+
     it('templates loadHidden/saveHidden via localStorage', async () => {
       const p = createWebPlatform()
       expect(await p.templates.loadHidden()).toBe(false)

@@ -44,6 +44,72 @@ describe('web prefsSync', () => {
     expect(SYNCED_KEYS).toContain('traffic_time_zone' as any)
   })
 
+  it('SYNCED_KEYS includes snippets', () => {
+    expect(SYNCED_KEYS).toContain('snippets' as any)
+  })
+
+  it('isolates snippets from established dirty preferences', async () => {
+    const a = localStorageAdapter()
+    a.writeValue('quick_templates', [{ id: 'ok', label: 'ok', text: 'ok' }])
+    a.writeMeta('quick_templates', { updatedAtLocal: 100, dirty: true })
+    a.writeValue('snippets', [{ id: 'deploy', label: 'Deploy', text: 'make deploy' }])
+    a.writeMeta('snippets', { updatedAtLocal: 200, dirty: true })
+    const put = vi.fn(async (items: Array<{ key: string; value: unknown; client_updated_at: number }>) => {
+      if (items.some((item) => item.key === 'snippets')) throw new Error('unknown_key')
+      return items.map((item) => ({ key: item.key, value: item.value, updated_at: item.client_updated_at + 1 }))
+    })
+
+    await expect(new PrefsSyncEngine(a, { get: vi.fn(), put }).push()).rejects.toThrow('unknown_key')
+    expect(put).toHaveBeenCalledTimes(2)
+    expect(a.readMeta('quick_templates')).toEqual({ updatedAtLocal: 101, dirty: false })
+    expect(a.readMeta('snippets')).toEqual({ updatedAtLocal: 200, dirty: true })
+  })
+
+  it('does not overwrite an established preference edited during the snippets PUT', async () => {
+    const a = localStorageAdapter()
+    a.writeValue('quick_templates', [{ id: 'old', label: 'Old', text: 'old' }])
+    a.writeMeta('quick_templates', { updatedAtLocal: 100, dirty: true })
+    a.writeValue('snippets', [{ id: 'deploy', label: 'Deploy', text: 'make deploy' }])
+    a.writeMeta('snippets', { updatedAtLocal: 200, dirty: true })
+    const put = vi.fn(async (items: Array<{ key: string; value: unknown; client_updated_at: number }>) => {
+      if (items[0]?.key === 'snippets') {
+        a.writeValue('quick_templates', [{ id: 'new', label: 'New', text: 'new' }])
+        a.writeMeta('quick_templates', { updatedAtLocal: 300, dirty: true })
+        return [
+          { key: 'quick_templates', value: [{ id: 'old', label: 'Old', text: 'old' }], updated_at: 101 },
+          { key: 'snippets', value: items[0].value, updated_at: 201 },
+        ]
+      }
+      return items.map((item) => ({ key: item.key, value: item.value, updated_at: item.client_updated_at + 1 }))
+    })
+
+    await new PrefsSyncEngine(a, { get: vi.fn(), put }).push()
+
+    expect(a.readValue('quick_templates')).toEqual([{ id: 'new', label: 'New', text: 'new' }])
+    expect(a.readMeta('quick_templates')).toEqual({ updatedAtLocal: 300, dirty: true })
+  })
+
+  it('ignores an unsent preference returned by an established PUT', async () => {
+    const a = localStorageAdapter()
+    a.writeValue('quick_templates', [{ id: 'quick', label: 'Quick', text: 'quick' }])
+    a.writeMeta('quick_templates', { updatedAtLocal: 100, dirty: true })
+    a.writeValue('notifications_enabled', false)
+    a.writeMeta('notifications_enabled', { updatedAtLocal: 50, dirty: false })
+    const put = vi.fn(async (items: Array<{ key: string; value: unknown; client_updated_at: number }>) => {
+      a.writeValue('notifications_enabled', true)
+      a.writeMeta('notifications_enabled', { updatedAtLocal: 300, dirty: true })
+      return [
+        { key: 'quick_templates', value: items[0]!.value, updated_at: 101 },
+        { key: 'notifications_enabled', value: false, updated_at: 51 },
+      ]
+    })
+
+    await new PrefsSyncEngine(a, { get: vi.fn(), put }).push()
+
+    expect(a.readValue('notifications_enabled')).toBe(true)
+    expect(a.readMeta('notifications_enabled')).toEqual({ updatedAtLocal: 300, dirty: true })
+  })
+
   it('pull adopts server values', async () => {
     const a = localStorageAdapter()
     const fakeRelay = {
@@ -57,7 +123,7 @@ describe('web prefsSync', () => {
     expect(JSON.parse(localStorage.getItem('atterm.locale_preference.value') ?? '""')).toBe('zh-CN')
   })
 
-  it.each(['pull', 'push'] as const)('%s ignores retired keys while adopting active and pull-only preferences', async (operation) => {
+  it.each(['pull', 'push'] as const)('%s ignores retired keys and only pull adopts pull-only preferences', async (operation) => {
     const a = localStorageAdapter()
     a.writeValue('locale_preference', 'en')
     a.writeMeta('locale_preference', { updatedAtLocal: 100, dirty: operation === 'push' })
@@ -82,13 +148,16 @@ describe('web prefsSync', () => {
       expect(method.mock.calls.some(([key]) => key === 'profiles_encrypted')).toBe(false)
     }
     expect(JSON.parse(localStorage.getItem('atterm.locale_preference.value') ?? 'null')).toBe('zh-CN')
-    expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.value') ?? 'null')).toBe('new-ssh-hosts')
     expect(JSON.parse(localStorage.getItem('atterm.locale_preference.meta') ?? 'null')).toEqual({ updatedAtLocal: 500, dirty: false })
-    expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.meta') ?? 'null')).toEqual({ updatedAtLocal: 500, dirty: false })
     if (operation === 'push') {
+      expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.value') ?? 'null')).toBe('old-ssh-hosts')
+      expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.meta') ?? 'null')).toEqual({ updatedAtLocal: 100, dirty: true })
       expect(r.put).toHaveBeenCalledWith([
         { key: 'locale_preference', value: 'en', client_updated_at: 100 },
       ])
+    } else {
+      expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.value') ?? 'null')).toBe('new-ssh-hosts')
+      expect(JSON.parse(localStorage.getItem('atterm.ssh_hosts_encrypted.meta') ?? 'null')).toEqual({ updatedAtLocal: 500, dirty: false })
     }
   })
 

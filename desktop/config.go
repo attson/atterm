@@ -231,6 +231,10 @@ type appConfig struct {
 	// or absent means "use defaults" — the renderer seeds DEFAULT_TEMPLATES
 	// in that case. See docs/superpowers/specs/2026-06-04-quick-templates-design.md.
 	QuickTemplates []QuickTemplate `json:"quick_templates,omitempty"`
+	// Snippets persists long command templates separately from QuickTemplates.
+	// Keeping the collections split prevents older clients from rendering a
+	// long command as a directly executable quick-action button.
+	Snippets []Snippet `json:"snippets,omitempty"`
 
 	// TaskPreset is the user's chosen session-bar display style.
 	// Empty falls back to "iconOnly" at read time.

@@ -34,6 +34,8 @@ export interface UseQuickTemplatesOpts {
   focused: () => boolean;
   /** Platform-side templates persistence (load / loadHidden). */
   templatesBridge: TemplateBridge;
+  /** Runtime gate for records shadowed by another template type. */
+  isEnabled?: (template: QuickTemplate) => boolean;
 }
 
 export interface UseQuickTemplates {
@@ -93,14 +95,17 @@ function hotkeyMatches(e: KeyboardEvent, h: { mod: boolean; alt: boolean; shift:
 
 export function useQuickTemplates(opts: UseQuickTemplatesOpts): UseQuickTemplates {
   const { send, confirmRequired, focused, templatesBridge } = opts;
+  const isEnabled = opts.isEnabled ?? (() => true);
 
-  const templates = ref<readonly QuickTemplate[]>([]);
+  const loadedTemplates = ref<readonly QuickTemplate[]>([]);
+  const templates = computed(() => loadedTemplates.value.filter(isEnabled));
   const templatesHidden = ref(false);
   const pendingTemplateConfirm = ref<QuickTemplate | null>(null);
 
   const templateConfirmOpen = computed(() => pendingTemplateConfirm.value !== null);
 
   function sendTemplate(tpl: QuickTemplate): void {
+    if (!isEnabled(tpl)) return;
     // Send the text and Enter as two separate writes one tick apart. Codex
     // (and other raw-mode TUIs) treats a bundled "text\r" payload as a paste
     // — the trailing CR becomes a literal newline in the prompt instead of
@@ -113,6 +118,7 @@ export function useQuickTemplates(opts: UseQuickTemplatesOpts): UseQuickTemplate
   }
 
   function requestTemplateSend(tpl: QuickTemplate): void {
+    if (!isEnabled(tpl)) return;
     if (!confirmRequired.value) {
       sendTemplate(tpl);
       return;
@@ -161,7 +167,7 @@ export function useQuickTemplates(opts: UseQuickTemplatesOpts): UseQuickTemplate
       effectiveTemplates(templatesBridge),
       templatesBridge.loadHidden(),
     ]);
-    templates.value = nextTemplates;
+    loadedTemplates.value = nextTemplates;
     templatesHidden.value = nextHidden;
   }
 

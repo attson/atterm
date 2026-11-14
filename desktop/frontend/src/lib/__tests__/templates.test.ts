@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_TEMPLATES, effectiveTemplates } from '../templates'
+import { DEFAULT_TEMPLATES, effectiveTemplates, snippetCollectionJSONBytes } from '../templates'
 
 describe('DEFAULT_TEMPLATES', () => {
   it('exposes the 9 starter entries', () => {
@@ -35,5 +35,18 @@ describe('effectiveTemplates', () => {
   it('returns DEFAULT_TEMPLATES when persisted list is empty', async () => {
     const bridge = { load: async () => [] }
     expect(await effectiveTemplates(bridge)).toBe(DEFAULT_TEMPLATES)
+  })
+})
+
+describe('snippetCollectionJSONBytes', () => {
+  it('matches Go JSON escaping for shell redirection characters', () => {
+    const snippets = Array.from({ length: 3 }, (_, index) => ({
+      id: String(index),
+      label: 'Redirect',
+      text: '<'.repeat(64 * 1024),
+    }))
+
+    expect(new TextEncoder().encode(JSON.stringify(snippets)).byteLength).toBeLessThan(1024 * 1024)
+    expect(snippetCollectionJSONBytes(snippets)).toBeGreaterThan(1024 * 1024)
   })
 })

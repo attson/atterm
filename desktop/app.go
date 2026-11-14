@@ -2130,6 +2130,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.TrafficTimeZone != ""
 		case "quick_templates":
 			return len(c.QuickTemplates) > 0
+		case "snippets":
+			return len(c.Snippets) > 0
 		case "notifications_enabled":
 			return c.NotificationsEnabled != nil
 		case "ai_notifications_only":

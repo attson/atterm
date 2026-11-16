@@ -29,6 +29,16 @@ describe("TerminalView plugin connection registry", () => {
     expect(source).toMatch(/pluginInputSenders\?\.get\(props\.sessionId\) === pluginInputSender/);
     expect(source).toMatch(/pluginInputSenders\?\.delete\(props\.sessionId\)/);
   });
+
+  test("registers snippet targets with live writability and removes only its own target", () => {
+    expect(appSource).toContain('provide("atterm:snippetSessions", sessions.all)');
+    expect(appSource).toContain('provide("atterm:snippetSessionTargets", snippetSessionTargets)');
+    expect(source).toContain('"atterm:snippetSessionTargets"');
+    expect(source).toMatch(/snippetSessionTarget\s*=\s*\{[\s\S]*?send:\s*terminalInputSender\.send,[\s\S]*?canSend:\s*\(\)\s*=>\s*snippetsCanSend\.value/);
+    expect(source).toMatch(/snippetSessionTargets\?\.set\(props\.sessionId, snippetSessionTarget\)/);
+    expect(source).toMatch(/snippetSessionTargets\?\.get\(props\.sessionId\) === snippetSessionTarget/);
+    expect(source).toMatch(/snippetSessionTargets\.delete\(props\.sessionId\)/);
+  });
 });
 
 describe("TerminalView direct transport plumbing", () => {
@@ -171,14 +181,14 @@ describe("TerminalView async mount lifecycle", () => {
     expect(source).toContain("let isAlive = true;");
     expect(source).toMatch(/await ensureTerm\(\);\s*if \(!isAlive\) return;/);
     expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;/);
-    expect(source).toMatch(/if \(props\.active\) \{[\s\S]*?scheduleTerminalResumeAfterReveal\(/);
+    expect(source).toMatch(/if \(subscriptionActive\.value\) \{[\s\S]*?scheduleTerminalResumeAfterReveal\(/);
     expect(source).toMatch(/onBeforeUnmount\(\(\) => \{\s*isAlive = false;/);
   });
 
   test("suspends hidden tab connections while keeping the xterm component mounted", () => {
     expect(source).toContain("scheduleTerminalActivation");
     expect(source).toMatch(
-      /watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?if \(isActive\)[\s\S]*?scheduleTerminalResumeAfterReveal\([\s\S]*?cancelTerminalResume\(\);[\s\S]*?conn\?\.suspend\(\)/,
+      /watch\(\s*\[\(\) => props\.active, subscriptionActive\],[\s\S]*?if \(isActive\)[\s\S]*?scheduleTerminalResumeAfterReveal\([\s\S]*?cancelTerminalResume\(\);[\s\S]*?conn\?\.suspend\(\)/,
     );
   });
 
@@ -191,10 +201,10 @@ describe("TerminalView async mount lifecycle", () => {
     const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
     expect(mountedBody).not.toBeNull();
     expect(mountedBody![0]).toMatch(
-      /if \(props\.active\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
+      /if \(subscriptionActive\.value\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
     );
 
-    const activeWatch = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
+    const activeWatch = source.match(/watch\(\s*\[\(\) => props\.active, subscriptionActive\],[\s\S]*?\n\);/);
     expect(activeWatch).not.toBeNull();
     expect(activeWatch![0]).toMatch(
       /if \(isActive\) \{[\s\S]*?ensureConnection\(\);[\s\S]*?scheduleTerminalResumeAfterReveal\(/,
@@ -1306,6 +1316,47 @@ describe("TerminalView template bar", () => {
     expect(source).toContain('platform.events.on("prefs:changed", reloadShortcutBars)');
     expect(source).toMatch(/prefsChangedOff\?\.\(\)/);
   });
+
+  test("keeps a fixed snippets entry outside the scrolling quick-template track", () => {
+    expect(source).toContain('data-testid="snippet-trigger"');
+    expect(source).toContain('data-testid="snippet-panel"');
+    const bar = source.match(/data-testid="template-bar"[\s\S]*?<\/div>\s*<Teleport to="body">/);
+    expect(bar).not.toBeNull();
+    expect(bar![0]).toContain('class="template-scroll"');
+    expect(bar![0].indexOf('class="template-scroll"')).toBeLessThan(bar![0].indexOf('data-testid="snippet-trigger"'))
+    expect(source).toContain('v-if="snippets.length > 0"')
+    expect(source).toMatch(/\.template-bar\s*\{[\s\S]*?z-index:\s*6/)
+    expect(source).toMatch(/:deep\(\.xterm-viewport\)\s*\{[\s\S]*?z-index:\s*5/)
+  });
+
+  test("opens desktop batch execution from a snippet row in a body-level drawer", () => {
+    expect(source).toContain('v-if="platform.caps.wailsBindings"')
+    expect(source).toContain(':data-testid="`snippet-batch-${snippet.id}`"')
+    expect(source).toContain('onKeyboardControlClick(() => openBatchSnippet(snippet))')
+    expect(source).toMatch(/<Teleport to="body">\s*<SnippetRunPanel/)
+    expect(source).toContain(':snippet-label="batchSnippet.label"')
+    expect(source).toContain(':snippet-text="batchSnippet.text"')
+  });
+
+  test("snippet actions remain browsable but disable Run and Paste when the input gate is closed", () => {
+    expect(source).toContain(':disabled="!snippetsCanSend"')
+    expect(source).toContain('@touchend="onKeyboardControlTouchEnd($event, () => onSnippetPaste(snippet))"')
+    expect(source).toContain('@touchend="onKeyboardControlTouchEnd($event, () => onSnippetRun(snippet))"')
+    expect(source).toContain('@click="onKeyboardControlClick(() => onSnippetPaste(snippet))"')
+    expect(source).toContain('@click="onKeyboardControlClick(() => onSnippetRun(snippet))"')
+    expect(source).toMatch(/const\s+snippetsCanSend\s*=\s*computed\([\s\S]*?isDriver\.value[\s\S]*?isPasteAllowed/)
+  });
+
+  test("keeps the snippet popover inside a narrow pane", () => {
+    expect(source).toContain(':style="{ width: `${snippetPanelWidth}px` }"')
+    expect(source).toMatch(/function\s+updateSnippetPanelWidth[\s\S]*?termContainer\.value\?\.clientWidth[\s\S]*?Math\.min\(440, paneWidth - 16\)/)
+    expect(source).toMatch(/new ResizeObserver\(\(\) => \{[\s\S]*?updateSnippetPanelWidth\(\)/)
+  });
+
+  test("does not steal an unfocused pane control's first click into xterm", () => {
+    expect(source).toMatch(/function\s+focusTerminalForPaneActivation\(\)[\s\S]*?if \(shouldPreserveSoftKeyboardForControlPointer\(\)\) return;[\s\S]*?focusTerminalIfDriver\(\)/)
+    expect(source).toMatch(/function\s+onKeyboardControlPointerDown\(\)[\s\S]*?lastKeyboardControlPointerAt = Date\.now\(\)/)
+  });
 });
 
 describe("TerminalView resize-suspended", () => {
@@ -1357,7 +1408,7 @@ describe("TerminalView driver-side PTY size reconciliation", () => {
     // conn already exists on tab re-activation, so startConnection() returns
     // early and its expectedCols/expectedRows comparison never runs. The
     // reveal redraw reaches applyViewerSize, whose driver branch reconciles.
-    const watchBody = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
+    const watchBody = source.match(/watch\(\s*\[\(\) => props\.active, subscriptionActive\],[\s\S]*?\n\);/);
     expect(watchBody).not.toBeNull();
     expect(watchBody![0]).toMatch(/redrawTerminalAfterReveal\(\)/);
   });
@@ -1386,7 +1437,7 @@ describe("TerminalView programmatic focus", () => {
     const mountedBody = source.match(/onMounted\(async \(\) => \{[\s\S]*?\n\}\);/);
     expect(mountedBody).not.toBeNull();
     expect(mountedBody![0]).toMatch(
-      /if \(props\.active\)[\s\S]*?scheduleTerminalResumeAfterReveal\(\(\) => \{[\s\S]*?focusTerminalForPaneActivation\(\)/,
+      /if \(subscriptionActive\.value\)[\s\S]*?scheduleTerminalResumeAfterReveal\(\(\) => \{[\s\S]*?focusTerminalForPaneActivation\(\)/,
     );
   });
 

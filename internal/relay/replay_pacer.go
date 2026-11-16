@@ -39,7 +39,7 @@ func (p *replayPacer) observe(f proto.Frame) bool {
 			p.pendingBytes = 0
 		}
 		return false
-	case proto.TypeOut:
+	case proto.TypeOut, proto.TypeOutCompressed:
 		if !p.active {
 			return false
 		}

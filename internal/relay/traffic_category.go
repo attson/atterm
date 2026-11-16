@@ -18,13 +18,13 @@ const (
 // through to catOther until classified (guarded by an exhaustive test).
 func frameCategory(t proto.Type) string {
 	switch t {
-	case proto.TypeIn, proto.TypeOut, proto.TypeResize,
+	case proto.TypeIn, proto.TypeOut, proto.TypeOutCompressed, proto.TypeResize,
 		proto.TypePasteImage, proto.TypePasteFile:
 		return catTerminal
 	case proto.TypeMeta, proto.TypeList, proto.TypeListResp,
 		proto.TypeReplayProgress, proto.TypeAnnounce, proto.TypeViewers,
 		proto.TypeOpen, proto.TypeClose, proto.TypeStreamRequest,
-		proto.TypeStreamStop, proto.TypeCommandEvent, proto.TypeSessionCreate,
+		proto.TypeStreamStop, proto.TypeStreamRequestCompressed, proto.TypeStreamStopCompressed, proto.TypeCommandEvent, proto.TypeSessionCreate,
 		proto.TypeSessionCreated, proto.TypeAttach, proto.TypeClaimDriver,
 		proto.TypePing, proto.TypePong:
 		return catState

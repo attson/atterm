@@ -152,8 +152,8 @@ func (s *Server) debugFrame(component, direction string, f proto.Frame) {
 
 func debugFrameScope(t proto.Type) string {
 	switch t {
-	case proto.TypeIn, proto.TypeOut, proto.TypeResize, proto.TypeReplayProgress,
-		proto.TypeStreamRequest, proto.TypeStreamStop, proto.TypePasteImage,
+	case proto.TypeIn, proto.TypeOut, proto.TypeOutCompressed, proto.TypeResize, proto.TypeReplayProgress,
+		proto.TypeStreamRequest, proto.TypeStreamStop, proto.TypeStreamRequestCompressed, proto.TypeStreamStopCompressed, proto.TypePasteImage,
 		proto.TypePasteFile, proto.TypeFSRequest, proto.TypeFSResponse, proto.TypeFSEvent:
 		return DebugScopeTerminalIO
 	case proto.TypeMeta, proto.TypeList, proto.TypeListResp, proto.TypeAnnounce, proto.TypeViewers:
@@ -279,6 +279,12 @@ func frameTypeName(t proto.Type) string {
 		return "IN"
 	case proto.TypeOut:
 		return "OUT"
+	case proto.TypeOutCompressed:
+		return "OUT_COMPRESSED"
+	case proto.TypeStreamRequestCompressed:
+		return "STREAM_REQUEST_COMPRESSED"
+	case proto.TypeStreamStopCompressed:
+		return "STREAM_STOP_COMPRESSED"
 	case proto.TypeResize:
 		return "RESIZE"
 	case proto.TypeMeta:

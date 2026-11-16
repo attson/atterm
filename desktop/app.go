@@ -1877,6 +1877,19 @@ func (a *App) SetWebglRendererEnabled(enabled bool) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetPauseRemoteSubscriptionsInBackground reports this device's opt-in policy.
+func (a *App) GetPauseRemoteSubscriptionsInBackground() bool {
+	return a != nil && a.cfgStore != nil && a.cfgStore.Get().PauseRemoteSubscriptionsInBackground
+}
+
+// SetPauseRemoteSubscriptionsInBackground stays local because devices have different background needs.
+func (a *App) SetPauseRemoteSubscriptionsInBackground(enabled bool) error {
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.PauseRemoteSubscriptionsInBackground = enabled
+		return nil
+	})
+}
+
 // GetDirectP2PEnabled reports whether this device should attempt and accept
 // Relay-assisted direct terminal routes. The environment switch remains a
 // deployment-level force-on override for staged builds.
@@ -2132,6 +2145,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.TrafficTimeZone != ""
 		case "quick_templates":
 			return len(c.QuickTemplates) > 0
+		case "snippets":
+			return len(c.Snippets) > 0
 		case "notifications_enabled":
 			return c.NotificationsEnabled != nil
 		case "ai_notifications_only":

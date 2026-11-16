@@ -36,6 +36,7 @@ const (
 	AADTagFSEvent              byte = 0x3a
 	AADTagServiceOpen          byte = 0x3d
 	AADTagInputHistoryResponse byte = 0x42
+	AADTagOutCompressed        byte = 0x43
 
 	// Synthetic, AAD-only — no wire frame carries these.
 	AADTagSSHHosts          byte = 0xF0
@@ -57,6 +58,7 @@ var AADTags = map[byte]string{
 	AADTagFSEvent:              "FS_EVENT",
 	AADTagServiceOpen:          "SERVICE_OPEN",
 	AADTagInputHistoryResponse: "INPUT_HISTORY_RESPONSE",
+	AADTagOutCompressed:        "OUT_COMPRESSED",
 	AADTagSSHHosts:             "ssh_hosts_encrypted sync",
 	AADTagProfiles:             "profiles_encrypted sync (retired)",
 	AADTagPeerConfigPayload:    "Peer config payload",

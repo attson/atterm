@@ -59,6 +59,10 @@ export function DiscoverTermiusProfiles():Promise<Array<string>>;
 
 export function DownloadVersion(arg1:string):Promise<void>;
 
+export function DrainNativeDirect(arg1:string):Promise<void>;
+
+export function DrainPeerNativeDirect(arg1:string):Promise<void>;
+
 export function ExportConfig(arg1:boolean):Promise<string>;
 
 export function ExportDiagnostics(arg1:string):Promise<string>;
@@ -117,6 +121,8 @@ export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPasteboardFileURLs():Promise<Array<string>>;
 
+export function GetPauseRemoteSubscriptionsInBackground():Promise<boolean>;
+
 export function GetPeerConfigSyncStatus():Promise<main.PeerConfigSyncStatus>;
 
 export function GetPeerLANConfig():Promise<main.PeerLANConfig>;
@@ -154,6 +160,8 @@ export function GetSessionInputHistory(arg1:string):Promise<main.SessionInputHis
 export function GetShellIntegrationEnabled():Promise<boolean>;
 
 export function GetShortcutBindings():Promise<Record<string, string>>;
+
+export function GetSnippets():Promise<Array<main.Snippet>>;
 
 export function GetStartupError():Promise<main.StartupError>;
 
@@ -201,7 +209,7 @@ export function ImportPeerTrustBackup(arg1:string,arg2:string):Promise<main.Peer
 
 export function ImportSSHHosts(arg1:Array<main.SSHHost>):Promise<number>;
 
-export function ImportTermius(arg1:string,arg2:Array<string>,arg3:Array<string>):Promise<main.TermiusImportReport>;
+export function ImportTermius(arg1:string,arg2:Array<string>,arg3:Array<string>,arg4:Array<string>):Promise<main.TermiusImportReport>;
 
 export function InstallPeerCloudflared():Promise<main.PeerQuickTunnelStatus>;
 
@@ -359,6 +367,8 @@ export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 
+export function SetPauseRemoteSubscriptionsInBackground(arg1:boolean):Promise<void>;
+
 export function SetPeerLANConfig(arg1:main.SetPeerLANConfigReq):Promise<void>;
 
 export function SetPeerRendezvousConfig(arg1:main.SetPeerRendezvousConfigReq):Promise<void>;
@@ -382,6 +392,8 @@ export function SetRelayDisableE2EE(arg1:boolean):Promise<void>;
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
 
 export function SetShortcutBindings(arg1:Record<string, string>):Promise<void>;
+
+export function SetSnippets(arg1:Array<main.Snippet>):Promise<void>;
 
 export function SetTaskGroupBy(arg1:string):Promise<void>;
 

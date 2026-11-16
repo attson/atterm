@@ -1,3 +1,4 @@
+import { drainBufferedTransport } from '../transferActivity'
 import type { DirectTransport } from '../connection'
 import type { DirectTransportDiagnostics } from '../directClient'
 import { DirectFrameReassembler, fragmentDirectFrame } from '../directFraming'
@@ -156,6 +157,7 @@ export class PeerQuickTunnelTransport implements DirectTransport {
   private context: PeerContext | null = null
   private started = false
   private closed = false
+  private readonly closedSignal = new AbortController()
   private authenticated = false
   private stage: 'authorization' | 'signal_handshake_host' | 'signal_handshake_ok' | 'signals' | 'data_handshake_host' | 'data_handshake_ok' | 'records' = 'authorization'
   private timeout: number | null = null
@@ -196,6 +198,12 @@ export class PeerQuickTunnelTransport implements DirectTransport {
       this.fail(error)
       return false
     }
+  }
+
+  drain(): Promise<void> {
+    const target = this.options.route === 'quick_tunnel' ? this.ws : this.dc
+    if (this.closed || !this.authenticated || !target) return Promise.reject(new Error('Peer route is not ready'))
+    return drainBufferedTransport(target, this.closedSignal.signal)
   }
 
   close(): void { this.finish() }
@@ -450,6 +458,7 @@ export class PeerQuickTunnelTransport implements DirectTransport {
   private finish(): void {
     if (this.closed) return
     this.closed = true
+    this.closedSignal.abort()
     this.authenticated = false
     this.clearTimeout()
     this.signalHandshake?.dispose()

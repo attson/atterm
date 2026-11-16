@@ -528,3 +528,43 @@ describe("SettingsGeneral default shell prefs:changed reload", () => {
     expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/remote-changed-shell");
   });
 });
+
+describe("SettingsGeneral background subscriptions", () => {
+  afterEach(() => __setPlatformForTests(null));
+
+  it("is available outside desktop, starts disabled, and emits the saved preference", async () => {
+    const platform = createFakePlatform();
+    platform.caps.wailsBindings = false;
+    let persisted = false;
+    platform.backgroundSubscriptions = {
+      load: async () => persisted,
+      save: async (enabled) => { persisted = enabled; },
+    };
+    __setPlatformForTests(platform);
+    const wrapper = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    const toggle = wrapper.get<HTMLInputElement>('[data-testid="background-subscriptions-toggle"]');
+    expect(toggle.element.checked).toBe(false);
+    await toggle.setValue(true);
+    await flushPromises();
+    expect(persisted).toBe(true);
+    expect(wrapper.emitted("background-subscriptions-changed")).toEqual([[true]]);
+  });
+
+  it("restores the checkbox and leaves panes unchanged when saving fails", async () => {
+    const platform = createFakePlatform();
+    platform.caps.wailsBindings = false;
+    platform.backgroundSubscriptions = {
+      load: async () => false,
+      save: async () => { throw new Error("disk full"); },
+    };
+    __setPlatformForTests(platform);
+    const wrapper = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    await wrapper.get('[data-testid="background-subscriptions-toggle"]').setValue(true);
+    await flushPromises();
+    expect(wrapper.get<HTMLInputElement>('[data-testid="background-subscriptions-toggle"]').element.checked).toBe(false);
+    expect(wrapper.emitted("background-subscriptions-changed")).toBeUndefined();
+    expect(wrapper.get('.error').text()).toContain("disk full");
+  });
+});

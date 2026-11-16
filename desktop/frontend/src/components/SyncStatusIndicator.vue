@@ -38,6 +38,7 @@ const notice = ref<PullResult | null>(null)
 const KEY_LABELS: Record<string, MessageKey> = {
   locale_preference: 'sync.keys.locale_preference',
   quick_templates: 'sync.keys.quick_templates',
+  snippets: 'sync.keys.snippets',
   notifications_enabled: 'sync.keys.notifications_enabled',
   ai_notifications_only: 'sync.keys.ai_notifications_only',
   command_notify_threshold_seconds: 'sync.keys.command_notify_threshold_seconds',

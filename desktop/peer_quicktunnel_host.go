@@ -636,7 +636,7 @@ func (a *peerHostAttempt) start(parent context.Context, channel peerQuickTunnelC
 			subscribeOptions = append(subscribeOptions, session.ReplacingSubscriber(replacedSub))
 		}
 	}
-	sub, replayToSeq := sess.Subscribe(0, clientID, a.clientInstanceID, subscribeOptions...)
+	sub, replayToSeq := sess.Subscribe(0, clientID, a.clientInstanceID, append(subscribeOptions, session.PreserveOutputFrames())...)
 	select {
 	case <-sub.Done():
 		return errors.New("Peer subscriber closed during attachment")

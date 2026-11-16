@@ -1,5 +1,5 @@
 import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } from './types'
-import type { QuickTemplate } from '../lib/templates'
+import type { QuickTemplate, Snippet } from '../lib/templates'
 import type { AuxKey } from '../lib/auxKeys'
 import { CapacitorHttp } from '@capacitor/core'
 import { Keyboard } from '@capacitor/keyboard'
@@ -33,6 +33,7 @@ const PASSWORD_KEY = 'atterm.relay.password'
 const ACCOUNT_KEY_KEY = 'atterm.relay.account-key'
 const TEMPLATES_KEY = 'atterm.templates'
 const SYNCED_TEMPLATES_KEY = 'atterm.quick_templates.value'
+const SYNCED_SNIPPETS_KEY = 'atterm.snippets.value'
 const AUXKEYS_KEY = 'atterm.auxkeys'
 
 // Shared base64 helpers for the OPAQUE / wrap envelope bytes. Same
@@ -48,6 +49,16 @@ function parseQuickTemplateList(raw: string | null): QuickTemplate[] | null {
   try {
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? (parsed as QuickTemplate[]) : null
+  } catch {
+    return null
+  }
+}
+
+function parseSnippetList(raw: string | null): Snippet[] | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as Snippet[]) : null
   } catch {
     return null
   }
@@ -732,6 +743,22 @@ export function createCapacitorPlatform(): Platform {
         else localStorage.removeItem(TEMPLATES_KEY + '.hidden')
       },
     },
+    snippets: {
+      load: async () => {
+        if (typeof localStorage === 'undefined') return []
+        return parseSnippetList(localStorage.getItem(SYNCED_SNIPPETS_KEY)) ?? []
+      },
+      save: async (list) => {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(SYNCED_SNIPPETS_KEY, JSON.stringify(list))
+        notifyLocalChange('snippets')
+      },
+      clear: async () => {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(SYNCED_SNIPPETS_KEY, JSON.stringify([]))
+        notifyLocalChange('snippets')
+      },
+    },
     auxKeys: {
       load: async () => {
         if (typeof localStorage === 'undefined') return []
@@ -751,6 +778,14 @@ export function createCapacitorPlatform(): Platform {
       clear: async () => {
         if (typeof localStorage === 'undefined') return
         localStorage.removeItem(AUXKEYS_KEY)
+      },
+    },
+    backgroundSubscriptions: {
+      load: async () => typeof localStorage !== 'undefined' && localStorage.getItem('atterm.pause_remote_subscriptions_in_background') === '1',
+      save: async (enabled: boolean) => {
+        if (typeof localStorage === 'undefined') return
+        if (enabled) localStorage.setItem('atterm.pause_remote_subscriptions_in_background', '1')
+        else localStorage.removeItem('atterm.pause_remote_subscriptions_in_background')
       },
     },
     directConnection: {

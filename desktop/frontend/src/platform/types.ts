@@ -251,7 +251,7 @@ export interface PluginHostBridge {
   }
 }
 
-import type { QuickTemplate } from '../lib/templates'
+import type { QuickTemplate, Snippet } from '../lib/templates'
 
 export interface TemplateBridge {
   load(): Promise<QuickTemplate[]>
@@ -264,6 +264,12 @@ export interface TemplateBridge {
   saveHidden(hidden: boolean): Promise<void>
 }
 
+export interface SnippetBridge {
+  load(): Promise<Snippet[]>
+  save(list: Snippet[]): Promise<void>
+  clear(): Promise<void>
+}
+
 import type { AuxKey } from '../lib/auxKeys'
 import type { DirectClientOptions } from '../lib/directClient'
 import type { NativeDirectClientOptions } from '../lib/nativeDirectClient'
@@ -273,6 +279,11 @@ export interface AuxKeyBridge {
   load(): Promise<AuxKey[]>
   save(list: AuxKey[]): Promise<void>
   clear(): Promise<void>
+}
+
+export interface BackgroundSubscriptionsBridge {
+  load(): Promise<boolean>
+  save(enabled: boolean): Promise<void>
 }
 
 export interface DirectConnectionBridge {
@@ -454,7 +465,9 @@ export interface Platform {
   system: SystemBridge
   events: EventBus
   templates: TemplateBridge
+  snippets: SnippetBridge
   auxKeys: AuxKeyBridge
+  backgroundSubscriptions?: BackgroundSubscriptionsBridge
   directConnection: DirectConnectionBridge
   trafficPreferences?: TrafficPreferencesBridge
   peer?: PeerBridge

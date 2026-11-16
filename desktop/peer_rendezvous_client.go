@@ -149,6 +149,16 @@ func (a *App) SendPeerNativeDirectFrame(id string, frame []byte) error {
 	return client.sendFrame(frame)
 }
 
+// DrainPeerNativeDirect waits for native queued frames before the renderer
+// suspends the Peer attachment. It does not await a remote acknowledgement.
+func (a *App) DrainPeerNativeDirect(id string) error {
+	client := a.peerNativeDirectClient(id)
+	if client == nil {
+		return errors.New("Peer direct attempt unavailable")
+	}
+	return client.drain()
+}
+
 func (a *App) StopPeerNativeDirect(id string) {
 	if client := a.peerNativeDirectClient(id); client != nil {
 		client.stop()
@@ -388,6 +398,26 @@ func (c *peerNativeDirectClient) sendFrame(frame []byte) error {
 		return errors.New("Peer direct channel unavailable")
 	}
 	return channel.SendFrame(c.ctx, frame)
+}
+
+func (c *peerNativeDirectClient) drain() error {
+	c.mu.Lock()
+	channel := c.channel
+	authenticated := c.authenticated
+	stopped := c.stopped
+	c.mu.Unlock()
+	if stopped || !authenticated || channel == nil {
+		return errors.New("Peer direct channel unavailable")
+	}
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	if queued, ok := channel.(interface{ Drain(context.Context) error }); ok {
+		return queued.Drain(c.ctx)
+	}
+	// WSS SendFrame waits until its writer completes every fragment, so a
+	// completed renderer send chain already leaves no application queue.
+	return nil
 }
 
 func (c *peerNativeDirectClient) sendServiceMessage(ctx context.Context, payload []byte) error {

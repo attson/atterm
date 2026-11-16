@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
+	"github.com/attson/atterm/internal/configsync"
 	"github.com/attson/atterm/internal/prefssync"
 )
 
@@ -51,6 +53,13 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 		return b, true
 	case "quick_templates":
 		b, _ := json.Marshal(c.QuickTemplates)
+		return b, true
+	case "snippets":
+		snippets := c.Snippets
+		if snippets == nil {
+			snippets = []Snippet{}
+		}
+		b, _ := json.Marshal(snippets)
 		return b, true
 	case "notifications_enabled":
 		return marshalPtr(c.NotificationsEnabled)
@@ -176,6 +185,12 @@ func applyPortableConfigValue(c *appConfig, key string, value json.RawMessage) (
 		return true, nil
 	case "quick_templates":
 		return true, json.Unmarshal(value, &c.QuickTemplates)
+	case "snippets":
+		normalized, err := configsync.NormalizeRelayValue("snippets", value)
+		if err != nil {
+			return true, err
+		}
+		return true, json.Unmarshal(normalized, &c.Snippets)
 	case "notifications_enabled":
 		var b bool
 		if err := json.Unmarshal(value, &b); err != nil {
@@ -387,6 +402,13 @@ func (c *httpRelayClient) Put(ctx context.Context, items []prefssync.ClientItem)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		var body struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&body)
+		if body.Error != "" {
+			return nil, fmt.Errorf("put prefs: HTTP %d: %s", resp.StatusCode, body.Error)
+		}
 		return nil, fmt.Errorf("put prefs: HTTP %d", resp.StatusCode)
 	}
 	var out struct {

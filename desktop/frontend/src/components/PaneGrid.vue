@@ -30,6 +30,7 @@ const props = defineProps<{
   endpointFor: (pane: Pane) => Endpoint | null;
   directEndpoint?: Endpoint | null;
   preferDirect?: boolean;
+  pauseRemoteSubscriptionsInBackground?: boolean;
   sessionInfoFor: (pane: Pane) => SessionInfo | null;
   viewerCountFor?: (sessionId: string) => number;
   active: boolean;
@@ -291,6 +292,7 @@ function requestServicePreview(pane: Pane): void {
           :endpoint="endpointFor(pane)"
           :direct-endpoint="pane.remote ? directEndpoint : null"
           :prefer-direct="pane.remote && preferDirect"
+          :pause-remote-subscriptions-in-background="pauseRemoteSubscriptionsInBackground"
           :session-id="pane.sessionId"
           :active="active"
           :focused="isPaneFocused(idx)"

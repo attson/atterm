@@ -149,6 +149,16 @@ func (a *App) SendNativeDirectFrame(id string, frame []byte) error {
 	return client.sendFrame(frame)
 }
 
+// DrainNativeDirect keeps the route alive until submitted frames leave the
+// native transport's local queue, before the renderer suspends its attachment.
+func (a *App) DrainNativeDirect(id string) error {
+	client := a.nativeDirectClient(id)
+	if client == nil {
+		return errors.New("native direct attempt unavailable")
+	}
+	return client.drain()
+}
+
 func (a *App) StopNativeDirect(id string) {
 	if client := a.nativeDirectClient(id); client != nil {
 		client.stop()
@@ -383,6 +393,18 @@ func (c *nativeDirectClient) sendFrame(frame []byte) error {
 		return errors.New("native direct channel unavailable")
 	}
 	return channel.SendFrame(c.ctx, frame)
+}
+
+func (c *nativeDirectClient) drain() error {
+	c.mu.Lock()
+	channel := c.channel
+	authenticated := c.authenticated
+	stopped := c.stopped
+	c.mu.Unlock()
+	if stopped || !authenticated || channel == nil {
+		return errors.New("native direct channel unavailable")
+	}
+	return channel.Drain(c.ctx)
 }
 
 func (c *nativeDirectClient) sendSignal(message directsignal.Message) error {

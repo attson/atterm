@@ -1354,7 +1354,7 @@ async function confirmConfigImport() {
         </div>
       </div>
       <p v-if="termiusResult" class="ssh-success" data-test="ssh-termius-import-result">
-        {{ t("ssh.termius.result", { hosts: termiusResult.hosts, keys: termiusResult.keys, skipped: termiusResult.skipped }) }}
+        {{ t("ssh.termius.result", { hosts: termiusResult.hosts, keys: termiusResult.keys, snippets: termiusResult.snippets, skipped: termiusResult.skipped }) }}
       </p>
       <p v-if="configImportResult !== null" class="ssh-success" data-test="ssh-config-import-result">
         {{ t("ssh.importedHosts", { count: configImportResult }) }}

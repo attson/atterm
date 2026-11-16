@@ -31,6 +31,7 @@ export const TYPE = {
   SERVICE_CLOSE: 0x3f,
   INPUT_HISTORY_REQUEST: 0x41,
   INPUT_HISTORY_RESPONSE: 0x42,
+  OUT_COMPRESSED: 0x43,
 } as const;
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE];

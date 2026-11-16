@@ -16,11 +16,17 @@ import type { Frame } from "./proto";
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
-import { deriveServiceKeys, openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame, b64ToBytes } from "./opaque";
+import { deriveServiceKeys, openMetaFields, openOutFrame, openCompressedOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame, b64ToBytes } from "./opaque";
 import { encodeSegments, decodeSegments } from "./fsSegments";
 import { errText, logDebug, logError, logWarn } from "./log";
 import { DirectClientTransport, type DirectClientOptions, type DirectTransportDiagnostics } from "./directClient";
 import { DirectRoute, DirectRouteState, DirectRouteTracker } from "./directRoute";
+import { TransferActivity, drainWebSocket, waitForTransfer } from "./transferActivity";
+import { decodeTerminalOutput, supportsTerminalCompression, MAX_OUTPUT_BYTES } from "./terminalCompression";
+
+// Canonical publishers use raw fallback whenever DEFLATE grows the block.
+// Bound the sequence, AEAD envelope, codec header and body before decryption.
+const MAX_COMPRESSED_OUT_PAYLOAD_BYTES = 8 + (1 + 24 + 16) + 5 + MAX_OUTPUT_BYTES;
 
 export interface ClosePayload {
   exit_code: number;
@@ -139,6 +145,8 @@ export class SessionInputHistoryError extends Error {
  * Relay-backed SessionConnection and accountless PeerSessionConnection
  * implement it. */
 export interface SessionFSConnection {
+  /** Reserve the subscription across a multi-request file transfer. */
+  beginTransfer?(): () => void;
   sendFSRequest(req: FSRequest, timeoutMs?: number): Promise<FSResponse>;
   onFSEvent(handler: (event: FSEvent) => void): () => void;
 }
@@ -237,6 +245,9 @@ export interface SessionConnectionOptions {
 export interface DirectTransport {
   start(): void;
   sendFrame(frame: Uint8Array): boolean;
+  /** Resolves after locally queued writes complete and rejects on close. The
+   * transport owns backpressure/stall detection; this is not a delivery ack. */
+  drain?(): Promise<void>;
   close(): void;
   /** Opaque native route handle used only by the desktop Peer Preview bridge. */
   nativeAttemptId?(): string;
@@ -589,6 +600,11 @@ export class SessionConnection {
   private reconnectTimer: number | null = null;
   private detached = false;
   private suspended = false;
+  private suspendRequested = false;
+  private transfers = new TransferActivity(() => {
+    if (this.suspendRequested) this.suspendIfIdle();
+    else this.maybeActivateDirect(this.route.generation);
+  });
   // Latest pending resize request whose WS write was deferred (WS still in
   // CONNECTING state). Flushed in ws.onopen right after the ATTACH frame.
   // Only the most recent request is kept; earlier ones are stale.
@@ -625,7 +641,6 @@ export class SessionConnection {
   private recoverDriverIfVacant = false;
   private recoverDriverVacant = false;
   private relayDriverConfirmed = false;
-  private historyPasteCount = 0;
   private pendingFSRequests = new Map<
     string,
     {
@@ -694,6 +709,7 @@ export class SessionConnection {
 
   attach(): void {
     if (this.detached) return;
+    this.suspendRequested = false;
     if (this.suspended) {
       this.route = new DirectRouteTracker(this.lastSeq);
       this.directAttempted = false;
@@ -728,8 +744,18 @@ export class SessionConnection {
     }
   }
 
+  beginTransfer(): () => void {
+    return this.transfers.begin();
+  }
+
   suspend(): void {
     if (this.detached) return;
+    this.suspendRequested = true;
+    this.suspendIfIdle();
+  }
+
+  private suspendIfIdle(): void {
+    if (!this.suspendRequested || this.detached || this.transfers.busy) return;
     this.suspended = true;
     this.relayDriverConfirmed = false;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection suspended"));
@@ -755,6 +781,8 @@ export class SessionConnection {
 
   detach(): void {
     this.detached = true;
+    this.suspendRequested = false;
+    this.transfers.cancel();
     this.suspended = false;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
     this.rejectPendingServiceOpens(new Error("service preview failed: connection detached"));
@@ -792,6 +820,7 @@ export class SessionConnection {
     const payload: FSRequest = { ...req, request_id: requestID };
     const encoded = encodeFSRequestPayload(payload, this.sessionId);
 
+    const release = this.beginTransfer();
     return new Promise<FSResponse>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pendingFSRequests.delete(requestID);
@@ -806,7 +835,7 @@ export class SessionConnection {
         this.pendingFSRequests.delete(requestID);
         reject(e instanceof Error ? e : new Error(String(e)));
       }
-    });
+    }).finally(release);
   }
 
   requestInputHistory(timeoutMs = DEFAULT_INPUT_HISTORY_TIMEOUT_MS): Promise<SessionInputHistoryResult> {
@@ -969,53 +998,51 @@ export class SessionConnection {
   beginHistoryPaste(): (() => void) | null {
     if (this.route.inputRoute() !== DirectRoute.Relay || this.ws?.readyState !== WebSocket.OPEN ||
         !this.relayDriverConfirmed || !this.isDriverRole) return null;
-    this.historyPasteCount++;
+    const ws = this.ws;
+    const signal = this.transfers.signal;
+    const releaseTransfer = this.beginTransfer();
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      this.historyPasteCount--;
-      this.maybeActivateDirect(this.route.generation);
+      const finish = () => {
+        releaseTransfer();
+      };
+      if (ws.bufferedAmount > 0) {
+        void drainWebSocket(ws, signal).catch(() => {}).finally(finish);
+      } else finish();
     };
   }
 
   async sendPasteImage(blob: Blob, filename = "clipboard-image"): Promise<boolean> {
-    const ws = this.ws;
-    const blocked = pasteImageBlockReason(ws?.readyState, blob.size);
-    if (blocked || !ws) {
-      this.handlers.onStatus?.("error");
-      throw new Error(blocked ?? "websocket is not open");
-    }
-    const payload = await encodePastePayload(blob, filename, "image/png");
-    logDebug("conn", "sending paste image", {
-      filename,
-      contentType: blob.type || "image/png",
-      bytes: blob.size,
-    });
-    ws.send(encodeFrame(TYPE.PASTE_IMAGE, this.sidBytes, payload));
-    return true;
+    return this.sendPaste(blob, filename, "image/png", TYPE.PASTE_IMAGE);
   }
 
-  // sendPasteFile is the generic-file counterpart of sendPasteImage. The
-  // desktop receiver sanitizes the filename, writes bytes into a session-
-  // scoped inbox, and injects the resulting absolute path (no CR, no
-  // quoting) into the PTY. Reuses PASTE_IMAGE's block reason for the
-  // ≤10 MiB size cap since the wire limit is identical.
   async sendPasteFile(blob: Blob, filename: string): Promise<boolean> {
+    return this.sendPaste(blob, filename, "application/octet-stream", TYPE.PASTE_FILE);
+  }
+
+  private async sendPaste(blob: Blob, filename: string, fallbackContentType: string, type: typeof TYPE.PASTE_IMAGE | typeof TYPE.PASTE_FILE): Promise<boolean> {
     const ws = this.ws;
     const blocked = pasteImageBlockReason(ws?.readyState, blob.size);
     if (blocked || !ws) {
       this.handlers.onStatus?.("error");
       throw new Error(blocked ?? "websocket is not open");
     }
-    const payload = await encodePastePayload(blob, filename, "application/octet-stream");
-    logDebug("conn", "sending paste file", {
-      filename,
-      contentType: blob.type || "application/octet-stream",
-      bytes: blob.size,
-    });
-    ws.send(encodeFrame(TYPE.PASTE_FILE, this.sidBytes, payload));
-    return true;
+    const release = this.beginTransfer();
+    const signal = this.transfers.signal;
+    try {
+      const payload = await waitForTransfer(encodePastePayload(blob, filename, fallbackContentType), signal);
+      if (this.ws !== ws || ws.readyState !== WebSocket.OPEN || signal.aborted) {
+        throw new Error("paste failed: websocket closed");
+      }
+      logDebug("conn", "sending paste", { filename, contentType: blob.type || fallbackContentType, bytes: blob.size });
+      ws.send(encodeFrame(type, this.sidBytes, payload));
+      await drainWebSocket(ws, signal);
+      return true;
+    } finally {
+      release();
+    }
   }
 
   sendResize(cols: number, rows: number): void {
@@ -1053,6 +1080,7 @@ export class SessionConnection {
     }
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    const receive = this.createProtocolQueue(DirectRoute.Relay, generation, () => this.ws === ws);
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
 
     ws.onopen = () => {
@@ -1072,6 +1100,8 @@ export class SessionConnection {
           since_seq: this.route.committedSeq,
           client_id: this.clientID,
           client_name: this.clientName,
+          ...(this.remote && getCurrentAccountKey()?.length === 32 && supportsTerminalCompression()
+            ? { output_compression: "deflate-raw-v1" } : {}),
         })
       );
       ws.send(encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload));
@@ -1091,7 +1121,7 @@ export class SessionConnection {
       // See SessionListConnection: a local proxy onopen does not prove its
       // upstream websocket was authenticated. A valid protocol frame does.
       this.reconnectAttempts = 0;
-      this.handleProtocolFrame(f, DirectRoute.Relay, generation);
+      receive((isCurrent) => this.handleProtocolFrame(f, DirectRoute.Relay, generation, isCurrent));
     };
 
     // The event is optional only because test doubles call this bare; a log
@@ -1099,6 +1129,8 @@ export class SessionConnection {
     ws.onclose = (e?: CloseEvent) => {
       if (this.ws !== ws) return;
       this.ws = null;
+      this.transfers.cancel();
+      this.suspendIfIdle();
       this.relayDriverConfirmed = false;
       this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
       this.rejectPendingServiceOpens(new Error("service preview failed: websocket closed"));
@@ -1128,19 +1160,57 @@ export class SessionConnection {
     };
   }
 
-  private handleProtocolFrame(f: Frame, route: DirectRoute, generation: number): void {
-    if (!this.route.acceptsRoute(generation, route)) return;
+  // A queue belongs to one transport, so obsolete inflation cannot stall its
+  // replacement. Ordinary OUT stays synchronous until an async decode is pending.
+  private createProtocolQueue(
+    route: DirectRoute,
+    generation: number,
+    sourceIsCurrent: () => boolean,
+  ): (task: (isCurrent: () => boolean) => void | Promise<void>) => void {
+    let pending: Promise<void> | null = null;
+    return (task) => {
+      const routeGeneration = this.route.generation;
+      // Aborting a direct probe advances the direct generation while leaving
+      // this relay subscription live. Its accepted relay generation and socket
+      // identity remain authoritative for queued output and controls.
+      const isCurrent = () => !this.detached && !this.suspended && sourceIsCurrent() &&
+        (route === DirectRoute.Relay || this.route.generation === routeGeneration) &&
+        this.route.acceptsRoute(generation, route);
+      const run = () => { if (isCurrent()) return task(isCurrent); };
+      const work = pending ? pending.then(run) : run();
+      if (work) {
+        const next: Promise<void> = work.catch(() => {}).then(() => {
+          if (pending === next) pending = null;
+        });
+        pending = next;
+      }
+    };
+  }
+
+  private handleProtocolFrame(
+    f: Frame,
+    route: DirectRoute,
+    generation: number,
+    isCurrent: () => boolean,
+  ): void | Promise<void> {
+    if (!isCurrent()) return;
     if (!this.sameSessionID(f.sid)) {
       if (route === DirectRoute.Direct) throw new Error("direct frame session mismatch");
       return;
     }
 
+    if (f.type === TYPE.OUT_COMPRESSED) {
+      return this.handleCompressedOutput(f.payload, route, generation, isCurrent);
+    }
+
     if (f.type === TYPE.OUT) {
       const { seq, data } = decodeOutPayload(f.payload);
+      if (!Number.isSafeInteger(seq) || seq < 0) return;
+      const out = this.remote ? this.decryptOut(data, seq) : data;
+      if (!out) return;
       if (seq === 0) {
         if (route === DirectRoute.Direct) throw new Error("direct OUT is missing sequence");
-        const out = this.remote ? this.decryptOut(data, seq) : data;
-        if (out) this.handlers.onOutput?.(out);
+        this.handlers.onOutput?.(out);
         return;
       }
       if (!this.route.acceptOutput(generation, route, seq)) {
@@ -1153,9 +1223,8 @@ export class SessionConnection {
         if (route === DirectRoute.Direct) this.maybeActivateDirect(generation);
         return;
       }
-      const out = this.remote ? this.decryptOut(data, seq) : data;
-      if (out) this.handlers.onOutput?.(out);
       this.lastSeq = this.route.committedSeq;
+      this.handlers.onOutput?.(out);
       if (route === DirectRoute.Direct) this.maybeActivateDirect(generation);
       return;
     }
@@ -1214,6 +1283,36 @@ export class SessionConnection {
     if (f.type === TYPE.FS_RESPONSE) this.handleFSResponse(f.payload);
     else if (f.type === TYPE.FS_EVENT) this.handleFSEvent(f.payload);
     else if (f.type === TYPE.SERVICE_OPENED) this.handleServiceOpened(f.payload);
+  }
+
+  private async handleCompressedOutput(
+    payload: Uint8Array,
+    route: DirectRoute,
+    generation: number,
+    isCurrent: () => boolean,
+  ): Promise<void> {
+    if (!this.remote || payload.length < 8 || payload.length > MAX_COMPRESSED_OUT_PAYLOAD_BYTES) return;
+    const { seq, data } = decodeOutPayload(payload);
+    if (!Number.isSafeInteger(seq) || seq < 0) return;
+    const accountKey = getCurrentAccountKey();
+    if (!accountKey) return;
+    const block = openCompressedOutFrame(data, accountKey, this.sessionId, seq);
+    if (!block) return;
+    const out = await decodeTerminalOutput(block);
+    // Authentication and inflation both precede committing the replay cursor.
+    // Recheck the source and its accepted route after asynchronous decoding.
+    if (!out || !isCurrent()) return;
+    if (seq === 0) {
+      if (route === DirectRoute.Relay) this.handlers.onOutput?.(out);
+      return;
+    }
+    if (!this.route.acceptOutput(generation, route, seq)) {
+      if (route === DirectRoute.Direct) this.maybeActivateDirect(generation);
+      return;
+    }
+    this.lastSeq = this.route.committedSeq;
+    this.handlers.onOutput?.(out);
+    if (route === DirectRoute.Direct) this.maybeActivateDirect(generation);
   }
 
   private handleMeta(payload: Uint8Array, route: DirectRoute): void {
@@ -1304,6 +1403,7 @@ export class SessionConnection {
     this.emitRoute("connecting-direct");
     const auth = webSocketAuth(this.directEndpoint, "/direct-signal");
     let transport: DirectTransport;
+    const receive = this.createProtocolQueue(DirectRoute.Direct, generation, () => this.direct === transport);
     try {
       transport = this.directTransportFactory({
         signalURL: auth.url,
@@ -1319,12 +1419,15 @@ export class SessionConnection {
           },
           onFrame: (bytes) => {
             if (this.direct !== transport || generation !== this.route.generation) return;
-            this.handleProtocolFrame(decodeFrame(bytes), DirectRoute.Direct, generation);
+            const frame = decodeFrame(bytes);
+            receive((isCurrent) => this.handleProtocolFrame(frame, DirectRoute.Direct, generation, isCurrent));
           },
           onReady: (replayedSeq) => {
             if (this.direct !== transport || generation !== this.route.generation) return;
-            this.route.noteDirectReady(generation, replayedSeq);
-            this.maybeActivateDirect(generation);
+            receive(() => {
+              this.route.noteDirectReady(generation, replayedSeq);
+              this.maybeActivateDirect(generation);
+            });
           },
           onDiagnostics: (diagnostics) => {
             if (this.direct !== transport || generation !== this.route.generation) return;
@@ -1348,7 +1451,7 @@ export class SessionConnection {
   }
 
   private maybeActivateDirect(generation: number): void {
-    if (this.historyPasteCount > 0) return;
+    if (this.transfers.busy || this.suspended || this.detached) return;
     const transport = this.direct;
     if (!transport || !this.route.canActivateDirect(generation)) return;
     if (this.isDriverRole) {

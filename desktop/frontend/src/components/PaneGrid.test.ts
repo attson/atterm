@@ -9,7 +9,7 @@ import type { SessionInfo } from "../lib/connection";
 vi.mock("./TerminalView.vue", () => ({
   default: {
     name: "TerminalView",
-    props: ["currentCwd", "appearance", "theme"],
+    props: ["currentCwd", "appearance", "theme", "pauseRemoteSubscriptionsInBackground"],
     template: "<div />",
   },
 }));
@@ -562,4 +562,30 @@ describe("PaneGrid detach affordances", () => {
     expect(source).toContain(`:can-detach="tab.layout !== 'single'"`);
     expect(source).toMatch(/@detach="pane\.sessionId && emit\('detach-session', pane\.sessionId\)"/);
   });
+});
+
+
+test("updates background subscription policy on every mounted terminal", async () => {
+  const wrapper = mount(PaneGrid, {
+    props: {
+      tab: {
+        id: "tab-1", layout: "vertical", activePaneIdx: 0,
+        panes: [{ sessionId: "first", remote: true }, { sessionId: "second", remote: true }],
+        colRatio: 0.5, rowRatio: 0.5,
+      },
+      endpointFor: () => ({ url: "wss://relay.test/client", session_token: "token" }),
+      sessionInfoFor: () => null,
+      active: false,
+      terminalTheme: {},
+      commandNotifyThresholdSec: 10,
+      pauseRemoteSubscriptionsInBackground: false,
+    },
+  });
+  const terminals = wrapper.findAllComponents({ name: "TerminalView" });
+  expect(terminals).toHaveLength(2);
+  expect(terminals.map((terminal) => terminal.props("pauseRemoteSubscriptionsInBackground"))).toEqual([false, false]);
+  await wrapper.setProps({ pauseRemoteSubscriptionsInBackground: true });
+  expect(terminals.map((terminal) => terminal.props("pauseRemoteSubscriptionsInBackground"))).toEqual([true, true]);
+  await wrapper.setProps({ pauseRemoteSubscriptionsInBackground: false });
+  expect(terminals.map((terminal) => terminal.props("pauseRemoteSubscriptionsInBackground"))).toEqual([false, false]);
 });

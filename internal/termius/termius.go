@@ -3,6 +3,7 @@
 package termius
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -48,10 +49,18 @@ type Host struct {
 	Proxy                                    *Proxy
 }
 
-// Data contains only current host definitions and their explicitly linked credentials.
+// Snippet is a saved Termius command. Script stays in the Go process until
+// confirmation, just like imported credential material.
+type Snippet struct {
+	ID, Label string
+	Script    string `json:"-"`
+}
+
+// Data contains only current importable definitions from the selected profile.
 type Data struct {
-	Hosts []Host
-	Keys  []Key
+	Hosts    []Host
+	Keys     []Key
+	Snippets []Snippet
 }
 
 // Locate accepts either a profile directory or its IndexedDB subdirectory.
@@ -412,7 +421,7 @@ func buildData(t tables) (*Data, error) {
 		}
 		indexes[name] = idx
 	}
-	data := &Data{Hosts: []Host{}, Keys: []Key{}}
+	data := &Data{Hosts: []Host{}, Keys: []Key{}, Snippets: []Snippet{}}
 	keys := map[string]bool{}
 	for _, row := range t["keys"] {
 		if deleted(row) {
@@ -548,11 +557,28 @@ func buildData(t tables) (*Data, error) {
 		}
 		data.Hosts = append(data.Hosts, h)
 	}
+	for _, row := range t["snippets"] {
+		if deleted(row) {
+			continue
+		}
+		id := entity(row)
+		label := field(row, "label", "title")
+		script := field(row, "script")
+		if script == "" {
+			continue
+		}
+		if id == "" {
+			sum := sha256.Sum256([]byte(label + "\x00" + script))
+			id = "content:" + base64.RawURLEncoding.EncodeToString(sum[:16])
+		}
+		data.Snippets = append(data.Snippets, Snippet{ID: id, Label: label, Script: script})
+	}
 	validateRoutes(data)
 	sort.Slice(data.Hosts, func(i, j int) bool { return data.Hosts[i].ID < data.Hosts[j].ID })
 	sort.Slice(data.Keys, func(i, j int) bool { return data.Keys[i].ID < data.Keys[j].ID })
-	if len(data.Hosts) == 0 && len(data.Keys) == 0 {
-		return nil, errors.New("no current Termius hosts or private keys found")
+	sort.Slice(data.Snippets, func(i, j int) bool { return data.Snippets[i].ID < data.Snippets[j].ID })
+	if len(data.Hosts) == 0 && len(data.Keys) == 0 && len(data.Snippets) == 0 {
+		return nil, errors.New("no current Termius hosts, private keys or snippets found")
 	}
 	return data, nil
 }

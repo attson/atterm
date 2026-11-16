@@ -264,7 +264,11 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 			sess = target
 			clientID = ap.ClientID
-			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID, ap.ClientName)
+			var outputOptions []session.SubscribeOption
+			if ap.OutputCompression == proto.OutputCompressionDeflate && sess.SupportsOutputCompression() {
+				outputOptions = append(outputOptions, session.WithCompressedOutput())
+			}
+			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID, ap.ClientName, outputOptions...)
 			s.debugf("client attached session=%s since_seq=%d client_id=%q client_name=%q", id, ap.SinceSeq, ap.ClientID, ap.ClientName)
 			seenAtOnAttach = s.markClientSessionSeen(ownerUserID, sess)
 			attachSignal <- sub

@@ -222,6 +222,8 @@ type appConfig struct {
 	// terminal route. It gates both client upgrade attempts and this desktop's
 	// direct host listener; false keeps the established Relay-only behavior.
 	DirectP2PEnabled bool `json:"direct_p2p_enabled,omitempty"`
+	// This device alone decides whether inactive remote panes retain subscriptions.
+	PauseRemoteSubscriptionsInBackground bool `json:"pause_remote_subscriptions_in_background,omitempty"`
 
 	// Plugins is the plugin-system block. Defaults filled in on first run.
 	Plugins PluginConfig `json:"plugins"`
@@ -230,6 +232,10 @@ type appConfig struct {
 	// or absent means "use defaults" — the renderer seeds DEFAULT_TEMPLATES
 	// in that case. See docs/superpowers/specs/2026-06-04-quick-templates-design.md.
 	QuickTemplates []QuickTemplate `json:"quick_templates,omitempty"`
+	// Snippets persists long command templates separately from QuickTemplates.
+	// Keeping the collections split prevents older clients from rendering a
+	// long command as a directly executable quick-action button.
+	Snippets []Snippet `json:"snippets,omitempty"`
 
 	// TaskPreset is the user's chosen session-bar display style.
 	// Empty falls back to "iconOnly" at read time.

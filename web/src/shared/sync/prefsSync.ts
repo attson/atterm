@@ -11,9 +11,9 @@ import { apiFetch } from '@shared/api/client'
 // `keys()` needs to offer it to push() — i.e. some setter on this platform
 // can mark it dirty via notifyLocalChange. Desktop-only keys are never
 // marked dirty here, so they don't need to be in this list to work
-// correctly: pull and PUT reconciliation adopt non-retired server keys
-// independently of SYNCED_KEYS. This preserves pull-only preferences such as
-// ssh_hosts_encrypted while ignoring retired data.
+// correctly: pull adopts non-retired server keys independently of SYNCED_KEYS.
+// PUT reconciliation only adopts keys sent in that request, leaving pull-only
+// preferences such as ssh_hosts_encrypted to pull().
 //
 // The Go list (internal/prefssync/sync.go::syncedKeys) is the superset
 // source of truth. Keep this list a subset of it — the drift-check test in
@@ -23,6 +23,7 @@ export const SYNCED_KEYS = [
   'locale_preference',
   'traffic_time_zone',
   'quick_templates',
+  'snippets',
   'notifications_enabled',
   'ai_notifications_only',
   'command_notify_threshold_seconds',
@@ -75,18 +76,30 @@ export class PrefsSyncEngine {
   }
 
   async push(): Promise<void> {
-    const items: ClientItem[] = []
+    const established: ClientItem[] = []
+    const snippets: ClientItem[] = []
     for (const k of this.adapter.keys()) {
       const m = this.adapter.readMeta(k)
       if (!m.dirty) continue
       const v = this.adapter.readValue(k)
       if (v === undefined) continue
-      items.push({ key: k, value: v, client_updated_at: m.updatedAtLocal })
+      const item = { key: k, value: v, client_updated_at: m.updatedAtLocal }
+      if (k === 'snippets') snippets.push(item)
+      else established.push(item)
     }
+    await this.pushItems(established)
+    await this.pushItems(snippets)
+  }
+
+  private async pushItems(items: ClientItem[]): Promise<void> {
     if (items.length === 0) return
+    const sentAt = new Map(items.map((item) => [item.key, item.client_updated_at]))
     const resp = await this.relay.put(items)
     for (const it of resp) {
       if (isRetiredKey(it.key)) continue
+      const sentTimestamp = sentAt.get(it.key)
+      if (sentTimestamp === undefined) continue
+      if (this.adapter.readMeta(it.key).updatedAtLocal !== sentTimestamp) continue
       this.adapter.writeValue(it.key, it.value)
       this.adapter.writeMeta(it.key, { updatedAtLocal: it.updated_at, dirty: false })
     }

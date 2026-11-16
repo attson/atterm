@@ -34,6 +34,7 @@ const emit = defineEmits<{
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", state: TerminalAppearanceState): void;
+  (e: "background-subscriptions-changed", enabled: boolean): void;
 }>();
 
 const selected = ref(getTerminalTheme(props.terminalThemeId).id);
@@ -63,6 +64,10 @@ const themeOptions = computed(() =>
     preview: terminalThemePreview(theme),
   })),
 );
+
+const backgroundSubscriptionsEnabled = ref(false);
+const backgroundSubscriptionsLoading = ref(true);
+const backgroundSubscriptionsSaving = ref(false);
 
 const notificationsEnabled = ref(true);
 const notificationsLoading = ref(true);
@@ -185,6 +190,13 @@ onBeforeUnmount(() => {
 });
 
 onMounted(async () => {
+  try {
+    backgroundSubscriptionsEnabled.value = await platform.backgroundSubscriptions?.load() ?? false;
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    backgroundSubscriptionsLoading.value = false;
+  }
   if (caps.wailsBindings) {
     try {
       const preference = await getLocalePreference();
@@ -234,6 +246,26 @@ onMounted(async () => {
   }
   await refreshPushState();
 });
+
+async function onBackgroundSubscriptionsToggle(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previous = backgroundSubscriptionsEnabled.value;
+  const next = target.checked;
+  backgroundSubscriptionsEnabled.value = next;
+  backgroundSubscriptionsSaving.value = true;
+  error.value = "";
+  try {
+    if (!platform.backgroundSubscriptions) throw new Error("Background subscription settings unavailable");
+    await platform.backgroundSubscriptions.save(next);
+    emit("background-subscriptions-changed", next);
+  } catch (e: unknown) {
+    backgroundSubscriptionsEnabled.value = previous;
+    target.checked = previous;
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    backgroundSubscriptionsSaving.value = false;
+  }
+}
 
 async function refreshPushState() {
   if (!pushSupported.value) {
@@ -582,6 +614,18 @@ async function onChange() {
     <p class="hint" v-if="caps.wailsBindings && !commandNotifyThresholdLoading">
       {{ t("settings.general.commandNotifyHint") }}
     </p>
+
+    <label v-if="!backgroundSubscriptionsLoading" class="checkbox">
+      <input
+        type="checkbox"
+        data-testid="background-subscriptions-toggle"
+        :checked="backgroundSubscriptionsEnabled"
+        :disabled="backgroundSubscriptionsSaving || !platform.backgroundSubscriptions"
+        @change="onBackgroundSubscriptionsToggle"
+      />
+      {{ t("settings.general.pauseRemoteSubscriptionsInBackground") }}
+    </label>
+    <p class="hint">{{ t("settings.general.pauseRemoteSubscriptionsInBackgroundHint") }}</p>
 
     <p v-if="error" class="error">{{ error }}</p>
 

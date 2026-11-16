@@ -114,66 +114,72 @@ func TestPrefsChangedFrameTypeValue(t *testing.T) {
 // also confirms nothing already claims them.
 func TestFrameTypeValuesPinned(t *testing.T) {
 	want := map[string]Type{
-		"TypeOpen":                 0x01,
-		"TypeIn":                   0x02,
-		"TypeOut":                  0x03,
-		"TypeResize":               0x04,
-		"TypeMeta":                 0x05,
-		"TypeClose":                0x06,
-		"TypeAttach":               0x10,
-		"TypeList":                 0x11,
-		"TypeListResp":             0x12,
-		"TypeReplayProgress":       0x13,
-		"TypePrefsChanged":         0x14,
-		"TypePing":                 0x20,
-		"TypePong":                 0x21,
-		"TypeAnnounce":             0x30,
-		"TypeStreamRequest":        0x31,
-		"TypeStreamStop":           0x32,
-		"TypePasteImage":           0x33,
-		"TypeClaimDriver":          0x34,
-		"TypeCommandEvent":         0x35,
-		"TypeViewers":              0x36,
-		"TypePasteFile":            0x37,
-		"TypeFSRequest":            0x38,
-		"TypeFSResponse":           0x39,
-		"TypeFSEvent":              0x3a,
-		"TypeSessionCreate":        0x3b,
-		"TypeSessionCreated":       0x3c,
-		"TypeAuthInfo":             0x40,
-		"TypeInputHistoryRequest":  0x41,
-		"TypeInputHistoryResponse": 0x42,
+		"TypeOpen":                    0x01,
+		"TypeIn":                      0x02,
+		"TypeOut":                     0x03,
+		"TypeResize":                  0x04,
+		"TypeMeta":                    0x05,
+		"TypeClose":                   0x06,
+		"TypeAttach":                  0x10,
+		"TypeList":                    0x11,
+		"TypeListResp":                0x12,
+		"TypeReplayProgress":          0x13,
+		"TypePrefsChanged":            0x14,
+		"TypePing":                    0x20,
+		"TypePong":                    0x21,
+		"TypeAnnounce":                0x30,
+		"TypeStreamRequest":           0x31,
+		"TypeStreamStop":              0x32,
+		"TypePasteImage":              0x33,
+		"TypeClaimDriver":             0x34,
+		"TypeCommandEvent":            0x35,
+		"TypeViewers":                 0x36,
+		"TypePasteFile":               0x37,
+		"TypeFSRequest":               0x38,
+		"TypeFSResponse":              0x39,
+		"TypeFSEvent":                 0x3a,
+		"TypeSessionCreate":           0x3b,
+		"TypeSessionCreated":          0x3c,
+		"TypeAuthInfo":                0x40,
+		"TypeInputHistoryRequest":     0x41,
+		"TypeInputHistoryResponse":    0x42,
+		"TypeOutCompressed":           0x43,
+		"TypeStreamRequestCompressed": 0x44,
+		"TypeStreamStopCompressed":    0x45,
 	}
 	got := map[string]Type{
-		"TypeOpen":                 TypeOpen,
-		"TypeIn":                   TypeIn,
-		"TypeOut":                  TypeOut,
-		"TypeResize":               TypeResize,
-		"TypeMeta":                 TypeMeta,
-		"TypeClose":                TypeClose,
-		"TypeAttach":               TypeAttach,
-		"TypeList":                 TypeList,
-		"TypeListResp":             TypeListResp,
-		"TypeReplayProgress":       TypeReplayProgress,
-		"TypePrefsChanged":         TypePrefsChanged,
-		"TypePing":                 TypePing,
-		"TypePong":                 TypePong,
-		"TypeAnnounce":             TypeAnnounce,
-		"TypeStreamRequest":        TypeStreamRequest,
-		"TypeStreamStop":           TypeStreamStop,
-		"TypePasteImage":           TypePasteImage,
-		"TypeClaimDriver":          TypeClaimDriver,
-		"TypeCommandEvent":         TypeCommandEvent,
-		"TypeViewers":              TypeViewers,
-		"TypePasteFile":            TypePasteFile,
-		"TypeFSRequest":            TypeFSRequest,
-		"TypeFSResponse":           TypeFSResponse,
-		"TypeFSEvent":              TypeFSEvent,
-		"TypeSessionCreate":        TypeSessionCreate,
-		"TypeSessionCreated":       TypeSessionCreated,
-		"TypeAuthInfo":             TypeAuthInfo,
-		"TypeInputHistoryRequest":  TypeInputHistoryRequest,
-		"TypeInputHistoryResponse": TypeInputHistoryResponse,
+		"TypeOpen":                    TypeOpen,
+		"TypeIn":                      TypeIn,
+		"TypeOut":                     TypeOut,
+		"TypeResize":                  TypeResize,
+		"TypeMeta":                    TypeMeta,
+		"TypeClose":                   TypeClose,
+		"TypeAttach":                  TypeAttach,
+		"TypeList":                    TypeList,
+		"TypeListResp":                TypeListResp,
+		"TypeReplayProgress":          TypeReplayProgress,
+		"TypePrefsChanged":            TypePrefsChanged,
+		"TypePing":                    TypePing,
+		"TypePong":                    TypePong,
+		"TypeAnnounce":                TypeAnnounce,
+		"TypeStreamRequest":           TypeStreamRequest,
+		"TypeStreamStop":              TypeStreamStop,
+		"TypePasteImage":              TypePasteImage,
+		"TypeClaimDriver":             TypeClaimDriver,
+		"TypeCommandEvent":            TypeCommandEvent,
+		"TypeViewers":                 TypeViewers,
+		"TypePasteFile":               TypePasteFile,
+		"TypeFSRequest":               TypeFSRequest,
+		"TypeFSResponse":              TypeFSResponse,
+		"TypeFSEvent":                 TypeFSEvent,
+		"TypeSessionCreate":           TypeSessionCreate,
+		"TypeSessionCreated":          TypeSessionCreated,
+		"TypeAuthInfo":                TypeAuthInfo,
+		"TypeInputHistoryRequest":     TypeInputHistoryRequest,
+		"TypeInputHistoryResponse":    TypeInputHistoryResponse,
+		"TypeOutCompressed":           TypeOutCompressed,
+		"TypeStreamRequestCompressed": TypeStreamRequestCompressed,
+		"TypeStreamStopCompressed":    TypeStreamStopCompressed,
 	}
 	for name, wantVal := range want {
 		gotVal, ok := got[name]
@@ -195,6 +201,48 @@ func TestFrameTypeValuesPinned(t *testing.T) {
 	}
 	if len(want) != len(got) {
 		t.Fatalf("want/got map size mismatch: want=%d got=%d — a constant was added without updating this pin test", len(want), len(got))
+	}
+}
+
+func TestOutputCompressionCapabilityJSON(t *testing.T) {
+	if OutputCompressionDeflate != "deflate-raw-v1" {
+		t.Fatalf("compression capability = %q", OutputCompressionDeflate)
+	}
+	for _, payload := range []any{AnnouncePayload{}, AttachPayload{}} {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte("output_compression")) {
+			t.Fatalf("empty capability must preserve legacy JSON: %s", raw)
+		}
+	}
+	for _, payload := range []any{
+		AnnouncePayload{OutputCompression: OutputCompressionDeflate},
+		AttachPayload{OutputCompression: OutputCompressionDeflate},
+	} {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if string(fields["output_compression"]) != `"deflate-raw-v1"` {
+			t.Fatalf("capability missing from JSON: %s", raw)
+		}
+		var announce AnnouncePayload
+		var attach AttachPayload
+		if err := json.Unmarshal(raw, &announce); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &attach); err != nil {
+			t.Fatal(err)
+		}
+		if announce.OutputCompression != OutputCompressionDeflate || attach.OutputCompression != OutputCompressionDeflate {
+			t.Fatal("capability lost during JSON decode")
+		}
 	}
 }
 

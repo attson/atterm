@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { scheduleTerminalActivation } from "./terminalActivation";
 
 function createFrameScheduler() {
@@ -25,7 +25,23 @@ function createFrameScheduler() {
   };
 }
 
+afterEach(() => { vi.restoreAllMocks(); });
+
 describe("terminal activation", () => {
+  test.each([0, 1])("finishes activation if the page hides after %i frames instead of waiting for a frozen RAF", (framesRun) => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    const scheduler = createFrameScheduler();
+    const resume = vi.fn();
+    scheduleTerminalActivation(() => undefined, resume, scheduler.frames);
+    for (let i = 0; i < framesRun; i++) scheduler.runNext();
+    hidden.mockReturnValue(true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(scheduler.pending()).toBe(0);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
   test("reveals the cached terminal for one frame before resuming output", () => {
     const scheduler = createFrameScheduler();
     const events: string[] = [];

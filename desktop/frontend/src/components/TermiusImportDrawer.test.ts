@@ -8,7 +8,11 @@ const api = vi.hoisted(() => ({
   discoverTermiusProfiles: vi.fn(), selectTermiusDirectory: vi.fn(),
   previewTermiusImport: vi.fn(), cancelTermiusImport: vi.fn(), importTermius: vi.fn(),
 }));
+const platform = vi.hoisted(() => ({ emit: vi.fn() }));
 vi.mock('../lib/api', () => api);
+vi.mock('../platform', () => ({
+  useOptionalPlatform: () => ({ events: { emit: platform.emit } }),
+}));
 const preview: TermiusImportPreview = {
   token: 'snapshot',
   hosts: [
@@ -17,6 +21,12 @@ const preview: TermiusImportPreview = {
     { id: 'existing', name: 'existing', host: '192.0.2.3', port: '22', user: 'root', key_id: '', has_password: true, tags: [], warnings: [], blocked: false, existing: true, forward_count: 0 },
   ],
   keys: [{ id: 'key', name: 'orphan key', valid: true }],
+  snippets: [
+    { id: 'snippet', name: 'Deploy', existing: false, blocked: false, warnings: [] },
+    { id: 'untitled-snippet', name: '', existing: false, blocked: false, warnings: [] },
+    { id: 'existing-snippet', name: 'Existing', existing: true, blocked: true, warnings: [] },
+    { id: 'invalid-snippet', name: 'Invalid', existing: false, blocked: true, warnings: ['invalid_snippet'] },
+  ],
 };
 beforeEach(() => {
   resetI18nForTest();
@@ -24,10 +34,32 @@ beforeEach(() => {
   api.discoverTermiusProfiles.mockResolvedValue(['/synthetic/Termius']);
   api.previewTermiusImport.mockResolvedValue(preview);
   api.cancelTermiusImport.mockResolvedValue(undefined);
-  api.importTermius.mockResolvedValue({ hosts: 1, keys: 0, skipped: 0 });
+  api.importTermius.mockResolvedValue({ hosts: 1, keys: 0, snippets: 0, skipped: 0 });
 });
 
 describe('Termius import', () => {
+  it('selects snippets in their own tab and submits only source IDs', async () => {
+    api.importTermius.mockResolvedValueOnce({ hosts: 0, keys: 0, snippets: 1, skipped: 0 });
+    const wrapper = mount(TermiusImportDrawer);
+    await flushPromises();
+    await wrapper.get('[data-test="termius-preview"]').trigger('click');
+    await flushPromises();
+
+    await wrapper.get('[data-test="termius-snippets-tab"]').trigger('click');
+    expect(wrapper.text()).toContain('Untitled snippet');
+    expect(wrapper.get<HTMLInputElement>('[data-test="termius-snippet-existing-snippet"]').element.disabled).toBe(true);
+    expect(wrapper.get<HTMLInputElement>('[data-test="termius-snippet-invalid-snippet"]').element.disabled).toBe(true);
+    await wrapper.get('[data-test="termius-snippet-snippet"]').setValue(true);
+    expect(wrapper.get('[data-test="termius-selection-count"]').text()).toContain('1 snippet');
+    await wrapper.get('[data-test="termius-confirm"]').trigger('click');
+    await flushPromises();
+
+    expect(api.importTermius).toHaveBeenCalledWith('snapshot', [], [], ['snippet']);
+    expect(platform.emit).toHaveBeenCalledWith('quickTemplates:changed', null);
+    expect(wrapper.emitted('imported')?.[0]).toEqual([{ hosts: 0, keys: 0, snippets: 1, skipped: 0 }]);
+    wrapper.unmount();
+  });
+
   it('requires selection, submits only source IDs, and clears the localKey', async () => {
     const wrapper = mount(TermiusImportDrawer);
     await flushPromises();
@@ -43,8 +75,9 @@ describe('Termius import', () => {
     await wrapper.get('[data-test="termius-host-host"]').setValue(true);
     await wrapper.get('[data-test="termius-confirm"]').trigger('click');
     await flushPromises();
-    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], []);
-    expect(wrapper.emitted('imported')?.[0]).toEqual([{ hosts: 1, keys: 0, skipped: 0 }]);
+    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], [], []);
+    expect(platform.emit).not.toHaveBeenCalled();
+    expect(wrapper.emitted('imported')?.[0]).toEqual([{ hosts: 1, keys: 0, snippets: 0, skipped: 0 }]);
     wrapper.unmount();
   });
   it('cancels a scan that finishes after closing', async () => {
@@ -120,7 +153,7 @@ describe('Termius import', () => {
     expect(wrapper.text()).toContain('No matching items');
     await wrapper.get('[data-test="termius-confirm"]').trigger('click');
     await flushPromises();
-    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], []);
+    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], [], []);
     wrapper.unmount();
   });
   it('counts linked keys once and exposes them without requiring a separate selection', async () => {
@@ -130,11 +163,11 @@ describe('Termius import', () => {
     await wrapper.get('[data-test="termius-preview"]').trigger('click');
     await flushPromises();
     await wrapper.get('[data-test="termius-select-visible"]').setValue(true);
-    expect(wrapper.get('[data-test="termius-selection-count"]').text()).toBe('1 hosts · 1 keys selected');
+    expect(wrapper.get('[data-test="termius-selection-count"]').text()).toBe('1 hosts · 1 keys · 0 snippets selected');
     await wrapper.get('[data-test="termius-keys-tab"]').trigger('click');
     expect(wrapper.text()).toContain('Included with host');
     await wrapper.get('[data-test="termius-select-visible"]').setValue(true);
-    expect(wrapper.get('[data-test="termius-selection-count"]').text()).toBe('1 hosts · 1 keys selected');
+    expect(wrapper.get('[data-test="termius-selection-count"]').text()).toBe('1 hosts · 1 keys · 0 snippets selected');
     wrapper.unmount();
   });
   it('shows the proxy route and automatically counts required jump hosts and their keys', async () => {
@@ -150,10 +183,10 @@ describe('Termius import', () => {
     expect(wrapper.text()).toContain('Jump hosts: bastion');
     await wrapper.get('[data-test="termius-host-host"]').setValue(true);
     expect(wrapper.text()).toContain('Included as jump host');
-    expect(wrapper.get('[data-test="termius-selection-count"]').text()).toBe('2 hosts · 1 keys selected');
+    expect(wrapper.get('[data-test="termius-selection-count"]').text()).toBe('2 hosts · 1 keys · 0 snippets selected');
     await wrapper.get('[data-test="termius-confirm"]').trigger('click');
     await flushPromises();
-    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], []);
+    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], [], []);
     wrapper.unmount();
   });
   it('combines status and search filters without losing hidden selections', async () => {
@@ -180,7 +213,7 @@ describe('Termius import', () => {
     expect(wrapper.get<HTMLInputElement>('[data-test="termius-host-host"]').element.checked).toBe(true);
     await wrapper.get('[data-test="termius-confirm"]').trigger('click');
     await flushPromises();
-    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], []);
+    expect(api.importTermius).toHaveBeenCalledWith('snapshot', ['host'], [], []);
     wrapper.unmount();
   });
   it('requires choosing between multiple installations', async () => {

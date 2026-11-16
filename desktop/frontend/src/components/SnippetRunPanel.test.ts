@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
+import { ref } from "vue";
 import SnippetRunPanel from "./SnippetRunPanel.vue";
+import panelSource from "./SnippetRunPanel.vue?raw";
 import { resetI18nForTest } from "../i18n";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 import type { SnippetRunProgress } from "../lib/api";
+import type { RemoteSession } from "../platform/types";
+import type { SnippetSessionTargetRegistry } from "../lib/snippetSessionTargets";
 
 const listSSHHosts = vi.fn();
 const runSnippetOnHosts = vi.fn();
@@ -29,10 +33,54 @@ const HOST_NOALIAS = { id: "h4", host: "10.0.0.4", user: "root", auth_kind: "pas
 const SNIPPET_LABEL = "Snip One";
 const SNIPPET_TEXT = "echo hi";
 
-async function mountPanel(events = fakeEventBus()) {
+const SESSION_A: RemoteSession = {
+  session_id: "s1",
+  host_id: "local",
+  host: "workstation",
+  user: "attson",
+  title: "API server",
+  cwd: "/work/api",
+  cols: 120,
+  rows: 32,
+  current_command: "npm run dev",
+};
+const SESSION_B: RemoteSession = {
+  ...SESSION_A,
+  session_id: "s2",
+  title: "Worker",
+  cwd: "/work/worker",
+  current_command: "go test ./...",
+};
+const SESSION_REMOTE: RemoteSession = {
+  ...SESSION_A,
+  session_id: "s3",
+  host_id: "remote",
+  host: "buildbox",
+  user: "root",
+  title: "Release",
+  cwd: "/srv/release",
+};
+
+async function mountPanel(
+  events = fakeEventBus(),
+  target: "hosts" | "sessions" = "hosts",
+  sessions: RemoteSession[] = [],
+  targets: SnippetSessionTargetRegistry = new Map(),
+) {
   __setPlatformForTests({ ...createFakePlatform(), events });
-  const w = mount(SnippetRunPanel, { props: { snippetLabel: SNIPPET_LABEL, snippetText: SNIPPET_TEXT } });
+  const w = mount(SnippetRunPanel, {
+    props: { snippetLabel: SNIPPET_LABEL, snippetText: SNIPPET_TEXT },
+    global: {
+      provide: {
+        "atterm:snippetSessions": ref(sessions),
+        "atterm:snippetSessionTargets": targets,
+      },
+    },
+  });
   await flushPromises();
+  if (target === "hosts") {
+    await w.find('[data-testid="snippet-target-hosts"]').trigger("click");
+  }
   return { w, events };
 }
 
@@ -50,6 +98,117 @@ describe("SnippetRunPanel", () => {
     listSSHHosts.mockReset().mockResolvedValue([HOST_A, HOST_B, HOST_C]);
     runSnippetOnHosts.mockReset().mockResolvedValue("run-1");
     cancelSnippetRun.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("uses a wide modal with a responsive multi-column host list", async () => {
+    const { w } = await mountPanel();
+
+    expect(w.find(".snippet-run-modal").exists()).toBe(true);
+    expect(w.find(".snippet-run-drawer").exists()).toBe(false);
+    expect(panelSource).toMatch(/\.snippet-run-modal\s*\{[\s\S]*?width:\s*min\(960px/);
+    expect(panelSource).toMatch(/\.host-list\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fill/);
+  });
+
+  it("defaults to terminal sessions and can switch to saved SSH hosts", async () => {
+    const targets: SnippetSessionTargetRegistry = new Map([
+      [SESSION_A.session_id, { send: vi.fn(), canSend: () => true }],
+    ]);
+    const { w } = await mountPanel(fakeEventBus(), "sessions", [SESSION_A], targets);
+
+    expect(w.find('[data-testid="snippet-target-sessions"]').attributes("aria-pressed")).toBe("true");
+    expect(w.find(`[data-testid="snippet-run-session-${SESSION_A.session_id}"]`).exists()).toBe(true);
+
+    await w.find('[data-testid="snippet-target-hosts"]').trigger("click");
+    expect(w.find('[data-testid="snippet-target-hosts"]').attributes("aria-pressed")).toBe("true");
+    expect(w.find(`[data-testid="snippet-run-host-${HOST_A.id}"]`).exists()).toBe(true);
+  });
+
+  it("shows all known sessions but only lets writable mounted drivers be selected", async () => {
+    const targets: SnippetSessionTargetRegistry = new Map([
+      [SESSION_A.session_id, { send: vi.fn(), canSend: () => true }],
+      [SESSION_B.session_id, { send: vi.fn(), canSend: () => false }],
+    ]);
+    const { w } = await mountPanel(
+      fakeEventBus(),
+      "sessions",
+      [SESSION_A, SESSION_B, SESSION_REMOTE],
+      targets,
+    );
+
+    expect(w.find(`[data-testid="snippet-run-session-${SESSION_A.session_id}"]`).attributes("disabled")).toBeUndefined();
+    expect(w.find(`[data-testid="snippet-run-session-${SESSION_B.session_id}"]`).attributes("disabled")).toBeDefined();
+    expect(w.find(`[data-testid="snippet-run-session-${SESSION_REMOTE.session_id}"]`).attributes("disabled")).toBeDefined();
+    expect(w.text()).toContain("Not writable now");
+    expect(w.text()).toContain("Not open in this window");
+  });
+
+  it("searches sessions by command and keeps host grouping visible", async () => {
+    const targets: SnippetSessionTargetRegistry = new Map([
+      [SESSION_A.session_id, { send: vi.fn(), canSend: () => true }],
+      [SESSION_REMOTE.session_id, { send: vi.fn(), canSend: () => true }],
+    ]);
+    const { w } = await mountPanel(
+      fakeEventBus(),
+      "sessions",
+      [SESSION_A, SESSION_REMOTE],
+      targets,
+    );
+
+    await w.find('[data-testid="snippet-run-session-search"]').setValue("release");
+
+    expect(w.find(`[data-testid="snippet-run-session-${SESSION_A.session_id}"]`).exists()).toBe(false);
+    expect(w.find(`[data-testid="snippet-run-session-${SESSION_REMOTE.session_id}"]`).exists()).toBe(true);
+    expect(w.text()).toContain("buildbox");
+  });
+
+  it("sends text and carriage return through each existing session target", async () => {
+    vi.useFakeTimers();
+    try {
+      const sendA = vi.fn();
+      const sendB = vi.fn();
+      const targets: SnippetSessionTargetRegistry = new Map([
+        [SESSION_A.session_id, { send: sendA, canSend: () => true }],
+        [SESSION_B.session_id, { send: sendB, canSend: () => true }],
+      ]);
+      const { w } = await mountPanel(fakeEventBus(), "sessions", [SESSION_A, SESSION_B], targets);
+      await w.find(`[data-testid="snippet-run-session-${SESSION_A.session_id}"]`).setValue(true);
+      await w.find(`[data-testid="snippet-run-session-${SESSION_B.session_id}"]`).setValue(true);
+
+      await w.find('[data-testid="snippet-run-start"]').trigger("click");
+      expect(sendA).toHaveBeenCalledTimes(1);
+      expect(sendA).toHaveBeenNthCalledWith(1, SNIPPET_TEXT);
+      expect(sendB).toHaveBeenNthCalledWith(1, SNIPPET_TEXT);
+
+      await vi.advanceTimersByTimeAsync(16);
+      await flushPromises();
+
+      expect(sendA.mock.calls).toEqual([[SNIPPET_TEXT], ["\r"]]);
+      expect(sendB.mock.calls).toEqual([[SNIPPET_TEXT], ["\r"]]);
+      expect(w.find(`[data-testid="snippet-run-session-state-${SESSION_A.session_id}"]`).text()).toBe("Sent");
+      expect(runSnippetOnHosts).not.toHaveBeenCalled();
+      expect(panelSource).not.toContain("sendInputToSession");
+      expect(panelSource).not.toContain("new SessionConnection");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks a selected session unsent if it loses driver permission before execution", async () => {
+    let writable = true;
+    const send = vi.fn();
+    const targets: SnippetSessionTargetRegistry = new Map([
+      [SESSION_A.session_id, { send, canSend: () => writable }],
+    ]);
+    const { w } = await mountPanel(fakeEventBus(), "sessions", [SESSION_A], targets);
+    await w.find(`[data-testid="snippet-run-session-${SESSION_A.session_id}"]`).setValue(true);
+    writable = false;
+
+    await w.find('[data-testid="snippet-run-start"]').trigger("click");
+    await flushPromises();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(w.find(`[data-testid="snippet-run-session-state-${SESSION_A.session_id}"]`).attributes("data-state")).toBe("error");
+    expect(w.find('[data-testid="snippet-run-session-retry"]').exists()).toBe(true);
   });
 
   it("renders one pending row per selected host, and only the selected hosts", async () => {
@@ -72,6 +231,39 @@ describe("SnippetRunPanel", () => {
     expect(btn.attributes("disabled")).toBeDefined();
     await w.find(`[data-testid="snippet-run-host-${HOST_A.id}"]`).setValue(true);
     expect(w.find('[data-testid="snippet-run-start"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("filters hosts by search and renders matching group paths", async () => {
+    listSSHHosts.mockReset().mockResolvedValue([
+      { ...HOST_A, tags: ["prod"], group_path: ["Production", "API"] },
+      { ...HOST_B, tags: ["staging"], group_path: ["Staging"] },
+      HOST_C,
+    ]);
+    const { w } = await mountPanel();
+
+    await w.find('[data-testid="snippet-run-search"]').setValue("production");
+
+    expect(w.find(`[data-testid="snippet-run-host-${HOST_A.id}"]`).exists()).toBe(true);
+    expect(w.find(`[data-testid="snippet-run-host-${HOST_B.id}"]`).exists()).toBe(false);
+    expect(w.find(`[data-testid="snippet-run-host-${HOST_C.id}"]`).exists()).toBe(false);
+    expect(w.text()).toContain("Production / API");
+  });
+
+  it("selects only the current tag-filtered results and preserves hidden selections", async () => {
+    listSSHHosts.mockReset().mockResolvedValue([
+      { ...HOST_A, tags: ["prod"] },
+      { ...HOST_B, tags: ["staging"] },
+      { ...HOST_C, tags: ["prod"] },
+    ]);
+    const { w } = await mountPanel();
+
+    await w.find(`[data-testid="snippet-run-host-${HOST_B.id}"]`).setValue(true);
+    await w.find('[data-testid="snippet-run-tag-prod"]').trigger("click");
+    await w.find('[data-testid="snippet-run-select-visible"]').setValue(true);
+
+    expect(w.find('[data-testid="snippet-run-start"]').text()).toBe("Run on 3 hosts");
+    await w.find('[data-testid="snippet-run-tag-prod"]').trigger("click");
+    expect((w.find(`[data-testid="snippet-run-host-${HOST_B.id}"]`).element as HTMLInputElement).checked).toBe(true);
   });
 
   it("a snippet:run:progress event updates only its own host's row", async () => {
@@ -360,6 +552,35 @@ describe("SnippetRunPanel", () => {
     await flushPromises();
 
     expect(w.find('[data-testid="snippet-run-cancel"]').exists()).toBe(false);
+  });
+
+  it("retries only hosts whose terminal state failed or errored", async () => {
+    runSnippetOnHosts
+      .mockReset()
+      .mockResolvedValueOnce("run-1")
+      .mockResolvedValueOnce("run-2");
+    const { w, events } = await mountPanel();
+    await selectAndRun(w, [HOST_A.id, HOST_B.id, HOST_C.id]);
+
+    events.emit("snippet:run:progress", {
+      run_id: "run-1",
+      result: { host_id: HOST_A.id, host_label: "alpha", state: "failed", exit_code: 1, output: "bad", truncated: false },
+    } satisfies SnippetRunProgress);
+    events.emit("snippet:run:progress", {
+      run_id: "run-1",
+      result: { host_id: HOST_B.id, host_label: "beta", state: "error", exit_code: 0, output: "", truncated: false, error: "offline" },
+    } satisfies SnippetRunProgress);
+    events.emit("snippet:run:progress", {
+      run_id: "run-1",
+      result: { host_id: HOST_C.id, host_label: "gamma", state: "ok", exit_code: 0, output: "done", truncated: false },
+    } satisfies SnippetRunProgress);
+    await flushPromises();
+
+    await w.find('[data-testid="snippet-run-retry"]').trigger("click");
+    await flushPromises();
+
+    expect(runSnippetOnHosts).toHaveBeenNthCalledWith(2, SNIPPET_LABEL, SNIPPET_TEXT, [HOST_A.id, HOST_B.id]);
+    expect(w.find(`[data-testid="snippet-run-row-${HOST_C.id}"]`).exists()).toBe(false);
   });
 
   it("copy-all concatenates every host's output under a '=== {host_label} ===' header", async () => {

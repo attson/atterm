@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, h } from 'vue'
 import {
-  NCard,
   NDataTable,
   NButton,
   NPopconfirm,
@@ -176,7 +175,11 @@ onMounted(reload)
 </script>
 
 <template>
-  <n-card :title="t('admin.users')" :bordered="false">
+  <section class="admin-page users-page">
+    <header class="admin-page-header">
+      <div><h1>{{ t('admin.users') }}</h1></div>
+    </header>
+
     <n-alert
       v-for="(s, i) in secrets"
       :key="i"
@@ -187,20 +190,22 @@ onMounted(reload)
       <div class="secret-msg">{{ t('admin.secretCopyOnce', { label: s.label }) }}</div>
       <code class="secret-display">{{ s.plaintext }}</code>
     </n-alert>
-    <n-data-table
-      :columns="columns"
-      :data="rows"
-      :loading="loading"
-      size="small"
-      :bordered="false"
-      :pagination="false"
-    />
     <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>
-  </n-card>
+    <div class="admin-surface admin-table-surface">
+      <n-data-table
+        :columns="columns"
+        :data="rows"
+        :loading="loading"
+        size="small"
+        :bordered="false"
+        :pagination="false"
+      />
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.secret-alert { margin-bottom: 0.5rem; }
+.secret-alert { margin-bottom: 14px; }
 .secret-msg { color: var(--fg-dim); font-size: 0.85rem; margin-bottom: 0.5rem; }
 .secret-display {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -210,5 +215,13 @@ onMounted(reload)
   display: block;
   padding: 0.25rem 0;
 }
-.form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
+.form-error {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+  color: var(--bad);
+  font-size: 0.875rem;
+}
 </style>

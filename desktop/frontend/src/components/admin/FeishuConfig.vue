@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NForm, NFormItem, NInput, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
+import { NForm, NFormItem, NInput, NButton, NSwitch, useMessage } from 'naive-ui'
+import { KeyRound, Save } from 'lucide-vue-next'
 import { ApiError } from '@shared/api/client'
 import { getFeishuAdminConfig, setFeishuAdminConfig, generateFeishuKey } from '@shared/api/admin'
 import type { FeishuAdminConfig, FeishuAdminConfigUpdate } from '@shared/api/types'
@@ -81,54 +82,117 @@ onMounted(load)
 </script>
 
 <template>
-  <n-card :title="t('admin.feishuConfig.title')" :bordered="false">
-    <p class="hint">{{ t('admin.feishuConfig.description') }}</p>
-    <n-form v-if="cfg" label-placement="top">
-      <n-form-item :label="t('admin.feishuConfig.enabled')" :show-feedback="false">
-        <n-switch v-model:value="enabled" data-testid="feishu-enabled" />
-      </n-form-item>
+  <section class="admin-page feishu-page">
+    <header class="admin-page-header">
+      <div>
+        <h1>{{ t('admin.feishuConfig.title') }}</h1>
+        <p>{{ t('admin.feishuConfig.description') }}</p>
+      </div>
+      <span v-if="cfg" class="status-badge" :class="{ running: cfg.running }">
+        <i aria-hidden="true"></i>
+        {{ cfg.running ? t('admin.feishuConfig.statusRunning') : t('admin.feishuConfig.statusStopped') }}
+      </span>
+    </header>
 
-      <n-form-item :label="t('admin.feishuConfig.encryptKey')" :show-feedback="false">
-        <n-space vertical :size="6" style="width: 100%">
-          <n-space :wrap="false" align="center" style="width: 100%">
-            <n-input
-              v-model:value="newKey"
-              type="password"
-              show-password-on="click"
-              :placeholder="cfg.key_set ? t('admin.feishuConfig.keyKeepPlaceholder', { last4: cfg.key_last4 ?? '' }) : t('admin.feishuConfig.keyEmptyPlaceholder')"
-              data-testid="feishu-key"
-            />
-            <n-button tertiary data-testid="feishu-generate" @click="onGenerate">
-              {{ t('admin.feishuConfig.generate') }}
-            </n-button>
-          </n-space>
-          <span v-if="newKey" class="warn">{{ t('admin.feishuConfig.keyCopyOnce') }}</span>
-          <n-space v-if="newKey && cfg.key_set" align="center" :size="8">
-            <n-switch v-model:value="force" size="small" data-testid="feishu-force" />
-            <span class="muted">{{ t('admin.feishuConfig.forceRotate') }}</span>
-          </n-space>
-        </n-space>
-      </n-form-item>
+    <n-form v-if="cfg" class="admin-surface feishu-form" label-placement="top">
+      <div class="enable-row">
+        <strong>{{ t('admin.feishuConfig.enabled') }}</strong>
+        <n-switch v-model:value="enabled" :aria-label="t('admin.feishuConfig.enabled')" data-testid="feishu-enabled" />
+      </div>
 
-      <n-form-item :label="t('admin.feishuConfig.baseUrl')" :show-feedback="false">
-        <n-input v-model:value="baseUrl" placeholder="https://open.feishu.cn" data-testid="feishu-base" />
-      </n-form-item>
+      <div class="feishu-fields">
+        <n-form-item class="key-field" :label="t('admin.feishuConfig.encryptKey')" :show-feedback="false">
+          <div class="stack-field">
+            <div class="key-control">
+              <n-input
+                v-model:value="newKey"
+                type="password"
+                show-password-on="click"
+                :placeholder="cfg.key_set ? t('admin.feishuConfig.keyKeepPlaceholder', { last4: cfg.key_last4 ?? '' }) : t('admin.feishuConfig.keyEmptyPlaceholder')"
+                data-testid="feishu-key"
+              />
+              <n-button tertiary data-testid="feishu-generate" @click="onGenerate">
+                <template #icon><KeyRound :size="15" /></template>
+                {{ t('admin.feishuConfig.generate') }}
+              </n-button>
+            </div>
+            <span v-if="newKey" class="warn">{{ t('admin.feishuConfig.keyCopyOnce') }}</span>
+            <div v-if="newKey && cfg.key_set" class="force-row">
+              <n-switch v-model:value="force" size="small" :aria-label="t('admin.feishuConfig.forceRotate')" data-testid="feishu-force" />
+              <span class="muted">{{ t('admin.feishuConfig.forceRotate') }}</span>
+            </div>
+          </div>
+        </n-form-item>
 
-      <n-space class="actions" align="center">
+        <n-form-item class="base-field" :label="t('admin.feishuConfig.baseUrl')" :show-feedback="false">
+          <n-input v-model:value="baseUrl" placeholder="https://open.feishu.cn" data-testid="feishu-base" />
+        </n-form-item>
+      </div>
+
+      <div class="form-footer">
         <n-button type="primary" :loading="saving" :disabled="saving" data-testid="feishu-save" @click="onSave">
+          <template #icon><Save :size="15" /></template>
           {{ t('common.save') }}
         </n-button>
-        <span class="muted">{{ cfg.running ? t('admin.feishuConfig.statusRunning') : t('admin.feishuConfig.statusStopped') }}</span>
-      </n-space>
+      </div>
     </n-form>
     <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>
-  </n-card>
+  </section>
 </template>
 
 <style scoped>
-.hint { color: var(--fg-dim); font-size: 0.875rem; margin: 0 0 1rem; }
+.status-badge {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  background: var(--panel);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.status-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-dim); }
+.status-badge.running { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, var(--border)); }
+.status-badge.running i { background: var(--good); }
+.feishu-form { overflow: hidden; }
+.enable-row {
+  min-height: 64px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.enable-row strong { font-size: 13px; font-weight: 600; }
+.feishu-fields {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.4fr) minmax(240px, .8fr);
+  gap: 24px;
+  padding: 18px;
+}
+.stack-field { width: 100%; display: flex; flex-direction: column; gap: 7px; }
+.key-control { display: flex; align-items: center; gap: 10px; }
+.key-control :deep(.n-input) { flex: 1 1 auto; width: auto; min-width: 0; }
+.force-row { display: flex; align-items: center; gap: 8px; }
 .muted { color: var(--fg-dim); font-size: 0.875rem; }
 .warn { color: var(--warn, #d89614); font-size: 0.8125rem; }
-.actions { margin-top: 1rem; }
+.form-footer {
+  min-height: 62px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+}
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
+@media (max-width: 760px) {
+  .feishu-fields { grid-template-columns: 1fr; gap: 4px; }
+}
+@media (max-width: 520px) {
+  .key-control { align-items: stretch; flex-direction: column; }
+  .key-control :deep(.n-button) { width: 100%; }
+}
 </style>

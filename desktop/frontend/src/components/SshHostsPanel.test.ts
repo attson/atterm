@@ -1697,6 +1697,31 @@ describe("SshHostsPanel 活跃隧道面板", () => {
     reopened.unmount();
   });
 
+  it("运行中的隧道置顶，同时保留所选排序的组内顺序", async () => {
+    localStorage.setItem("atterm.ssh.tunnels.sort", "name-asc");
+    listActiveForwards.mockResolvedValue([
+      {
+        host_id: "h1", rule_id: "f1", kind: "local", listen_addr: "127.0.0.1:5432",
+        target: "db.internal:5432", conns: 0, started_at: 1, running: true, error: "",
+      },
+      {
+        host_id: "h1", rule_id: "f3", kind: "local", listen_addr: "127.0.0.1:6379",
+        target: "redis.internal:6379", conns: 0, started_at: 2, running: true, error: "",
+      },
+    ]);
+    const wrapper = await mountPanel([{ ...FWD_HOST, forwards: [
+      { ...PG_RULE, note: "Zulu database" },
+      { ...PG_RULE, id: "f2", note: "Alpha cache", target_host: "redis.internal" },
+      { ...PG_RULE, id: "f3", note: "Bravo cache", bind_port: "6379", target_host: "redis.internal", target_port: "6379" },
+    ] }]);
+
+    await openTunnels(wrapper);
+
+    const names = wrapper.findAll('[data-test^="ssh-tunnel-row-"] .fwd-note').map((el) => el.text());
+    expect(names).toEqual(["Bravo cache", "Zulu database", "Alpha cache"]);
+    wrapper.unmount();
+  });
+
   it("没有任何规则时显示空态", async () => {
     const wrapper = await mountPanel([
       { id: "n1", host: "10.0.0.1", user: "root", auth_kind: "password" },

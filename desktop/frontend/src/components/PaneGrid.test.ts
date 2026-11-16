@@ -163,6 +163,11 @@ describe("PaneGrid viewers badge", () => {
     expect(source).toMatch(/!pane\.remote/);
     expect(source).toMatch(/viewerCountFor\?\.\(pane\.sessionId\)/);
   });
+  test("keeps the viewers badge in the controls flex layout", () => {
+    const badgeCSS = source.match(/\.viewers-badge\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(badgeCSS).toMatch(/display:\s*inline-flex/);
+    expect(badgeCSS).not.toMatch(/position:\s*absolute/);
+  });
   test("lets the SP1 overlay dodge the viewers badge too", () => {
     expect(source).toMatch(/avoid-top-right-badge="pane\.remote \|\|/);
   });

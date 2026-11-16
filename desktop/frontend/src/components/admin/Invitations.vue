@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, h } from 'vue'
 import {
-  NCard,
   NDataTable,
-  NSpace,
   NInput,
   NInputNumber,
   NDatePicker,
@@ -13,6 +11,7 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
+import { Plus } from 'lucide-vue-next'
 import { ApiError } from '@shared/api/client'
 import { listInvitations, createInvitation } from '@shared/api/admin'
 import type { InvitationCreated, InvitationRow } from '@shared/api/types'
@@ -95,41 +94,44 @@ onMounted(reload)
 </script>
 
 <template>
-  <n-card :title="t('admin.invitations')" :bordered="false">
-    <form @submit="onCreate" autocomplete="off" class="create-form">
-      <n-space :wrap="false" align="end">
-        <div class="field">
-          <label class="field-label">{{ t('admin.invitationsTab.note') }}</label>
-          <n-input
-            v-model:value="noteInput"
-            type="text"
-            :placeholder="t('common.optional')"
-            :input-props="noteInputProps"
-          />
-        </div>
-        <div class="field">
-          <label class="field-label">{{ t('admin.invitationsTab.count') }}</label>
-          <n-input-number
-            v-model:value="countInput"
-            :min="1"
-            :max="50"
-            :input-props="countInputProps"
-          />
-        </div>
-        <div class="field">
-          <label class="field-label">{{ t('admin.invitationsTab.expires') }}</label>
-          <n-date-picker
-            v-model:value="expiresInput"
-            type="datetime"
-            clearable
-            :placeholder="t('common.optional')"
-            :input-props="expiresPickerProps"
-          />
-        </div>
-        <n-button type="primary" attr-type="submit" :loading="submitting" :disabled="submitting">
-          {{ t('common.create') }}
-        </n-button>
-      </n-space>
+  <section class="admin-page invitations-page">
+    <header class="admin-page-header">
+      <div><h1>{{ t('admin.invitations') }}</h1></div>
+    </header>
+
+    <form @submit="onCreate" autocomplete="off" class="admin-surface create-form">
+      <div class="field note-field">
+        <label class="field-label">{{ t('admin.invitationsTab.note') }}</label>
+        <n-input
+          v-model:value="noteInput"
+          type="text"
+          :placeholder="t('common.optional')"
+          :input-props="noteInputProps"
+        />
+      </div>
+      <div class="field">
+        <label class="field-label">{{ t('admin.invitationsTab.count') }}</label>
+        <n-input-number
+          v-model:value="countInput"
+          :min="1"
+          :max="50"
+          :input-props="countInputProps"
+        />
+      </div>
+      <div class="field expires-field">
+        <label class="field-label">{{ t('admin.invitationsTab.expires') }}</label>
+        <n-date-picker
+          v-model:value="expiresInput"
+          type="datetime"
+          clearable
+          :placeholder="t('common.optional')"
+          :input-props="expiresPickerProps"
+        />
+      </div>
+      <n-button class="create-button" type="primary" attr-type="submit" :loading="submitting" :disabled="submitting">
+        <template #icon><Plus :size="15" /></template>
+        {{ t('common.create') }}
+      </n-button>
     </form>
 
     <n-alert
@@ -145,28 +147,40 @@ onMounted(reload)
       <code class="secret-display">{{ s.plaintext }}</code>
     </n-alert>
 
-    <n-data-table
-      :columns="columns"
-      :data="rows"
-      :loading="loading"
-      size="small"
-      :bordered="false"
-      :pagination="false"
-    />
-    <p v-if="!loading && rows.length === 0" class="empty">{{ t('admin.invitationsTab.empty') }}</p>
-  </n-card>
+    <div class="admin-surface admin-table-surface">
+      <n-data-table
+        :columns="columns"
+        :data="rows"
+        :loading="loading"
+        size="small"
+        :bordered="false"
+        :pagination="false"
+      >
+        <template #empty><p class="empty">{{ t('admin.invitationsTab.empty') }}</p></template>
+      </n-data-table>
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.create-form { margin-bottom: 1rem; }
-.field { display: flex; flex-direction: column; gap: 0.25rem; }
-.field-label {
-  font-size: 0.75rem;
-  color: var(--fg-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.create-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) 110px minmax(220px, .9fr) auto;
+  align-items: end;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 16px;
 }
-.secret-alert { margin: 0.5rem 0; }
+.field { display: flex; flex-direction: column; gap: 0.25rem; }
+.field :deep(.n-input-number), .field :deep(.n-date-picker) { width: 100%; }
+.field-label {
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.create-button { min-width: 88px; }
+.secret-alert { margin: 0 0 14px; }
 .secret-msg { color: var(--fg-dim); font-size: 0.85rem; margin-bottom: 0.5rem; }
 .secret-display {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -176,5 +190,15 @@ onMounted(reload)
   display: block;
   padding: 0.25rem 0;
 }
-.empty { color: var(--fg-dim); font-size: 0.875rem; margin: 0.5rem 0 0; }
+.empty { color: var(--fg-dim); font-size: 0.875rem; margin: 0; padding: 20px; text-align: center; }
+@media (max-width: 900px) {
+  .create-form { grid-template-columns: minmax(180px, 1fr) 110px; }
+  .expires-field { grid-column: 1; }
+  .create-button { grid-column: 2; }
+}
+@media (max-width: 560px) {
+  .create-form { grid-template-columns: 1fr; }
+  .expires-field, .create-button { grid-column: auto; }
+  .create-button { width: 100%; }
+}
 </style>

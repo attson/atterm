@@ -1,7 +1,7 @@
 # Wire 协议规范 (v1)
 
 > **Audience**: 实现 WS 帧或 HTTP API 客户端的工程师
-> **Last updated**: 2026-11-14
+> **Last updated**: 2026-11-16
 > **Status**: stable
 > **See also**: [auth.md](./auth.md) · [architecture.md](./architecture.md)
 
@@ -711,7 +711,7 @@ Payload (JSON):
 - The relay drops the frame silently when `session_id` is not present in the sender's current manifest.
 - `label` is truncated to 256 bytes before being forwarded into a notification payload.
 
-**E2EE（`sealed_body` 字段）**：当 agent 持有 `account_key` 时，`SealedPushBody { label, exit_code, elapsed_ms }` 封装进 [§E2EE 信封](#e2ee-信封)，AAD 鉴别字节 = `0x35`（COMMAND_EVENT 帧类型）；同时 agent 把 `label` 写空、`exit_code` / `elapsed_ms` 写零（M6-final）。relay 不解开，把 `sealed_body` 经 base64 透传到 Web Push payload 的 `sealedBody` 字段、webhook 的 `sealed_body` 字段。service worker 走 [MessageChannel 桥](../superpowers/specs/2026-06-15-relay-e2ee-design.md) 找可见 client 解密渲染富文本；无可见 client 时退化为通用 `AT Term · Session command finished`。
+**E2EE（`sealed_body` 字段）**：当 agent 持有 `account_key` 时，`SealedPushBody { label, exit_code, elapsed_ms }` 封装进 [§E2EE 信封](#e2ee-信封)，AAD 鉴别字节 = `0x35`（COMMAND_EVENT 帧类型）；同时 agent 把 `label` 写空、`exit_code` / `elapsed_ms` 写零。relay 不解开，只把 `sealed_body` 经 base64 透传到 Web Push payload 的 `sealedBody` 字段。service worker 走 [MessageChannel 桥](../superpowers/specs/2026-06-15-relay-e2ee-design.md) 找可见 client 解密渲染富文本；无可见 client 时退化为通用 `AT Term · Session command finished`。通用 outbound webhook 已退休，不是该帧的消费者。
 
 ### `VIEWERS` (0x36) — relay → uplink only (remote viewer count)
 

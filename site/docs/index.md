@@ -1,5 +1,8 @@
 ---
 layout: home
+title: AT Term - 本地优先的 SSH 与 AI Agent 跨平台终端
+titleTemplate: false
+description: AT Term 是本地优先的跨平台终端、SSH 工作台与 AI Agent 控制台，支持通过端到端加密的 Relay 从桌面、浏览器和 iPhone 远程接管会话。
 hero:
   name: AT Term
   text: 带远程接管的跨平台终端
@@ -30,7 +33,7 @@ import HomeDemo from './.vitepress/theme/components/HomeDemo.vue'
     <div class="badge"><span class="badge-k">3 平台</span><span class="badge-v">macOS / Linux / Windows</span></div>
     <div class="badge"><span class="badge-k">OSC 133</span><span class="badge-v">任务状态推导</span></div>
     <div class="badge"><span class="badge-k">AI Agent</span><span class="badge-v">Claude / Codex / Aider</span></div>
-    <div class="badge"><span class="badge-k">Web Push</span><span class="badge-v">Feishu / webhook 通知</span></div>
+    <div class="badge"><span class="badge-k">通知</span><span class="badge-v">系统 / Web Push / 飞书</span></div>
     <div class="badge"><span class="badge-k">Apache-2.0</span><span class="badge-v">开源</span></div>
   </div>
 </section>
@@ -40,7 +43,7 @@ import HomeDemo from './.vitepress/theme/components/HomeDemo.vue'
 <div class="feature-cards">
   <div class="feature-card"><h3>远程接管(lazy 同步)</h3><p>桌面连上 relay 后,手机 / 浏览器 / 另一台桌面可 attach 同一会话;默认 viewer,take over 才能写。无人看时不上传字节。</p></div>
   <div class="feature-card"><h3>会话状态与侧栏</h3><p>OSC 133 推导 running / waiting / done / failed;侧栏可搜索、置顶、按 host 分组,attention 高亮 AI 等输入的会话。</p></div>
-  <div class="feature-card"><h3>多通道通知</h3><p>命令完成、AI 等输入触发系统通知 / Web Push / 飞书卡片 / 出站 webhook,payload 带 session id 与摘要。</p></div>
+  <div class="feature-card"><h3>多通道通知</h3><p>命令完成、AI 等输入可触发系统通知、Web Push 和飞书卡片，并按 session id 回到对应任务。</p></div>
   <div class="feature-card"><h3>AI Agent 识别</h3><p>Claude Code / Codex / Aider / Gemini 自动识别:命令分类、resume 注入、Notification hook 自动安装。</p></div>
   <div class="feature-card"><h3>端到端加密</h3><p>account_key 只在客户端持有;输出 / 标题 / cwd / 摘要在 relay 侧全程密文,自托管不外泄。</p></div>
   <div class="feature-card"><h3>远程文件浏览</h3><p>浏览 owner 机器文件系统、编辑保存、全套 CRUD + 回收站,双源切换本地 / 远程。</p></div>

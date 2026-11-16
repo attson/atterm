@@ -1,7 +1,7 @@
 # 组件样式规范
 
 > **Audience**: 改 atterm 前端 UI 的工程师
-> **Last updated**: 2026-11-12
+> **Last updated**: 2026-11-16
 > **Status**: stable
 > **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md) · [session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)
 
@@ -145,6 +145,21 @@ Settings 是最容易跑偏的区域，新增 tab 或字段时遵守以下结构
 - `640px` 以下字段网格必须降为单列；列表、工具栏和按钮行允许换行，输入控件
   使用 `min-width: 0`，不得把 Settings 内容区撑出横向滚动。
 
+## Admin 组件规范
+
+Admin 是共享 `App.vue` 内的工作视图，不是独立营销页或第二套应用壳：
+
+- `AdminPanel.vue` 根节点占满主区域，使用 `min-height: 0; min-width: 0; overflow: hidden`；
+  只有 `.admin-body` 纵向滚动，不能让整个 App 或标签导航一起滚走。
+- 顶部导航使用 icon + label 的 `role="tablist"` / `role="tab"`，active 状态同时依靠
+  border/background/text 表达，不能只变颜色。窄屏允许横向滚动并隐藏 scrollbar，tab
+  不压缩、不换成难以识别的单字母。
+- 页面内容统一包在 `.admin-page`（最大 1280px）；标题区使用 `.admin-page-header`，
+  表单面使用 `.admin-surface`，表格容器使用 `.admin-table-surface`。各 tab 不重复定义
+  页面宽度、外层 padding 或另一套卡片背景。
+- Admin 内标题保持 18px 左右，说明 12px；运维界面优先可扫读密度，不使用 hero 字号、
+  装饰渐变或嵌套 card。`640px` 以下由外壳统一收紧 padding，子页只负责自身字段换行。
+
 ## Dialog / overlay
 
 - modal backdrop 使用 fixed inset 0，黑色透明度 0.5-0.6。
@@ -158,6 +173,8 @@ Settings 是最容易跑偏的区域，新增 tab 或字段时遵守以下结构
 - TerminalView 及 PaneGrid 视觉不能被通用表单样式污染；终端背景、overlay、网格线使用 `--terminal-*`。
 - Pane gap 维持 2px；调整时必须同步 `predictCellDims` 的尺寸假设，否则新 pane 初始 PTY winsize 会回归。
 - Pane 关闭按钮、remote badge、viewer overlay 要使用轻量 overlay，不改变 xterm cell 尺寸。
+- pane hover/focus 操作条只在当前 focused pane 显示；viewer 数量、远程来源等纯状态 badge
+  可常驻，但必须进入同一右上控制行参与 flex 布局，不能绝对定位后互相覆盖。
 - Pane 内点击目标必须以事件归属 pane 为准，不能隐式作用于当前 active pane；此类交互需要布局/组件测试覆盖。
 - 每个有 session 的 pane 在输入历史按钮旁显示应用主题入口。这里与 Settings 的终端
   主题共用同一个全局偏好：选择后由 `App.vue` 同时更新应用 CSS variables 与全局
@@ -652,6 +669,8 @@ template bar 同属终端工具面，不是 Settings 表单控件：
   严格校验结构、图片 MIME、大小与数量；仅接受内联 PNG/JPEG/GIF/WebP，禁止请求外部
   图片或执行 HTML。粘贴时先校验 driver、attached 和 full 权限，再按顺序走原有文本
   输入与 `PASTE_IMAGE` 路径，不追加提交回车。其它应用按其富文本剪贴板能力接收。
+- 桌面输入历史浮层最大高度为 `min(520px, pane 可用高度 - 48px)`，正文独立滚动；移动端
+  改为底部面板并限制在约 68dvh，同时避让 safe area。历史再多也不能无限盖住整个终端。
 
 ## 终端链接识别与交互
 

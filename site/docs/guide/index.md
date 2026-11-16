@@ -1,3 +1,7 @@
+---
+description: 从安装桌面端到部署自托管 Relay，快速开始使用 AT Term 的本地终端、SSH、AI Agent 会话与端到端加密远程接管。
+---
+
 # 介绍与快速上手
 
 AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动的 shell、Codex、Claude 等长任务,可以在离开电脑后从手机、浏览器或另一台电脑继续查看和输入。Relay 端启用 E2EE 后,命令输出 / 标题 / cwd / 任务摘要在传输和持久化路径上都对 relay 不可读,只在拥有 `account_key` 的客户端解开。
@@ -9,7 +13,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 1. 桌面端跑本地 PTY,每个 tab 是一个独立会话;OSC 133 推导任务状态(running / waiting / done / failed)。
 2. 登录 relay 后,桌面端按需把会话状态 + PTY 字节上行;远程端(手机 / 浏览器 / 另一台桌面)attach 后才上传字节,无人看时不上传。
 3. 启用 E2EE:account_key 只在客户端持有;输出 / 标题 / cwd / 摘要在 relay 侧全程密文。
-4. 任务关键节点(命令完成、AI 等输入)触发系统通知 / Web Push / 飞书卡片 / 出站 webhook,payload 带 session id 与摘要。
+4. 任务关键节点(命令完成、AI 等输入)可触发系统通知、Web Push 和飞书卡片，并按 session id 路由回对应会话。
 5. AI agent(Claude Code / Codex / Aider / Gemini)自动识别:命令分类、resume 注入、Notification hook 自动安装。
 
 ## 适合谁

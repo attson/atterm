@@ -1,3 +1,7 @@
+---
+description: 排查 AT Term 的启动命令、Relay HTTPS、OPAQUE 登录、WebSocket、通知、远程接管和桌面安装问题。
+---
+
 # FAQ / 故障排查
 
 ## 启动子进程报 `command not found`(pnpm / go / nvm)?

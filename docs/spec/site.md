@@ -1,7 +1,7 @@
 # Demo 站点（site/）
 
 > **Audience**: 维护 `site/`(GitHub Pages 首页交互 demo)的工程师
-> **Last updated**: 2026-07-31
+> **Last updated**: 2026-11-16
 > **Status**: stable
 > **See also**: [architecture.md](./architecture.md) · [protocol.md](./protocol.md) · [component-style.md](./component-style.md)
 
@@ -109,6 +109,20 @@ ssr.noExternal: naive-ui/xterm/…(浏览器端组件,SSR 阶段不外部化)
 - `config.mjs` 的 `base: '/atterm/'` 必须与仓库名一致,否则静态资源 404。
 - 首次部署前需在仓库 Settings → Pages → Source 选「GitHub Actions」(否则 `deploy-pages` 报 403)。
 - 纯 README 改动不触发(paths 不含),不会重新部署站点。
+
+## SEO 与索引边界
+
+- `config.mjs::transformHead` 按页面输出 canonical、Open Graph 与 Twitter Card；首页
+  额外输出 `SoftwareApplication` JSON-LD。canonical 必须使用公开站点 origin，不能
+  指向 Relay 或 Vite 开发地址。
+- VitePress sitemap 与 `public/robots.txt` 都以
+  `https://attson.github.io/atterm/` 为唯一公开索引入口。新增 guide 必须提供唯一的
+  frontmatter `description`，避免所有搜索结果复用站点默认摘要。
+- `web/*.html` 是用户自托管 Relay 的鉴权与应用壳，包含登录态和运行时界面，必须保留
+  `noindex, nofollow`；不要把这些页面 canonical 到某个具体 Relay 实例。
+- 分享图由 Vite plugin 从 `web/public/icon.png` 生成同源 `atterm-social.png`，避免依赖
+  外部图片域名。标题与描述必须和 README、GitHub About 的产品定位一致，不把已退休
+  功能写进关键词或摘要。
 
 ## 测试
 

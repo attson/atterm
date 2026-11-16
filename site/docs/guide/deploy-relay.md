@@ -1,3 +1,7 @@
+---
+description: 使用 Docker Compose、HTTPS、SQLite 或 PostgreSQL 自托管 AT Term Relay，实现多设备终端接管、账号鉴权与端到端加密。
+---
+
 # 部署 Relay
 
 ## Docker Compose

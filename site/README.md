@@ -50,10 +50,13 @@ push 到 `main` 触发 `.github/workflows/pages.yml` 自动构建发布。
 ## SEO 与分享元数据
 
 `config.mjs` 为每个页面生成 canonical、Open Graph 和 Twitter Card 标签，首页另带
-`SoftwareApplication` JSON-LD；`sitemap` 和 `public/robots.txt` 固定指向
+`SoftwareApplication` JSON-LD；`sitemap` 固定使用
 `https://attson.github.io/atterm/`。新增 guide 时必须在 frontmatter 提供唯一的
 `description`，不要复用站点默认描述。分享图由构建插件从 `web/public/icon.png`
 生成同源 `atterm-social.png`，不额外维护一份图片源文件。
+
+GitHub Project Pages 不能控制 origin 根路径 `/robots.txt`，因此不在本仓库伪造
+`/atterm/robots.txt`；索引控制依赖逐页 meta，sitemap 需通过搜索站长工具提交。
 
 Relay 自带的 `web/*.html` 是登录和运行时应用壳，不是公开内容站，统一使用
 `noindex, nofollow`；搜索入口只指向本站和 GitHub 仓库。

@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://attson.github.io/atterm/sitemap.xml

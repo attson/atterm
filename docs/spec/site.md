@@ -115,8 +115,9 @@ ssr.noExternal: naive-ui/xterm/…(浏览器端组件,SSR 阶段不外部化)
 - `config.mjs::transformHead` 按页面输出 canonical、Open Graph 与 Twitter Card；首页
   额外输出 `SoftwareApplication` JSON-LD。canonical 必须使用公开站点 origin，不能
   指向 Relay 或 Vite 开发地址。
-- VitePress sitemap 与 `public/robots.txt` 都以
-  `https://attson.github.io/atterm/` 为唯一公开索引入口。新增 guide 必须提供唯一的
+- VitePress sitemap 以 `https://attson.github.io/atterm/` 为公开索引入口。GitHub
+  Project Pages 无法控制 origin 根路径 `/robots.txt`，不要添加无效的
+  `/atterm/robots.txt`；sitemap 需通过搜索站长工具提交。新增 guide 必须提供唯一的
   frontmatter `description`，避免所有搜索结果复用站点默认摘要。
 - `web/*.html` 是用户自托管 Relay 的鉴权与应用壳，包含登录态和运行时界面，必须保留
   `noindex, nofollow`；不要把这些页面 canonical 到某个具体 Relay 实例。

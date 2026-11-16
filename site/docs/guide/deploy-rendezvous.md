@@ -1,3 +1,7 @@
+---
+description: 部署 AT Term Rendezvous 无账户发现与信令服务，为 Peer Space 提供 WebRTC 直连协商、Origin 校验和限流。
+---
+
 # 部署 Rendezvous
 
 Rendezvous 是 Peer Space 的无账户发现与信令服务。它没有用户数据库，不读取 Relay 配置，

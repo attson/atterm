@@ -1,8 +1,8 @@
 # Feishu — 远程终端与 AskUserQuestion form 子系统
 
 > **Audience**: 实现或审计 atterm 飞书集成路径的工程师(anchor card 生命周期 / AskUserQuestion 表单式远程回答 / local vs relay 模式分流)
-> **Last updated**: 2026-10-15
-> **Status**: shipped through v0.2.171
+> **Last updated**: 2026-11-16
+> **Status**: stable
 > **See also**: [architecture.md](./architecture.md) · [protocol.md](./protocol.md) · [auth.md](./auth.md) · [../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md](../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md)
 
 ## 目录

@@ -1,5 +1,10 @@
 # Relay 流量统计
 
+> **Audience**: 维护 Relay 流量采集、查询接口或统计 UI 的工程师
+> **Last updated**: 2026-11-16
+> **Status**: stable
+> **See also**: [architecture.md](./architecture.md) · [protocol.md](./protocol.md) · [component-style.md](./component-style.md)
+
 个人 Settings Relay 面板与管理侧复用时间窗口控件和分时图表，提供实时、分时、汇总三种模式。
 
 - 实时：最近 15 / 60 分钟，事实桶使用 UTC 绝对时间，每 10 秒刷新。隐藏页面暂停轮询，回到前台补查。

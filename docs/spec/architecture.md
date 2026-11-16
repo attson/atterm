@@ -1,11 +1,13 @@
 # 架构规范
 
 > **Audience**: 理解 atterm 系统整体结构的工程师
-> **Last updated**: 2026-07-31
+> **Last updated**: 2026-11-16
 > **Status**: stable
 > **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md) · [conventions.md](./conventions.md) · [component-style.md](./component-style.md) · [site.md](./site.md)
 
-v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identity + `relay_instances` 心跳 + `home_instance_url` 路由）+ DB-backed 运行时配置（`relay_config` 表，SQLite / Postgres 双后端，取代原 `relay.json`）、远程文件浏览器（`FS_REQUEST/RESPONSE/EVENT` + `PASTE_FILE`）、会话侧栏置顶 + 搜索（`useSessionPins` / `sessionMatch.ts`）及其恢复期 pin 迁移、桌面启动致命错误非崩溃化（`StartupError`）、**web 主入口改挂桌面 `App.vue`**（`platform/web.ts` 桥接，删除独立的 `web/src/main/` 会话列表页与 `settings.html` / `admin.html` 主界面）、web 终端辅助键 + 显式选择图片/文件粘贴（复用 `TerminalView.vue`，走 `PASTE_IMAGE` / `PASTE_FILE`，受 driver + `remote_permission=full` 门控）。相关设计 doc：[session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [pinned-session-recovery-design](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md) · [web-layout-align-desktop-design](../superpowers/specs/2026-07-27-web-layout-align-desktop-design.md)。
+本文只描述当前稳定结构，不维护版本流水账。实现时间查 `git log`；历史取舍查
+`docs/superpowers/specs/`，阶段性实施范围查 `docs/tasks/` 与
+`docs/superpowers/plans/`。
 
 ## 一句话总览
 
@@ -68,8 +70,9 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 |------|------|------|------|
 | `proto` | `internal/proto/` | 帧协议常量 + 编解码 | 任何业务逻辑 |
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
-| `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子；AI 会话的 `task_state` 由客户端 hook 驱动（`hookDriven` 闩锁关闭静默启发式，OSC 133 D 解锁） | 不开 WS 不读 PTY |
-| `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
+| `session` | `internal/session/` | session 数据模型、legacy/compressed 订阅 fan-out、scrollback、lifecycle 钩子；AI 会话的 `task_state` 由客户端 hook 驱动（`hookDriven` 闩锁关闭静默启发式，OSC 133 D 解锁） | 不开 WS 不读 PTY |
+| `terminalcodec` | `internal/terminalcodec/` | 终端输出 codec header 与压缩/解压；供 relay、uplink 和 direct route 共用 | 不负责订阅协商、E2EE 或 seq |
+| `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY；共享持久化统一委托 `userstore` |
 | `rendezvous` | `internal/rendezvous/` + `cmd/atterm-rendezvous/` | 无账户 WSS presence、opaque topic discovery、120 秒加密信令 mailbox、无敏感 label 的 health/metrics | 不保存 membership/config，不解析 SDP/ICE，不转发 terminal frame，不提供 TURN |
 | `rendezvousclient` / `rendezvouscontract` | `internal/rendezvousclient/` + `internal/rendezvouscontract/` | 解析官方/自建 origin 与 STUN/TURN 本地配置；用同一黑盒契约验收部署 | 不参与 Peer 配置复制，不依赖服务端内部状态 |
 | `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webpush subscriptions / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）；历史 `webhooks` 表已由 migration 删除 | 不知道 HTTP / 不依赖 relay |
@@ -78,11 +81,13 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
 | `desktop/relay_host.go` | desktop | 启 mini relay，spawn PTY，AdoptSession | 不连远程 |
 | `desktop/uplink.go` | desktop | 远程 relay 客户端（lazy 协议） | 不直接拥有 PTY |
+| `prefssync` / `configsync` | `internal/prefssync/` + `internal/configsync/` | 账号 Relay 的 per-key LWW 偏好同步，以及 Peer Space 的签名配置复制/materialize | 不同步设备本地网络、凭据或运行态 |
 | `desktop/remote_fs.go` | desktop | 远程文件浏览器桥接：本机文件系统 CRUD + 回收站 + watch，响应 `FS_REQUEST`/发 `FS_EVENT`，受 `remote_permission=full` 门控；Relay 经 `internal/relay/fs_router.go` 按 requester 路由，Peer route 按 attempt 生命周期隔离 | 不做前端 UI、不越权访问未授权 session 的 host |
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
-| `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update / Pairing / Diagnostics / QuickTemplates) | 不实现协议 |
+| `desktop/app.go` | desktop | Wails bindings（Session / Relay / Update / Pairing / Diagnostics / Templates / SSH / Plugins）与启动编排 | 不实现 wire 协议 |
+| `desktop/widget_*` | desktop | 以同一已签名二进制的 `--widget` 子进程运行桌面挂件；主进程经 stdin/stdout NDJSON 推送解封后的投影与接收意图 | 子进程不连接 relay，不持有 token 或 `account_key` |
 | `web/` | web | Vue 3 + TypeScript + Naive UI 浏览器/PWA client；除 login/signup/setup/firstrun 几个独立小页面外，主入口 `index.html` 现在通过 `main-web.ts` → `desktop/frontend/src/main.web.ts` 挂载**桌面同一份** `App.vue`（见「前端架构细节」节），不再是独立的 `web/src/main/` 会话列表页；`settings.html` 已删除（设置并入 `App.vue` 的 `SettingsDialog.vue`），admin 面板由主 App.vue 内嵌为 AdminPanel 视图（TabBar 按钮切换），不再是独立的 `admin.html` MPA entry；终端辅助键、右键菜单、置顶/多选、选择图片/文件粘贴都复用桌面组件，通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token`（以及 web 专属的 pin/模板/aux-key 等 `platform/web.ts` 桥接的本地偏好） |
 | `internal/feishu` | internal | 飞书 client SDK：Cardkit v2 anchor card 渲染 + IM 消息 API + Router.InjectKeystrokesBySession（stroke dispatch 到本地 pty） | 不知道 hook payload 结构（那是 `desktop/feishu` 层）|
 | `desktop/feishu` | desktop | hook payload 解析、AskUserQuestion form 挂拆 lifecycle、stroke plan 构造、local 模式 LongConn subscriber | 不直接持有 pty；stroke 通过 `Router.InjectKeystrokesBySession` 送 |
@@ -273,20 +278,22 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 
 **rollout 解析只作 Codex 兼容 fallback 与内容流来源**：旧 Codex 或未启用 hook 时，rollout 只记录 cwd，不记录 atterm `session_id`；多个 pane 同时在一个目录运行时，单靠“哪个 jsonl 刚创建/更新”会让多个 resolver 认领同一会话。Linux desktop 因此从 PTY shell PID 沿 `/proc` 子进程树查找实际打开的 `rollout-*.jsonl`，只在唯一匹配时写入 SID，并只把 rollout 最近用户消息用作旧版 Codex 的标题兜底。desktop 进程还必须在 generation 生命周期内维护 `cwd + Codex SID` 活跃认领：恢复已有 SID、权威 hook SID 和 fallback 成功解析的 SID 都要同步认领，generation 取消或 PTY 关闭才释放；后续 resolver 的进程归属和文件变化候选都必须排除已认领 SID。只统计“尚未解析”的同 cwd resolver 不足以隔离会话，因为先解析成功的活跃 rollout 仍会继续更新。新版 Codex 通过 OSC 发布的生成式会话标题优先，rollout tracker 不得与它反复覆盖同一个 `Title` 字段。无进程级归属能力的平台仍可在同 cwd 只有一个活跃 resolver 时使用排除认领后的文件变化启发式；没有剩余唯一候选就保持未解析，遵守“抓不到优于抓错”。
 
-## phase 完成度（截至当前）
+## 当前能力边界
 
-- ✅ Phase 0：协议骨架，命令行 wrapper + relay + 浏览器 attach
-- ✅ Phase 1：Wails 桌面壳，多 tab，自动建会话，cwd-driven 标题
-- ✅ Phase 1.5：lazy 远程镜像（ANNOUNCE/STREAM_REQUEST/STOP），GUI 设置入口，cast 面板
-- ✅ Phase 2：每 tab 1/2/4 pane 分屏（layout pure fns + iTerm-style ⌘N/⌘⇧N 快捷键）；自动更新（GitHub Releases，Ed25519/SHA256 验签，dev 短路，用户手动 force install）
-- ✅ Phase 3：用户账号、邀请码、session token 鉴权、admin UI、Web Push、outbound webhook、Vue 3 + TypeScript + Naive UI Web/PWA、多语言
-- ✅ Phase 4a：Capacitor iOS WebView MVP、移动 relay setup、host-grouped mobile session list、touch terminal
-- ✅ Phase 4b：P0 任务状态模型 / 移动任务首页 / 通知深链 / 移动快捷控制 / relay setup wizard
-- ✅ Phase 4c（v0.4 引导可信度）：P1.6 桌面端 QR 配对 + 移动端扫码消费 token（`/api/pair/*`）；P1.7 relay `/healthz` + admin `/admin/health` 健康检查页；P1.9 iOS Keychain 安全存储 + ATS；P1.10 桌面诊断信息导出 + 脱敏
-- ✅ Phase 4d（v0.5 AI 任务控制台）：P2.11 session 类型分类（shell / ai / test / build / deploy，sticky non-shell）；P2.12 OSC 133 D 事件触发的 SessionSummary（ANSI-stripped tail + error lines），MetaPayload 携带 type + summary；P2.13 AI 快捷模板（QuickTemplate model + desktop Settings editor + 三端 bar）
-- ✅ Phase 4e（v0.6 mobile UX 收口，至 v0.2.39 全部落地）：移动端独立设置页 + 模板/aux 键编辑器 + 退出登录保留配置（#105）；终端首屏全屏（ResizeObserver 替换一次性 fit）+ viewer 锁尺寸（onMeta term.resize）（#106）；中文输入法 capture-phase 补获 `insertText`（#107）；设置改动通过事件总线（`mobile:shortcutsChanged` / `quickTemplates:changed`）实时同步到已开 tab（#108）；Capacitor 8 plugin 正式落地（#104 Keychain + #109 Camera/barcode 注册到 mobile/package.json + #113 keyboard accessory bar 隐藏）；QuickTemplate v2（hotkey + 直接发送 + 显示/隐藏开关 + 新默认值）+ 删 legacy quickInput 插件（#110 + #111）；防误触模式 banner（#100）
-- ✅ Remote Web Preview Phase 1：remote driver 手工暴露 owner loopback HTTP 端口；Wails/iOS 原生 loopback bridge；独立 E2EE service WS multiplex，不触碰 PTY lazy subscriber lifecycle
-- ⬜ Phase 5（未完成）：P1.8 桌面安装包 codesign + notarization；P3+ 单 session 分享 / presence / 审计日志 / 持久化历史 / 命令级回放
+- **本地终端**：Wails 桌面壳、多 tab 与 1/2/4 pane、PTY 初始 winsize、滚动历史、
+  工作区恢复、主题、链接/图片交互和手动验签更新均已进入稳定路径。
+- **远程终端**：账户 Relay 的 lazy mirror、driver/viewer、断线续传、回放进度、
+  legacy/compressed 双输出流、远程文件、按需输入历史和 Web Preview 已实现。
+- **跨端前端**：桌面、Web 主入口和 Capacitor iOS 都挂载共享 `App.vue` / `TerminalView.vue`；
+  平台差异收敛到 `platform/{wails,web,capacitor}.ts` 与少量 capability gate。
+- **账户与安全**：OPAQUE、`account_key` E2EE、QR pairing、Web Push、Admin、SQLite/Postgres
+  和多实例 realm/home routing 已实现。通用 outbound webhook 已退休，不得作为现役能力引用。
+- **AI/SSH 工作台**：任务状态与摘要、AI 会话恢复、Quick/Snippet、输入历史、飞书、
+  桌面挂件，以及 SSH 主机/密钥/转发/SFTP/导入链路已实现。
+- **Peer 路径**：Peer Space、Quick Tunnel、Rendezvous、Pion direct route 与配置复制已实现，
+  但官方 Rendezvous 部署、默认开启和真实 NAT/WebKit/iOS gate 仍以 `docs/roadmap.md` 为准。
+- **未完成边界**：macOS notarization/Windows 代码签名、正式的单 session 分享授权、
+  owner approve/revoke 控制权、审计日志和持久化命令级回放不属于当前稳定契约。
 
 ## 桌面端架构细节
 
@@ -295,15 +302,15 @@ desktop/main.go            创建 *App，wails.Run；OnStartup→app.startup，O
                            macOS-only: 自定义 NSMenu（保留 App + Edit role，不要 Window
                            submenu，让 ⌘W 留给前端）
                            var Version / UpdateVerifyPublicKey (ldflags 注入)
-desktop/app.go             A 持有 *relayHost、*uplink、*configStore、*Updater
-                           暴露 ~48 个 binding，按用途分组：session/relay/update/
-                           pairing/diagnostics/quicktemplates/plugin-fs/pin；
+desktop/app.go             App 持有 *relayHost、*uplink、*configStore、*Updater
+                           bindings 按 session/relay/update/pairing/diagnostics/
+                           templates/SSH/plugin/pin 分组；
                            CloseSession sync 注销（cleanup() 同步调，notifyChange 立即
                            推 ANNOUNCE，不等 pty.Wait）；
                            CreatePairingToken 用当前 RelayURL + session token 调
                            `/api/pair/create`，前端拿到 token 渲染 QR；
-                           GetQuickTemplates / SetQuickTemplates 读写
-                           appConfig.QuickTemplates；
+                           Get/SetQuickTemplates 与 Get/SetSnippets 读写本机配置，
+                           并通过 per-key prefs sync 推送可同步偏好；
                            GetDiagnostics / ExportDiagnostics 走 desktop/diagnostics.go
                            组装脱敏 payload + 平台 save dialog；
                            Get/SetPinnedSessionIds 读写 config.go::PinnedSessionIDs；
@@ -568,8 +575,7 @@ handler 同时服务 Quick Tunnel 与 Manual LAN，无法可靠区分来源时�
 
 ## Relay 多实例架构
 
-跨机 HA / 就近节点路由通过 realm identity + instance registry 实现（v0.3.x，全部合入
-`v0.3-dev`）：
+跨机 HA / 就近节点路由通过 realm identity + instance registry 实现：
 
 - **realm identity**：`internal/userstore/realm.go` 的 `relay_realm_state`（singleton
   row）持有整个集群共享的 `realm_id`，首次启动生成、永不变，直接影响 E2EE
@@ -603,7 +609,9 @@ relay admin 配置（`AdminConfig` / DB `relay_config`）覆盖运维场景：ra
 
 ```
 desktop/frontend/src/
-├── main.ts                Vue 入口
+├── main.ts                Wails 入口；通过 bootstrapApp 挂载共享 App.vue
+├── main.web.ts            Browser 入口；注入 web Platform 后挂载同一 App.vue
+├── main.capacitor.ts      Capacitor 入口；注入 native Platform/prefs sync 后挂载同一 App.vue
 ├── App.vue                双源轮询：local + remote /api/sessions；
                            tabs 模型：每 tab 持 layout (single/vertical/horizontal/grid2x2)
                            + panes[]；boot 时挂 measure probe（FitAddon proposeDimensions）
@@ -617,7 +625,10 @@ desktop/frontend/src/
 │                          初始 RESIZE（远端 attach 不打扰）；browser/web 下额外
 │                          渲染 aux key row（Enter/Esc/Tab/Ctrl-C/Ctrl-D/方向键）
 │                          与图片/文件 hidden input，发送 PASTE_IMAGE/PASTE_FILE
-│                          时要求 attached + driver + remote_permission=full
+│                          时要求 attached + driver + remote_permission=full；
+│                          remote 输出协商压缩流并在解密后解码；可选后台暂停
+│                          通过 subscription-active + transfer drain 控制 suspend；
+│                          pane 内按需打开本 session 的输入历史
 │   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge
 │                          + close-pane × 同行 flex 布局；close 按钮 mousedown
 │                          不冒泡，避免先激活其它 pane 再关错目标；saved-host SSH
@@ -625,9 +636,13 @@ desktop/frontend/src/
 │                          只作用于 terminal pane，不改变 App chrome
 │   ├── SettingsDialog.vue relay 配置 + Updates 区（current / latest / 进度 /
 │                          autocheck toggle / release notes / 三个按钮）
+│   ├── SettingsTemplates.vue Quick / Snippet 两类命令的编辑、转换和同步状态
 │   ├── ConfirmInstallDialog.vue force install & restart 确认弹窗，列出会被
 │                                 终止的本地 session 数 + 远端 detach 数
 │   ├── RemoteSessionsDialog.vue cast 面板：以 tab 形式打开远端 session
+│   ├── SessionInputHistoryPanel.vue 当前 pane 输入历史；本地直接读，远端走
+│   │                                  request/response + E2EE，支持图文复制
+│   ├── AdminPanel.vue     主 App 内嵌管理视图；桌面宽导航 + 窄屏横向 tabs
 │   ├── TaskSidebar.vue    会话侧栏容器：header 内联 `<input type="search">`
 │                          （`Cmd/Ctrl+Shift+F` focus，`Esc` 清空）+ `defineExpose({
 │                          focusSearch })`；`.title` ellipsis 应对窄侧栏
@@ -646,6 +661,8 @@ desktop/frontend/src/
 │   │                      持久化到 `desktop/config.go::PinnedSessionIDs`）
 │   ├── useCollapsedGroups.ts 侧栏分组折叠状态（`useSessionPins` 沿用同一
 │   │                          module-level ref 共享模式）
+│   ├── useTerminalSubscriptionActive.ts remote pane 的 active/visibility
+│   │                                    订阅策略；传输 drain 后才暂停
 │   └── useRecoverySnapshot.ts snapshot 写盘 + `buildSnapshot` 携带
 │                              pin 迁移用的 `session_id`（见「会话标识」节）
 ├── lib/
@@ -655,20 +672,23 @@ desktop/frontend/src/
 │   ├── proto.ts           帧编解码（与 web/src/shared/ws/protocol.ts 保持协议常量同步）
 │   ├── connection.ts      SessionConnection：WS attach + 重连 + 续传 +
 │                          sendResize 队列（WS 还在 CONNECTING 时缓存，ws.onopen
-│                          跟在 ATTACH 帧后 flush）
+│                          跟在 ATTACH 帧后 flush）+ compressed stream 协商 +
+│                          输入历史与文件传输 request 路由
+│   ├── terminalCompression.ts 解密后的 codec header 校验与流式解压
+│   ├── transferActivity.ts 文件/图片/FS transaction 活跃计数和 drain
 │   ├── sessionMatch.ts    `matchesSession(session, q)` 纯函数：title/cwd/
 │                          current_command case-insensitive substring；`q`
 │                          由调用方预先 trim + lowercase
 │   ├── shortcutBindings.ts `sidebar.focus-search`（默认 `Mod+KeyF`）等
 │                           快捷键 action 绑定表
-│   └── api.ts             Wails bindings 包装（不依赖 generated 文件，走
-│                          window.go.main.App.*；含 UpdateState 镜像）
+│   └── api/               按领域封装 Wails bindings；generated import 只留在
+│                          platform/wails.ts 与 API 边界
 ├── platform/              Wails / Capacitor / browser adapter；App 只依赖
 │                          `usePlatform()`，不要在其它目录直接 import wailsjs
 ├── plugins/               右侧插件槽：fileExplorer（本地/远程双源切换 +
 │                          编辑 + CRUD + 回收站，受 `remote_permission=full`
-│                          门控远程侧）/ translate（legacy quickInput 已删，
-│                          由 QuickTemplate 取代）
+│                          门控远程侧）/ deskWidget（主进程投影到独立挂件）/
+│                          translate
 └── i18n/                  desktop 前端中英 messages + useI18n()
 ```
 
@@ -695,16 +715,13 @@ web/src/
                            `sync/prefsSync.ts`（web 侧 `PrefsSyncEngine`，见下）
 ```
 
-`web/src/main/`、`web/src/settings/`、`web/src/admin/` 不再承载主体验；不要在这些路径复活第二套会话列表、设置页或管理后台。需要补 web-only 行为时，优先在 `desktop/frontend/src/platform/web.ts` 实现 `Platform` bridge，或在桌面组件里用 `platform.caps` 做能力分支。
+`web/src/main/`、`web/src/settings/`、`web/src/admin/` 不再承载主体验；不要在这些路径复活第二套会话列表、设置页或管理后台。需要补 web-only 行为时，优先在 `desktop/frontend/src/platform/web.ts` 实现 `Platform` bridge，或在共享组件里用 `platform.caps` 做能力分支。
 
-`desktop/frontend/src/main.web.ts` + `desktop/frontend/src/platform/web.ts` 是桥接层：
-`platform/web.ts` 用 `localStorage` + 同源 `apiFetch` 实现 `Platform` 接口（`getPins`/
-`setPins` 等），让同一份 `App.vue` 在 web 下无需 Wails 绑定即可跑（Capacitor 走的是独立的
-`main.capacitor.ts` + `mobile/MobileApp.vue`，不受影响）。已知 platform-capability gap（非本计划
-引入、任务 6.1 已记录为预期行为，未修）：`App.vue` 里少数几处（`refreshTerminalTheme` 等 boot
-step、`getStartupError`、`getCommandNotifyThresholdSeconds`）直接调 `lib/api.ts` 的 Wails-only
-`bindings()` 而不是走 `platform` 抽象，在 web 下会各打一条**非致命** console error/warning
-（`Wails 绑定尚未就绪`），不影响页面渲染或功能。
+`desktop/frontend/src/main.web.ts` + `desktop/frontend/src/platform/web.ts` 是浏览器桥接层：
+`platform/web.ts` 用 `localStorage` + 同源 `apiFetch` 实现 `Platform` 接口，让同一份
+`App.vue` 无需 Wails runtime 也能运行。Capacitor 同样通过 `main.capacitor.ts` +
+`platform/capacitor.ts` 挂载共享 App；平台特异的登录、安全存储、二维码、Web Preview、
+剪贴板和文件选择都留在 adapter/capability 边界。共享组件不得直接 import `wailsjs/*`。
 
 **pin 跨端同步**：`useSessionPins` 的 pin 变更（web 侧存 `localStorage`
 key `atterm.pinned_session_ids.value`）触发 `platform/web.ts::sessions.setPins` →
@@ -726,8 +743,10 @@ mobile/                                   Capacitor 壳（capacitor.config.json 
     ├── App/MainViewController.swift      CAPBridgeViewController 子类，
     │                                     capacitorDidLoad() 里
     │                                     bridge?.registerPluginInstance(...)
-    ├── App/Plugins/AttermSecureStorage/  自定义 plugin（Keychain）
-    │                                     CAPBridgedPlugin conformance
+    ├── App/Plugins/AttermSecureStorage/  Keychain
+    ├── App/Plugins/AttermQRScanner/      QR pairing
+    ├── App/Plugins/AttermServicePreview/ 本机 preview bridge
+    │                                     三者均需 CAPBridgedPlugin conformance
     ├── App/Info.plist                    NSCameraUsageDescription /
     │                                     NSPhotoLibraryUsageDescription /
     │                                     NSPhotoLibraryAddUsageDescription
@@ -736,21 +755,20 @@ mobile/                                   Capacitor 壳（capacitor.config.json 
 
 desktop/frontend/src/
 ├── main.capacitor.ts                     Capacitor 入口；启动调
-│                                          Keyboard.setAccessoryBarVisible(false)
-└── mobile/                               所有移动专属组件
-    ├── MobileApp.vue                     view: 'setup' | 'list' | 'terminal' | 'settings'
-    ├── MobileSetup.vue                   scheme dropdown + host input + token
-    │                                     + 仅 http 时显示 insecure 开关
-    ├── MobileSessionList.vue             gear emit openSettings（不再 editRelay）
-    ├── MobileSettings.vue                语言 / 模板编辑器 / aux 键编辑器 / 退出登录
-    │                                     emit 'mobile:shortcutsChanged' 同步开终端
-    ├── MobileListEditor.vue              通用增删改/重排/重置组件
-    └── MobileTerminal.vue                xterm + 防误触 banner + AUX bar + template bar
-                                          + ResizeObserver（driver fit）
-                                          + onMeta viewer 锁尺寸
-                                          + onImeInput capture 阶段补获 insertText
-                                          + Camera.getPhoto 图片上传
+│                                          Keyboard.setAccessoryBarVisible(false)，
+│                                          安装 Capacitor prefs sync，挂载共享 App.vue
+├── platform/capacitor.ts                 relay auth、Keychain、QR、文件/图片、
+│                                          preview 与本地偏好的 Platform adapter
+├── components/SettingsAccount.vue        登录、退出、扫码配对
+├── components/SettingsPairingConsume.vue pairing token 消费与 auth-restored 事件
+├── components/SettingsSSHHostsMobile.vue SSH 设置的窄屏入口
+└── components/TerminalView.vue           桌面/Web/iOS 共用 xterm、AUX、模板、IME、
+                                           ResizeObserver、viewer 尺寸与 paste gate
 ```
+
+Capacitor 不维护第二套 `MobileApp` / `MobileTerminal` / `MobileSettings`。窄屏布局由
+共享 `App.vue`、`SettingsDialog.vue`、`PaneGrid.vue` 和 `TerminalView.vue` 的响应式样式
+负责；移动端差异必须通过 `platform.caps` 或 native adapter 表达，不能复制业务组件。
 
 **Plugin 注册三件套（红线 #15）**：
 
@@ -764,13 +782,14 @@ desktop/frontend/src/
 
 `mobile/package.json` 的 `ios:open` script 已自动串 `npm install + cap sync`。
 
-**事件总线（同进程 pub/sub，platform.events）**：
+**事件总线（同进程 pub/sub，`platform.events`）**：
 
-- `mobile:shortcutsChanged`（mobile）：MobileSettings 改完后 emit，
-  MobileTerminal 订阅重新 `effectiveTemplates / effectiveAuxKeys / loadHidden`。
-  绕过 `active` prop 不变的死角（进设置页时 activeSessionId 不变）。
-- `quickTemplates:changed`（desktop）：SettingsTemplates 改完后 emit，
-  desktop TerminalView 订阅重新 reload。
+- `quickTemplates:changed`：共享 `SettingsTemplates` 保存 Quick/Snippet 或导入完成后发出，
+  所有已挂载 `TerminalView` 重新加载模板栏。
+- `mobile:shortcutsChanged`：保留给 Capacitor aux-key 兼容路径；共享 `TerminalView` 同时订阅
+  两个事件，避免设置页往返时 active session 未变化而快捷栏不刷新。
+- `prefs:changed` / `prefs:remote-changed`：账号偏好 pull 或远端通知后刷新 pin、模板、
+  Snippet、语言等可同步投影；设备本地 capability 和凭据不参与同步。
 
 ## Demo 站点（site/）
 
@@ -799,7 +818,7 @@ boot →
 
 发现新版（state.Available=true）→
   ⚙ badge dot 亮（App.vue 5s poll GetUpdateState 维持）
-  Settings 显示 "v0.2.0 available · [Download]"
+  Settings 显示 "<version> available · [Download]"
 
 用户点 Download →
   StartDownload() → fetch asset → ${UserCacheDir}/atterm/updates/<ver>-<asset>.partial
@@ -821,7 +840,12 @@ helper 在子进程跑：
 Windows helper 分成原用户父进程与提权 worker：父进程用
 `Start-Process -Verb RunAs -Wait -PassThru` 等待 worker；worker 只等待旧进程、
 解压、替换和清理。worker 成功后由父进程启动新副本，因此继续读取发起更新用户的
-`%APPDATA%\atterm` 和 Windows Credential Manager。
+`%APPDATA%\atterm` 和 Windows Credential Manager。禁止从提权 worker 启动 AT Term，
+否则 UAC 使用不同管理员账号时会表现为 Relay 登录、SSH hosts 和本地设置全部丢失。
+
+更新前后不迁移或重写 `config.json`。文件不存在才按首次启动使用默认值；读取失败或
+JSON 损坏时，`configStore` 记录 load error，启动通过 `StartupError` 呈现，并拒绝所有
+后续写入，避免空配置覆盖仍可人工恢复的原文件。
 
 release CI：
 

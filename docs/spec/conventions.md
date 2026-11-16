@@ -1,7 +1,7 @@
 # 代码约定
 
 > **Audience**: 改 Go / 前端代码的工程师
-> **Last updated**: 2026-07-29
+> **Last updated**: 2026-11-16
 > **Status**: stable
 > **See also**: [component-style.md](./component-style.md) · [architecture.md](./architecture.md)
 
@@ -169,9 +169,10 @@ if err != nil {
   `SettingsTemplates.test.ts` 锁住增删改 + reset + hotkey 字段 + show-bar 开关；
   mobile / desktop / web TerminalView 测试断言点击模板按钮**直接** `sendInput(text + '\r')`，
   无预览对话框；desktop 还要覆盖 hotkey 解析（`Mod`/`Alt`/`Shift`+key）+ 仅 focused pane 响应
-- 移动端模板/快捷键事件总线测试：`MobileSettings.test.ts` 验证保存模板/aux 键后
-  emit `mobile:shortcutsChanged`；`MobileTerminal.test.ts` 验证订阅事件 → reload bar
-- 移动端 IME 测试：`MobileTerminal.test.ts` 用 jsdom InputEvent 验证
+- 移动端模板/快捷键事件总线测试：`SettingsTemplates.test.ts` 验证保存 Quick/Snippet
+  后 emit `quickTemplates:changed`；`TerminalView.test.ts` 验证共享终端订阅
+  `quickTemplates:changed` / `mobile:shortcutsChanged` 后 reload bar
+- 移动端 IME 测试：`TerminalView.test.ts` 用 jsdom InputEvent 验证
   `insertText && !isComposing` 触发 `sendInput`，`insertCompositionText` 不被劫持
 - 移动端 fit / viewer 锁尺寸测试：mock `ResizeObserver` + xterm `resize` 验证
   viewer 收到 `meta.cols/rows` 时 `term.resize(cols, rows)`、driver 不锁
@@ -332,7 +333,7 @@ Capacitor 8 把 plugin 发现从 ObjC runtime 改成了 SwiftPM + `CAPBridgedPlu
 
 iOS 中文九宫格的 `，。？！` / 数字 / 空格走 `input` 事件
 （`inputType='insertText'`、`isComposing=false`），xterm 的 handler 不 forward。
-`MobileTerminal` 在 `term.textarea` 的 **capture 阶段**监听 `input`：
+共享 `TerminalView` 在 `term.textarea` 的 **capture 阶段**监听 `input`：
 
 ```ts
 const ta = term.textarea
@@ -599,6 +600,8 @@ non-shell 时才覆盖。这条 sticky 规则保证：
 "sticky" 补丁，否则两层规则会互相打架。`type` 同样需要走 MetaPayload 广播
 路径（P2.12 之前漏了这点，导致已连接的 subscriber 拿不到实时类型变化）。
 
+### 会话输入历史
+
 会话输入历史需要区分“用户实际输入”和“shell 将执行的命令”。新版 shell
 integration 在 `C` 前发送 Atterm 私有 `OSC 133;I;<raw>`：`I` 只暂存原始输入，
 紧随的 `C` 才确认执行边界并触发历史追加；`CurrentCommand`、`ClassifyCommand` 和 AI
@@ -661,7 +664,7 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
 - ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用 Vite 打包出来的同源 assets，避免 CSP/PWA 回归
 - ❌ 服务端接受 `?token=` 鉴权，或让浏览器长期把 secret 留在地址栏、日志或可分享 URL 中；手工打开 web 页面只能用 `#token=...` fragment bootstrap，WS 鉴权必须用 `Sec-WebSocket-Protocol`
-- ❌ 把用户凭据明文（密码、邀请码、API token、cookie 值）写进数据库、日志或任何持久化路径——全部以 `sha256`/`argon2id` 散列存储，明文仅在签发时返回一次
+- ❌ 把用户凭据明文（密码、claim/pairing/session token、cookie 值）写进数据库或日志。密码只参与客户端 OPAQUE；服务端保存 OPAQUE record，bearer/一次性 token 只保存不可逆摘要或受限状态，明文仅在签发/握手时出现
 - ❌ 把远程权限只做成 UI 提示；relay 和 desktop host 都必须实际拦截越权帧
 
 ## Release 签名与发版

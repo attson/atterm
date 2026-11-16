@@ -1,3 +1,7 @@
+---
+description: 在 AT Term 中跟踪和恢复 Claude Code、Codex、Aider、Gemini CLI 会话，并通过飞书卡片远程处理 AskUserQuestion。
+---
+
 # AI Agent 与 Feishu
 
 ## AI agent 支持

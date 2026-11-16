@@ -1,5 +1,10 @@
 # Termius 本机迁移
 
+> **Audience**: 维护 Termius 导入、源数据解密或迁移 UI 的工程师
+> **Last updated**: 2026-11-16
+> **Status**: stable
+> **See also**: [architecture.md](./architecture.md) · [conventions.md](./conventions.md) · [component-style.md](./component-style.md)
+
 桌面 SSH 管理面板提供「从 Termius 导入」。用户先退出 Termius，选择数据目录，扫描、勾选并确认。扫描前检查 Termius 主进程及 Helper；仍在运行（含托盘后台）或进程检查失败时，阻止读取数据库与钥匙串并提示重试。检测到多个安装目录时必须明确选择，不合并不同安装的数据。Web 和移动端不提供此入口。
 
 ## 模块边界

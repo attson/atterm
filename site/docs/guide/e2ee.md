@@ -1,3 +1,7 @@
+---
+description: 了解 AT Term 的 OPAQUE 登录、account_key 管理、端到端加密信封、远程权限与自托管 Relay 安全边界。
+---
+
 # 端到端加密与安全
 
 ## 启用端到端加密
@@ -8,7 +12,6 @@
 
 - 终端 OUT 字节、会话标题 / cwd / 当前命令、任务摘要、命令完成 push body 都封装上链,relay 收到的就是密文。
 - 浏览器 / 桌面 / 移动端在本地解密;service worker 命令完成通知会通过 `MessageChannel` 找到可见 tab 解密,渲染出富文本(无可见 tab 时退化到通用文案)。
-- Webhook 接收端(飞书 / generic JSON)此时只看到 `Session command finished` + 一段 base64 `sealed_body`;要解开就拿 `account_key` 自己 AEAD-open。
 
 ## 加密细节
 

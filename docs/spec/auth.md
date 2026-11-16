@@ -1,11 +1,12 @@
 # Auth — Atterm Session Token + OPAQUE + E2EE 钥匙环
 
 > **Audience**: 实现或审计 atterm 鉴权层与端到端加密的工程师
-> **Last updated**: 2026-07-29
+> **Last updated**: 2026-11-16
 > **Status**: stable
 > **See also**: [protocol.md](./protocol.md) · [architecture.md](./architecture.md) · [../superpowers/specs/2026-06-15-relay-e2ee-design.md](../superpowers/specs/2026-06-15-relay-e2ee-design.md)
 
-v0.3.x：登录响应新增 `realm_id` + `home_instance_url`（多实例路由，见 §4.3）；`remote_permission=full` 现在也门控远程文件浏览器的 `FS_REQUEST`（见 §2、§10）。详见 [architecture.md](./architecture.md) §Relay 多实例架构。
+本文描述当前鉴权与内容密钥契约，不维护版本流水账。多实例登录字段见 §4.3，
+远程权限与文件访问边界见 §2、§10。
 
 ## 目录
 
@@ -164,7 +165,7 @@ sequenceDiagram
 1. 客户端 `POST /api/auth/register/init` → `POST /api/auth/register/finalize`；密码只在客户端参与 OPAQUE。
 2. finalize body 带 `email`、OPAQUE `RegistrationRecord`、`account_key_wrap`，以及**可选** `claim_token`。
 3. `claim_token` 只用于授予角色（bootstrap admin，见 §4.1 / §8）；注册本身**不被邀请码门控**，留空也能注册。
-4. 成功一次性返回 `session_token` + user 摘要；客户端持久化（web → sessionStorage / localStorage；mobile → Keychain；desktop → `appConfig.RelaySessionToken`）。
+4. 成功一次性返回 `session_token`、`user_id`、`is_admin`、`realm_id`；客户端按平台保存 session 凭据，`account_key` 则遵守 §12.7 的独立存储规则。
 
 ### 4.3 登录（OPAQUE，邮箱 + 密码）
 
@@ -173,13 +174,13 @@ sequenceDiagram
 要点：
 
 1. `POST /api/auth/login/init` → `POST /api/auth/login/finalize`；本地用密码跑 OPAQUE，relay 全程接触不到密码或口令哈希。
-2. finalize 返回 `session_token` + `account_key_wrap`（客户端本地解开拿回 32B `account_key`）+ user 摘要 + `realm_id` + `home_instance_url`（v0.3.x 多实例栈新增，见下）。
+2. finalize 返回 `session_token` + `account_key_wrap`（客户端本地解开拿回 32B `account_key`）+ `user_id` + `realm_id` + `home_instance_url`。
 3. 后续请求带 `Authorization: Bearer <session_token>`；WS 升级带 `Sec-WebSocket-Protocol: atterm-token.<session_token>`。
 4. 特权操作（`DELETE /api/me` 等）需 step-up：再走一次 `/api/auth/stepup/{init,finalize}` 换 60s 单次有效的 `step_up_token`（`internal/relay/opaque_stepup.go`）。
 
 完整 OPAQUE 套件、endpoint、数据模型与时序见 §12。`GET /api/me`（Bearer）→ `LookupSession(sha256(token))` → user 摘要，这部分与认证方式无关。
 
-**登录响应新增字段（v0.3.x，多实例路由）**：`internal/relay/opaque_auth.go::loginFinalizeResponse` 在 `session_token` / `account_key_wrap` / `user` 之外，携带：
+**多实例登录字段**：`internal/relay/opaque_auth.go::loginFinalizeResponse` 在 `session_token`、`account_key_wrap`、`user_id` 之外携带：
 
 | 字段 | 来源 | 客户端行为 |
 |------|------|------------|
@@ -476,7 +477,9 @@ WS 升级失败统一表现为 HTTP 状态码（在 upgrade 之前），客户�
 
 ## 12. OPAQUE 与 account_key（E2EE 钥匙环）
 
-§1–11 描述的是 **服务端可信** 的 session 鉴权层：relay 看得到密码哈希、session token 哈希、和明文请求内容。E2EE（M1–M6 系列，至 v0.2.110 落地）把内容保护从 transport 层延伸到 relay 不可读的端到端密文，靠两个独立的密钥：
+§1–11 的 session token 只解决“请求属于谁”，不能单独保证 relay 看不到内容。
+OPAQUE 与 E2EE 把口令校验和内容保护延伸到客户端：relay 不接收明文密码，
+内容字段在 owner/client 之间以端到端密文传递。链路依赖两个独立的密钥体系：
 
 - **OPAQUE PAKE** — 注册 / 登录 / step-up 时双方协商出 session key，relay 全程**接触不到密码或派生的口令哈希**。
 - **`account_key`** — 客户端本地随机生成的 32 字节内容主密钥；用密码派生的 wrap key + XChaCha20-Poly1305 封装存 relay 一份 `account_key_wrap` blob，登录时本地解开。所有 sealed 字段（`OUT`、`SessionInfo.Sealed`、`MetaPayload.Sealed`、`CommandEventPayload.SealedBody`）都用 `HKDF-SHA256(account_key, "atterm-session-v1" ‖ session_uuid)` 派生的 session key AEAD 封装。
@@ -489,13 +492,20 @@ WS 升级失败统一表现为 HTTP 状态码（在 upgrade 之前），客户�
 
 | 参数 | 值 | 备注 |
 |------|-----|------|
-| Key exchange | `OPAQUE_P256`（P-256-SHA256） | 选 P-256 是 [@cloudflare/opaque-ts](https://github.com/cloudflare/opaque-ts) 唯一支持的，覆盖浏览器/桌面/iOS |
-| Memory-hard function | `Scrypt` | 同上；bytemare 默认是 Argon2id 但 TS 端不支持 |
+| Key exchange | `OPAQUE_P256`（P-256-SHA256） | `internal/opaquesuite.Config()` 的持久 wire 契约 |
+| Memory-hard function | `Scrypt` | OPAQUE KSF；与 account-key wrap 的 Argon2id 是两件事 |
 | `ServerIdentity` | `"atterm-relay"`（UTF-8） | 双端硬编码；绑进 AKE transcript |
 | `ClientIdentity` | 用户邮箱 | 同上；防止 evil-server pinning |
-| 实现 | Go：`bytemare/opaque@v0.10.0`；TS：`@cloudflare/opaque-ts@^0.7.5` | 两端跨语言互操作有 contract test |
+| 实现 | 全端 `github.com/bytemare/opaque@v0.10.0` | relay/desktop 直接使用 Go 包；Web/iOS 使用 `cmd/opaque-wasm` 构建的同一实现 |
 
-**红线（也是 [AGENTS.md](../../AGENTS.md) §20）**：改套件必须两端一起改。Go 一边换 ristretto255 / TS 一边升新版本都会让握手当场断在 `unsupported KE2 length`。
+套件、server identity 和构建入口只有一处权威：`internal/opaquesuite`。Relay
+`internal/relay/opaque_server.go`、桌面 SDK `internal/e2eeclient`、浏览器/iOS 的
+`cmd/opaque-wasm` 全部调用它。历史 `@cloudflare/opaque-ts` 与 bytemare 的客户端 AKE
+密钥对派生不兼容，即使参数表看起来相同也会得到 `invalid credentials`；禁止重新引入。
+
+WASM 产物由 `scripts/build-opaque-wasm.sh` 构建，必须保留 `-trimpath -buildvcs=false`。
+Web embed drift gate 还要求 CI 与本地使用固定 Go patch 版本。跨端互通测试位于
+`web/tests/unit/opaque-interop.test.ts`，需要真实 `$ATTERM_RELAY_URL`。
 
 ### 12.2 OPAQUE endpoint
 
@@ -504,9 +514,9 @@ WS 升级失败统一表现为 HTTP 状态码（在 upgrade 之前），客户�
 | 路径 | 用途 | 输入 | 输出 |
 |------|-----|------|------|
 | `POST /api/auth/register/init` | 注册第一步 | `email`、`opaque.RegistrationRequest`（base64） | `opaque.RegistrationResponse`（base64） |
-| `POST /api/auth/register/finalize` | 注册第二步 | `email`、`opaque.RegistrationRecord`、`account_key_wrap`（见 §12.3）、**可选** `claim_token` | `session_token` + `*User` 摘要 |
+| `POST /api/auth/register/finalize` | 注册第二步 | `email`、`opaque.RegistrationRecord`、`account_key_wrap`（见 §12.3）、**可选** `claim_token` | `session_token` + `user_id` + `is_admin` + `realm_id` |
 | `POST /api/auth/login/init` | 登录第一步 | `email`、`opaque.KE1` | `opaque.KE2`（含 envelope） |
-| `POST /api/auth/login/finalize` | 登录第二步 | `email`、`opaque.KE3` | `session_token`、`account_key_wrap`、`*User` |
+| `POST /api/auth/login/finalize` | 登录第二步 | `email`、`session_id`、`opaque.KE3` | `session_token`、`account_key_wrap`、`user_id`、`realm_id`、`home_instance_url` |
 | `POST /api/auth/stepup/init` | 特权操作再认证 | 同 login/init | KE2 |
 | `POST /api/auth/stepup/finalize` | 特权操作再认证 | 同 login/finalize | `step_up_token`（60 秒、单次有效） |
 
@@ -522,7 +532,7 @@ WS 升级失败统一表现为 HTTP 状态码（在 upgrade 之前），客户�
 |------|------|------|------|
 | `users.auth_mode` | TEXT NOT NULL DEFAULT 'opaque' | migration 0003 | 旧 `password_hash` 列在同一个 migration 里被 DROP 掉；OPAQUE 之后没有 bcrypt 回退路径 |
 | `user_opaque_records.record` | BLOB | OPAQUE 注册时 `bytemare/opaque.RegistrationRecord` 的 serialize 输出 | 服务端永远只有这份；丢了等于密码丢了 |
-| `user_account_key_wraps.{wrapped,nonce,salt,kdf_params,method}` | BLOB / TEXT | 客户端 `AccountKeyWrap{ method, wrapped, nonce, salt, kdf_params }` | 见 §12.4。`PRIMARY KEY (user_id, method)`，方便未来加 `method = 'recovery_code'` 等多重 wrap |
+| `user_account_key_wraps.{wrapped,nonce,salt,kdf_params,method}` | BLOB / TEXT | 客户端 `AccountKeyWrap{ method, wrapped, nonce, salt, kdf_params }` | 见 §12.4。当前只允许 `method = 'password'`；没有 recovery wrap |
 | `opaque_server_state.{oprf_seed,server_ake_sk,server_ake_pk,suite}` | BLOB / TEXT | 首次启动时随机生成 | 单行（`id = 1`），跨重启稳定；丢了等于所有用户得重新注册 |
 
 **Step-up token 是 in-memory, 不入库**：`internal/relay/opaque_stepup.go` 维护一个进程内 map `{token → (userID, expiresAt)}`。明文 token 格式 `stepup_<base64url(32 random bytes)>`，60 秒 TTL，单次有效（`ConsumeStepUpToken` 在校验通过后立即 `delete` 表项）。Relay 重启 = step-up 池清零，用户需重新走 init/finalize；该取舍是有意的（重启窗口本身就是异常状态，且 in-memory 比 DB token 难偷）。
@@ -573,7 +583,7 @@ AccountKeyWrap = {
                                       (可选 claim_token → 校验+提权)
                                       持久化 users.opaque_record + account_key_wrap
                                       生成 session_token (明文返回一次)
-  ◄── { session_token, user } ───────
+  ◄── { session_token, user_id, is_admin, realm_id }
   本地 saveAccountKey(account_key)
 
 
@@ -588,7 +598,8 @@ AccountKeyWrap = {
   ─── POST /api/auth/login/finalize ─►
                                       ake4(KE3) → 验通过
                                       新 session_token (明文返回一次)
-  ◄── { session_token, account_key_wrap, user }
+  ◄── { session_token, account_key_wrap, user_id,
+        realm_id, home_instance_url }
   account_key = unwrapWithPassword(password, account_key_wrap)
   saveAccountKey(account_key)
 
@@ -597,17 +608,17 @@ step-up（DELETE /api/me 等特权操作）：
   Client                              Relay
   ───────────────────────────────────────────────────
   KE1 = ake1(password)
-  ─── POST /auth/stepup/init ────────►  （走和登录一样的 OPAQUE，但 finalize 路径不同）
+  ─── POST /api/auth/stepup/init ────►  （走和登录一样的 OPAQUE，但 finalize 路径不同）
   ◄── KE2 ────────────────────────────
   KE3 = ake3(KE2)
-  ─── POST /auth/stepup/finalize ────►
+  ─── POST /api/auth/stepup/finalize ►
                                       生成 step_up_token (60s)
   ◄── { step_up_token } ─────────────
   ─── DELETE /api/me ────────────────►
        Authorization: Bearer <session>
        X-Step-Up-Token: <step_up_token>
-                                      校验 token_sha256 + expires_at + consumed_at
-                                      标记 consumed_at = now
+                                      校验进程内 token 的 user_id + expires_at
+                                      成功后从 map 删除
                                       执行 delete
 ```
 
@@ -622,7 +633,7 @@ step-up（DELETE /api/me 等特权操作）：
 - **没有密码恢复**：忘记密码 = admin reset = 新 `opaque_record` + 新 `account_key_wrap` + 客户端重新生成 `account_key`。旧会话的 ringbuf 密文（如果 relay 持久化了）永久不可解。这是单用户自托管定位下的设计选择；不要给"备用问题 / 邮件链接"加分支，那会让 relay 重新拿到内容密钥。
 - **OPAQUE record 不可重置**：服务端不存密码、不存能恢复密码的中间产物。被偷库的攻击者仍然要花暴破 OPAQUE envelope 的代价，不是简单的 sha256 撞库。
 - **`account_key_wrap` 是客户端 secret，不应给到第三方**：admin 后台不能查；只在 login finalize 响应里下发给账号本人。
-- **step-up token**：60s + 单次有效 + sha256 入库。明文只在 finalize 响应里出现，客户端立刻塞进 `X-Step-Up-Token` header 用掉，不要持久化。
+- **step-up token**：60s + 单次有效，只存在 relay 进程内 map，不入库。明文只在 finalize 响应里出现，客户端立刻塞进 `X-Step-Up-Token` header 用掉，不要持久化。多实例部署中 init/finalize/受保护请求必须落到同一 home instance；进程重启会使未使用 token 失效。
 - **`account_key` 永远不进 URL / 日志 / IndexedDB / postMessage 广播**（[AGENTS.md](../../AGENTS.md) §21）。SW 解密 push body 只能通过 `MessageChannel` 跟可见 client 协商一次性 reply。
 
 ### 12.7 客户端实现要点（OPAQUE / `account_key`）
@@ -630,22 +641,22 @@ step-up（DELETE /api/me 等特权操作）：
 | 平台 | OPAQUE 客户端 | account_key 持久化 |
 |------|---------------|-------------------|
 | Go（desktop） | `internal/e2eeclient`（bytemare/opaque@0.10.0 wrapper） | `zalando/go-keyring`（macOS Keychain / Linux Secret Service / Windows Credential Manager） |
-| Web | `web/src/shared/lib/opaque.ts`（cloudflare/opaque-ts + noble/argon2id + noble/xchacha20-poly1305） | `sessionStorage["atterm.account-key"]`，tab 关掉就丢 |
-| iOS Capacitor | `desktop/frontend/src/lib/opaque.ts`（同 web） | `mobile/ios/.../AttermSecureStorage.swift` Keychain plugin（红线 #15：plugin 必须装在 `mobile/package.json`） |
+| Web | `web/src/shared/lib/opaqueWasm.ts`（bytemare WASM）；`opaque.ts` 只负责 noble Argon2id/XChaCha20 wrap 与内容解密 | `sessionStorage["atterm.account-key"]`，tab 关掉就丢 |
+| iOS Capacitor | `desktop/frontend/src/lib/opaqueWasm.ts`（同一 bytemare WASM 的镜像 loader）；`opaque.ts` 负责 wrap/内容解密 | `mobile/ios/App/App/Plugins/AttermSecureStorage/` Keychain plugin |
 
 跨平台都遵守同一份 cache 注册表 `desktop/frontend/src/lib/account-key.ts`：上层模块 `setAccountKeyProvider()` 注册取 key 的函数，业务代码用 `getCurrentAccountKey()` 同步拿，避免每次解密都 round-trip 到 platform layer。
 
 平台特异 fallback：
 
 - **Desktop**（`desktop/account_key_store.go`）：`zalando/go-keyring` 调系统 Secret Service（macOS Keychain / Linux libsecret / Windows Credential Manager）。注册/登录成功后 `saveAccountKey(relayOrigin, userID, key)` 写入；boot 时 `loadAccountKey` 读出装到 `App.accountKey`（受 `accountKeyMu` 互斥保护），前端通过 `GetAccountKey` Wails binding 同步取。容器内无 D-Bus、钥匙串临时锁、Linux 桌面缺 `gnome-keyring-daemon` 等失败路径，按 `account_key_store.go:49` 注释「fall back to the in-memory state」处理——`account_key` 本次进程内继续可用，下次启动钥匙串不可用时则要求重新登录，但不会让 app 启动失败。
-- **iOS**（`mobile/ios/App/App/Plugins/SecureStorage/AttermSecureStorage.swift`）：自定义 Capacitor plugin 用 `SecItemAdd` / `kSecAttrAccessibleAfterFirstUnlock`。**必须**按 [AGENTS.md](../../AGENTS.md) §15 在 `MainViewController.capacitorDidLoad()` 里 `bridge?.registerPluginInstance(...)` 注册；漏注册时 `desktop/frontend/src/platform/capacitor.ts` 检测到 `PLUGIN_NOT_AVAILABLE` 同样降级为 in-memory（行为同 Desktop fallback：本次可用，重启即丢）。CI 不构建 iOS，这条只能在真机 / 模拟器复测（参见 v0.2.36 / PR #101 修复）。
+- **iOS**（`mobile/ios/App/App/Plugins/AttermSecureStorage/AttermSecureStoragePlugin.swift`）：自定义 Capacitor plugin 用 `SecItemAdd` / `kSecAttrAccessibleAfterFirstUnlock`。**必须**按 [AGENTS.md](../../AGENTS.md) §15 在 `MainViewController.capacitorDidLoad()` 里 `bridge?.registerPluginInstance(...)` 注册；漏注册时 `desktop/frontend/src/platform/capacitor.ts` 检测到 `PLUGIN_NOT_AVAILABLE` 同样降级为 in-memory（行为同 Desktop fallback：本次可用，重启即丢）。CI 不构建 iOS，这条只能在真机 / 模拟器复测。
 - **Web**：`sessionStorage["atterm.account-key"]` 写完即可用，无失败路径；tab close 自然清空，符合 §12.6 「不持久化到 IndexedDB」的红线。
 
 ### 12.8 已知 gap
 
-完整列表见 e2ee design §"Known gaps after v0.2.110"。auth 层面值得记一笔的：
+更早的威胁模型和历史 gap 见 E2EE design。当前 auth 层仍需明确的边界：
 
 - **没有密码找回** — 见 §12.6，单用户自托管定位下不计划做。
-- **OPAQUE 套件选择是"够用最广"而非"最强"** — P-256-Scrypt 是浏览器侧 TS 库唯一支持的；想升 ristretto255-Argon2id 需要 Cloudflare TS 库或自己实现，外部审计后再评。
+- **OPAQUE 套件是持久兼容契约** — P-256-SHA256 + Scrypt 已写入 `opaque_server_state.suite` 并绑定所有现有注册记录。即使全端已统一 bytemare，也不能原地切换 ristretto255/Argon2id；升级需要明确的账号迁移和跨端互通方案。
 - **`account_key_wrap` 的 wrap KDF 参数固定**（64 MiB / t=3 / p=1） — 老设备（旧 iPhone）可能慢；想做按设备协商需要在 `account_key_wrap.kdf_params` 里加 capability 字段并发回去存。M7-audit 列入。
 - **step-up token 只覆盖 `DELETE /api/me`** — 未来若加"修改邮箱"、"修改密码"、"轮转 `account_key`" 等特权操作应该都过 step-up 门。

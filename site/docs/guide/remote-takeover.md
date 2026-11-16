@@ -1,3 +1,7 @@
+---
+description: 使用 AT Term 从浏览器、iPhone 或另一台电脑安全接管桌面终端会话，了解 lazy 上传、driver/viewer 权限、会话侧栏和通知。
+---
+
 # 远程接管与会话侧栏
 
 ## 远程接管(lazy 同步)
@@ -17,7 +21,7 @@
 ## 任务状态闭环
 
 - OSC 133 推导 running / waiting-input / completed / failed / disconnected 状态,三端同步。
-- 命令完成触发系统通知、Web Push、出站 webhook(飞书 / generic JSON);payload 带 session id / 任务类型 / summary。
+- 命令完成可触发系统通知、Web Push 和飞书卡片；通知按 session id 路由回对应会话。
 - AI 任务控制台:自动给 `codex` / `claude` / `gemini` / `aider` / `go test` / `docker build` / `kubectl` 等命令打 type chip;失败卡片附 error 行;可配快捷模板(`yes / ok / continue / commit / push / release / 1 / 2 / 3` 默认,hotkey 可绑)。
 
 ## 桌面挂件
@@ -43,7 +47,6 @@
 - **系统通知**:桌面原生通知,点击直接路由到对应 session(通知带 `session_id` payload)。
 - **Web Push**:浏览器 / PWA 订阅后收命令完成推送(iOS 有平台限制,详见项目 `docs/features/web-push.md`)。
 - **飞书卡片**:锚点卡片承载 AI 会话,支持远程回答(见 [AI Agent 与 Feishu](/guide/ai-agents))。
-- **出站 webhook**:generic JSON,payload 带 session id / 任务类型 / summary。
 
 ## 会话恢复
 

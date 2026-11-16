@@ -156,6 +156,10 @@ describe("SessionInputHistoryPanel", () => {
     expect(source).toMatch(/\.session-input-history-text\s*\{[\s\S]*?white-space:\s*pre-wrap/);
   });
 
+  test("caps the desktop panel height while keeping short panes responsive", () => {
+    expect(source).toMatch(/max-height:\s*min\(520px,\s*calc\(100% - 48px\)\)/);
+  });
+
   test("renders loading, empty, locked, failure, and truncation states", async () => {
     const wrapper = mountPanel({ loading: true });
     expect(wrapper.find("[data-test='session-input-history-loading']").exists()).toBe(true);

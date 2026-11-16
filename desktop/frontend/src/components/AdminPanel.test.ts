@@ -77,6 +77,18 @@ describe("AdminPanel", () => {
     expect(w.find('[data-test="admin-tab-traffic"]').exists()).toBe(true);
   });
 
+  test("exposes the compact navigation as an accessible tab list", async () => {
+    const w = mount(AdminPanel, { global: { stubs } });
+    expect(w.get(".admin-tabs").attributes("role")).toBe("tablist");
+    expect(w.get('[data-test="admin-tab-invitations"]').attributes("aria-selected")).toBe("true");
+    expect(w.findAll(".admin-tabs button svg")).toHaveLength(5);
+    expect(w.findAll(".admin-tabs button").every((button) => button.attributes("tabindex") === undefined)).toBe(true);
+
+    await w.get('[data-test="admin-tab-traffic"]').trigger("click");
+    expect(w.get('[data-test="admin-tab-invitations"]').attributes("aria-selected")).toBe("false");
+    expect(w.get('[data-test="admin-tab-traffic"]').attributes("aria-selected")).toBe("true");
+  });
+
   // Regression: every admin child calls `useMessage()` from naive-ui, which
   // throws unconditionally when it can't find an <n-message-provider> above.
   // Before we wrapped AdminPanel's body in <n-config-provider> +

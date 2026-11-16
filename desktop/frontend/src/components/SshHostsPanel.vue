@@ -776,7 +776,19 @@ const tunnelSortOptions = computed<SelectOption[]>(() => [
   { value: "newest", label: t("ssh.forwards.sortNewest") },
   { value: "oldest", label: t("ssh.forwards.sortOldest") },
 ]);
-const visibleForwardRows = computed(() => browseTunnels(forwardRows.value, tunnelQuery.value, tunnelSort.value as TunnelSort));
+const visibleForwardRows = computed(() => {
+  const rows = browseTunnels(forwardRows.value, tunnelQuery.value, tunnelSort.value as TunnelSort);
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const aStarting = forwardOperations.value.get(forwardKey(a.row.host.id, a.row.rule.id)) === "starting";
+      const bStarting = forwardOperations.value.get(forwardKey(b.row.host.id, b.row.rule.id)) === "starting";
+      const aActive = aStarting || isForwardRunning(a.row.host.id, a.row.rule.id);
+      const bActive = bStarting || isForwardRunning(b.row.host.id, b.row.rule.id);
+      return Number(bActive) - Number(aActive) || a.index - b.index;
+    })
+    .map(({ row }) => row);
+});
 
 function forwardKindLabel(kind: string): string {
   if (kind === "remote") return t("ssh.forwards.kindRemote");

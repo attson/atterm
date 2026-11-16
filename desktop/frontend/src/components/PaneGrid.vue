@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from "vue";
-import { Palette } from "lucide-vue-next";
+import { Eye, Palette } from "lucide-vue-next";
 import TerminalView from "./TerminalView.vue";
 import PaneSplitter from "./PaneSplitter.vue";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
@@ -366,10 +366,7 @@ function requestServicePreview(pane: Pane): void {
           class="viewers-badge"
           v-tooltip="t('terminal.remoteViewerWatching', { count: viewerCountFor!(pane.sessionId) })"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
+          <Eye :size="11" aria-hidden="true" />
           <span>{{ viewerCountFor!(pane.sessionId) }}</span>
         </div>
 
@@ -602,17 +599,18 @@ function requestServicePreview(pane: Pane): void {
 .remote-preview-trigger svg { display: block; }
 .remote-badge svg { display: block; }
 .viewers-badge {
-  position: absolute;
-  top: 4px;
-  right: 4px;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
+  min-height: 18px;
   padding: 1px 6px;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.55);
   color: var(--fg);
   font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
   pointer-events: none;
 }
 .viewers-badge svg { display: block; }

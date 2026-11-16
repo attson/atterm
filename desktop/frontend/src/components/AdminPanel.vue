@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, type Component } from "vue";
 import { NConfigProvider, NMessageProvider, darkTheme } from "naive-ui";
+import { ChartNoAxesCombined, KeyRound, MessageSquareText, SlidersHorizontal, UsersRound } from "lucide-vue-next";
 import { getNaiveOverrides } from "@shared/theme/naive-theme";
 import { naiveLocale } from "@shared/i18n/naive-locale";
 import { useI18n } from "@shared/i18n/useI18n";
@@ -25,12 +26,12 @@ const naiveDateLocaleValue = computed(() => naiveLocale.value.dateLocale);
 // Not persisted: reopening the admin view always starts on "invitations".
 const active = ref<AdminTabKey>("invitations");
 
-const tabs = computed<{ key: AdminTabKey; label: string }[]>(() => [
-  { key: "invitations", label: t("admin.invitations") },
-  { key: "users", label: t("admin.users") },
-  { key: "config", label: t("admin.configTab") },
-  { key: "feishu", label: t("admin.feishuTab") },
-  { key: "traffic", label: t("admin.trafficTab") },
+const tabs = computed<{ key: AdminTabKey; label: string; icon: Component }[]>(() => [
+  { key: "invitations", label: t("admin.invitations"), icon: KeyRound },
+  { key: "users", label: t("admin.users"), icon: UsersRound },
+  { key: "config", label: t("admin.configTab"), icon: SlidersHorizontal },
+  { key: "feishu", label: t("admin.feishuTab"), icon: MessageSquareText },
+  { key: "traffic", label: t("admin.trafficTab"), icon: ChartNoAxesCombined },
 ]);
 
 // All four admin tab components consume `useMessage()` from naive-ui, which
@@ -54,17 +55,22 @@ const overrides = getNaiveOverrides();
       :date-locale="naiveDateLocaleValue"
     >
       <n-message-provider>
-        <div class="admin-tabs">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            type="button"
-            @click="active = tab.key"
-            :class="{ active: active === tab.key }"
-            :data-test="`admin-tab-${tab.key}`"
-          >
-            {{ tab.label }}
-          </button>
+        <div class="admin-tabs-shell">
+          <nav class="admin-tabs" role="tablist" :aria-label="t('admin.title')">
+            <button
+              v-for="tab in tabs"
+              :key="tab.key"
+              type="button"
+              role="tab"
+              :aria-selected="active === tab.key"
+              @click="active = tab.key"
+              :class="{ active: active === tab.key }"
+              :data-test="`admin-tab-${tab.key}`"
+            >
+              <component :is="tab.icon" :size="15" aria-hidden="true" />
+              <span>{{ tab.label }}</span>
+            </button>
+          </nav>
         </div>
         <div class="admin-body">
           <Invitations v-if="active === 'invitations'" />
@@ -88,34 +94,100 @@ const overrides = getNaiveOverrides();
   min-width: 0;
   overflow: hidden;
 }
-.admin-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 8px 12px 0;
-  border-bottom: 1px solid var(--border);
+.admin-tabs-shell {
   flex: 0 0 auto;
+  padding: 8px clamp(16px, 2.5vw, 36px);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, var(--panel));
 }
+.admin-tabs {
+  width: 100%;
+  max-width: 1540px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.admin-tabs::-webkit-scrollbar { display: none; }
 .admin-tabs button {
+  height: 36px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
   color: var(--fg-dim);
-  padding: 8px 12px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 .admin-tabs button:hover {
   color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
 }
 .admin-tabs button.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
   font-weight: 600;
+}
+.admin-tabs button.active svg { color: var(--accent); }
+.admin-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .admin-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 24px;
+  padding: 22px clamp(16px, 2.5vw, 36px) 40px;
+  scrollbar-gutter: stable;
+}
+.admin-body :deep(.admin-page) {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  color: var(--fg);
+}
+.admin-body :deep(.admin-page-header) {
+  min-height: 54px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.admin-body :deep(.admin-page-header h1) {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+.admin-body :deep(.admin-page-header p) {
+  max-width: 780px;
+  margin: 6px 0 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.admin-body :deep(.admin-surface) {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.admin-body :deep(.admin-table-surface) {
+  overflow: hidden;
+}
+@media (max-width: 640px) {
+  .admin-tabs-shell { padding-inline: 10px; }
+  .admin-tabs button { height: 34px; padding-inline: 10px; }
+  .admin-body { padding: 16px 12px 32px; }
+  .admin-body :deep(.admin-page-header) { min-height: 0; }
 }
 </style>

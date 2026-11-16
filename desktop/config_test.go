@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -39,6 +40,83 @@ func TestRetiredProfileFieldsLoadAndDropOnSave(t *testing.T) {
 	}
 	if _, ok := persisted["default_profile_id"]; ok {
 		t.Fatal("retired default_profile_id survived rewrite")
+	}
+}
+
+func TestConfigStore_InvalidJSONRefusesToOverwriteOriginal(t *testing.T) {
+	isolateConfigDir(t)
+	path := configPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"relay_url":"wss://relay.example",`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := loadConfig()
+	if store.LoadError() == nil {
+		t.Fatal("invalid config JSON was silently treated as a fresh config")
+	}
+	next := store.Get()
+	next.RelayURL = "wss://replacement.example"
+	if err := store.Set(next); err == nil {
+		t.Fatal("Set succeeded after config load failure; original data can be overwritten")
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("failed config was overwritten:\n got %q\nwant %q", got, original)
+	}
+	if store.Get().RelayURL != "" {
+		t.Fatal("rejected Set changed the in-memory config snapshot")
+	}
+}
+
+func TestConfigStore_MissingFileRemainsWritableFirstRun(t *testing.T) {
+	isolateConfigDir(t)
+	store := loadConfig()
+	if err := store.LoadError(); err != nil {
+		t.Fatalf("missing first-run config reported an error: %v", err)
+	}
+	next := store.Get()
+	next.RelayURL = "wss://relay.example"
+	if err := store.Set(next); err != nil {
+		t.Fatalf("first-run Set: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"relay_url": "wss://relay.example"`) {
+		t.Fatalf("first-run config was not persisted: %s", data)
+	}
+}
+
+func TestConfigStore_ReadFailureRefusesWrites(t *testing.T) {
+	isolateConfigDir(t)
+	path := configPath()
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	store := loadConfig()
+	if store.LoadError() == nil {
+		t.Fatal("config read failure was silently treated as a fresh config")
+	}
+	if err := store.Set(store.Get()); err == nil {
+		t.Fatal("Set succeeded after config read failure")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() {
+		t.Fatal("failed config path was replaced")
 	}
 }
 

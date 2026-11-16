@@ -521,6 +521,18 @@ func (a *App) observeConfigStore() {
 	a.cfgStore.setOnCommit(func(c appConfig) { a.tunnels.reconcile(c.SSHHosts) })
 }
 
+func (a *App) ensureConfigReady() bool {
+	if a.cfgStore == nil {
+		a.setStartupFatalError("load config", errors.New("config store unavailable"))
+		return false
+	}
+	if err := a.cfgStore.LoadError(); err != nil {
+		a.setStartupFatalError("load config", err)
+		return false
+	}
+	return true
+}
+
 // startup is called when the Wails runtime is ready. Boot the in-process
 // relay, load persisted config, and apply it (which may start the uplink).
 // ATTERM_RELAY_URL/TOKEN env vars are honored only when no config file
@@ -539,6 +551,9 @@ func (a *App) startup(ctx context.Context) {
 	// (and possibly written on first run) before we open the userstore.
 	if a.cfgStore == nil {
 		a.cfgStore = loadConfig()
+	}
+	if !a.ensureConfigReady() {
+		return
 	}
 	a.observeConfigStore()
 	h, err := startRelayHost(a.cfgStore)

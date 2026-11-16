@@ -737,6 +737,41 @@ func TestWindowsInstallHelperSelfElevatesBeforeReplacing(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallHelperRestartsAsOriginalDesktopUser(t *testing.T) {
+	body, err := os.ReadFile("scripts/install-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(body)
+	for _, required := range []string{
+		"[switch]$ElevatedWorker",
+		"-ElevatedWorker",
+		"-Verb RunAs",
+		"-Wait",
+		"-PassThru",
+		"$worker.ExitCode",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("install-windows.ps1 missing %q from the original-user/elevated-worker handoff", required)
+		}
+	}
+
+	const restart = "Start-Process -FilePath $Dst"
+	if got := strings.Count(script, restart); got != 1 {
+		t.Fatalf("install-windows.ps1 launches the updated app %d times; want only the original-user parent to launch it", got)
+	}
+	restartAt := strings.Index(script, restart)
+	exitCheckAt := strings.Index(script, "$worker.ExitCode")
+	if restartAt < exitCheckAt {
+		t.Fatal("install-windows.ps1 restarts AT Term before checking the elevated worker result")
+	}
+	parentBranchAt := strings.Index(script, "if (-not $ElevatedWorker)")
+	workerBranchAt := strings.Index(script, "if (-not (Test-IsAdministrator))")
+	if parentBranchAt < 0 || workerBranchAt < 0 || restartAt < parentBranchAt || restartAt > workerBranchAt {
+		t.Fatal("install-windows.ps1 restart is not confined to the original unelevated branch")
+	}
+}
+
 func TestLinuxInstallHelperFallsBackToPkexecWhenDirectReplaceFails(t *testing.T) {
 	if _, err := os.Stat("/bin/bash"); err != nil {
 		t.Skip("/bin/bash not available")

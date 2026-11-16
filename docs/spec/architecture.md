@@ -331,8 +331,12 @@ desktop/scripts/           install-darwin.sh / install-linux.sh / install-window
                            等 PID 退出（最多 30s, 0.5s 轮询）→ 解压到 tmp →
                            原子替换 → 平台特异收尾（macOS `xattr -dr quarantine`，
                            Linux `chmod +x`，Windows 重试 Move-Item 应对 file-lock 滞后）
-                           → 重启新副本 → 清理临时文件
+                           → 重启新副本 → 清理临时文件。Windows 由原桌面用户
+                           helper 等待提权 worker 完成替换后再重启；提权 worker
+                           绝不启动 app，避免切换 `%APPDATA%` / Credential Manager
 desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write-temp-rename
+                           读取/JSON 解析失败时经 StartupError 中止启动并拒绝写回，
+                           只有文件不存在按合法首次启动处理
                            包含 RelayURL/RelayToken/AllowInsecureRelay +
                            AutoCheckUpdates *bool（nil = default true）+
                            LastCheckAt + SkipVersion（v0 reserved）
@@ -802,6 +806,11 @@ helper 在子进程跑：
     while kill -0 $pid; do sleep 0.5; done   # 等我们退出
     解压 archive → 替换原位 → 平台特异收尾 → 启动新副本 → 清理
 ```
+
+Windows helper 分成原用户父进程与提权 worker：父进程用
+`Start-Process -Verb RunAs -Wait -PassThru` 等待 worker；worker 只等待旧进程、
+解压、替换和清理。worker 成功后由父进程启动新副本，因此继续读取发起更新用户的
+`%APPDATA%\atterm` 和 Windows Credential Manager。
 
 release CI：
 

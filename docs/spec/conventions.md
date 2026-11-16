@@ -561,14 +561,18 @@ if (startupErr?.fatal) showStartupFailure(startupErr);
 
 ### Go 侧 StartupError（前端 bootStage 的配套半边）
 
-前端 `bootStage` 只能捕获**前端**抛出的异常。Go 侧的致命初始化失败（relay
-host 起不来、日志系统初始化失败）历史上是 `log.Fatalf`——整个进程崩溃退出，
+前端 `bootStage` 只能捕获**前端**抛出的异常。Go 侧的致命初始化失败（config
+读取/解析失败、relay host 起不来、日志系统初始化失败）历史上是静默回退或
+`log.Fatalf`——前者可能让空配置覆盖原文件，后者让整个进程崩溃退出，
 webview 来不及展示任何 UI，用户只看到 app 消失。v0.3.x 把这类路径统一改成
 非崩溃：
 
 - `desktop/app.go::setStartupFatalError(msg, logPath)` 把失败记进
   `startupFatal *StartupError{Fatal, Message, LogPath}` 字段，函数
   **return** 而不是 `log.Fatalf`，Wails 主循环继续跑，webview 正常起来。
+- `desktop/config.go::loadConfig` 仅把文件不存在视为首次启动；其他读取错误和
+  JSON 解析错误写入 `configStore.LoadError()`。错误未解除时 `Set` 必须在改变
+  内存快照或磁盘文件之前失败，防止用默认空配置覆盖 Relay / SSH hosts。
 - 前端在 boot 链末尾（无论上面 `bootStage` try/catch 是否已经失败）调用
   `GetStartupError()`，非空且 `Fatal` 为真时展示可复制的失败信息
   + 日志路径（`app.startupFailureCopy` i18n key）。

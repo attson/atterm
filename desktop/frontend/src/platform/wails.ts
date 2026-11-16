@@ -26,6 +26,7 @@ import {
   RebindServicePreview,
   StartNativeDirect,
   SendNativeDirectFrame,
+  DrainNativeDirect,
   StopNativeDirect,
   GetPeerSpaceStatus,
   GetPeerTraffic,
@@ -62,6 +63,7 @@ import {
   GetPeerSessionRouteStatus,
   StartPeerNativeDirect,
   SendPeerNativeDirectFrame,
+  DrainPeerNativeDirect,
   StopPeerNativeDirect,
   SetTrafficTimeZone,
   ReadSSHKeyFile,
@@ -97,6 +99,7 @@ const peerNativeBridge = {
   on: (event: string, handler: (data: unknown) => void) => EventsOn(event, handler as (...data: unknown[]) => void),
   start: (req: { id: string; session_id: string; since_seq: number; client_instance_id: string; route?: 'direct' | 'lan' | 'quick_tunnel' }) => StartPeerNativeDirect(req),
   send: (id: string, frame: number[]) => SendPeerNativeDirectFrame(id, frame),
+  drain: (id: string) => DrainPeerNativeDirect(id),
   stop: (id: string) => StopPeerNativeDirect(id),
 }
 
@@ -325,6 +328,18 @@ export function createWailsPlatform(): Platform {
         else localStorage.removeItem('atterm.templates.hidden')
       },
     },
+    snippets: {
+      load: async () => {
+        const raw = await api.getSnippets()
+        return Array.isArray(raw) ? raw : []
+      },
+      save: async (list) => {
+        await api.setSnippets(list)
+      },
+      clear: async () => {
+        await api.setSnippets([])
+      },
+    },
     promptHistory: {
       status: () => api.getPromptHistoryStatus(),
       query: (prefix, limit) => api.queryPromptHistory(prefix, limit),
@@ -340,6 +355,10 @@ export function createWailsPlatform(): Platform {
       save: async () => {},
       clear: async () => {},
     },
+    backgroundSubscriptions: {
+      load: () => api.getPauseRemoteSubscriptionsInBackground(),
+      save: (enabled) => api.setPauseRemoteSubscriptionsInBackground(enabled),
+    },
     directConnection: {
       load: () => api.getDirectP2PEnabled(),
       save: (enabled) => api.setDirectP2PEnabled(enabled),
@@ -347,6 +366,7 @@ export function createWailsPlatform(): Platform {
         on: (event, handler) => EventsOn(event, handler as (...data: unknown[]) => void),
         start: (req) => StartNativeDirect(req),
         send: (id, frame) => SendNativeDirectFrame(id, frame),
+        drain: (id) => DrainNativeDirect(id),
         stop: (id) => StopNativeDirect(id),
       }),
     },

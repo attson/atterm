@@ -12,6 +12,7 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 		"locale_preference":                ` "zh-CN" `,
 		"traffic_time_zone":                `"Asia/Kathmandu"`,
 		"quick_templates":                  `[{"text":"yes","label":"Yes","id":"one"}]`,
+		"snippets":                         `[{"text":"echo one\necho two","label":"Deploy","id":"snippet-one"}]`,
 		"notifications_enabled":            `true`,
 		"ai_notifications_only":            `false`,
 		"command_notify_threshold_seconds": `10`,
@@ -47,6 +48,7 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 	invalid := map[string]string{
 		"locale_preference":                `12`,
 		"quick_templates":                  `[{"id":"dup","label":"a","text":"a"},{"id":"dup","label":"b","text":"b"}]`,
+		"snippets":                         `[{"id":"bad","label":"x","text":"echo","hotkey":"Alt+1"}]`,
 		"notifications_enabled":            `"true"`,
 		"command_notify_threshold_seconds": `1.5`,
 		"pinned_session_ids":               `["ok",3]`,
@@ -61,6 +63,19 @@ func TestNormalizeRelayValueCoversStrictShapes(t *testing.T) {
 				t.Fatalf("error=%v", err)
 			}
 		})
+	}
+}
+
+func TestNormalizeSnippetsRejectsNull(t *testing.T) {
+	if _, err := NormalizeRelayValue("snippets", json.RawMessage(`null`)); err == nil {
+		t.Fatal("NormalizeRelayValue(snippets) accepted null")
+	}
+	normalized, err := NormalizeRelayValue("snippets", json.RawMessage(`[]`))
+	if err != nil {
+		t.Fatalf("NormalizeRelayValue(snippets []): %v", err)
+	}
+	if string(normalized) != `[]` {
+		t.Fatalf("normalized empty snippets = %s, want []", normalized)
 	}
 }
 
@@ -118,6 +133,32 @@ func TestSplitAndJoinRelayRecordArrayUsesStableIDsAndOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	normalized, err := NormalizeRelayValue("quick_templates", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(joined) != string(normalized) {
+		t.Fatalf("joined=%s normalized=%s", joined, normalized)
+	}
+}
+
+func TestSplitAndJoinSnippetsUsesIndependentCollection(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"id":"two","label":"Two","text":"echo two"},
+		{"id":"one","label":"One","text":"echo one\necho done"}
+	]`)
+	records, err := SplitRelayRecordArray("snippets", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].Collection != CollectionSnippet || records[0].RecordID != "two" || records[1].Position != 1 {
+		t.Fatalf("records=%+v", records)
+	}
+	records[0], records[1] = records[1], records[0]
+	joined, err := JoinRelayRecordArray("snippets", records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := NormalizeRelayValue("snippets", raw)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,11 @@ const { fake } = vi.hoisted(() => {
         loadHidden: vi.fn().mockResolvedValue(false),
         saveHidden: vi.fn().mockResolvedValue(undefined),
       },
+      snippets: {
+        load: vi.fn().mockResolvedValue([]),
+        save: vi.fn().mockResolvedValue(undefined),
+        clear: vi.fn().mockResolvedValue(undefined),
+      },
       promptHistory: {
         status: vi.fn().mockResolvedValue({ enabled: true, count: 4 }),
         query: vi.fn().mockResolvedValue([]),
@@ -50,6 +55,56 @@ describe('SettingsTemplates', () => {
     const w = mount(SettingsTemplates)
     await flushPromises()
     expect(w.findAll('[data-testid^="template-row-"]')).toHaveLength(2)
+  })
+
+  it('separates Quick and Snippet records into accessible tabs', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'quick-a', label: 'Quick A', text: 'echo quick' },
+    ])
+    __fake.snippets.load = vi.fn().mockResolvedValue([
+      { id: 'snippet-a', label: 'Snippet A', text: 'echo snippet' },
+    ])
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    expect(w.find('[data-testid="template-kind-tabs"]').attributes('role')).toBe('tablist')
+    expect(w.find('[data-testid="template-tab-quick"]').attributes('aria-selected')).toBe('true')
+    expect(w.find('[data-testid="template-row-quick-a"]').exists()).toBe(true)
+    expect(w.find('[data-testid="template-row-snippet-a"]').exists()).toBe(false)
+
+    await w.find('[data-testid="template-tab-snippet"]').trigger('click')
+
+    expect(w.find('[data-testid="template-tab-snippet"]').attributes('aria-selected')).toBe('true')
+    expect(w.find('[data-testid="template-row-quick-a"]').exists()).toBe(false)
+    expect(w.find('[data-testid="template-row-snippet-a"]').exists()).toBe(true)
+  })
+
+  it('shows footer actions for the active template type', async () => {
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    expect(w.find('[data-testid="template-add"]').text()).toBe('settings.templates.addQuick')
+    expect(w.find('[data-testid="template-reset"]').exists()).toBe(true)
+
+    await w.find('[data-testid="template-tab-snippet"]').trigger('click')
+
+    expect(w.find('[data-testid="template-add"]').text()).toBe('settings.templates.addSnippet')
+    expect(w.find('[data-testid="template-reset"]').exists()).toBe(false)
+  })
+
+  it('shows a type-specific empty state inside an empty tab', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'quick-a', label: 'Quick A', text: 'echo quick' },
+    ])
+    __fake.snippets.load = vi.fn().mockResolvedValue([])
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-tab-snippet"]').trigger('click')
+
+    expect(w.find('[data-testid="template-empty"]').text()).toBe('settings.templates.emptySnippet')
   })
 
   it('calls save when a new template is added to an existing list', async () => {
@@ -121,6 +176,150 @@ describe('SettingsTemplates', () => {
     expect(clear).toHaveBeenCalled()
   })
 
+  it('creates a snippet without a hotkey and saves it to the independent collection', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.templates.load = vi.fn().mockResolvedValue([{ id: 'quick', label: 'Quick', text: 'ok' }])
+    __fake.snippets.load = vi.fn().mockResolvedValue([])
+    const saveSnippets = vi.fn().mockResolvedValue(undefined)
+    __fake.snippets.save = saveSnippets
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-tab-snippet"]').trigger('click')
+    await w.find('[data-testid="template-add"]').trigger('click')
+    expect(w.find('[data-testid="template-kind-snippet"]').classes()).toContain('active')
+    expect(w.find('[data-testid="template-edit-hotkey"]').exists()).toBe(false)
+    await w.find('[data-testid="template-edit-label"]').setValue('Deploy')
+    await w.find('[data-testid="template-edit-text"]').setValue('make build\nmake deploy')
+    await w.find('[data-testid="template-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveSnippets).toHaveBeenLastCalledWith([
+      expect.objectContaining({ label: 'Deploy', text: 'make build\nmake deploy' }),
+    ])
+    expect(w.find('[data-testid^="template-row-"][data-kind="snippet"]').exists()).toBe(true)
+  })
+
+  it('converts a quick template to snippet with the same id at the target collection end', async () => {
+    const { __fake } = await import('../../platform') as any
+    const saveQuick = vi.fn().mockResolvedValue(undefined)
+    const saveSnippets = vi.fn().mockResolvedValue(undefined)
+    __fake.templates.load = vi.fn().mockResolvedValue([{ id: 'move-me', label: 'Deploy', text: 'deploy', hotkey: 'Alt+1' }])
+    __fake.templates.save = saveQuick
+    __fake.snippets.load = vi.fn().mockResolvedValue([{ id: 'existing', label: 'Existing', text: 'echo existing' }])
+    __fake.snippets.save = saveSnippets
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-edit-move-me"]').trigger('click')
+    await w.find('[data-testid="template-kind-snippet"]').trigger('click')
+    await w.find('[data-testid="template-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveQuick).toHaveBeenLastCalledWith([])
+    expect(saveSnippets).toHaveBeenLastCalledWith([
+      { id: 'existing', label: 'Existing', text: 'echo existing' },
+      { id: 'move-me', label: 'Deploy', text: 'deploy' },
+    ])
+    expect(w.find('[data-testid="template-tab-snippet"]').attributes('aria-selected')).toBe('true')
+    expect(w.find('[data-testid="template-row-move-me"]').exists()).toBe(true)
+  })
+
+  it('keeps the quick source when saving the target snippet fails during conversion', async () => {
+    const { __fake } = await import('../../platform') as any
+    const saveQuick = vi.fn().mockResolvedValue(undefined)
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'move-me', label: 'Deploy', text: 'deploy' },
+    ])
+    __fake.templates.save = saveQuick
+    __fake.snippets.load = vi.fn().mockResolvedValue([])
+    __fake.snippets.save = vi.fn().mockRejectedValue(new Error('storage full'))
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-edit-move-me"]').trigger('click')
+    await w.find('[data-testid="template-kind-snippet"]').trigger('click')
+    await w.find('[data-testid="template-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveQuick).not.toHaveBeenCalled()
+    expect(w.find('[data-testid="template-edit-text"]').exists()).toBe(true)
+    expect(w.find('.error').text()).toContain('storage full')
+  })
+
+  it('shows the snippet for a duplicate id and removes the quick copy on the next save', async () => {
+    const { __fake } = await import('../../platform') as any
+    const saveQuick = vi.fn().mockResolvedValue(undefined)
+    const saveSnippets = vi.fn().mockResolvedValue(undefined)
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'duplicate', label: 'Quick copy', text: 'echo quick' },
+      { id: 'keep', label: 'Keep', text: 'echo keep' },
+    ])
+    __fake.templates.save = saveQuick
+    __fake.snippets.load = vi.fn().mockResolvedValue([
+      { id: 'duplicate', label: 'Snippet copy', text: 'echo snippet' },
+    ])
+    __fake.snippets.save = saveSnippets
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-tab-snippet"]').trigger('click')
+    const duplicateRows = w.findAll('[data-testid="template-row-duplicate"]')
+    expect(duplicateRows).toHaveLength(1)
+    expect(duplicateRows[0].attributes('data-kind')).toBe('snippet')
+    expect(duplicateRows[0].text()).toContain('Snippet copy')
+
+    await w.find('[data-testid="template-edit-duplicate"]').trigger('click')
+    await w.find('[data-testid="template-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveQuick).toHaveBeenLastCalledWith([
+      { id: 'keep', label: 'Keep', text: 'echo keep' },
+    ])
+    expect(saveSnippets).toHaveBeenLastCalledWith([
+      { id: 'duplicate', label: 'Snippet copy', text: 'echo snippet' },
+    ])
+  })
+
+  it('resetting quick defaults preserves snippets', async () => {
+    const { __fake } = await import('../../platform') as any
+    const clearQuick = vi.fn().mockResolvedValue(undefined)
+    const clearSnippets = vi.fn().mockResolvedValue(undefined)
+    __fake.templates.clear = clearQuick
+    __fake.snippets.load = vi.fn().mockResolvedValue([{ id: 'keep', label: 'Keep', text: 'echo keep' }])
+    __fake.snippets.clear = clearSnippets
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-reset"]').trigger('click')
+    await w.find('[data-testid="template-reset-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(clearQuick).toHaveBeenCalledOnce()
+    expect(clearSnippets).not.toHaveBeenCalled()
+    await w.find('[data-testid="template-tab-snippet"]').trigger('click')
+    expect(w.find('[data-testid="template-row-keep"]').exists()).toBe(true)
+  })
+
+  it('keeps invalid snippet text in the editor and does not persist', async () => {
+    const { __fake } = await import('../../platform') as any
+    const saveSnippets = vi.fn().mockResolvedValue(undefined)
+    __fake.snippets.save = saveSnippets
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-add"]').trigger('click')
+    await w.find('[data-testid="template-kind-snippet"]').trigger('click')
+    await w.find('[data-testid="template-edit-label"]').setValue('Deploy')
+    await w.find('[data-testid="template-edit-text"]').setValue('')
+    await w.find('[data-testid="template-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveSnippets).not.toHaveBeenCalled()
+    expect(w.find('[data-testid="template-edit-text"]').exists()).toBe(true)
+    expect(w.find('.error').exists()).toBe(true)
+  })
+
   it('reloads when the platform fires prefs:changed (relay pull landed while pane is open)', async () => {
     const { __fake } = await import('../../platform') as any
     let handler: (() => void) | null = null
@@ -151,48 +350,14 @@ describe('SettingsTemplates', () => {
     expect(off).toHaveBeenCalled()
   })
 
-  it('passes the template label and text to the run panel in the right order', async () => {
-    const { __fake } = await import('../../platform') as any
-    __fake.caps = { wailsBindings: true }
-    // The two props are adjacent and both strings, so a swap typechecks and
-    // every other test stays green — while the runtime consequence is running
-    // the template's LABEL as a shell command on N remote hosts. Distinct,
-    // unmistakable values are the whole point of this test.
-    __fake.templates.load = vi.fn().mockResolvedValue([
-      { id: 'a', label: 'Restart nginx', text: 'systemctl restart nginx' },
-    ])
-    const w = mount(SettingsTemplates)
-    await flushPromises()
-
-    await w.find('[data-testid="template-run-a"]').trigger('click')
-    await flushPromises()
-
-    const panel = w.findComponent({ name: 'SnippetRunPanel' })
-    expect(panel.exists()).toBe(true)
-    expect(panel.props('snippetLabel')).toBe('Restart nginx')
-    expect(panel.props('snippetText')).toBe('systemctl restart nginx')
-  })
-
-  it('hides "run on hosts" where the Wails bindings do not exist (web, iOS)', async () => {
+  it('keeps execution actions out of the settings editor', async () => {
     const { __fake } = await import('../../platform') as any
     __fake.templates.load = vi.fn().mockResolvedValue([
       { id: 'a', label: 'A', text: 'a-text' },
     ])
-
-    __fake.caps = { wailsBindings: true }
-    const desktop = mount(SettingsTemplates)
-    await flushPromises()
-    expect(desktop.find('[data-testid="template-run-a"]').exists()).toBe(true)
-
-    // Same component, web/Capacitor shape. Without the gate the button renders,
-    // the modal opens, listSSHHosts throws app.wailsBindingsNotReady, and the
-    // user is left looking at a developer's error message in a dead dialog.
-    __fake.caps = { wailsBindings: false }
     const web = mount(SettingsTemplates)
     await flushPromises()
     expect(web.find('[data-testid="template-run-a"]').exists()).toBe(false)
-    // The rest of the tab still works everywhere — the gate is on the button,
-    // not the tab.
     expect(web.find('[data-testid="template-row-a"]').exists()).toBe(true)
   })
 

@@ -124,39 +124,44 @@ export function createRemoteSessionFS(conn: SessionFSConnection, identity = "rem
   }
 
   async function fetchAssetURL(path: string): Promise<string> {
-    const chunks: ArrayBuffer[] = [];
-    let contentType = DEFAULT_ASSET_CONTENT_TYPE;
-    let offset = 0;
-    let firstChunk = true;
+    const release = conn.beginTransfer?.();
+    try {
+      const chunks: ArrayBuffer[] = [];
+      let contentType = DEFAULT_ASSET_CONTENT_TYPE;
+      let offset = 0;
+      let firstChunk = true;
 
-    for (;;) {
-      const chunk = requireField(
-        ensureOK(await conn.sendFSRequest({ op: "read_chunk", path, offset, length: ASSET_CHUNK_BYTES })).chunk,
-        "chunk",
-      );
-      if (chunk.path !== path || chunk.offset !== offset) {
-        throw new Error("remote filesystem response returned an unexpected chunk");
+      for (;;) {
+        const chunk = requireField(
+          ensureOK(await conn.sendFSRequest({ op: "read_chunk", path, offset, length: ASSET_CHUNK_BYTES })).chunk,
+          "chunk",
+        );
+        if (chunk.path !== path || chunk.offset !== offset) {
+          throw new Error("remote filesystem response returned an unexpected chunk");
+        }
+        const declaredEnd = chunk.offset + chunk.length;
+        if (declaredEnd > MAX_ASSET_BYTES) {
+          throw new Error("remote asset exceeds the 50 MiB size limit");
+        }
+        const bytes = decodeChunk(chunk);
+        if (offset + bytes.byteLength > MAX_ASSET_BYTES) {
+          throw new Error("remote asset exceeds the 50 MiB size limit");
+        }
+        if (firstChunk) {
+          contentType = chunk.contentType || DEFAULT_ASSET_CONTENT_TYPE;
+          firstChunk = false;
+        }
+        chunks.push(copyToArrayBuffer(bytes));
+        offset += bytes.byteLength;
+        if (chunk.eof) break;
+        if (bytes.byteLength === 0) throw new Error("remote filesystem response returned an empty non-final chunk");
       }
-      const declaredEnd = chunk.offset + chunk.length;
-      if (declaredEnd > MAX_ASSET_BYTES) {
-        throw new Error("remote asset exceeds the 50 MiB size limit");
-      }
-      const bytes = decodeChunk(chunk);
-      if (offset + bytes.byteLength > MAX_ASSET_BYTES) {
-        throw new Error("remote asset exceeds the 50 MiB size limit");
-      }
-      if (firstChunk) {
-        contentType = chunk.contentType || DEFAULT_ASSET_CONTENT_TYPE;
-        firstChunk = false;
-      }
-      chunks.push(copyToArrayBuffer(bytes));
-      offset += bytes.byteLength;
-      if (chunk.eof) break;
-      if (bytes.byteLength === 0) throw new Error("remote filesystem response returned an empty non-final chunk");
+
+      const url = URL.createObjectURL(new Blob(chunks, { type: contentType }));
+      return url;
+    } finally {
+      release?.();
     }
-
-    const url = URL.createObjectURL(new Blob(chunks, { type: contentType }));
-    return url;
   }
 
   function assetUrlFor(path: string): Promise<string> {

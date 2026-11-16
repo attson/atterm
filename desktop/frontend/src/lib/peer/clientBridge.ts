@@ -27,7 +27,7 @@ export interface PeerClientBridgeOptions {
 }
 
 class LazyPeerTransport implements DirectTransport {
-  private delegate: DirectTransport | null = null
+  private delegate: PeerQuickTunnelTransport | null = null
   private closed = false
 
   constructor(
@@ -51,6 +51,11 @@ class LazyPeerTransport implements DirectTransport {
     // after DIRECT_READY. Reporting success here would silently drop input
     // while identity/state loading or membership authentication is pending.
     return false
+  }
+
+  drain(): Promise<void> {
+    if (this.closed || !this.delegate) return Promise.reject(new Error('Peer route is not ready'))
+    return this.delegate.drain()
   }
 
   close(): void {

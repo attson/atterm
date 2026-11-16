@@ -32,3 +32,16 @@ func TestGetStartupErrorEmptyWhenStartupSucceeded(t *testing.T) {
 		t.Fatalf("GetStartupError() = %+v; want empty non-fatal payload", got)
 	}
 }
+
+func TestConfigLoadFailureBecomesStartupError(t *testing.T) {
+	store := &configStore{loadErr: errors.New("parse config.json: unexpected end of JSON input")}
+	a := NewApp(store, nil)
+
+	if a.ensureConfigReady() {
+		t.Fatal("config with a load failure was accepted for startup")
+	}
+	got := a.GetStartupError()
+	if !got.Fatal || !strings.Contains(got.Message, "load config: parse config.json") {
+		t.Fatalf("GetStartupError() = %+v; want visible config load failure", got)
+	}
+}

@@ -144,7 +144,9 @@ describe('PeerSessionConnection', () => {
     initial.options.callbacks.onFrame(meta(clientID, 'this-device'))
     initial.options.callbacks.onReady(0)
 
-    expect(connection.beginHistoryPaste()).toBeTypeOf('function')
+    const releasePaste = connection.beginHistoryPaste()
+    expect(releasePaste).toBeTypeOf('function')
+    releasePaste!()
 
     connection.suspend()
     connection.sendResize(132, 41)
@@ -465,7 +467,7 @@ describe('PeerSessionConnection', () => {
     connection.setRoute('quick_tunnel')
     finishRead(encodeText('png').buffer as ArrayBuffer)
 
-    await expect(pending).rejects.toThrow(/send failed/i)
+    await expect(pending).rejects.toThrow(/cancelled|send failed/i)
     expect(transports).toHaveLength(2)
     expect(transports[0].sent).toHaveLength(0)
     expect(transports[1].sent).toHaveLength(0)

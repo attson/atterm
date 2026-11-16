@@ -102,6 +102,7 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", appearance: TerminalAppearance): void;
   (e: "direct-connection-changed", enabled: boolean): void;
+  (e: "background-subscriptions-changed", enabled: boolean): void;
   (e: "bindings-changed", bindings: Record<string, string>): void;
 }>();
 
@@ -432,6 +433,7 @@ function onSaveClick() {
             @terminal-theme-changed="onTerminalThemeChanged"
             @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
             @appearance-changed="onAppearanceChanged"
+            @background-subscriptions-changed="emit('background-subscriptions-changed', $event)"
           />
           <SettingsAccount v-if="!caps.wailsBindings && activeTab === 'account'" />
           <SettingsTasks v-show="activeTab === 'tasks'" />

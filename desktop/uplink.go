@@ -167,6 +167,11 @@ type streamingLocal struct {
 	cancelFwd context.CancelFunc
 }
 
+type uplinkStreamKey struct {
+	ID         uuid.UUID
+	Compressed bool
+}
+
 func (u *uplink) runOnce(ctx context.Context) error {
 	dialCtx, cancelDial := context.WithTimeout(ctx, uplinkDialTimeout)
 	hdr := map[string][]string{}
@@ -233,16 +238,16 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	// streaming map and its lock.
 	var (
 		mu        sync.Mutex
-		streaming = make(map[uuid.UUID]*streamingLocal)
+		streaming = make(map[uplinkStreamKey]*streamingLocal)
 	)
 	stopAll := func() {
 		mu.Lock()
 		defer mu.Unlock()
-		for id, s := range streaming {
+		for key, s := range streaming {
 			s.cancelFwd()
-			u.host.UnsubscribeLocal(id, s.sub)
+			u.host.UnsubscribeLocal(key.ID, s.sub)
 		}
-		streaming = make(map[uuid.UUID]*streamingLocal)
+		streaming = make(map[uplinkStreamKey]*streamingLocal)
 	}
 	defer stopAll()
 
@@ -331,10 +336,11 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		}
 	}()
 
-	startStream := func(id uuid.UUID, sinceSeq uint64) {
+	startStream := func(id uuid.UUID, sinceSeq uint64, compressed bool) {
+		key := uplinkStreamKey{ID: id, Compressed: compressed}
 		logDebug("uplink", "stream_request session=%s since_seq=%d", id, sinceSeq)
 		mu.Lock()
-		if _, ok := streaming[id]; ok {
+		if _, ok := streaming[key]; ok {
 			mu.Unlock()
 			logDebug("uplink", "stream_request_duplicate session=%s since_seq=%d", id, sinceSeq)
 			return
@@ -343,10 +349,15 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		if err != nil {
 			mu.Unlock()
 			logWarn("uplink", "stream_request_failed session=%s since_seq=%d error=%v", id, sinceSeq, err)
+			if u.localSessionLive(id) {
+				// The mirror is already waiting for this stream; resetting the
+				// connection makes it request a fresh subscription and cursor.
+				cancelConn()
+			}
 			return
 		}
 		fwdCtx, cancelFwd := context.WithCancel(connCtx)
-		streaming[id] = &streamingLocal{id: id, sub: sub, cancelFwd: cancelFwd}
+		streaming[key] = &streamingLocal{id: id, sub: sub, cancelFwd: cancelFwd}
 		mu.Unlock()
 		logDebug("uplink", "stream_subscribed session=%s since_seq=%d replay_to_seq=%d", id, sinceSeq, replayToSeq)
 
@@ -357,35 +368,33 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			stats := newStreamForwardStats(id)
 			reason := "unknown"
 			defer func() { stats.finish(reason) }()
-			for {
-				select {
-				case <-fwdCtx.Done():
-					reason = "context_done"
-					return
-				case f, ok := <-sub.Out():
-					if !ok {
-						reason = "subscriber_closed"
-						return
-					}
-					if !forwardLocalSubscriberFrame(fwdCtx, out, f, stats, func() {
-						u.host.RequestLocalRepaint(id)
-					}, u.accountKey) {
-						reason = "uplink_out_closed"
-						return
-					}
-				case <-sub.Done():
-					reason = "subscriber_done"
-					return
+			reason = forwardUplinkStream(fwdCtx, sub.Out(), sub.Done(), out, stats, func() {
+				u.host.RequestLocalRepaint(id)
+			}, u.accountKey, compressed)
+			mu.Lock()
+			active := streaming[key] != nil && streaming[key].sub == sub
+			if active {
+				delete(streaming, key)
+			}
+			mu.Unlock()
+			if active {
+				u.host.UnsubscribeLocal(id, sub)
+				unexpected := reason == "output_prepare_failed" || reason == "subscriber_done" || reason == "subscriber_closed"
+				if unexpected && fwdCtx.Err() == nil && u.localSessionLive(id) {
+					// A live session losing its forwarder must retry, whereas an
+					// explicit stop or a finished session needs no reconnect.
+					cancelConn()
 				}
 			}
 		}()
 	}
 
-	stopStream := func(id uuid.UUID) {
+	stopStream := func(id uuid.UUID, compressed bool) {
+		key := uplinkStreamKey{ID: id, Compressed: compressed}
 		mu.Lock()
-		s, ok := streaming[id]
+		s, ok := streaming[key]
 		if ok {
-			delete(streaming, id)
+			delete(streaming, key)
 		}
 		mu.Unlock()
 		if !ok {
@@ -420,7 +429,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			continue
 		}
 		switch f.Type {
-		case proto.TypeStreamRequest:
+		case proto.TypeStreamRequest, proto.TypeStreamRequestCompressed:
 			var p proto.StreamRequestPayload
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				continue
@@ -429,8 +438,8 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			if err != nil {
 				continue
 			}
-			startStream(id, p.SinceSeq)
-		case proto.TypeStreamStop:
+			startStream(id, p.SinceSeq, f.Type == proto.TypeStreamRequestCompressed)
+		case proto.TypeStreamStop, proto.TypeStreamStopCompressed:
 			var p proto.StreamStopPayload
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				continue
@@ -439,7 +448,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			if err != nil {
 				continue
 			}
-			stopStream(id)
+			stopStream(id, f.Type == proto.TypeStreamStopCompressed)
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
 			logDebug("uplink", "inbound_recv type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
 			if !localFrameAllowedByPermission(u.remotePermission, f.Type) {
@@ -579,11 +588,12 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn, allowA
 			snapshot = stripContentFieldsFromSnapshot(snapshot)
 		}
 	}
-	payload, err := buildAnnouncePayload(hostID, host, user, snapshot, u.remotePermission)
+	compression := u.outputCompression()
+	payload, err := buildAnnouncePayload(hostID, host, user, snapshot, u.remotePermission, compression)
 	if err != nil {
 		return err
 	}
-	semanticPayload, err := buildAnnounceSemanticPayload(hostID, host, user, snapshot, u.remotePermission)
+	semanticPayload, err := buildAnnounceSemanticPayload(hostID, host, user, snapshot, u.remotePermission, compression)
 	if err != nil {
 		return err
 	}
@@ -655,18 +665,23 @@ func stripContentFieldsFromSnapshot(sessions []proto.SessionInfo) []proto.Sessio
 	return out
 }
 
-func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInfo, remotePermission string) ([]byte, error) {
+func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInfo, remotePermission string, outputCompression ...string) ([]byte, error) {
 	snapshot := append([]proto.SessionInfo(nil), sessions...)
 	perm := normalizeRemotePermission(remotePermission)
 	for i := range snapshot {
 		snapshot[i].RemotePermission = perm
 	}
 	sort.Slice(snapshot, func(i, j int) bool { return snapshot[i].ID < snapshot[j].ID })
+	compression := ""
+	if len(outputCompression) > 0 {
+		compression = outputCompression[0]
+	}
 	return json.Marshal(proto.AnnouncePayload{
-		HostID:   hostID,
-		Host:     host,
-		User:     user,
-		Sessions: snapshot,
+		HostID:            hostID,
+		Host:              host,
+		User:              user,
+		Sessions:          snapshot,
+		OutputCompression: compression,
 	})
 }
 
@@ -674,12 +689,12 @@ func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInf
 // list freshness. Registry notifications fire for that clock every few
 // seconds, but only the 30-second heartbeat should promote it to a full remote
 // manifest. All fields that change rendered or routable session state remain.
-func buildAnnounceSemanticPayload(hostID, host, user string, sessions []proto.SessionInfo, remotePermission string) ([]byte, error) {
+func buildAnnounceSemanticPayload(hostID, host, user string, sessions []proto.SessionInfo, remotePermission string, outputCompression ...string) ([]byte, error) {
 	snapshot := append([]proto.SessionInfo(nil), sessions...)
 	for i := range snapshot {
 		snapshot[i].LastOutputAt = 0
 	}
-	return buildAnnouncePayload(hostID, host, user, snapshot, remotePermission)
+	return buildAnnouncePayload(hostID, host, user, snapshot, remotePermission, outputCompression...)
 }
 
 func normalizeRemotePermission(value string) string {

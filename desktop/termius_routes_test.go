@@ -18,7 +18,7 @@ func TestTermiusImportIncludesExactJumpAndProxyCredentials(t *testing.T) {
 	if strings.Contains(string(encoded), "proxy-secret") {
 		t.Fatal("proxy secret escaped preview")
 	}
-	report, err := a.ImportTermius(preview.Token, []string{"target"}, nil)
+	report, err := a.ImportTermius(preview.Token, []string{"target"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestTermiusBlockedHopDisablesDestination(t *testing.T) {
 			t.Fatal("invalid key in jump dependency not propagated")
 		}
 	}
-	if _, err := a.ImportTermius(p.Token, []string{"target"}, nil); err == nil {
+	if _, err := a.ImportTermius(p.Token, []string{"target"}, nil, nil); err == nil {
 		t.Fatal("blocked dependency imported")
 	}
 }
@@ -100,7 +100,7 @@ func TestTermiusJumpCycleAndExistingRouteConflictAreRetryable(t *testing.T) {
 				}
 			}
 			p := a.stageTermiusImport(&termius.Data{Hosts: []termius.Host{{ID: "target", Name: "target", Address: "192.0.2.2", Port: "22", Username: "root", Password: "pw", JumpIDs: []string{"hop"}}, hop}})
-			if _, err := a.ImportTermius(p.Token, []string{"target"}, nil); err == nil {
+			if _, err := a.ImportTermius(p.Token, []string{"target"}, nil, nil); err == nil {
 				t.Fatal("invalid dependency accepted")
 			}
 			if a.termiusImport.Load() == nil {

@@ -7,6 +7,7 @@ import {
   openAccountKeyWrap,
   openMetaFields,
   openOutFrame,
+  openCompressedOutFrame,
   openSessionFields,
   type SealedMetaFields,
   type SealedSessionFields,
@@ -135,7 +136,7 @@ describe('openMetaFields (M5-meta-mobile)', () => {
 
 // sealOut mirrors internal/e2eecrypto.SealOut + the desktop agent's
 // sealOutFrame: AAD = uuid(16) || 0x03 || seq(8B BE), raw plaintext payload.
-function sealOut(accountKey: Uint8Array, uuid: string, seq: number, plaintext: Uint8Array): Uint8Array {
+function sealOut(accountKey: Uint8Array, uuid: string, seq: number, plaintext: Uint8Array, frameType = OUT_AAD_FRAME_TYPE): Uint8Array {
   const uuidBytes = uuidStringToBytes(uuid)
   const prefix = utf8ToBytes('atterm-session-v1')
   const info = new Uint8Array(prefix.length + uuidBytes.length)
@@ -145,7 +146,7 @@ function sealOut(accountKey: Uint8Array, uuid: string, seq: number, plaintext: U
   const nonce = randomBytes(24)
   const aad = new Uint8Array(uuidBytes.length + 1 + 8)
   aad.set(uuidBytes, 0)
-  aad[uuidBytes.length] = OUT_AAD_FRAME_TYPE
+  aad[uuidBytes.length] = frameType
   new DataView(aad.buffer).setBigUint64(uuidBytes.length + 1, BigInt(seq), false)
   const ct = xchacha20poly1305(sessionKey, nonce, aad).encrypt(plaintext)
   const env = new Uint8Array(1 + 24 + ct.length)
@@ -216,5 +217,21 @@ describe('openAccountKeyWrap', () => {
   it('returns null on missing envelope', () => {
     expect(openAccountKeyWrap(null, WK)).toBeNull()
     expect(openAccountKeyWrap(undefined, WK)).toBeNull()
+  })
+})
+
+
+describe('compressed output authentication', () => {
+  const uuid = 'a1b2c3d4-e5f6-7890-1234-567890abcdef'
+  const key = new Uint8Array(32).fill(17)
+  it('binds the compressed frame discriminator and sequence independently of ordinary OUT', () => {
+    const body = new Uint8Array([0, 0, 0, 0, 1, 65])
+    const compressed = sealOut(key, uuid, 42, body, 0x43)
+    expect(Array.from(openCompressedOutFrame(compressed, key, uuid, 42)!)).toEqual(Array.from(body))
+    expect(openOutFrame(compressed, key, uuid, 42)).toBeNull()
+    expect(openCompressedOutFrame(sealOut(key, uuid, 42, body), key, uuid, 42)).toBeNull()
+    expect(openCompressedOutFrame(compressed, key, uuid, 43)).toBeNull()
+    compressed[compressed.length - 1] ^= 1
+    expect(openCompressedOutFrame(compressed, key, uuid, 42)).toBeNull()
   })
 })

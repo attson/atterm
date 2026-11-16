@@ -137,6 +137,17 @@ uplink_conn 通过控制连发 STREAM_REQUEST(sid)
 
 最后一个浏览器 detach 时：`removeSubscriber → lifecycle.onLastUnsubscribe → uplink_conn 发 STREAM_STOP → 桌面 uplink 取消 forwarder`。
 
+“后台暂停远程订阅”为设备设置，默认关闭。关闭时远程终端在切换终端标签页或隐藏浏览器
+页面后继续保持连接；开启后，共享 `TerminalView.vue` 通过 `useTerminalSubscriptionActive`
+同时观察 tab active 和 `document.hidden`，只在终端标签页激活且页面可见时正常订阅。
+转入后台就取消待执行的激活动画并请求 `suspend()`；连接中的文件/图片传输、文件请求和
+分块读取事务结束后才执行暂停，重新激活会取消待执行的暂停，显式 detach 仍立即清理。
+切回后保留 xterm 缓存画面，按已接收 seq 和现有历史缓存续传，并重新确认 driver，不
+抢占其他客户端的控制权。可见分屏都保持订阅；本地终端沿用既有标签页生命周期，不受
+该开关影响。会话列表继续更新侧栏，源端 PTY/任务继续运行；只有对应输出格式的最后一个
+远程观看者离开，才会停止该格式的上传流。浏览器/操作系统强制冻结页面或网络断开仍由
+现有重连路径处理，传输保活只推迟应用主动请求的暂停。
+
 ### 流 3：本机两个桌面 app 互相 attach
 
 两个 app 都连同一 relay。各自 ANNOUNCE。一方点 cast 面板选另一方的 session：
@@ -331,8 +342,12 @@ desktop/scripts/           install-darwin.sh / install-linux.sh / install-window
                            等 PID 退出（最多 30s, 0.5s 轮询）→ 解压到 tmp →
                            原子替换 → 平台特异收尾（macOS `xattr -dr quarantine`，
                            Linux `chmod +x`，Windows 重试 Move-Item 应对 file-lock 滞后）
-                           → 重启新副本 → 清理临时文件
+                           → 重启新副本 → 清理临时文件。Windows 由原桌面用户
+                           helper 等待提权 worker 完成替换后再重启；提权 worker
+                           绝不启动 app，避免切换 `%APPDATA%` / Credential Manager
 desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write-temp-rename
+                           读取/JSON 解析失败时经 StartupError 中止启动并拒绝写回，
+                           只有文件不存在按合法首次启动处理
                            包含 RelayURL/RelayToken/AllowInsecureRelay +
                            AutoCheckUpdates *bool（nil = default true）+
                            LastCheckAt + SkipVersion（v0 reserved）
@@ -802,6 +817,11 @@ helper 在子进程跑：
     while kill -0 $pid; do sleep 0.5; done   # 等我们退出
     解压 archive → 替换原位 → 平台特异收尾 → 启动新副本 → 清理
 ```
+
+Windows helper 分成原用户父进程与提权 worker：父进程用
+`Start-Process -Verb RunAs -Wait -PassThru` 等待 worker；worker 只等待旧进程、
+解压、替换和清理。worker 成功后由父进程启动新副本，因此继续读取发起更新用户的
+`%APPDATA%\atterm` 和 Windows Credential Manager。
 
 release CI：
 

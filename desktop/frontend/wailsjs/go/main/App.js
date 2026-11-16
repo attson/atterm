@@ -110,6 +110,14 @@ export function DownloadVersion(arg1) {
   return window['go']['main']['App']['DownloadVersion'](arg1);
 }
 
+export function DrainNativeDirect(arg1) {
+  return window['go']['main']['App']['DrainNativeDirect'](arg1);
+}
+
+export function DrainPeerNativeDirect(arg1) {
+  return window['go']['main']['App']['DrainPeerNativeDirect'](arg1);
+}
+
 export function ExportConfig(arg1) {
   return window['go']['main']['App']['ExportConfig'](arg1);
 }
@@ -226,6 +234,10 @@ export function GetPasteboardFileURLs() {
   return window['go']['main']['App']['GetPasteboardFileURLs']();
 }
 
+export function GetPauseRemoteSubscriptionsInBackground() {
+  return window['go']['main']['App']['GetPauseRemoteSubscriptionsInBackground']();
+}
+
 export function GetPeerConfigSyncStatus() {
   return window['go']['main']['App']['GetPeerConfigSyncStatus']();
 }
@@ -300,6 +312,10 @@ export function GetShellIntegrationEnabled() {
 
 export function GetShortcutBindings() {
   return window['go']['main']['App']['GetShortcutBindings']();
+}
+
+export function GetSnippets() {
+  return window['go']['main']['App']['GetSnippets']();
 }
 
 export function GetStartupError() {
@@ -394,8 +410,8 @@ export function ImportSSHHosts(arg1) {
   return window['go']['main']['App']['ImportSSHHosts'](arg1);
 }
 
-export function ImportTermius(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ImportTermius'](arg1, arg2, arg3);
+export function ImportTermius(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ImportTermius'](arg1, arg2, arg3, arg4);
 }
 
 export function InstallPeerCloudflared() {
@@ -710,6 +726,10 @@ export function SetNotificationsEnabled(arg1) {
   return window['go']['main']['App']['SetNotificationsEnabled'](arg1);
 }
 
+export function SetPauseRemoteSubscriptionsInBackground(arg1) {
+  return window['go']['main']['App']['SetPauseRemoteSubscriptionsInBackground'](arg1);
+}
+
 export function SetPeerLANConfig(arg1) {
   return window['go']['main']['App']['SetPeerLANConfig'](arg1);
 }
@@ -756,6 +776,10 @@ export function SetShellIntegrationEnabled(arg1) {
 
 export function SetShortcutBindings(arg1) {
   return window['go']['main']['App']['SetShortcutBindings'](arg1);
+}
+
+export function SetSnippets(arg1) {
+  return window['go']['main']['App']['SetSnippets'](arg1);
 }
 
 export function SetTaskGroupBy(arg1) {

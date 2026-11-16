@@ -433,3 +433,12 @@ describe("SettingsDialog appearance forwarding", () => {
     expect(w.emitted("appearance-changed")!.at(-1)![0]).toEqual(payload);
   });
 });
+
+
+it("forwards saved background subscription changes from General to the app", async () => {
+  const wrapper = mountDialog();
+  await flushPromises();
+  wrapper.getComponent(SettingsGeneral).vm.$emit("background-subscriptions-changed", true);
+  expect(wrapper.emitted("background-subscriptions-changed")).toEqual([[true]]);
+  wrapper.unmount();
+});

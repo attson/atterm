@@ -1,4 +1,4 @@
-import type { Platform, Capabilities, RelayBridge, SessionBridge, RemoteSession, SystemBridge, EventBus, TemplateBridge, AuxKeyBridge } from './types'
+import type { Platform, Capabilities, RelayBridge, SessionBridge, RemoteSession, SystemBridge, EventBus, TemplateBridge, SnippetBridge, AuxKeyBridge } from './types'
 import { apiFetch } from '@webshared/api/client'
 // ^ resolved via the '@webshared' vite alias to web/src/shared/api/client
 // (desktop/frontend/vite.config.ts).
@@ -178,6 +178,7 @@ const system: SystemBridge = {
 }
 
 const TEMPLATES_KEY = 'atterm.quick_templates.value'
+const SNIPPETS_KEY = 'atterm.snippets.value'
 const TEMPLATES_HIDDEN_KEY = 'atterm.templates_hidden.value'
 const AUXKEYS_KEY = 'atterm.aux_keys.value'
 const DIRECT_CONNECTION_KEY = 'atterm.direct_connection.enabled'
@@ -207,6 +208,25 @@ const templates: TemplateBridge = {
   },
   async saveHidden(hidden) {
     localStorage.setItem(TEMPLATES_HIDDEN_KEY, JSON.stringify(hidden))
+  },
+}
+
+const snippets: SnippetBridge = {
+  async load() {
+    try {
+      const raw = localStorage.getItem(SNIPPETS_KEY)
+      if (!raw) return []
+      const value = JSON.parse(raw)
+      return Array.isArray(value) ? value : []
+    } catch { return [] }
+  },
+  async save(list) {
+    localStorage.setItem(SNIPPETS_KEY, JSON.stringify(list))
+    notifyLocalChange('snippets')
+  },
+  async clear() {
+    localStorage.setItem(SNIPPETS_KEY, JSON.stringify([]))
+    notifyLocalChange('snippets')
   },
 }
 
@@ -240,7 +260,16 @@ export function createWebPlatform(): Platform {
     system,
     events,
     templates,
+    snippets,
     auxKeys,
+    backgroundSubscriptions: {
+      load: async () => typeof localStorage !== 'undefined' && localStorage.getItem('atterm.pause_remote_subscriptions_in_background') === '1',
+      save: async (enabled: boolean) => {
+        if (typeof localStorage === 'undefined') return
+        if (enabled) localStorage.setItem('atterm.pause_remote_subscriptions_in_background', '1')
+        else localStorage.removeItem('atterm.pause_remote_subscriptions_in_background')
+      },
+    },
     directConnection: {
       load: async () => localStorage.getItem(DIRECT_CONNECTION_KEY) === '1',
       save: async (enabled) => {

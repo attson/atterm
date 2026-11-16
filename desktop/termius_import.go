@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -47,18 +49,29 @@ type TermiusKeyPreview struct {
 	Valid bool   `json:"valid"`
 }
 
+// TermiusSnippetPreview exposes selection metadata without command text.
+type TermiusSnippetPreview struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Existing bool     `json:"existing"`
+	Blocked  bool     `json:"blocked"`
+	Warnings []string `json:"warnings"`
+}
+
 // TermiusImportPreview grants one confirmation of a specific in-memory snapshot.
 type TermiusImportPreview struct {
-	Token string               `json:"token"`
-	Hosts []TermiusHostPreview `json:"hosts"`
-	Keys  []TermiusKeyPreview  `json:"keys"`
+	Token    string                  `json:"token"`
+	Hosts    []TermiusHostPreview    `json:"hosts"`
+	Keys     []TermiusKeyPreview     `json:"keys"`
+	Snippets []TermiusSnippetPreview `json:"snippets"`
 }
 
 // TermiusImportReport distinguishes additions from hosts preserved on re-import.
 type TermiusImportReport struct {
-	Hosts   int `json:"hosts"`
-	Keys    int `json:"keys"`
-	Skipped int `json:"skipped"`
+	Hosts    int `json:"hosts"`
+	Keys     int `json:"keys"`
+	Snippets int `json:"snippets"`
+	Skipped  int `json:"skipped"`
 }
 
 // DiscoverTermiusProfiles keeps side-by-side installation selection explicit.
@@ -111,7 +124,7 @@ func (a *App) beginTermiusImport() *termiusImportState {
 }
 func (a *App) finishTermiusImport(pending *termiusImportState, data *termius.Data) (TermiusImportPreview, error) {
 	state := &termiusImportState{token: pending.token, expires: time.Now().Add(10 * time.Minute), data: data}
-	preview := TermiusImportPreview{Token: state.token, Hosts: []TermiusHostPreview{}, Keys: []TermiusKeyPreview{}}
+	preview := TermiusImportPreview{Token: state.token, Hosts: []TermiusHostPreview{}, Keys: []TermiusKeyPreview{}, Snippets: []TermiusSnippetPreview{}}
 	valid := map[string]bool{}
 	for _, k := range data.Keys {
 		_, e := parseKeyType(k.PrivateKey, k.Passphrase)
@@ -166,6 +179,10 @@ func (a *App) finishTermiusImport(pending *termiusImportState, data *termius.Dat
 			}
 		}
 		preview.Hosts = append(preview.Hosts, TermiusHostPreview{ID: h.ID, Name: h.Name, Host: h.Address, Port: h.Port, User: h.Username, KeyID: h.KeyID, HasPassword: h.Password != "", Tags: append([]string{}, h.Tags...), Warnings: warnings, Blocked: blocked, Existing: existing, GroupPath: append([]string{}, h.GroupPath...), ForwardCount: len(h.Forwards), JumpIDs: append([]string{}, h.JumpIDs...), ProxyLabel: termiusProxyLabel(h.Proxy)})
+	}
+	for _, snippet := range data.Snippets {
+		_, existing, blocked, warnings := termiusSnippetStatus(snippet, a.GetSnippets())
+		preview.Snippets = append(preview.Snippets, TermiusSnippetPreview{ID: snippet.ID, Name: snippet.Label, Existing: existing, Blocked: blocked, Warnings: warnings})
 	}
 	if !a.termiusImport.CompareAndSwap(pending, state) {
 		return TermiusImportPreview{}, errors.New("termius_preview_expired")
@@ -269,9 +286,49 @@ func termiusKeyFingerprint(k termius.Key) (string, error) {
 	return ssh.FingerprintSHA256(signer.PublicKey()), nil
 }
 
+func termiusTargetSnippet(source termius.Snippet) Snippet {
+	sum := sha256.Sum256([]byte(source.ID))
+	return Snippet{
+		ID:    "termius-snippet-" + hex.EncodeToString(sum[:12]),
+		Label: termiusSnippetLabel(source),
+		Text:  source.Script,
+	}
+}
+
+func termiusSnippetLabel(source termius.Snippet) string {
+	if strings.TrimSpace(source.Label) != "" {
+		return source.Label
+	}
+	for _, line := range strings.Split(source.Script, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > snippetMaxLabelCodePoints {
+			runes = runes[:snippetMaxLabelCodePoints]
+		}
+		return string(runes)
+	}
+	return ""
+}
+
+func termiusSnippetStatus(source termius.Snippet, current []Snippet) (Snippet, bool, bool, []string) {
+	target := termiusTargetSnippet(source)
+	for _, saved := range current {
+		if saved.ID == target.ID || (saved.Label == target.Label && saved.Text == target.Text) {
+			return target, true, true, []string{}
+		}
+	}
+	if err := validateSnippets([]Snippet{target}); err != nil {
+		return target, false, true, []string{"invalid_snippet"}
+	}
+	return target, false, false, []string{}
+}
+
 // ImportTermius consumes a preview once. Validation precedes consumption; a
 // failed write rolls back new credentials and makes the snapshot retryable.
-func (a *App) ImportTermius(token string, hostIDs, keyIDs []string) (TermiusImportReport, error) {
+func (a *App) ImportTermius(token string, hostIDs, keyIDs, snippetIDs []string) (TermiusImportReport, error) {
 	var report TermiusImportReport
 	state := a.termiusImport.Load()
 	if state == nil || state.data == nil || state.token != token || time.Now().After(state.expires) {
@@ -282,11 +339,15 @@ func (a *App) ImportTermius(token string, hostIDs, keyIDs []string) (TermiusImpo
 	}
 	hosts := map[string]termius.Host{}
 	keys := map[string]termius.Key{}
+	snippets := map[string]termius.Snippet{}
 	for _, h := range state.data.Hosts {
 		hosts[h.ID] = h
 	}
 	for _, k := range state.data.Keys {
 		keys[k.ID] = k
+	}
+	for _, snippet := range state.data.Snippets {
+		snippets[snippet.ID] = snippet
 	}
 	selectedHosts := []termius.Host{}
 	selectedKeys := map[string]bool{}
@@ -325,13 +386,34 @@ func (a *App) ImportTermius(token string, hostIDs, keyIDs []string) (TermiusImpo
 		}
 		selectedKeys[id] = true
 	}
-	if len(selectedHosts) == 0 && len(selectedKeys) == 0 {
+	selectedSnippets := []Snippet{}
+	selectedSnippetIDs := map[string]bool{}
+	currentSnippets := a.GetSnippets()
+	for _, id := range snippetIDs {
+		source, ok := snippets[id]
+		if !ok || selectedSnippetIDs[id] {
+			return report, errors.New("termius_invalid_selection")
+		}
+		target, existing, blocked, _ := termiusSnippetStatus(source, currentSnippets)
+		if existing || blocked {
+			return report, errors.New("termius_invalid_selection")
+		}
+		selectedSnippetIDs[id] = true
+		selectedSnippets = append(selectedSnippets, target)
+	}
+	if len(selectedHosts) == 0 && len(selectedKeys) == 0 && len(selectedSnippets) == 0 {
 		return report, errors.New("termius_empty_selection")
 	}
 	original := a.cfgStore.Get()
 	cfg := original
 	cfg.SSHHosts = append([]SSHHost{}, cfg.SSHHosts...)
 	cfg.SSHKeys = append([]SSHKey{}, cfg.SSHKeys...)
+	cfg.Snippets = append([]Snippet{}, cfg.Snippets...)
+	cfg.Snippets = append(cfg.Snippets, selectedSnippets...)
+	if err := validateSnippets(cfg.Snippets); err != nil {
+		return report, err
+	}
+	report.Snippets = len(selectedSnippets)
 	additions := []termius.Host{}
 	hostMap := map[string]string{}
 	existingMap := map[string]SSHHost{}
@@ -475,14 +557,20 @@ func (a *App) ImportTermius(token string, hostIDs, keyIDs []string) (TermiusImpo
 		cfg.SSHHosts = append(cfg.SSHHosts, host)
 		report.Hosts++
 	}
-	if report.Hosts+report.Keys > 0 {
+	sshChanged := report.Hosts+report.Keys > 0
+	if sshChanged || report.Snippets > 0 {
 		if e := a.cfgStore.Set(cfg); e != nil {
 			// configStore publishes in-memory state even on disk failure.
 			// Restore that state before rolling back the credential writes.
 			_ = a.cfgStore.Set(original)
 			return rollback(fmt.Errorf("save imported Termius configuration: %w", e))
 		}
-		a.markSSHHostsDirty()
+		if sshChanged {
+			a.markSSHHostsDirty()
+		}
+		if report.Snippets > 0 {
+			a.markPrefDirtyAndPush("snippets")
+		}
 	}
 	return report, nil
 }

@@ -1,3 +1,4 @@
+import { TransferActivity, waitForTransfer } from './transferActivity'
 import {
   decodeFrame,
   decodeOutPayload,
@@ -91,6 +92,8 @@ export class PeerSessionConnection {
   private ready = false
   private detached = false
   private suspended = false
+  private suspendRequested = false
+  private transfers = new TransferActivity(() => this.suspendIfIdle())
   private reconnectAttempts = 0
   private reconnectTimer: number | null = null
   private fallbackPending = false
@@ -139,13 +142,24 @@ export class PeerSessionConnection {
 
   attach(): void {
     if (this.detached) return
+    this.suspendRequested = false
     this.suspended = false
     if (this.transport || this.reconnectTimer !== null || this.fallbackPending) return
     this.start()
   }
 
+  beginTransfer(): () => void {
+    return this.transfers.begin()
+  }
+
   suspend(): void {
     if (this.detached) return
+    this.suspendRequested = true
+    this.suspendIfIdle()
+  }
+
+  private suspendIfIdle(): void {
+    if (!this.suspendRequested || this.detached || this.transfers.busy) return
     this.suspended = true
     this.clearReconnect()
     this.closeTransport()
@@ -153,6 +167,8 @@ export class PeerSessionConnection {
 
   detach(): void {
     this.detached = true
+    this.suspendRequested = false
+    this.transfers.cancel()
     this.suspended = false
     this.clearReconnect()
     this.closeTransport()
@@ -174,7 +190,16 @@ export class PeerSessionConnection {
 
   beginHistoryPaste(): (() => void) | null {
     if (!this.ready || !this.transport || this.handover || !this.driverConfirmed || !this.isDriverRole) return null
-    return () => {}
+    const transport = this.transport
+    const signal = this.transfers.signal
+    const release = this.beginTransfer()
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      if (transport.drain) void waitForTransfer(transport.drain(), signal, null).catch(() => {}).finally(release)
+      else release()
+    }
   }
 
   sendInput(value: string): void {
@@ -273,6 +298,7 @@ export class PeerSessionConnection {
     const generation = this.generation
     const payload: FSRequest = { ...request, request_id: requestID }
     const encoded = encodeSegments([encodeText(JSON.stringify(payload))])
+    const release = this.beginTransfer()
     return new Promise<FSResponse>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pendingFSRequests.delete(requestID)
@@ -290,7 +316,7 @@ export class PeerSessionConnection {
         this.pendingFSRequests.delete(requestID)
         reject(value instanceof Error ? value : new Error(String(value)))
       }
-    })
+    }).finally(release)
   }
 
   async sendPasteImage(blob: Blob, filename = 'clipboard-image'): Promise<boolean> {
@@ -309,11 +335,18 @@ export class PeerSessionConnection {
     }
     const generation = this.generation
     const transport = this.transport
-    const payload = await encodePastePayload(blob, filename, fallbackContentType)
-    if (!this.isCurrent(generation, transport) || !this.ready || this.handover || !transport.sendFrame(encodeFrame(type, this.sidBytes, payload))) {
-      throw new Error('Peer paste send failed')
+    const release = this.beginTransfer()
+    const signal = this.transfers.signal
+    try {
+      const payload = await waitForTransfer(encodePastePayload(blob, filename, fallbackContentType), signal)
+      if (signal.aborted || !this.isCurrent(generation, transport) || !this.ready || this.handover || !transport.sendFrame(encodeFrame(type, this.sidBytes, payload))) {
+        throw new Error('Peer paste send failed')
+      }
+      if (transport.drain) await waitForTransfer(transport.drain(), signal, null)
+      return true
+    } finally {
+      release()
     }
-    return true
   }
 
   private start(): void {
@@ -597,6 +630,9 @@ export class PeerSessionConnection {
 
   private recover(generation: number, error: Error): void {
     if (this.detached || this.suspended) return
+    this.transfers.cancel()
+    this.suspendIfIdle()
+    if (this.suspended) return
     this.clearDirectFailbackTimer()
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
     this.rejectPendingServiceOpens(new Error('service preview failed: Peer route changed'))
@@ -727,6 +763,7 @@ export class PeerSessionConnection {
   }
 
   private startDirectHandover(generation: number): void {
+    if (this.transfers.busy) { this.scheduleDirectFailback(); return }
     if (
       generation !== this.generation ||
       this.route !== 'quick_tunnel' ||
@@ -870,6 +907,7 @@ export class PeerSessionConnection {
   }
 
   private closeTransport(): void {
+    this.transfers.cancel()
     this.rejectPendingFSRequests(new Error('filesystem request failed: Peer route changed'))
     this.rejectPendingServiceOpens(new Error('service preview failed: Peer route changed'))
     this.retiredFSRequestIDs.clear()

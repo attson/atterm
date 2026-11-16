@@ -5,6 +5,9 @@ import "github.com/google/uuid"
 // Version is the wire protocol version. Bump when incompatible changes ship.
 const Version uint8 = 1
 
+// OutputCompressionDeflate identifies independently compressed, sealed blocks.
+const OutputCompressionDeflate = "deflate-raw-v1"
+
 // Type is a frame type discriminator.
 type Type uint8
 
@@ -79,6 +82,12 @@ const (
 	// The response is targeted to the requesting client and always sealed.
 	TypeInputHistoryRequest  Type = 0x41 // client -> relay/direct host
 	TypeInputHistoryResponse Type = 0x42 // desktop host -> requester client
+
+	// Compression has its own lazy stream and AAD namespace, preserving OUT
+	// compatibility for older subscribers to the same session.
+	TypeOutCompressed           Type = 0x43 // uplink -> relay -> client (8B seq prefix)
+	TypeStreamRequestCompressed Type = 0x44 // relay -> uplink
+	TypeStreamStopCompressed    Type = 0x45 // relay -> uplink
 )
 
 // Frame is a single protocol message.
@@ -202,6 +211,8 @@ type AttachPayload struct {
 	// the device hostname). Echoed back in META.driver_client_name so
 	// viewers can show "taken over by <name>" in their overlay.
 	ClientName string `json:"client_name,omitempty"`
+	// OutputCompression opts into a format only when the publisher supports it.
+	OutputCompression string `json:"output_compression,omitempty"`
 }
 
 // ClaimDriverPayload is the JSON body of a TypeClaimDriver frame.
@@ -239,6 +250,8 @@ type AnnouncePayload struct {
 	Host     string        `json:"host"`
 	User     string        `json:"user"`
 	Sessions []SessionInfo `json:"sessions"`
+	// OutputCompression is advertised only when output can be sealed.
+	OutputCompression string `json:"output_compression,omitempty"`
 }
 
 // StreamRequestPayload is the JSON body of TypeStreamRequest.

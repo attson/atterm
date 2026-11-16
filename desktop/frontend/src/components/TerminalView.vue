@@ -48,6 +48,7 @@ import {
 } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
+import { useTerminalSubscriptionActive } from "../composables/useTerminalSubscriptionActive";
 import {
   useTerminalImagePreview,
   type SessionHistoryImagePreview,
@@ -73,7 +74,7 @@ import { descriptorsForSlot } from "../plugins/registry";
 import { usePluginConfigStore } from "../plugins/configStore";
 import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/types";
 import { useI18n } from "../i18n/useI18n";
-import { type QuickTemplate } from "../lib/templates";
+import { type QuickTemplate, type Snippet } from "../lib/templates";
 import { effectiveAuxKeys, type AuxKey } from "../lib/auxKeys";
 import {
   installTouchDebugDump,
@@ -83,6 +84,7 @@ import {
   setTouchDebugEnabled,
 } from "../lib/touchScrollDebug";
 import { useQuickTemplates } from "../composables/useQuickTemplates";
+import { useSnippets } from "../composables/useSnippets";
 import { setServicePreviewActive } from "../composables/useServicePreviewActive";
 import { usePlatform } from "../platform";
 import type { PeerSessionRouteStatus } from "../platform/types";
@@ -92,8 +94,10 @@ import ServicePreviewSwitcher from "./ServicePreviewSwitcher.vue";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 import TerminalSearchBar from "./TerminalSearchBar.vue";
 import SessionInputHistoryPanel from "./SessionInputHistoryPanel.vue";
-import { Cloud, History } from "lucide-vue-next";
+import SnippetRunPanel from "./SnippetRunPanel.vue";
+import { ClipboardPaste, Cloud, History, Play, ServerCog } from "lucide-vue-next";
 import { createPromptDraftTracker, isCodexOrClaudeCommand, isPromptDraftInputData } from "../lib/promptDraft";
+import type { SnippetSessionTarget, SnippetSessionTargetRegistry } from "../lib/snippetSessionTargets";
 import { promptSuggestionBottomOffset } from "../lib/promptSuggestions";
 import {
   createPromptHistoryBrowser,
@@ -108,6 +112,7 @@ const props = withDefaults(
     preferDirect?: boolean;
     sessionId: string;
     active?: boolean;
+    pauseRemoteSubscriptionsInBackground?: boolean;
     focused?: boolean;
     avoidTopRightBadge?: boolean;
     sessionLabel?: string;
@@ -145,6 +150,7 @@ const props = withDefaults(
   }>(),
   {
     active: true,
+    pauseRemoteSubscriptionsInBackground: false,
     focused: false,
     avoidTopRightBadge: false,
     commandNotifyThresholdSec: 10,
@@ -162,6 +168,12 @@ const props = withDefaults(
       scrollback: 5000,
     }),
   }
+);
+
+const subscriptionActive = useTerminalSubscriptionActive(
+  () => props.active,
+  () => props.isLocalSession,
+  () => props.pauseRemoteSubscriptionsInBackground,
 );
 
 // The attached session's META stream is authoritative once it reports cwd.
@@ -460,6 +472,7 @@ const searchResultCount = ref(0);
 let conn: SessionConnection | PeerSessionConnection | null = null;
 const terminalInputSender = createDeferredInputSender();
 let pluginInputSender: ((text: string) => void) | null = null;
+let snippetSessionTarget: SnippetSessionTarget | null = null;
 let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
@@ -621,6 +634,11 @@ const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
   null,
 );
 
+const snippetSessionTargets = inject<SnippetSessionTargetRegistry | null>(
+  "atterm:snippetSessionTargets",
+  null,
+);
+
 const pluginSessionConnections = inject<Map<string, SessionFSConnection> | null>(
   "atterm:pluginSessionConnections",
   null,
@@ -759,6 +777,9 @@ const showAuxKeyBar = computed(() =>
   !platform.caps.wailsBindings && !platform.caps.localPty && auxKeys.value.length > 0
 );
 const auxKeysCanSend = computed(() =>
+  isDriver.value && isPasteAllowed(status.value, props.remotePermission)
+);
+const snippetsCanSend = computed(() =>
   isDriver.value && isPasteAllowed(status.value, props.remotePermission)
 );
 const pasteBlobCanSend = computed(() =>
@@ -1033,6 +1054,10 @@ async function copyPreviewURL(): Promise<void> {
 }
 
 function focusTerminalForPaneActivation() {
+  // Pane activation starts on mousedown, before the button's click fires.
+  // Keep focus on a shortcut/snippet control for that interaction; stealing it
+  // into xterm here can remove the popover before Run/Paste receives its click.
+  if (shouldPreserveSoftKeyboardForControlPointer()) return;
   if (platform.caps.wailsBindings || platform.caps.localPty || keyboardWanted.value) {
     focusTerminalIfDriver();
   }
@@ -1139,6 +1164,7 @@ function restoreScrollPositionAfterKeyboardToggle(scrollPosition: ScrollPosition
 function hideSoftKeyboard() {
   const scrollPosition = captureScrollPosition();
   clearSoftKeyboardOpenFocusTimers();
+  clearSnippetCloseTimer();
   softKeyboardOpening.value = false;
   keyboardWanted.value = false;
   imeInputTarget?.blur();
@@ -1580,6 +1606,7 @@ function onImeInput(event: InputEvent) {
 
 function onImeFocus(event: FocusEvent) {
   logTouch("onImeFocus", { keyboardWanted: keyboardWanted.value, isDriver: isDriver.value });
+  closeSnippets();
   imeFocused.value = true;
   if (isDriver.value) {
     if (keyboardWanted.value) scrollToBottomForKeyboardOpen();
@@ -1907,6 +1934,12 @@ function stopSelectionEdgeScroll() {
 
 function onDocumentPointerDown(event: PointerEvent) {
   if (shouldHideSoftKeyboardForDocumentPointer(event)) hideSoftKeyboard();
+  if (snippetsOpen.value) {
+    const target = event.target;
+    if (!(target instanceof Node) || (!snippetTriggerRef.value?.contains(target) && !snippetPanelRef.value?.contains(target))) {
+      closeSnippets();
+    }
+  }
   if (templateConfirmOpen.value) {
     const target = event.target as Element | null;
     if (!target?.closest?.(".template-confirm-panel, .template-bar")) cancelTemplateSend();
@@ -2013,7 +2046,10 @@ function onDocumentMouseDown(e: MouseEvent) {
 }
 
 function onDocumentKeyDown(e: KeyboardEvent) {
-  if (e.key === "Escape") closeContextMenu();
+  if (e.key === "Escape") {
+    closeContextMenu();
+    closeSnippets();
+  }
 }
 
 function getTerminalGridElement(): HTMLElement | null {
@@ -2669,6 +2705,7 @@ async function ensureTerm() {
   });
 
   resizeObserver = new ResizeObserver(() => {
+    updateSnippetPanelWidth();
     safeFit();
     restorePendingKeyboardScrollPosition();
   });
@@ -2805,6 +2842,11 @@ function ensureConnection(): SessionConnection | PeerSessionConnection | null {
   // IN frames dropped by the relay.
   pluginInputSender = terminalInputSender.send;
   pluginInputSenders?.set(props.sessionId, pluginInputSender);
+  snippetSessionTarget = {
+    send: terminalInputSender.send,
+    canSend: () => snippetsCanSend.value,
+  };
+  snippetSessionTargets?.set(props.sessionId, snippetSessionTarget);
   // Skip the no-op RESIZE if our fit landed on the same size the relay
   // already knows about. Net effect: locally-spawned shells (PTY born at
   // predicted dims) and cross-attached shells whose owner happens to be
@@ -2830,6 +2872,7 @@ function startConnection() {
 // useQuickTemplates. The send() closure below uses the same deferred sender so
 // the composable stays session-transport agnostic; the two-call split
 // for text + CR lives inside sendTemplate (see [[feedback_template_send_split_cr]]).
+const snippetTemplateIDs = ref<ReadonlySet<string>>(new Set());
 const {
   templates,
   templatesHidden,
@@ -2849,7 +2892,93 @@ const {
   ),
   focused: () => props.focused,
   templatesBridge: platform.templates,
+  isEnabled: (template) => !snippetTemplateIDs.value.has(template.id),
 });
+
+const snippetsOpen = ref(false);
+const batchSnippet = ref<Snippet | null>(null);
+const snippetTriggerRef = ref<HTMLButtonElement | null>(null);
+const snippetPanelRef = ref<HTMLDivElement | null>(null);
+const snippetPanelWidth = ref(440);
+let snippetCloseTimer: number | null = null;
+const {
+  snippets,
+  error: snippetError,
+  reload: reloadSnippets,
+  pasteSnippet,
+  runSnippet,
+} = useSnippets({
+  bridge: platform.snippets,
+  canSend: () => snippetsCanSend.value,
+  paste: (text) => {
+    if (!term) return false;
+    term.paste(text);
+    return true;
+  },
+  send: terminalInputSender.send,
+  sendError: () => t("terminal.snippets.notWritable"),
+});
+
+function clearSnippetCloseTimer(): void {
+  if (snippetCloseTimer === null) return;
+  window.clearTimeout(snippetCloseTimer);
+  snippetCloseTimer = null;
+}
+
+function updateSnippetPanelWidth(): void {
+  const paneWidth = termContainer.value?.clientWidth;
+  if (!paneWidth) return;
+  snippetPanelWidth.value = Math.max(1, Math.min(440, paneWidth - 16));
+}
+
+function openSnippets(): void {
+  clearSnippetCloseTimer();
+  if (snippets.value.length > 0) {
+    updateSnippetPanelWidth();
+    snippetsOpen.value = true;
+  }
+}
+
+function closeSnippets(): void {
+  clearSnippetCloseTimer();
+  snippetsOpen.value = false;
+  snippetError.value = "";
+}
+
+function scheduleCloseSnippets(): void {
+  clearSnippetCloseTimer();
+  snippetCloseTimer = window.setTimeout(() => {
+    const active = document.activeElement;
+    if (active && (snippetTriggerRef.value?.contains(active) || snippetPanelRef.value?.contains(active))) return;
+    closeSnippets();
+  }, 120);
+}
+
+function toggleSnippets(): void {
+  if (snippetsOpen.value) closeSnippets();
+  else openSnippets();
+}
+
+function onSnippetPaste(snippet: Snippet): void {
+  if (!pasteSnippet(snippet)) return;
+  closeSnippets();
+  focusTerminalIfDriver();
+}
+
+function onSnippetRun(snippet: Snippet): void {
+  if (!runSnippet(snippet)) return;
+  closeSnippets();
+  focusTerminalIfDriver();
+}
+
+function openBatchSnippet(snippet: Snippet): void {
+  closeSnippets();
+  batchSnippet.value = snippet;
+}
+
+function closeBatchSnippet(): void {
+  batchSnippet.value = null;
+}
 
 function sendAuxPointer(seq: string, event: PointerEvent) {
   if (!shouldSendShortcutPointer(event)) return;
@@ -2991,11 +3120,14 @@ async function onImagePicked(event: Event) {
 // a remount. Delegates templates to reloadQuickTemplates and reloads
 // auxKeys inline (aux keys live in the parent for now).
 async function reloadShortcutBars() {
-  const [_, nextAuxKeys] = await Promise.all([
+  const [, , nextAuxKeys] = await Promise.all([
     reloadQuickTemplates(),
+    reloadSnippets(),
     effectiveAuxKeys(platform.auxKeys),
   ]);
+  snippetTemplateIDs.value = new Set(snippets.value.map((snippet) => snippet.id));
   auxKeys.value = nextAuxKeys;
+  if (snippets.value.length === 0) closeSnippets();
 }
 
 let templatesOff: (() => void) | null = null;
@@ -3024,15 +3156,15 @@ function scheduleTerminalResumeAfterReveal(
 ): void {
   cancelTerminalResume();
   nextTick(() => {
-    if (!isAlive || !props.active) return;
+    if (!isAlive || !subscriptionActive.value) return;
     cancelPendingTerminalResume = scheduleTerminalActivation(
       () => {
-        if (isAlive && props.active) reveal();
+        if (isAlive && subscriptionActive.value && props.active && !document.hidden) reveal();
       },
       () => {
         cancelPendingTerminalResume = null;
-        if (!isAlive || !props.active) return;
-        settle();
+        if (!isAlive || !subscriptionActive.value) return;
+        if (props.active && !document.hidden) settle();
         startConnection();
       },
     );
@@ -3086,8 +3218,12 @@ onMounted(async () => {
   document.addEventListener("keydown", onTemplateHotkey, true);
   // Keep the existing two-frame layout settle, but do not start replay until
   // the blank/cached terminal has had a chance to paint.
-  if (props.active) {
+  if (subscriptionActive.value) {
     ensureConnection();
+    if (!props.active || document.hidden) {
+      startConnection();
+      return;
+    }
     scheduleTerminalResumeAfterReveal(() => {
       // A newly-created tab mounts active, so the active watcher below never
       // sees a transition. Focus here as part of the same reveal path or the
@@ -3166,6 +3302,10 @@ onBeforeUnmount(() => {
     pluginInputSenders?.delete(props.sessionId);
   }
   pluginInputSender = null;
+  if (snippetSessionTargets?.get(props.sessionId) === snippetSessionTarget) {
+    snippetSessionTargets.delete(props.sessionId);
+  }
+  snippetSessionTarget = null;
   if (pluginSessionConnections?.get(props.sessionId) === conn) {
     pluginSessionConnections?.delete(props.sessionId);
   }
@@ -3196,13 +3336,19 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => props.active,
-  (isActive) => {
+  [() => props.active, subscriptionActive],
+  ([isVisible, isActive]) => {
     if (isActive) {
       // Let Vue reveal the v-show subtree and paint the cached terminal before
       // replaying output. Otherwise a busy session can consume the first frame
       // in xterm's parser and make the tab click itself appear stuck.
       ensureConnection();
+      if (!isVisible || document.hidden) {
+        cancelTerminalResume();
+        closeContextMenu();
+        startConnection();
+        return;
+      }
       scheduleTerminalResumeAfterReveal(() => {
         focusTerminalForPaneActivation();
         // This also reconciles a driver's PTY size via applyViewerSize;
@@ -3533,23 +3679,120 @@ watch(
       data-testid="template-bar"
       :style="{ bottom: templateBarBottom }"
       @pointerdown.capture="onKeyboardControlPointerDown"
-      @wheel.passive="onTemplateBarWheel"
     >
-      <button
-        v-for="tpl in templates"
-        :key="tpl.id"
-        class="template-btn"
-        :data-testid="`template-btn-${tpl.id}`"
-        v-tooltip="tpl.hotkey || ''"
-        tabindex="-1"
-        @touchstart="onKeyboardControlTouchStart"
-        @touchmove="onKeyboardControlTouchMove"
-        @touchcancel="onKeyboardControlTouchCancel"
-        @touchend="onKeyboardControlTouchEnd($event, () => requestTemplateSend(tpl))"
-        @pointerdown="onKeyboardControlPointerDown"
-        @click="onKeyboardControlClick(() => requestTemplateSend(tpl))"
-      >{{ tpl.label }}</button>
+      <div class="template-scroll" @wheel.passive="onTemplateBarWheel">
+        <button
+          v-for="tpl in templates"
+          :key="tpl.id"
+          class="template-btn"
+          :data-testid="`template-btn-${tpl.id}`"
+          v-tooltip="tpl.hotkey || ''"
+          tabindex="-1"
+          @touchstart="onKeyboardControlTouchStart"
+          @touchmove="onKeyboardControlTouchMove"
+          @touchcancel="onKeyboardControlTouchCancel"
+          @touchend="onKeyboardControlTouchEnd($event, () => requestTemplateSend(tpl))"
+          @pointerdown="onKeyboardControlPointerDown"
+          @click="onKeyboardControlClick(() => requestTemplateSend(tpl))"
+        >{{ tpl.label }}</button>
+      </div>
+      <div
+        v-if="snippets.length > 0"
+        class="snippet-entry"
+        @mouseenter="openSnippets"
+        @mouseleave="scheduleCloseSnippets"
+        @focusin="openSnippets"
+        @focusout="scheduleCloseSnippets"
+      >
+        <button
+          ref="snippetTriggerRef"
+          type="button"
+          class="snippet-trigger"
+          data-testid="snippet-trigger"
+          :aria-expanded="snippetsOpen"
+          aria-haspopup="menu"
+          @touchstart="onKeyboardControlTouchStart"
+          @touchmove="onKeyboardControlTouchMove"
+          @touchcancel="onKeyboardControlTouchCancel"
+          @touchend="onKeyboardControlTouchEnd($event, toggleSnippets)"
+          @pointerdown="onKeyboardControlPointerDown"
+          @click="onKeyboardControlClick(toggleSnippets)"
+        >{{ t("terminal.snippets.title") }}</button>
+        <div
+          v-if="snippetsOpen"
+          ref="snippetPanelRef"
+          class="snippet-panel"
+          data-testid="snippet-panel"
+          role="menu"
+          :style="{ width: `${snippetPanelWidth}px` }"
+          @mouseenter="openSnippets"
+          @mouseleave="scheduleCloseSnippets"
+          @pointerdown.stop="onKeyboardControlPointerDown"
+          @click.stop
+        >
+          <div class="snippet-list">
+            <div v-for="snippet in snippets" :key="snippet.id" class="snippet-row" role="menuitem">
+              <div class="snippet-copy">
+                <div class="snippet-label" v-tooltip="snippet.label">{{ snippet.label }}</div>
+                <code class="snippet-preview" v-tooltip="snippet.text">{{ snippet.text }}</code>
+              </div>
+              <div class="snippet-actions">
+                <button
+                  type="button"
+                  class="snippet-action-btn"
+                  :disabled="!snippetsCanSend"
+                  :aria-label="t('terminal.snippets.run')"
+                  v-tooltip="t('terminal.snippets.run')"
+                  @touchstart="onKeyboardControlTouchStart"
+                  @touchmove="onKeyboardControlTouchMove"
+                  @touchcancel="onKeyboardControlTouchCancel"
+                  @touchend="onKeyboardControlTouchEnd($event, () => onSnippetRun(snippet))"
+                  @pointerdown="onKeyboardControlPointerDown"
+                  @click="onKeyboardControlClick(() => onSnippetRun(snippet))"
+                ><Play :size="13" /></button>
+                <button
+                  type="button"
+                  class="snippet-action-btn"
+                  :disabled="!snippetsCanSend"
+                  :aria-label="t('common.paste')"
+                  v-tooltip="t('common.paste')"
+                  @touchstart="onKeyboardControlTouchStart"
+                  @touchmove="onKeyboardControlTouchMove"
+                  @touchcancel="onKeyboardControlTouchCancel"
+                  @touchend="onKeyboardControlTouchEnd($event, () => onSnippetPaste(snippet))"
+                  @pointerdown="onKeyboardControlPointerDown"
+                  @click="onKeyboardControlClick(() => onSnippetPaste(snippet))"
+                ><ClipboardPaste :size="13" /></button>
+                <button
+                  v-if="platform.caps.wailsBindings"
+                  type="button"
+                  class="snippet-action-btn snippet-batch-btn"
+                  :data-testid="`snippet-batch-${snippet.id}`"
+                  :aria-label="t('snippets.batchRun')"
+                  v-tooltip="t('snippets.batchRun')"
+                  @touchstart="onKeyboardControlTouchStart"
+                  @touchmove="onKeyboardControlTouchMove"
+                  @touchcancel="onKeyboardControlTouchCancel"
+                  @touchend="onKeyboardControlTouchEnd($event, () => openBatchSnippet(snippet))"
+                  @pointerdown="onKeyboardControlPointerDown"
+                  @click="onKeyboardControlClick(() => openBatchSnippet(snippet))"
+                ><ServerCog :size="14" /></button>
+              </div>
+            </div>
+          </div>
+          <div v-if="snippetError" class="snippet-error">{{ snippetError }}</div>
+          <div v-else-if="!snippetsCanSend" class="snippet-disabled">{{ t("terminal.snippets.notWritable") }}</div>
+        </div>
+      </div>
     </div>
+    <Teleport to="body">
+      <SnippetRunPanel
+        v-if="batchSnippet"
+        :snippet-label="batchSnippet.label"
+        :snippet-text="batchSnippet.text"
+        @close="closeBatchSnippet"
+      />
+    </Teleport>
     <div
       v-if="showAuxKeyBar && !previewViewActive"
       class="aux-key-bar"
@@ -3908,17 +4151,95 @@ watch(
   display: flex;
   align-items: center;
   gap: 6px;
-  overflow-x: auto;
+  overflow: visible;
   padding: 2px 8px;
   border-top: 1px solid var(--border);
   background: var(--panel);
-  z-index: 4;
+  /* The popover extends over xterm's viewport (z-index: 5). Keep the whole
+     bar in a higher stacking context so the transparent viewport cannot win
+     hit-testing over visible Snippet actions. */
+  z-index: 6;
   /* Hide the WebKit scrollbar gutter — the row scrolls with wheel/trackpad
      and individual buttons are reachable via keyboard; the scrollbar itself
      just steals 12-15px of vertical space we'd rather give to the terminal. */
+}
+.template-scroll {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
   scrollbar-width: none;
 }
-.template-bar::-webkit-scrollbar { display: none; }
+.template-scroll::-webkit-scrollbar { display: none; }
+.snippet-entry { position: relative; flex: 0 0 auto; height: 22px; }
+.snippet-trigger {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  background: var(--bg);
+  font: 600 0.74rem var(--font-mono);
+  cursor: pointer;
+}
+.snippet-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.snippet-panel {
+  position: absolute;
+  right: 0;
+  bottom: 26px;
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 90px));
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+  z-index: 8;
+}
+.snippet-list { max-height: min(360px, calc(100vh - 140px)); overflow-y: auto; }
+.snippet-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 44px;
+  padding: 5px 6px;
+  border-radius: 5px;
+}
+.snippet-row:hover, .snippet-row:focus-within { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.snippet-copy { min-width: 0; }
+.snippet-label, .snippet-preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snippet-label { color: var(--fg); font: 600 0.78rem var(--font-mono); }
+.snippet-preview { margin-top: 2px; color: var(--fg-dim); font: 0.7rem var(--font-mono); }
+.snippet-actions { display: flex; gap: 3px; opacity: 0; pointer-events: none; }
+.snippet-row:hover .snippet-actions, .snippet-row:focus-within .snippet-actions { opacity: 1; pointer-events: auto; }
+.snippet-actions button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  background: var(--bg);
+  font: 0.72rem var(--font-mono);
+  cursor: pointer;
+}
+.snippet-actions button:first-child { color: var(--accent); border-color: var(--accent); }
+.snippet-actions .snippet-batch-btn { width: 24px; }
+.snippet-actions button:disabled { opacity: 0.45; cursor: default; }
+.snippet-error, .snippet-disabled { padding: 6px 8px 2px; color: var(--bad); font: 0.7rem var(--font-mono); }
+.snippet-disabled { color: var(--fg-dim); }
+@media (hover: none), (pointer: coarse) {
+  .snippet-actions { opacity: 1; pointer-events: auto; }
+  .snippet-panel { width: min(94vw, 440px); }
+}
 .aux-key-bar {
   position: absolute;
   left: 0;

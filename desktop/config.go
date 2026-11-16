@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -221,6 +222,8 @@ type appConfig struct {
 	// terminal route. It gates both client upgrade attempts and this desktop's
 	// direct host listener; false keeps the established Relay-only behavior.
 	DirectP2PEnabled bool `json:"direct_p2p_enabled,omitempty"`
+	// This device alone decides whether inactive remote panes retain subscriptions.
+	PauseRemoteSubscriptionsInBackground bool `json:"pause_remote_subscriptions_in_background,omitempty"`
 
 	// Plugins is the plugin-system block. Defaults filled in on first run.
 	Plugins PluginConfig `json:"plugins"`
@@ -229,6 +232,10 @@ type appConfig struct {
 	// or absent means "use defaults" — the renderer seeds DEFAULT_TEMPLATES
 	// in that case. See docs/superpowers/specs/2026-06-04-quick-templates-design.md.
 	QuickTemplates []QuickTemplate `json:"quick_templates,omitempty"`
+	// Snippets persists long command templates separately from QuickTemplates.
+	// Keeping the collections split prevents older clients from rendering a
+	// long command as a directly executable quick-action button.
+	Snippets []Snippet `json:"snippets,omitempty"`
 
 	// TaskPreset is the user's chosen session-bar display style.
 	// Empty falls back to "iconOnly" at read time.
@@ -687,8 +694,9 @@ func migrateShortcutBindings(c *appConfig) bool {
 
 // configStore is a thin lock-protected wrapper around appConfig with disk I/O.
 type configStore struct {
-	mu  sync.Mutex
-	cfg appConfig
+	mu      sync.Mutex
+	cfg     appConfig
+	loadErr error
 	// onCommit, when set, runs after every Set — outside the lock. It exists
 	// because some state *outside* the config has to follow the config: a
 	// running port-forward tunnel whose rule was just deleted (see
@@ -710,10 +718,15 @@ func (s *configStore) setOnCommit(fn func(appConfig)) {
 
 func loadConfig() *configStore {
 	s := &configStore{}
-	if p := configPath(); p != "" {
-		if data, err := os.ReadFile(p); err == nil {
-			_ = json.Unmarshal(data, &s.cfg)
+	p := configPath()
+	if p == "" {
+		s.loadErr = errors.New("user config dir unavailable")
+	} else if data, err := os.ReadFile(p); err == nil {
+		if err := json.Unmarshal(data, &s.cfg); err != nil {
+			s.loadErr = fmt.Errorf("parse %s: %w", p, err)
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		s.loadErr = fmt.Errorf("read %s: %w", p, err)
 	}
 	// applyDefaults MUST run on every path, including "no config file yet".
 	// It used to be skipped when ReadFile failed, which is exactly the first
@@ -727,6 +740,14 @@ func loadConfig() *configStore {
 	// written before the hoist keeps working without a one-off migration step.
 	migrateShortcutBindings(&s.cfg)
 	return s
+}
+
+// LoadError reports why an existing config could not be loaded. A missing
+// file is a valid first run and therefore does not produce an error.
+func (s *configStore) LoadError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadErr
 }
 
 // detachMaps returns a copy of c whose reference-backed fields are freshly
@@ -806,6 +827,9 @@ func (s *configStore) Set(c appConfig) error {
 func (s *configStore) write(c appConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		return fmt.Errorf("refusing to overwrite config after load failure: %w", s.loadErr)
+	}
 	s.cfg = detachMaps(c)
 	p := configPath()
 	if p == "" {

@@ -521,6 +521,18 @@ func (a *App) observeConfigStore() {
 	a.cfgStore.setOnCommit(func(c appConfig) { a.tunnels.reconcile(c.SSHHosts) })
 }
 
+func (a *App) ensureConfigReady() bool {
+	if a.cfgStore == nil {
+		a.setStartupFatalError("load config", errors.New("config store unavailable"))
+		return false
+	}
+	if err := a.cfgStore.LoadError(); err != nil {
+		a.setStartupFatalError("load config", err)
+		return false
+	}
+	return true
+}
+
 // startup is called when the Wails runtime is ready. Boot the in-process
 // relay, load persisted config, and apply it (which may start the uplink).
 // ATTERM_RELAY_URL/TOKEN env vars are honored only when no config file
@@ -539,6 +551,9 @@ func (a *App) startup(ctx context.Context) {
 	// (and possibly written on first run) before we open the userstore.
 	if a.cfgStore == nil {
 		a.cfgStore = loadConfig()
+	}
+	if !a.ensureConfigReady() {
+		return
 	}
 	a.observeConfigStore()
 	h, err := startRelayHost(a.cfgStore)
@@ -1862,6 +1877,19 @@ func (a *App) SetWebglRendererEnabled(enabled bool) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetPauseRemoteSubscriptionsInBackground reports this device's opt-in policy.
+func (a *App) GetPauseRemoteSubscriptionsInBackground() bool {
+	return a != nil && a.cfgStore != nil && a.cfgStore.Get().PauseRemoteSubscriptionsInBackground
+}
+
+// SetPauseRemoteSubscriptionsInBackground stays local because devices have different background needs.
+func (a *App) SetPauseRemoteSubscriptionsInBackground(enabled bool) error {
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.PauseRemoteSubscriptionsInBackground = enabled
+		return nil
+	})
+}
+
 // GetDirectP2PEnabled reports whether this device should attempt and accept
 // Relay-assisted direct terminal routes. The environment switch remains a
 // deployment-level force-on override for staged builds.
@@ -2117,6 +2145,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.TrafficTimeZone != ""
 		case "quick_templates":
 			return len(c.QuickTemplates) > 0
+		case "snippets":
+			return len(c.Snippets) > 0
 		case "notifications_enabled":
 			return c.NotificationsEnabled != nil
 		case "ai_notifications_only":

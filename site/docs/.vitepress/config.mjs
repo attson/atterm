@@ -1,5 +1,4 @@
 import { defineConfig } from 'vitepress'
-import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 // 首页 demo 复用真实前端源码(desktop/frontend/src 与 web/src/shared),通过
@@ -8,8 +7,44 @@ import { fileURLToPath } from 'node:url'
 const R = (p) => fileURLToPath(new URL(p, import.meta.url))
 const SITE_ORIGIN = 'https://attson.github.io'
 const SITE_BASE = '/atterm/'
-const SOCIAL_IMAGE_NAME = 'atterm-social.png'
-const SOCIAL_IMAGE = `${SITE_ORIGIN}${SITE_BASE}${SOCIAL_IMAGE_NAME}`
+const SOCIAL_IMAGE = `${SITE_ORIGIN}${SITE_BASE}atterm-demo-poster.png`
+
+const zhNav = [
+  { text: '首页', link: '/' },
+  { text: '文档', link: '/guide/' },
+  { text: '部署 Relay', link: '/guide/deploy-relay' },
+  { text: '下载', link: '/#下载' },
+]
+const enNav = [
+  { text: 'Home', link: '/en/' },
+  { text: 'Documentation', link: '/en/guide/' },
+  { text: 'Deploy Relay', link: '/en/guide/deploy-relay' },
+  { text: 'Download', link: '/en/#downloads' },
+]
+const zhSidebar = [{
+  text: '使用文档',
+  items: [
+    { text: '介绍与快速上手', link: '/guide/' },
+    { text: '远程接管与会话侧栏', link: '/guide/remote-takeover' },
+    { text: '端到端加密与安全', link: '/guide/e2ee' },
+    { text: '部署 Relay', link: '/guide/deploy-relay' },
+    { text: '部署 Rendezvous', link: '/guide/deploy-rendezvous' },
+    { text: 'AI Agent 与 Feishu', link: '/guide/ai-agents' },
+    { text: 'FAQ / 故障排查', link: '/guide/faq' },
+  ],
+}]
+const enSidebar = [{
+  text: 'Documentation',
+  items: [
+    { text: 'Introduction and quick start', link: '/en/guide/' },
+    { text: 'Remote takeover and sessions', link: '/en/guide/remote-takeover' },
+    { text: 'End-to-end encryption', link: '/en/guide/e2ee' },
+    { text: 'Deploy Relay', link: '/en/guide/deploy-relay' },
+    { text: 'Deploy Rendezvous', link: '/en/guide/deploy-rendezvous' },
+    { text: 'AI agents and Feishu', link: '/en/guide/ai-agents' },
+    { text: 'FAQ and troubleshooting', link: '/en/guide/faq' },
+  ],
+}]
 
 function canonicalURL(page) {
   let route = page.replace(/\\/g, '/').replace(/\.md$/, '')
@@ -24,6 +59,10 @@ function canonicalURL(page) {
 export default defineConfig({
   base: '/atterm/',
   lang: 'zh-CN',
+  locales: {
+    root: { label: '简体中文', lang: 'zh-CN', link: '/' },
+    en: { label: 'English', lang: 'en-US', link: '/en/' },
+  },
   title: 'AT Term',
   titleTemplate: ':title | AT Term',
   description: '本地优先的跨平台终端、SSH 工作台与 AI Agent 控制台，支持端到端加密的桌面、Web 和 iOS 远程会话接管。',
@@ -39,25 +78,28 @@ export default defineConfig({
     }
 
     const url = canonicalURL(page)
+    const isEnglish = page.startsWith('en/')
+    const locale = isEnglish ? 'en_US' : 'zh_CN'
     const head = [
       ['link', { rel: 'canonical', href: url }],
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:site_name', content: 'AT Term' }],
-      ['meta', { property: 'og:locale', content: 'zh_CN' }],
+      ['meta', { property: 'og:locale', content: locale }],
+      ['meta', { property: 'og:locale:alternate', content: isEnglish ? 'zh_CN' : 'en_US' }],
       ['meta', { property: 'og:title', content: title }],
       ['meta', { property: 'og:description', content: description }],
       ['meta', { property: 'og:url', content: url }],
       ['meta', { property: 'og:image', content: SOCIAL_IMAGE }],
-      ['meta', { property: 'og:image:width', content: '1024' }],
-      ['meta', { property: 'og:image:height', content: '1024' }],
-      ['meta', { property: 'og:image:alt', content: 'AT Term application icon' }],
-      ['meta', { name: 'twitter:card', content: 'summary' }],
+      ['meta', { property: 'og:image:width', content: '1200' }],
+      ['meta', { property: 'og:image:height', content: '630' }],
+      ['meta', { property: 'og:image:alt', content: isEnglish ? 'AT Term terminal and session interface' : 'AT Term 终端与会话界面' }],
+      ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
       ['meta', { name: 'twitter:title', content: title }],
       ['meta', { name: 'twitter:description', content: description }],
       ['meta', { name: 'twitter:image', content: SOCIAL_IMAGE }],
     ]
 
-    if (page === 'index.md') {
+    if (page === 'index.md' || page === 'en/index.md') {
       head.push([
         'script',
         { type: 'application/ld+json' },
@@ -84,44 +126,14 @@ export default defineConfig({
     return head
   },
   themeConfig: {
-    nav: [
-      { text: '首页', link: '/' },
-      { text: '文档', link: '/guide/' },
-      { text: '部署 Relay', link: '/guide/deploy-relay' },
-      { text: '下载', link: 'https://github.com/attson/atterm/releases/latest' },
-    ],
-    sidebar: {
-      '/guide/': [
-        {
-          text: '使用文档',
-          items: [
-            { text: '介绍与快速上手', link: '/guide/' },
-            { text: '远程接管与会话侧栏', link: '/guide/remote-takeover' },
-            { text: '端到端加密与安全', link: '/guide/e2ee' },
-            { text: '部署 Relay', link: '/guide/deploy-relay' },
-            { text: '部署 Rendezvous', link: '/guide/deploy-rendezvous' },
-            { text: 'AI Agent 与 Feishu', link: '/guide/ai-agents' },
-            { text: 'FAQ / 故障排查', link: '/guide/faq' },
-          ],
-        },
-      ],
+    locales: {
+      root: { label: '简体中文', nav: zhNav, sidebar: { '/guide/': zhSidebar } },
+      en: { label: 'English', nav: enNav, sidebar: { '/en/guide/': enSidebar } },
     },
     socialLinks: [{ icon: 'github', link: 'https://github.com/attson/atterm' }],
     search: { provider: 'local' },
   },
   vite: {
-    plugins: [
-      {
-        name: 'atterm-social-image',
-        generateBundle() {
-          this.emitFile({
-            type: 'asset',
-            fileName: SOCIAL_IMAGE_NAME,
-            source: readFileSync(R('../../../web/public/icon.png')),
-          })
-        },
-      },
-    ],
     resolve: {
       alias: [
         // wailsjs/* 必须排在 @ 之前,否则 @/… 里对 ../../wailsjs 的相对 import

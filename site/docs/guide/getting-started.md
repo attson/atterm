@@ -14,7 +14,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 2. 登录 relay 后,桌面端按需把会话状态 + PTY 字节上行;远程端(手机 / 浏览器 / 另一台桌面)attach 后才上传字节,无人看时不上传。
 3. 启用 E2EE:account_key 只在客户端持有;输出 / 标题 / cwd / 摘要在 relay 侧全程密文。
 4. 任务关键节点(命令完成、AI 等输入)可触发系统通知、Web Push 和飞书卡片，并按 session id 路由回对应会话。
-5. AI agent(Claude Code / Codex / Aider / Gemini)自动识别:命令分类、resume 注入、Notification hook 自动安装。
+5. Claude Code、Codex、Aider 和 Gemini CLI 都可自动识别；恢复与 hook 支持因 Agent 而异，详见 [AI Agent 与 Feishu](/guide/ai-agents)。
 
 ## 适合谁
 

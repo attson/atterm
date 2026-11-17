@@ -16,7 +16,13 @@ describe('runFakeCommand', () => {
     expect(r.longRunning).toBeFalsy()
   })
 
-  it('flags a long-running AI command that drives task state', () => {
+  it('enters interactive mode for a bare AI command', () => {
+    const r = runFakeCommand('codex')
+    expect(r.interactive).toBe('codex')
+    expect(r.longRunning).toBeFalsy()
+  })
+
+  it('flags a long-running one-shot AI command that drives task state', () => {
     const r = runFakeCommand('codex exec "add feature"')
     expect(r.longRunning).toBe(true)
     expect(r.finalState).toBe('completed')

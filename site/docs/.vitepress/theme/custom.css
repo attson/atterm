@@ -1,3 +1,13 @@
+/* VitePress 会把 Demo 动态导入的 desktop style.css 提取进公共 CSS；其中较晚
+   出现的 html/body 规则不能接管文档站画布。用更高 specificity 把站点颜色和
+   16px 基线绑定回 VitePress 主题变量，Demo 内部再单独恢复桌面端基线。 */
+html:root,
+html:root body {
+  background-color: var(--vp-c-bg);
+  color: var(--vp-c-text-1);
+  font-size: 16px;
+}
+
 /* 统一暗色主题背景:VitePress 默认 nav bar / hero 用 --vp-c-bg-alt(更深),
    与内容区 --vp-c-bg 在超宽屏右侧留白处形成色差。这里让 nav 背景与页面一致,
    消除右边缘那条深色带。 */
@@ -12,19 +22,12 @@
   background-color: var(--vp-c-bg);
 }
 
-/* hero 标题「带远程接管的跨平台终端」默认会换成 3 行。放宽 hero 文本区并让
-   标题在够宽时不换行(窄屏仍允许换行,避免溢出)。 */
+/* 放宽 hero 文本区；标题保留自然换行，中英文在中等桌面宽度都不能横向溢出。 */
 .VPHero .container .main {
   max-width: none;
 }
 .VPHero .text {
   max-width: 100%;
-}
-@media (min-width: 960px) {
-  .VPHero .name,
-  .VPHero .text {
-    white-space: nowrap;
-  }
 }
 
 /* 压缩 hero 与首页内容(demo)之间的空白:VitePress 默认在 hero 下方和内容区
@@ -33,31 +36,76 @@
 .VPHome .vp-doc.container { padding-top: 0; }
 .VPHome .tech-home { margin-top: 0; }
 
-.tech-home .badge-strip { display: flex; justify-content: center; margin: 24px 0; }
-.tech-home .badge-wrap { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
-.tech-home .badge {
-  display: flex; flex-direction: column; align-items: center; padding: 10px 16px;
-  border: 1px solid var(--vp-c-divider); border-radius: 10px; background: var(--vp-c-bg-soft);
+.tech-home > h2 { margin-top: 56px; letter-spacing: 0; }
+.tech-home .section-lead { max-width: 760px; margin: -6px 0 26px; color: var(--vp-c-text-2); }
+.tech-home .connection-paths {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--vp-c-divider);
+  border-bottom: 1px solid var(--vp-c-divider);
 }
-.tech-home .badge-k { font-weight: 700; }
-.tech-home .badge-v { font-size: 12px; opacity: 0.75; }
-.tech-home .feature-cards {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px; margin: 24px 0;
+.tech-home .connection-paths section { padding: 24px 24px 26px 0; }
+.tech-home .connection-paths section + section { border-left: 1px solid var(--vp-c-divider); padding-left: 24px; }
+.tech-home .connection-paths h3,
+.tech-home .capability-rows h3,
+.tech-home .release-platform h3 { margin: 5px 0 8px; border: 0; letter-spacing: 0; }
+.tech-home .connection-paths p,
+.tech-home .capability-rows p,
+.tech-home .release-platform p { margin: 0 0 12px; color: var(--vp-c-text-2); }
+.tech-home .path-index { color: var(--vp-c-brand-1); font-size: 12px; font-weight: 700; }
+.tech-home .connection-paths a { font-size: 13px; font-weight: 600; }
+.tech-home .capability-rows { border-top: 1px solid var(--vp-c-divider); }
+.tech-home .capability-rows section {
+  display: grid;
+  grid-template-columns: minmax(200px, .7fr) minmax(0, 1.3fr);
+  gap: 28px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--vp-c-divider);
 }
-.tech-home .feature-card {
-  padding: 18px; border: 1px solid var(--vp-c-divider); border-radius: 12px;
-  background: var(--vp-c-bg-soft);
+.tech-home .capability-rows h3,
+.tech-home .capability-rows p { margin-top: 0; margin-bottom: 0; }
+.tech-home .release-downloads { border-top: 1px solid var(--vp-c-divider); }
+.tech-home .release-platform {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--vp-c-divider);
 }
-.tech-home .feature-card h3 { margin: 0 0 8px; }
-.tech-home .downloads {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;
+.tech-home .release-platform p:last-child { margin-bottom: 0; }
+.tech-home .release-warning { color: var(--vp-c-warning-1) !important; font-size: 13px; }
+.tech-home .release-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.tech-home .release-links a {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding: 7px 11px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  color: var(--vp-c-text-1);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
 }
-.tech-home .download-card {
-  display: block; padding: 20px; border: 1px solid var(--vp-c-divider);
-  border-radius: 12px; text-decoration: none; background: var(--vp-c-bg-soft);
-  transition: border-color 0.2s, transform 0.2s;
+.tech-home .release-links a:hover { border-color: var(--vp-c-brand-1); color: var(--vp-c-brand-1); }
+.tech-home .release-verify {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
 }
-.tech-home .download-card:hover { border-color: var(--vp-c-brand-1); transform: translateY(-2px); }
-.tech-home .download-card .os { font-weight: 700; font-size: 18px; }
-.tech-home .download-card .os-sub { font-size: 12px; opacity: 0.7; }
+.tech-home .release-verify > div:first-child { display: flex; flex-direction: column; }
+.tech-home .release-verify span { color: var(--vp-c-text-2); font-size: 13px; }
+
+@media (max-width: 760px) {
+  .tech-home > h2 { margin-top: 42px; }
+  .tech-home .connection-paths { grid-template-columns: 1fr; }
+  .tech-home .connection-paths section { padding: 20px 0; }
+  .tech-home .connection-paths section + section { border-top: 1px solid var(--vp-c-divider); border-left: 0; padding-left: 0; }
+  .tech-home .capability-rows section { grid-template-columns: 1fr; gap: 6px; }
+  .tech-home .release-platform { grid-template-columns: 1fr; gap: 10px; }
+  .tech-home .release-links { justify-content: flex-start; }
+  .tech-home .release-verify { align-items: flex-start; flex-direction: column; }
+}

@@ -17,6 +17,14 @@
 .worktrees/
 .workflow-plan/
 docs/tasks/
+docs/brainstorm/drafts/
+docs/brainstorm/notes/
+docs/superpowers/
+.claude/settings.local.json
+*.local
+*.local.*
+/site/test-results/
+/site/playwright-report/
 
 # Local-only artefacts that should never be committed
 /atterm-relay

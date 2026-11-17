@@ -46,9 +46,14 @@ jobs:
       - name: Test mock layer
         working-directory: site
         run: npm test
-      - name: Build
+      - name: Install Playwright Chromium
         working-directory: site
-        run: npm run docs:build
+        run: npx playwright install --with-deps chromium
+      # Playwright builds once, serves the generated site, and leaves dist in place
+      # for upload. This covers the real App integration without a duplicate build.
+      - name: Test built site
+        working-directory: site
+        run: npm run test:e2e
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

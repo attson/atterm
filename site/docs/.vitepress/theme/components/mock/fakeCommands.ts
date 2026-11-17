@@ -1,8 +1,11 @@
 // 假命令响应表:供 idle 会话的 mock 终端解析用户输入。output 用 \r\n 换行
 // 以匹配 PTY 语义。longRunning 命令返回分步输出 + 最终任务状态,由 mockSocket
 // 播放并触发通知。
+export type FakeAgentKind = 'codex' | 'claude' | 'aider'
+
 export interface FakeCommandResult {
   output: string
+  interactive?: FakeAgentKind
   longRunning?: boolean
   steps?: string[] // 逐步输出(打字机),仅 longRunning
   finalState?: 'completed' | 'failed'
@@ -36,6 +39,7 @@ export function runFakeCommand(raw: string): FakeCommandResult {
     case 'codex':
     case 'claude':
     case 'aider':
+      if (!arg) return { output: '', interactive: cmd }
       return {
         output: '',
         longRunning: true,
@@ -67,7 +71,8 @@ function helpText(): string {
   return [
     'demo shell — try:',
     '  ls  pwd  whoami  echo <text>  cat README.md  date  clear',
-    '  codex/claude/aider <task>   (演示任务状态 + 通知)',
+    '  codex/claude/aider          (进入交互演示，输入 /exit 返回 shell)',
+    '  codex exec <task>           (演示一次性任务状态 + 通知)',
     '',
   ].join('\r\n')
 }

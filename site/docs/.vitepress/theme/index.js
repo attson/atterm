@@ -1,6 +1,7 @@
 import DefaultTheme from 'vitepress/theme'
 import { createPinia } from 'pinia'
 import HomeDemo from './components/HomeDemo.vue'
+import ReleaseDownloads from './components/ReleaseDownloads.vue'
 import './custom.css'
 
 // 真实 App.vue 及其组件用 Pinia store(如 pluginConfig)。把 Pinia 装到
@@ -11,5 +12,6 @@ export default {
   enhanceApp({ app }) {
     app.use(createPinia())
     app.component('HomeDemo', HomeDemo)
+    app.component('ReleaseDownloads', ReleaseDownloads)
   },
 }

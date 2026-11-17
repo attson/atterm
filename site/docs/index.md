@@ -2,15 +2,15 @@
 layout: home
 title: AT Term - 本地优先的 SSH 与 AI Agent 跨平台终端
 titleTemplate: false
-description: AT Term 是本地优先的跨平台终端、SSH 工作台与 AI Agent 控制台，支持通过端到端加密的 Relay 从桌面、浏览器和 iPhone 远程接管会话。
+description: AT Term 是本地优先的跨平台终端、SSH 工作台与 AI Agent 控制台，支持通过端到端加密的 Relay 或 Peer Space 从桌面、浏览器和 iPhone 远程接管会话。
 hero:
   name: AT Term
-  text: 带远程接管的跨平台终端
-  tagline: 桌面端启动的 shell、Codex、Claude 等长任务,离开电脑后从手机、浏览器或另一台电脑继续查看和输入。启用 E2EE 后,输出对 relay 全程不可读。
+  text: 让长任务留在终端，控制权跟你走
+  tagline: 本机照常运行 shell、SSH、Codex 和 Claude；离开工位后，从浏览器、手机或另一台电脑继续查看和输入。
   actions:
     - theme: brand
-      text: 下载最新版
-      link: https://github.com/attson/atterm/releases/latest
+      text: 选择下载
+      link: '#下载'
     - theme: alt
       text: 使用文档
       link: /guide/
@@ -19,44 +19,33 @@ hero:
       link: /guide/deploy-relay
 ---
 
-<script setup>
-import HomeDemo from './.vitepress/theme/components/HomeDemo.vue'
-</script>
-
 <div class="tech-home">
 
 <HomeDemo />
 
-<section class="badge-strip">
-  <div class="badge-wrap">
-    <div class="badge"><span class="badge-k">E2EE</span><span class="badge-v">端到端加密</span></div>
-    <div class="badge"><span class="badge-k">3 平台</span><span class="badge-v">macOS / Linux / Windows</span></div>
-    <div class="badge"><span class="badge-k">OSC 133</span><span class="badge-v">任务状态推导</span></div>
-    <div class="badge"><span class="badge-k">AI Agent</span><span class="badge-v">Claude / Codex / Aider</span></div>
-    <div class="badge"><span class="badge-k">通知</span><span class="badge-v">系统 / Web Push / 飞书</span></div>
-    <div class="badge"><span class="badge-k">Apache-2.0</span><span class="badge-v">开源</span></div>
-  </div>
-</section>
+## 选择连接方式
 
-## 核心能力
+<p class="section-lead">先把 AT Term 当成一个本地终端使用；需要跨设备时，再按账号制或点对点场景接入。</p>
 
-<div class="feature-cards">
-  <div class="feature-card"><h3>远程接管(lazy 同步)</h3><p>桌面连上 relay 后,手机 / 浏览器 / 另一台桌面可 attach 同一会话;默认 viewer,take over 才能写。无人看时不上传字节。</p></div>
-  <div class="feature-card"><h3>会话状态与侧栏</h3><p>OSC 133 推导 running / waiting / done / failed;侧栏可搜索、置顶、按 host 分组,attention 高亮 AI 等输入的会话。</p></div>
-  <div class="feature-card"><h3>多通道通知</h3><p>命令完成、AI 等输入可触发系统通知、Web Push 和飞书卡片，并按 session id 回到对应任务。</p></div>
-  <div class="feature-card"><h3>AI Agent 识别</h3><p>Claude Code / Codex / Aider / Gemini 自动识别:命令分类、resume 注入、Notification hook 自动安装。</p></div>
-  <div class="feature-card"><h3>端到端加密</h3><p>account_key 只在客户端持有;输出 / 标题 / cwd / 摘要在 relay 侧全程密文,自托管不外泄。</p></div>
-  <div class="feature-card"><h3>远程文件浏览</h3><p>浏览 owner 机器文件系统、编辑保存、全套 CRUD + 回收站,双源切换本地 / 远程。</p></div>
+<div class="connection-paths">
+  <section><span class="path-index">01</span><h3>本地终端与 SSH</h3><p>本机 PTY、本地优先。管理 SSH 主机、标签页和分屏；Relay 不可用也不影响本地 shell。</p><a href="/atterm/guide/">从桌面端开始</a></section>
+  <section><span class="path-index">02</span><h3>账户 Relay</h3><p>适合固定设备和持续远程接管。自托管账号、历史回放、Web/PWA、通知与端到端加密集中在一处。</p><a href="/atterm/guide/deploy-relay.html">部署自己的 Relay</a></section>
+  <section><span class="path-index">03</span><h3>Peer Space</h3><p>适合无账户的可信设备组。Rendezvous 只负责发现和加密信令，建立 WebRTC 后终端流量不经过它。</p><a href="/atterm/guide/deploy-rendezvous.html">了解 Rendezvous</a></section>
+</div>
+
+## 为终端里的长任务而设计
+
+<div class="capability-rows">
+  <section><h3>会话状态与远程接管</h3><p>OSC 133 推导 running、waiting、done、failed；远程默认 viewer，明确 take over 后才写入。无人观看时不上传 PTY 字节。</p></section>
+  <section><h3>AI Agent 有边界的集成</h3><p>Claude Code、Codex、Aider、Gemini CLI 都可识别分类；Claude/Codex 支持会话 ID 恢复，Aider 重放启动命令；Notification hook 与飞书 AskUserQuestion 目前只覆盖 Claude Code。</p></section>
+  <section><h3>端到端加密与权限</h3><p>启用 E2EE 后，终端输出、标题、cwd 和任务摘要对 Relay 保持密文。owner 以 view/control/full 控制远程输入和文件访问。</p></section>
+  <section><h3>文件、通知与恢复</h3><p>在 full 权限下浏览远端文件，任务完成或等待输入时接收系统、Web Push 或飞书通知；桌面重启后按 session ID 恢复正确的会话。</p></section>
 </div>
 
 ## 下载
 
-<div class="downloads">
-  <a class="download-card" href="https://github.com/attson/atterm/releases/latest" target="_blank" rel="noreferrer"><div class="os">macOS</div><div class="os-sub">.dmg / .zip · Intel / Apple Silicon</div></a>
-  <a class="download-card" href="https://github.com/attson/atterm/releases/latest" target="_blank" rel="noreferrer"><div class="os">Linux</div><div class="os-sub">.deb / .tar.gz · amd64 / arm64</div></a>
-  <a class="download-card" href="https://github.com/attson/atterm/releases/latest" target="_blank" rel="noreferrer"><div class="os">Windows</div><div class="os-sub">.exe / .zip · amd64</div></a>
-</div>
+<p class="section-lead">桌面构件直接来自 GitHub 最新 Release。自动更新会强制验签并校验 SHA256；手动下载可使用下方同一份签名清单核验。</p>
 
-<p style="margin-top:12px;opacity:.7;font-size:13px">三平台均前往 <a href="https://github.com/attson/atterm/releases/latest" target="_blank" rel="noreferrer">GitHub Releases</a> 下载最新版。</p>
+<ReleaseDownloads locale="zh" />
 
 </div>

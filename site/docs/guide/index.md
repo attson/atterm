@@ -39,6 +39,18 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 >
 > Homebrew cask 分发(`brew install --cask attson/tap/atterm`)**绕不开这一步**:cask 装完同样会带上隔离标记,该跑的 `xattr` 一条不少(cask 会在安装完成时提示你)。它带来的是版本化安装、每次发版自动更新的 checksum,以及一条顺手的升级路径,不是 Gatekeeper 的解法。另外承载 cask 的 tap 仓库还没建好,这条命令**目前还跑不通**——建好后会在这里换成可直接执行的命令。
 
+## iPhone / iPad:从源码构建
+
+目前没有公开 App Store 或 TestFlight 构件。移动端由仓库内的 Capacitor 工程提供，需要 Xcode 15+：
+
+```bash
+cd mobile
+npm install
+npm run ios:open
+```
+
+在 Xcode 中选择 simulator，或配置自己的开发签名后运行到真机。iOS 凭据写入 Keychain，不使用浏览器 localStorage。
+
 ## 方式 B:桌面端 + 自托管 relay(用户账号制)
 
 这个模式适合「电脑上跑任务,手机/另一台机器接管」。

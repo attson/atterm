@@ -3,6 +3,8 @@ import { DEFAULT_TEMPLATES, type Snippet } from '@/lib/templates'
 import { fakeSessions } from './fakeSessions'
 import { createMockPluginFs } from './mockFs'
 import { MockSocket } from './mockSocket'
+import { readMockInputHistory } from './mockInputHistory'
+import { mockEvents } from './mockEvents'
 
 // 以 desktop/frontend/src/platform/web.ts 为模板,把网络调用换成内存假数据。
 // 目标:让真实 App.vue 以「已登录 + 已连接」状态直接进入主界面,并打开文件
@@ -27,7 +29,6 @@ const CAPS: Capabilities = {
 const mem = new Map<string, string>()
 
 export function createMockPlatform(): Platform {
-  const events = makeEventBus()
   let directConnectionEnabled = false
   let snippets = [
     {
@@ -76,6 +77,9 @@ export function createMockPlatform(): Platform {
       async listRemoteSessions() {
         return fakeSessions
       },
+      async getInputHistory(sessionID: string) {
+        return readMockInputHistory(sessionID)
+      },
       async markSessionsSeen() {},
       async getPins() {
         const v = mem.get('pins')
@@ -83,7 +87,7 @@ export function createMockPlatform(): Platform {
       },
       async setPins(ids: string[]) {
         mem.set('pins', JSON.stringify(ids))
-        events.emit('prefs:remote-changed', undefined)
+        mockEvents.emit('prefs:remote-changed', undefined)
       },
       async listRelaySessions() {
         return []
@@ -103,7 +107,7 @@ export function createMockPlatform(): Platform {
         } catch {
           /* fall through to toast */
         }
-        events.emit('demo:toast', { title, body })
+        mockEvents.emit('demo:toast', { title, body })
       },
       async getClipboardPaste() {
         return { kind: 'none' }
@@ -122,7 +126,7 @@ export function createMockPlatform(): Platform {
         return { version: 'demo', tag: 'demo' }
       },
     },
-    events,
+    events: mockEvents,
     directConnection: {
       async load() {
         return directConnectionEnabled
@@ -187,28 +191,4 @@ export function createMockPlatform(): Platform {
   }
 
   return platform
-}
-
-function makeEventBus() {
-  const map = new Map<string, Set<(d: unknown) => void>>()
-  return {
-    on(name: string, handler: (d: unknown) => void) {
-      let set = map.get(name)
-      if (!set) {
-        set = new Set()
-        map.set(name, set)
-      }
-      set.add(handler)
-      return () => set!.delete(handler)
-    },
-    emit(name: string, data: unknown) {
-      for (const fn of Array.from(map.get(name) || [])) {
-        try {
-          fn(data)
-        } catch {
-          /* ignore listener errors */
-        }
-      }
-    },
-  }
 }

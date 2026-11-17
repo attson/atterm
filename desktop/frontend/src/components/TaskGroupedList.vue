@@ -22,9 +22,11 @@ import {
   hostNameWithIndex,
   coResidentIndex,
   taskStateLabel,
-  commandLabel,
+  sessionKindLabel,
+  sessionKindTone,
   sshEndpoint,
 } from "../lib/sessionLabel";
+import { useSessionLabelAppearance } from "../composables/useSessionLabelAppearance";
 
 const preset = useTaskPreset();
 const showStateLabel = computed(() => preset.active.value.showLabel);
@@ -90,6 +92,11 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const labelAppearance = useSessionLabelAppearance();
+
+function sessionKindColor(session: RemoteSession): string {
+  return labelAppearance.colorFor(sessionKindTone(session));
+}
 const sel = useSessionSelection();
 
 // The group order is the row order: one list, so the two cannot disagree about
@@ -668,10 +675,16 @@ function stateLabel(state: string | undefined): string {
                kept in step by hand. -->
           <span
             class="row-tail"
-            :class="{ 'time-only': s.type !== 'ai' }"
+            :class="{ 'time-only': !sessionKindLabel(s) }"
             data-test="row-tail"
           >
-            <span v-if="s.type === 'ai'" class="kind" data-test="row-kind">{{ commandLabel(s) }}</span>
+            <span
+              v-if="sessionKindLabel(s)"
+              class="kind"
+              :class="{ 'kind-colored': sessionKindColor(s) }"
+              :style="sessionKindColor(s) ? { '--kind-color': sessionKindColor(s) } : undefined"
+              data-test="row-kind"
+            >{{ sessionKindLabel(s) }}</span>
             <LastOutputIndicator
               :last-output-at="s.last_output_at"
               :task-state="s.task_state"
@@ -825,6 +838,11 @@ function stateLabel(state: string | undefined): string {
   color: var(--fg-dim);
   white-space: nowrap;
   transition: opacity 100ms;
+}
+.kind.kind-colored {
+  color: var(--kind-color);
+  border-color: color-mix(in srgb, var(--kind-color) 50%, transparent);
+  background: color-mix(in srgb, var(--kind-color) 10%, transparent);
 }
 .completed-row-close {
   position: absolute;

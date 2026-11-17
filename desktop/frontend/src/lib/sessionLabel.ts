@@ -51,6 +51,20 @@ export function commandLabel(s: Pick<SessionLike, 'current_command' | 'title' | 
   return firstToken.split('/').pop() || firstToken
 }
 
+export function sessionKindLabel(s: SessionLike): string {
+  if ((s.ssh_host_alias ?? '').trim()) return 'SSH'
+  return s.type === 'ai' ? commandLabel(s) : ''
+}
+
+export type SessionLabelTone = 'neutral' | 'ssh' | 'codex' | 'claude'
+
+export function sessionKindTone(s: SessionLike): SessionLabelTone {
+  if ((s.ssh_host_alias ?? '').trim()) return 'ssh'
+  if (s.type !== 'ai') return 'neutral'
+  const label = commandLabel(s).toLowerCase()
+  return label === 'codex' || label === 'claude' ? label : 'neutral'
+}
+
 export function sshEndpoint(s: Pick<SessionLike, 'host' | 'user'>): string {
   const host = (s.host ?? '').trim()
   const user = (s.user ?? '').trim()

@@ -4,22 +4,22 @@ description: 了解 AT Term 的 OPAQUE 登录、account_key 管理、端到端�
 
 # 端到端加密与安全
 
-## 启用端到端加密
+## 账号与 account key
 
-新账号在注册时(`signup.html` / 桌面 Settings → Remote relay → Register)走 OPAQUE 流程,浏览器 / 桌面端在本地随机生成 32 字节 `account_key`,用 Argon2id 派生的 wrap key + XChaCha20-Poly1305 封装成 wrap blob 上传,relay 只看到 wrap 不看密码。登录时同样在本地 OPAQUE 后用密码解 wrap 拿回 `account_key`,存 sessionStorage / Keychain / Keyring。
+新账号在 `signup.html` 或客户端注册入口使用 OPAQUE。密码只参与客户端与 Relay 的 OPAQUE 交互，Relay 不接收或保存明文密码。注册时客户端生成独立的 32 字节 `account_key`，上传的只是密码保护后的包裹结果；登录成功后由客户端在本地解锁。
 
-只要 `account_key` 解锁,agent 就会自动开 E2EE:
+解锁后的 key 只保存在当前客户端的安全边界内：Web 使用 tab 级 `sessionStorage`，桌面使用系统 keyring，iOS 使用 Keychain。它不进入 URL、日志、IndexedDB 或 Relay 明文存储。
+
+只要 `account_key` 解锁，host 就会自动启用 E2EE：
 
 - 终端 OUT 字节、会话标题 / cwd / 当前命令、任务摘要、命令完成 push body 都封装上链,relay 收到的就是密文。
-- 浏览器 / 桌面 / 移动端在本地解密;service worker 命令完成通知会通过 `MessageChannel` 找到可见 tab 解密,渲染出富文本(无可见 tab 时退化到通用文案)。
+- 浏览器、桌面和移动端都在本地解密；如果浏览器没有可用的已解锁页面，后台通知只显示不含敏感内容的通用文案。
 
-## 加密细节
+## Relay 能看到什么
 
-- OPAQUE aPAKE 注册 / 登录 / step-up(P-256-SHA256 + Scrypt);服务器从不接触明文密码。
-- 32 字节 `account_key` 随机生成、用 Argon2id 派生的 wrap key + XChaCha20-Poly1305 封装存 relay;客户端用密码当场解开后存 sessionStorage / Keychain / Keyring。
-- 终端输出 / 标题 / cwd / 当前命令 / 任务摘要 / 命令完成 push body 在 agent 端用 HKDF-SHA256(account_key) 派生的 session key 封装;relay 转发不解开,只看 routing 必需的 session id / 时间戳。AAD 由 `uuid || frame_type` 鉴别帧类型,防止 cross-type 替换重放。
+Relay 需要看到 session id、时间戳、连接和路由元数据，才能把密文送到正确客户端；它看不到被 sealed 的终端输出、标题、cwd、当前命令、任务摘要或命令完成通知正文。所有支持的客户端使用同一套 OPAQUE 实现与账户密钥格式，登录后的内容在本地解密。
 
-> 特殊门控:硬删除账号 `DELETE /api/me` 走 step-up(再走一次 OPAQUE login 换 60s 一次性 token)。**没有密码找回**——忘记密码只能 admin reset,相当于换一把新 `account_key`,旧会话的 sealed 内容永久不可解;这是单用户自托管定位下的设计选择。
+没有可绕过 E2EE 的密码找回。忘记密码后，管理员重置会生成新的 `account_key`，旧 sealed 内容永久不可解。删除账号等高风险操作还会要求重新进行一次 OPAQUE step-up，并使用短时单次 token。
 
 ## 选择远程权限
 
@@ -47,4 +47,4 @@ AT Term 的默认策略是 fail-closed:
 - 桌面端默认拒绝非 loopback 的明文 `ws://` relay;可信内网需要在 Settings 手动开启 insecure mode。
 - 自动更新必须通过 Ed25519 签名和 SHA256 校验;缺公钥、缺签名、签名不匹配或 hash 不匹配都会失败。
 
-完整鉴权模型(含 bootstrap、pairing、错误码)见项目 [docs/spec/auth.md](https://github.com/attson/atterm/blob/main/docs/spec/auth.md)。
+部署侧的 TLS、bootstrap 和 Origin 要求见 [部署 Relay](/guide/deploy-relay)，管理员操作见 [管理后台](/guide/admin)。

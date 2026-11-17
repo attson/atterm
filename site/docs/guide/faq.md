@@ -34,17 +34,17 @@ OPAQUE 登录用浏览器 WebCrypto,只在**安全上下文**(HTTPS 或 `localho
 
 ## 远程能看到会话但不能输入?
 
-远程 attach 默认是 **viewer** 模式,按空格 take over 才能写。此外要看桌面端为该 session 设的 `remote_permission`:`view` 只读、`control` 可输入、`full` 才能粘贴图片 / 文件 / 用远程文件浏览器。见 [端到端加密与安全](/guide/e2ee) 的权限表。
+远程 attach 默认是 **viewer** 模式,按空格 take over 才能写。此外要看桌面端为该 session 设的 `remote_permission`:`view` 只读、`control` 可输入、`full` 才能粘贴图片 / 文件 / 用远程文件浏览器。见 [跨设备客户端](/guide/remote-clients) 与 [端到端加密与安全](/guide/e2ee) 的权限表。
 
 ## 命令完成通知没弹出?
 
 - 系统通知:确认浏览器 / 系统授予了通知权限。
 - Web Push:需要先在 web / PWA 端订阅;iOS 有平台限制(详见项目 `docs/features/web-push.md`)。
-- 飞书:确认 `internal/feishu` 已在桌面 Settings → Feishu 配置并绑定。
+- 飞书:确认桌面 **Settings → Feishu** 已配置并绑定；Relay 托管模式还要检查 [管理后台](/guide/admin) 的 Feishu 状态。
 
 ## macOS 提示「无法打开,因为无法验证开发者」?
 
-目前的 macOS 构件**未签名 / 未公证**(roadmap 第 8 项,阻塞于 Apple Developer 证书——我们还没有),下载的 dmg / zip 会带上 Gatekeeper 的下载隔离标记,首次直接双击打开就会被拦截。
+目前的 macOS 构件**未签名 / 未公证**,下载的 dmg / zip 会带上 Gatekeeper 的下载隔离标记,首次直接双击打开就会被拦截。
 
 解决办法,终端执行:
 
@@ -54,9 +54,7 @@ xattr -dr com.apple.quarantine "/Applications/AT Term.app"
 
 这条命令只是去掉这一个 app 的下载隔离标记,不会改动任何系统级安全设置。
 
-**用 Homebrew 装也要跑这一步。** Homebrew cask 默认会给装好的 app 打上同一个 `com.apple.quarantine` 标记,这是它有意为之——刻意模仿浏览器下载的行为;`--no-quarantine` 这个开关在 Homebrew 5.0.0 已弃用、之后被移除,第三方 tap 也没有替代品。所以无论走哪条安装路径,未签名的 app 都会弹同一个对话框,cask 只是会在安装完成时把上面这条命令再提示你一次(Homebrew cask 分发本身也还在准备中,尚未可用,见 [安装指南](/guide/#方式-a-只用桌面端))。
-
-真正的修法是签名 + 公证(roadmap 第 8 项),目前卡在证书上;签名到位后这一步会消失。
+**用 Homebrew 装也要跑这一步。** Homebrew cask 不能替未签名应用绕过 Gatekeeper。当前可用构件与安装入口以 [安装与快速上手](/guide/getting-started) 为准。
 
 ## 忘记密码怎么办?
 

@@ -7,7 +7,7 @@
 
 `site/` 是一个 VitePress 站点,发布到 GitHub Pages(<https://attson.github.io/atterm/>)。它有两个职责:
 
-1. **文档站** —— 面向用户的介绍、快速上手、部署、E2EE、AI agent 等(`docs/guide/*.md`),README 精简后详细内容都在这里。
+1. **产品手册** —— 面向产品用户与 Relay / Peer 运维者，按开始使用、桌面工作区、远程接管、自托管和参考资料组织中英文内容(`docs/guide/*.md` 与 `docs/en/guide/*.md`)；README 精简后详细内容都在这里。
 2. **首页交互 demo** —— 首页先展示 1200×630 真实产品截图和单一「开始体验」入口；访客点击后才在浏览器里嵌入**真实**的 `desktop/frontend/src/App.vue`,用 mock 后端驱动,无需本地 relay 即可体验会话侧栏、终端回放、交互输入、文件浏览、快捷模板。
 
 ## 核心原则:零侵入
@@ -24,9 +24,9 @@ site/
 ├── vitest.config.ts             mock 层单测的 alias(与 config.mjs 对齐)
 └── docs/
     ├── index.md                 中文首页:hero + <HomeDemo/> + 连接路径 + 下载
-    ├── guide/*.md               中文文档页(从 README 提炼)
+    ├── guide/*.md               中文产品手册(总览 + 任务章节，保留既有公开 URL)
     ├── en/index.md              英文首页
-    ├── en/guide/*.md            与中文信息架构对应的英文文档
+    ├── en/guide/*.md            与中文信息架构对应的英文产品手册
     └── .vitepress/
         ├── config.mjs           base:'/atterm/'、nav/sidebar、vite alias、dedupe、ssr.noExternal
         └── theme/
@@ -37,6 +37,31 @@ site/
                 ├── ReleaseDownloads.vue 中英共用的稳定 release 直链与校验入口
                 └── mock/        mock 层(见下)
 ```
+
+## 产品手册信息架构
+
+- `/guide/` 与 `/en/guide/` 是统一产品手册总览；安装内容分别位于
+  `/guide/getting-started` 与 `/en/guide/getting-started`。
+- 侧栏固定按五组组织：开始使用、桌面工作区、远程接管、自托管、参考资料；英文使用
+  对应的 `Get started`、`Desktop workspace`、`Remote access`、`Self-hosting`、`Reference`。
+- 既有专题 URL（remote-takeover、e2ee、deploy-relay、deploy-rendezvous、ai-agents、faq）
+  直接成为手册章节，不复制第二份内容，也不因分组调整迁移路径。
+- 核心工作流使用稳定的任务型 URL：`workspace`、`ssh-files`、`productivity`、`settings` 与
+  `remote-clients`。中文和英文页面一一对应；平台专属能力必须明确标注 desktop / Web / PWA /
+  iOS 的适用范围，不能把 capability-gated 设置泛化到所有客户端。
+- 自托管手册除 Relay、Rendezvous 与 E2EE 外，使用 `admin` 章节承载邀请、用户角色、运行时
+  配置、Feishu、Traffic 和健康检查；公开手册只说明稳定运维行为，数据库表、wire tag 与内部
+  handler 仍留在 `docs/spec/`。
+- 中英文在同一次改动中维护相同的信息架构。新增 guide 必须同时加入对应 locale 的侧栏，
+  提供唯一 frontmatter `description`，并覆盖构建、路由和移动端无溢出验收。
+- 手册截图存放在 `docs/public/manual/`，只选能显著降低理解成本的关键流程。截图必须来自首页
+  复用的真实 `App.vue` demo 和仓库 mock 数据，不能包含本机真实路径、账号、主机或凭据；当前
+  基线为工作区分屏、文件浏览与输入历史三张。
+- E2E 必须机械比较中英文侧栏 path（去掉 `/en` 后一致），并遍历产品手册正文内链确认返回成功；
+  VitePress build 的 dead-link 检查与这项浏览器契约共同防止导航或 locale 漂移。
+- VitePress 1.6 的 locale 专属 `nav` / `sidebar` 必须放在顶层
+  `locales.<locale>.themeConfig`；`themeConfig.locales` 不会把这些字段合并到当前页面主题，
+  会导致导航和侧栏静默不渲染。全局搜索与社交链接仍放在顶层 `themeConfig`。
 
 ## Mock 层:三处拦截
 
@@ -155,6 +180,10 @@ ssr.noExternal: naive-ui/xterm/…(浏览器端组件,SSR 阶段不外部化)
 
 ## 首页内容与下载边界
 
+- Hero 用一句产品定位加一组能力标签，不再用长段 tagline 罗列场景。中英文首页的
+  `hero.highlights` 必须语义对称，只列已落地能力；当前覆盖 AI 任务状态、远程查看与
+  接管、SSH 主机管理、文件浏览与编辑、端到端加密、配置同步和全平台支持。标签通过
+  `HeroHighlights.vue` 注入 `home-hero-info-after`，在窄屏自然换行且不得造成横向滚动。
 - 首页必须区分本地终端/SSH、账户 Relay、Peer Space 三条连接路径；AI 能力按 agent
   分开陈述，不能把 Claude Code 独有的 Notification hook / 飞书 AskUserQuestion 或
   Claude/Codex 的 session-id 恢复泛化成所有 agent 都支持。
@@ -170,4 +199,4 @@ ssr.noExternal: naive-ui/xterm/…(浏览器端组件,SSR 阶段不外部化)
 
 `site/docs/.vitepress/theme/components/mock/*.test.ts`(vitest):守 `fakeSessions`(状态覆盖/字段形状)、`fakeCommands`(命中/未命中/交互 agent)、`mockFs`(listDir/readFile/write/chunk)、`mockSocket`(帧往返/回放/排队输入/行编辑/agent 进入退出/图片粘贴/echo)、`mockGoApp`(本机会话增删/健康快照/终端外观/SSH 主机/浏览器剪贴板/全局恢复)。当前基线为 40 个单测。
 
-`site/tests/e2e/*.spec.ts`(Playwright):对构建产物验收首屏不请求 App chunk、单一体验入口、默认 Shell 终端回放、AI 会话图片粘贴与后续输入、输入历史、SSH Snippet、主题切换、浮层边界、加载失败后干净重试、卸载恢复全局绑定且保留用户 localStorage、390px/1024px 无横向溢出、亮色/暗色画布与主题变量一致、控制台错误、稳定下载直链、中英文路由、locale/canonical、1200×630 分享图。当前基线为 10 个 E2E；CI 必须执行，人工预览只补视觉检查，不替代 smoke test。
+`site/tests/e2e/*.spec.ts`(Playwright):对构建产物验收首屏定位与中英文能力标签、首屏不请求 App chunk、单一体验入口、默认 Shell 终端回放、AI 会话图片粘贴与后续输入、输入历史、SSH Snippet、主题切换、浮层边界、加载失败后干净重试、卸载恢复全局绑定且保留用户 localStorage、390px/1024px 无横向溢出、亮色/暗色画布与主题变量一致、控制台错误、稳定下载直链、中英文路由、locale/canonical、1200×630 分享图。当前基线为 13 个 E2E；CI 必须执行，人工预览只补视觉检查，不替代 smoke test。

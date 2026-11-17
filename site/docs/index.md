@@ -5,14 +5,22 @@ titleTemplate: false
 description: AT Term 是本地优先的跨平台终端、SSH 工作台与 AI Agent 控制台，支持通过端到端加密的 Relay 或 Peer Space 从桌面、浏览器和 iPhone 远程接管会话。
 hero:
   name: AT Term
-  text: 让长任务留在终端，控制权跟你走
-  tagline: 本机照常运行 shell、SSH、Codex 和 Claude；离开工位后，从浏览器、手机或另一台电脑继续查看和输入。
+  text: AI 时代的跨设备终端
+  highlightsLabel: 产品卖点
+  highlights:
+    - AI 任务状态
+    - 远程查看与接管
+    - SSH 主机管理
+    - 文件浏览与编辑
+    - 端到端加密
+    - 配置同步
+    - 全平台支持
   actions:
     - theme: brand
       text: 选择下载
       link: '#下载'
     - theme: alt
-      text: 使用文档
+      text: 产品手册
       link: /guide/
     - theme: alt
       text: 部署 Relay

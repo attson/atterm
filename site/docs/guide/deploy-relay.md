@@ -6,15 +6,16 @@ description: 使用 Docker Compose、HTTPS、SQLite 或 PostgreSQL 自托管 AT 
 
 ## Docker Compose
 
-最简单的部署方式:
+最简单的生产部署起点（两项都必填）:
 
 ```bash
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
-  docker compose up -d atterm-relay
+ATTERM_ORIGINS='https://relay.example.com' \
+docker compose up -d atterm-relay
 docker compose logs atterm-relay
 ```
 
-compose 默认只起明文 HTTP `:8080`,**前面要挂一个 TLS 终止反代**(Cloudflare/Caddy/nginx/Tailscale)。浏览器经反代的 `https://relay.<你的域名>` 访问,没有 admin 时会自动进入首次安装页创建管理员。
+compose 默认只起明文 HTTP `:8080`,**前面要挂一个 TLS 终止反代**(Cloudflare/Caddy/nginx/Tailscale)。启动日志会为 bootstrap 邮箱打印一次性 claim token；在 `https://relay.<你的域名>/signup.html` 用同一邮箱、自设密码和该 token 注册管理员。
 
 > **为什么必须 HTTPS**:OPAQUE 登录用浏览器 WebCrypto,而它只在「安全上下文」(HTTPS 或 `localhost`) 可用,明文 HTTP 在公网 IP 上无法登录。**relay 不再自带自签证书**——浏览器直连的 TLS 必须来自真证书或前置反代。
 >
@@ -23,7 +24,7 @@ compose 默认只起明文 HTTP `:8080`,**前面要挂一个 TLS 终止反代**(
 > - **`:8080` 是明文 HTTP 端口**:仅供反代后端或内网用,浏览器直连它登录不了。
 > - 仅本机临时用:`ssh -L 8080:127.0.0.1:8080 <host>` 后开 `http://localhost:8080`。
 
-大多数配置已下沉到管理后台(Admin → Config / Feishu),持久化在 DB 表 `relay_config`(SQLite 或 Postgres,取决于 `ATTERM_RELAY_DB_DRIVER`),运行时即可修改、无需重启(VAPID subject 除外)。
+大多数配置已下沉到管理后台(Admin → Config / Feishu),持久化在数据库中。Origin、debug 和飞书可热生效；VAPID subject 与进程级 rate / connection limit 需要重启对应实例。
 
 > **存储后端**:`docker-compose.yml` 默认起一个 bundled Postgres 与 relay 一起跑(`ATTERM_RELAY_DB_DRIVER=postgres`)。多实例部署把 `ATTERM_RELAY_DB_DRIVER=postgres` + `ATTERM_RELAY_DB_DSN` 指向同一个**外部** Postgres 即可。若要单实例 SQLite,设 `ATTERM_RELAY_DB_DRIVER=sqlite` + `ATTERM_RELAY_DB_DSN=<config-dir>/users.db`。
 
@@ -79,13 +80,13 @@ go run ./cmd/atterm-relay --addr :8080
 go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
 ```
 
-`--web` 省略时使用 `internal/relay/web-dist/` 的内嵌 web 构建产物;需要测试当前工作区的 web 改动时,先 `cd web && npm run build`,再从仓库根目录传 `--web web/dist`。
+`--web` 省略时使用二进制内嵌的 Web 客户端。
 
 ## Bootstrap admin
 
 密码认证已切换到 OPAQUE(密码只在客户端本地参与协议,**relay 永不接收明文密码**),因此 bootstrap 不再用密码 env,而是用一次性 **claim token**:
 
-- **`ATTERM_BOOTSTRAP_ADMIN_EMAIL` 未设置**:relay 正常启动,不打印 claim token、也不创建 admin。可手动提权某用户(`UPDATE users SET is_admin=1 WHERE email='you@…';`)。
+- **`ATTERM_BOOTSTRAP_ADMIN_EMAIL` 未设置**:公网监听会拒绝启动；只有 loopback 开发或显式 `--dev-insecure` 才能省略，也不会打印 claim token。
 - **email 已设置**:relay 每次启动都为该 email 打印一条 7 天有效、**单次使用**的 claim token。在 `/signup.html` 用**该邮箱注册一个新账号**并把 token 填进「邀请码 / claim token」框,注册完成即创建用户并提为 admin(token 随即作废)。
 
 claim token 只能用于**注册新账号**——若该邮箱已注册过,token 无法消费,此时改用上面的 SQL 直接提权。
@@ -94,11 +95,13 @@ claim token 只能用于**注册新账号**——若该邮箱已注册过,token 
 
 以 admin 账号登录后,顶部导航出现 **Admin**,大部分运行时配置都在这里改、保存即生效、无需重启:
 
-- **Config**:速率限制、每 key 连接上限、Origin 白名单、详细日志开关。
+- **Config**:速率限制、每 key 连接上限、Origin 白名单、详细日志开关。Origin 与 debug 热生效；进程级限制的环境变量变更需重启当前实例。
 - **Feishu**:飞书集成开关 + 加密密钥(可一键「生成」)+ Open Platform base URL。保存后 relay 即可热接入飞书,无需重启;关闭即拆除。
 - **Invitations / Users**:邀请记录与用户/角色管理。
 
 > 需重启才生效的:VAPID subject、per-instance 的 `ATTERM_RATE_LIMIT_PER_MINUTE` / `ATTERM_MAX_CONNECTIONS_PER_KEY`。
+
+完整操作、密钥轮换和健康检查见 [管理后台](/guide/admin)。
 
 ## 多实例部署
 
@@ -111,3 +114,5 @@ claim token 只能用于**注册新账号**——若该邮箱已注册过,token 
 5. `GET /api/nodes` 返回活跃实例列表,供客户端做节点切换 UI。
 
 > **红线**:`realm_id` 只从 DB 读、不从 env 覆盖——同一物理集群必须共享同一 realm,否则 E2EE 会跨实例失效;实例之间也不要拉 gossip / 直连,所有共享状态走 DB。
+
+上线前继续核对 [管理后台](/guide/admin) 的正反验证清单与 [端到端加密和安全](/guide/e2ee) 的信任边界。

@@ -5,14 +5,22 @@ titleTemplate: false
 description: AT Term is a local-first cross-platform terminal, SSH workspace, and AI agent console with end-to-end encrypted remote takeover through Relay or Peer Space.
 hero:
   name: AT Term
-  text: Keep long tasks running. Take control anywhere.
-  tagline: Run shell, SSH, Codex, and Claude locally, then continue from a browser, phone, or another computer when you leave your desk.
+  text: A cross-device terminal for the AI era
+  highlightsLabel: Product highlights
+  highlights:
+    - AI task status
+    - Remote view and control
+    - SSH host management
+    - File browsing and editing
+    - End-to-end encryption
+    - Configuration sync
+    - Cross-platform
   actions:
     - theme: brand
       text: Choose a download
       link: '#downloads'
     - theme: alt
-      text: Documentation
+      text: Product manual
       link: /en/guide/
     - theme: alt
       text: Deploy Relay

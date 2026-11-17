@@ -109,3 +109,5 @@ The default STUN server is `stun:stun.cloudflare.com:3478`. Users can replace or
 Rendezvous can observe source IP, opaque topics/presence, sizes, and timing, but signaling payloads are encrypted. STUN sees source IP and timing. A user-selected TURN service sees endpoint IPs, timing, and encrypted WebRTC traffic size. WebRTC peers necessarily learn ICE candidate addresses. Metrics and logs omit topics, presence, public keys, message IDs, and payloads.
 
 Browser registration requires a secure context, WebCrypto, and `RTCPeerConnection`. Public HTTP fails before a peer identity or WebRTC connection is created; `localhost` is the only development exception.
+
+For joining a Peer Space, importing a connection bundle, and taking over a session, see [Remote takeover and sessions](/en/guide/remote-takeover) and [Cross-device clients](/en/guide/remote-clients).

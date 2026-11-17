@@ -1,69 +1,36 @@
 ---
-description: Install AT Term, use its local terminal and SSH workspace, then add a self-hosted Relay or build the iOS client when remote takeover is needed.
+description: Browse the AT Term product manual by local terminal, SSH, AI task, remote access, and self-hosting workflows.
 ---
 
-# Introduction and quick start
+# AT Term product manual
 
-AT Term is a cross-platform terminal with remote takeover. Shell, Codex, Claude, and other long-running tasks start in the desktop app and can later be viewed or controlled from a phone, browser, or another computer. When E2EE is enabled, Relay cannot read terminal output, titles, working directories, or task summaries.
+This manual is organized around the task you want to complete. Start with the desktop app and its local workspace. When you need to continue away from your computer, add Relay or Peer Space access from the Web, mobile app, or another desktop client.
 
-> Local comes first. Add remote synchronization only when you need it.
+## Choose your path
 
-## How it works
-
-1. Desktop runs local PTYs; OSC 133 derives running, waiting, done, and failed states.
-2. After desktop connects to Relay, a remote client can attach. PTY bytes are uploaded lazily only while somebody watches.
-3. E2EE keeps the account key on clients and seals terminal content before it reaches Relay.
-4. System notifications, Web Push, and Feishu cards can route important events back to the correct session.
-5. Claude Code, Codex, Aider, and Gemini CLI are recognized, with agent-specific recovery and hook support described in [AI agents](/en/guide/ai-agents).
-
-## Desktop only
-
-Download a stable package from the [home page](/en/#downloads) or browse [all Releases](https://github.com/attson/atterm/releases/latest).
-
-| Platform | Recommended package | Notes |
+| Goal | Start here | What you will accomplish |
 |---|---|---|
-| macOS Apple Silicon | `AT-Term-darwin-arm64.zip` | Intel machines use `amd64` |
-| Linux x64 | `AT-Term-linux-amd64.tar.gz` | Requires WebKitGTK 4.1 |
-| Linux arm64 | `AT-Term-linux-arm64.tar.gz` | For ARM Linux desktops |
-| Windows x64 | `AT-Term-windows-amd64.zip` | Windows 10 may need WebView2 |
+| Use AT Term as a local terminal and SSH workspace | [Install and quick start](/en/guide/getting-started) | Install desktop, create a session, and understand the local-first workflow |
+| Continue from a phone, browser, or another computer | [Remote takeover and sessions](/en/guide/remote-takeover) | Choose a remote path, find a session, take control, and recover work |
+| Run your own account service | [Deploy Relay](/en/guide/deploy-relay) | Configure TLS, accounts, Admin, storage, and multiple instances |
+| Connect a trusted device group without accounts | [Deploy Rendezvous](/en/guide/deploy-rendezvous) | Configure discovery and encrypted signaling for peer-to-peer routes |
 
-::: warning macOS Gatekeeper
-Current macOS packages are unsigned and not notarized. After installing, run `xattr -dr com.apple.quarantine "/Applications/AT Term.app"`. This removes quarantine only from AT Term and does not disable system security.
-:::
+## Daily use
 
-## Desktop plus a self-hosted Relay
+- [Install and quick start](/en/guide/getting-started): desktop, iPhone / iPad, and local development entry points.
+- [Workspace and sessions](/en/guide/workspace): tabs, panes, sidebar, task states, search, and recovery.
+- [SSH and files](/en/guide/ssh-files): host management, Termius / SSH config import, file browsing, and transfer.
+- [Productivity tools](/en/guide/productivity): input history, quick templates, Snippets, and default shortcuts.
+- [Remote takeover and sessions](/en/guide/remote-takeover): task state, pinning and search, notifications, recovery, the desktop widget, Web, and mobile.
+- [AI agents and Feishu](/en/guide/ai-agents): recognition and recovery boundaries for Claude Code, Codex, Aider, and Gemini CLI, plus Feishu interaction.
+- [Settings](/en/guide/settings): appearance, tasks, connections, devices, plugins, updates, and diagnostics by platform.
 
-This mode is for starting work on a computer and taking it over elsewhere.
+## Remote access and security
 
-```bash
-ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
-ATTERM_ORIGINS='https://relay.example.com' \
-docker compose up -d atterm-relay
-```
+- [End-to-end encryption](/en/guide/e2ee): account keys, sealed content, remote permissions, and fail-closed defaults.
+- [Cross-device clients](/en/guide/remote-clients): Web, PWA, iOS, pairing, viewer / driver, and mobile input.
+- [Deploy Relay](/en/guide/deploy-relay): an account-based service for persistent access across devices.
+- [Admin console](/en/guide/admin): invitations, users, runtime configuration, Feishu, traffic, and health.
+- [Deploy Rendezvous](/en/guide/deploy-rendezvous): discovery and direct routes for trusted device groups.
 
-Read the one-time claim token from `docker compose logs atterm-relay`, then register that email at `/signup.html`. Set the Relay URL in desktop Settings, log in, and use the same account in a browser or another client. See [Deploy Relay](/en/guide/deploy-relay) for TLS, storage, and multi-instance details.
-
-## Build the iOS client from source
-
-There is currently no public App Store or TestFlight build. The supported path is the Capacitor project in this repository:
-
-```bash
-cd mobile
-npm install
-npm run ios:open
-```
-
-Open the generated project in Xcode and run it on a simulator or a signed development device. Xcode 15+ is required.
-
-## Development setup
-
-```bash
-go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
-
-cd web && npm ci && npm run dev
-
-cd desktop
-wails dev -tags webkit2_41  # Linux; omit the tag on macOS/Windows
-```
-
-Core tools: Go 1.23+, Node.js 20, Wails 2.12, and Xcode 15+ for iOS. Ubuntu 24.04 or Debian 12 also needs `build-essential`, `pkg-config`, `libgtk-3-dev`, and `libwebkit2gtk-4.1-dev`.
+For installation, connection, permission, notification, or recovery problems, see [FAQ and troubleshooting](/en/guide/faq).

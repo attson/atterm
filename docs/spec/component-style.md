@@ -461,7 +461,15 @@ header 必须可键盘操作：
   分组各自独立过滤（见上一节），搜索词变化不影响折叠状态。
 - saved-host SSH 行以建连时快照的 alias 作为主标题，并在第二行先显示
   `user@host`、再显示 cwd；tooltip 同时保留 alias、endpoint、command、cwd。
-  ad-hoc SSH 没有 alias，继续走普通会话标题规则。
+  右上角复用现有 workload 类型槽显示 `SSH`，并优先于 AI CLI 标签；普通、置顶
+  和已完成折叠行使用同一判定。ad-hoc SSH 没有 alias，不显示 `SSH`，继续走普通
+  会话标题规则。
+- 会话标签外观在 Settings → 会话栏配置，偏好通过版本化 `localStorage` 保存在当前
+  设备，desktop、Web、Capacitor 共用同一前端实现，不做账号同步。默认使用“分类色”：
+  SSH `#58A6FF`、codex `#3FB950`、claude `#D29922`；未知 AI 标签保持中性。
+  “中性”模式必须完全复用原灰色 badge 外观，不添加分类背景；切换模式不得清空用户
+  自定义颜色，切回“分类色”后恢复。支持单项和全部恢复默认；存储项缺失或非法时按
+  成员独立回退默认值，写入失败保留最后一次有效状态并显示错误。
 
 ### 会话行右键菜单：视口翻转 popover（SessionRowMenu）
 

@@ -23,7 +23,8 @@ import LastOutputIndicator from "./LastOutputIndicator.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { formatLastOutput } from "../lib/lastOutput";
-import { titleOrCommand, rowTitle, taskStateLabel, commandLabel, sshEndpoint } from "../lib/sessionLabel";
+import { titleOrCommand, rowTitle, taskStateLabel, sessionKindLabel, sessionKindTone, sshEndpoint } from "../lib/sessionLabel";
+import { useSessionLabelAppearance } from "../composables/useSessionLabelAppearance";
 
 const props = withDefaults(defineProps<{
   session: RemoteSession;
@@ -42,16 +43,14 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const labelAppearance = useSessionLabelAppearance();
 const cwd = computed(() => shortenCwd(props.session.cwd, props.home));
 const endpoint = computed(() => props.session.ssh_host_alias ? sshEndpoint(props.session) : "");
 const hasLastOutput = computed(() =>
   formatLastOutput(props.session.last_output_at, props.session.task_state, props.nowMs) !== null,
 );
-// Same rule as the desk widget's row: name the CLI only for sessions we
-// classified as ai, so an ordinary shell does not grow a "zsh" badge.
-const kind = computed(() =>
-  props.session.type === "ai" ? commandLabel(props.session) : "",
-);
+const kind = computed(() => sessionKindLabel(props.session));
+const kindColor = computed(() => labelAppearance.colorFor(sessionKindTone(props.session)));
 
 function stateLabel(state: string | undefined): string {
   return taskStateLabel(state, t);
@@ -88,7 +87,13 @@ function stateLabel(state: string | undefined): string {
        take space from an already-truncating title on rows whose tail is
        narrower than the widest case. -->
   <span class="row-tail" :class="{ 'time-only': !kind }" data-test="row-tail">
-    <span v-if="kind" class="kind" data-test="row-kind">{{ kind }}</span>
+    <span
+      v-if="kind"
+      class="kind"
+      :class="{ 'kind-colored': kindColor }"
+      :style="kindColor ? { '--kind-color': kindColor } : undefined"
+      data-test="row-kind"
+    >{{ kind }}</span>
     <LastOutputIndicator
       :last-output-at="props.session.last_output_at"
       :task-state="props.session.task_state"
@@ -151,6 +156,11 @@ function stateLabel(state: string | undefined): string {
   color: var(--fg-dim);
   white-space: nowrap;
   transition: opacity 100ms;
+}
+.kind.kind-colored {
+  color: var(--kind-color);
+  border-color: color-mix(in srgb, var(--kind-color) 50%, transparent);
+  background: color-mix(in srgb, var(--kind-color) 10%, transparent);
 }
 /* Absolute so it can sit *on* the kind badge's slot: the badge fades out
    whenever × fades in, so the two never occupy the row at the same time and

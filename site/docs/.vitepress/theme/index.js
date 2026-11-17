@@ -1,5 +1,7 @@
 import DefaultTheme from 'vitepress/theme'
 import { createPinia } from 'pinia'
+import { h } from 'vue'
+import HeroHighlights from './components/HeroHighlights.vue'
 import HomeDemo from './components/HomeDemo.vue'
 import ReleaseDownloads from './components/ReleaseDownloads.vue'
 import './custom.css'
@@ -9,6 +11,9 @@ import './custom.css'
 // 的初始化在 HomeDemo onMounted 里做(需在 App.vue 动态 import 之前)。
 export default {
   extends: DefaultTheme,
+  Layout: () => h(DefaultTheme.Layout, null, {
+    'home-hero-info-after': () => h(HeroHighlights),
+  }),
   enhanceApp({ app }) {
     app.use(createPinia())
     app.component('HomeDemo', HomeDemo)

@@ -61,7 +61,7 @@ For loopback development only:
 go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
 ```
 
-Without `--web`, Relay serves the embedded `internal/relay/web-dist`. To test a workspace Web build, run `cd web && npm run build`, then pass `--web web/dist` from the repository root.
+Without `--web`, Relay serves its embedded Web client.
 
 ## Bootstrap admin
 
@@ -83,6 +83,8 @@ An admin sees an Admin link after login.
 
 Feishu routes remain registered but return a disabled response when the integration is off. The master key is stored in the database, never returned in full, and rotation requires an explicit force because old bindings become unreadable.
 
+See [Admin console](/en/guide/admin) for invitations, user roles, traffic, key rotation, and health checks.
+
 ## Multiple instances
 
 1. Point every instance at the same external PostgreSQL database.
@@ -92,3 +94,5 @@ Feishu routes remain registered but return a disabled response when the integrat
 5. `GET /api/nodes` lists active instances for node selection.
 
 `realm_id` comes only from the shared database because it affects E2EE key derivation. Instances do not gossip or connect to one another; shared configuration and registry state stay in PostgreSQL.
+
+Before going live, complete the positive and negative checks in [Admin console](/en/guide/admin) and review the trust boundary in [End-to-end encryption](/en/guide/e2ee).

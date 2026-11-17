@@ -22,6 +22,14 @@ html:root body {
   background-color: var(--vp-c-bg);
 }
 
+/* HomeDemo 打包出的桌面端全局 button 规则会给 VitePress 的全高 flyout
+   按钮加边框，语言切换因此看起来像一个撑满导航栏的大框。 */
+.VPNavBar .VPFlyout > button.button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 /* 放宽 hero 文本区；标题保留自然换行，中英文在中等桌面宽度都不能横向溢出。 */
 .VPHero .container .main {
   max-width: none;

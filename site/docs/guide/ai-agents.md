@@ -4,29 +4,34 @@ description: 在 AT Term 中跟踪和恢复 Claude Code、Codex、Aider、Gemini
 
 # AI Agent 与 Feishu
 
-## AI agent 支持
+## 启动与识别
 
-会话内启动的 AI CLI 会被自动归类并显示对应 type chip:
+在 AT Term 的 shell 中照常运行 `claude`、`codex`、`aider` 或 `gemini`。会话侧栏会显示对应类型和运行状态；命令结束、失败或等待输入时，可以通过桌面通知、Web Push 或 Feishu 回到正确的 session。
 
-| Agent | type chip | resume 注入 | session jsonl 嗅探 | Notification hook | 飞书 AskUserQuestion 远程回答 |
-|---|---|---|---|---|---|
-| **Claude Code** (`claude`) | ✅ | `claude --resume <sid>` | `~/.claude/projects/<cwd>/<sid>.jsonl` | ✅ 自动安装 + 健康巡检 | ✅ 锚点卡上表单选择,提交后自动按键送 pty |
-| **Codex** (`codex`) | ✅ | `codex resume <sid>` | `~/.codex/sessions/YYYY/MM/DD/rollout-*-<sid>.jsonl` | ⏳ 自动安装路径未做 | — |
-| **Aider** (`aider`) | ✅ | 直接重放上一条 command line | —(无稳定 jsonl 协议) | — | — |
-| **Gemini CLI** (`gemini`) | ✅ | —(暂无) | — | — | — |
-| 其他(`go test` / `docker build` / `kubectl` …) | ✅ 命令分类 | — | — | — | — |
+| Agent | 自动识别 | 重启后恢复原对话 | Feishu AskUserQuestion |
+|---|---:|---|---:|
+| Claude Code | 是 | 已捕获会话 id 时使用 `claude --resume` | 是 |
+| Codex | 是 | 已捕获会话 id 时使用 `codex resume` | 否 |
+| Aider | 是 | 重放完整启动命令，不保证恢复聊天历史 | 否 |
+| Gemini CLI | 是 | 暂不支持 | 否 |
 
-权限审批 / AskUserQuestion 等待这两条信号目前仅 Claude Code 走 Notification hook 路径;Codex 走 jsonl 监听是后续规划。飞书 AskUserQuestion 表单式远程回答仅覆盖 Claude Code。
+恢复遵循“宁可不恢复，也不恢复错对话”：AT Term 只有在能确认会话 id 时才注入 resume；否则在原 cwd 打开普通 shell。启动命令中的其他参数会保留。
 
-AI sid 抓取在 session 启动时自动进行(OSC 133 D 事件触发分类 + claude/codex 的 session jsonl 文件 mtime 跟踪),抓不到就退化为普通 shell 恢复、不注入 resume ——「抓不到」优于「抓错的对话」。
+## 从侧栏跟踪 AI 任务
 
-## Feishu — 远程终端 + AskUserQuestion 远程回答
+- 置顶长任务，或按类型、标题、cwd 和当前命令搜索。
+- `waiting input` 表示需要你处理问题或权限；`completed` / `failed` 表示命令已结束。
+- 用快捷模板发送 `yes`、`continue` 或数字选项前，先确认当前客户端已经取得 driver 且会话允许控制。
+- 桌面挂件可以只显示 AI 会话，也可以和构建、测试等普通任务一起显示。
 
-`claude-code` 在 atterm session 内运行时,其 PreToolUse / Notification hook 触发 `atterm-hook` CLI(`ATTERM_SESSION_ID` 和 `ATTERM_HOOK_ENDPOINT` 环境变量已自动注入每个 PTY)。CLI 把 hook payload POST 到桌面进程,桌面进程按以下路径向飞书 DM 推送和接收:
+## 配置 Feishu
 
-- **anchor card(锚点卡片)**:一张持续更新的 IM 卡,body 流式接收 assistant 输出,输入框和 `^C / ^D / Esc / Enter / 结束` 按钮把用户操作直接送回本地 pty。
-- **AskUserQuestion form**:`claude-code` 触发 AskUserQuestion 时,锚点卡片上生成对应表单(每题一行 select_static 下拉 + 自定义输入框,支持单选和多选)。用户在飞书上填完提交,桌面进程按反向工程的 TUI 按键模型送回本地 pty,claude 收到答案后 form 消失、锚点卡片恢复到普通输入 + 按钮态。
-- **前置要求**:本机 `claude-code` 首次遇到 AskUserQuestion 权限对话框时,选 "Yes, and don't ask again" 一次;否则每次都要在飞书回答前先在本地授权。
-- **local vs relay**:`internal/feishu` 支持两种部署 —— local 走本机 LongConn 直连飞书(credentials 存钥匙串),relay 走中央 relay 服务(credentials 存 relay 的 `users.db` + `AdminConfig.Feishu`)。桌面 Settings → Feishu 里可切换。
+Feishu 远程回答目前只覆盖 Claude Code：
 
-完整设计与按键模型见项目 [docs/spec/feishu.md](https://github.com/attson/atterm/blob/main/docs/spec/feishu.md)。
+1. 在桌面端打开 **Settings → Feishu**，选择本机直连或 Relay 模式并完成配置。
+2. 在 AT Term 会话中启动 Claude Code。锚点卡会持续更新输出，并提供输入、`Ctrl-C`、`Ctrl-D`、Esc、Enter 与结束操作。
+3. Claude Code 调用 AskUserQuestion 时，卡片切换为单选、多选和自定义输入表单；提交后恢复普通控制栏。
+
+首次在本机遇到 AskUserQuestion 权限提示时，选择一次 **“Yes, and don't ask again”**。否则权限对话框会先吃掉远程提交的按键，表单答案无法送达问题。
+
+本机模式的凭据保存在系统凭据存储；Relay 模式由管理员配置并加密保存。不要在终端输出、截图或故障报告中粘贴 App Secret。

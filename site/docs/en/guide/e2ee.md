@@ -4,17 +4,19 @@ description: Understand AT Term OPAQUE login, account-key handling, end-to-end e
 
 # End-to-end encryption and security
 
-## Account setup
+## Account and account key
 
-Registration and login use OPAQUE with P-256-SHA256 and Scrypt, so Relay never receives a plaintext password. A client creates a random 32-byte `account_key`, wraps it locally with Argon2id and XChaCha20-Poly1305, and uploads only the wrapped blob. After login, the key stays in browser session storage, the desktop keyring, or iOS Keychain.
+Registration and login use OPAQUE, so Relay never receives or stores a plaintext password. During registration the client creates an independent random 32-byte `account_key` and uploads only its password-protected wrapped form. After login, the client unlocks it locally.
 
-Once unlocked, terminal output, title, cwd, current command, task summary, and command-finished push content are sealed before Relay sees them. Browser, desktop, and mobile clients decrypt locally. A service worker asks a visible tab to decrypt push content through a `MessageChannel`; otherwise it shows generic text.
+The unlocked key stays inside the current client boundary: tab-scoped `sessionStorage` on Web, the operating system keyring on desktop, and Keychain on iOS. It never belongs in a URL, log, IndexedDB, or plaintext Relay storage.
 
-## Envelope details
+Once unlocked, terminal output, title, cwd, current command, task summary, and command-finished push content are sealed before Relay sees them. Browser, desktop, and mobile clients decrypt locally. If no unlocked browser page is available, a background notification shows generic, non-sensitive text.
 
-Session keys are derived from `account_key` with HKDF-SHA256. AAD binds each envelope to `session_id` and its unique frame type, preventing cross-type replay. Relay retains only routing metadata such as session IDs and timestamps.
+## What Relay can see
 
-Hard account deletion requires a 60-second, one-use step-up token obtained through another OPAQUE login. There is no password recovery: an admin reset creates a new account key and old sealed history becomes unreadable.
+Relay needs session IDs, timestamps, connection state, and routing metadata to deliver ciphertext to the correct client. It cannot read sealed terminal output, title, cwd, current command, task summary, or command-finished notification content. Supported clients use the same OPAQUE implementation and account-key format, then decrypt content locally.
+
+There is no recovery path that bypasses E2EE. An administrator password reset creates a new `account_key`, leaving old sealed content permanently unreadable. High-risk operations such as account deletion require another OPAQUE step-up and a short-lived, one-use token.
 
 ## Remote permissions
 
@@ -36,4 +38,4 @@ Relay rejects unauthorized frames first, and the desktop host checks again befor
 - Desktop rejects non-loopback plaintext `ws://` unless insecure mode is explicitly enabled.
 - Updates fail closed unless the Ed25519 signature and asset SHA256 both verify.
 
-See the repository [authentication specification](https://github.com/attson/atterm/blob/main/docs/spec/auth.md) for protocol details and error codes.
+See [Deploy Relay](/en/guide/deploy-relay) for TLS, bootstrap, and Origin requirements, and [Admin console](/en/guide/admin) for operator actions.

@@ -11,40 +11,98 @@ const SOCIAL_IMAGE = `${SITE_ORIGIN}${SITE_BASE}atterm-demo-poster.png`
 
 const zhNav = [
   { text: '首页', link: '/' },
-  { text: '文档', link: '/guide/' },
+  { text: '产品手册', link: '/guide/' },
   { text: '部署 Relay', link: '/guide/deploy-relay' },
   { text: '下载', link: '/#下载' },
 ]
 const enNav = [
   { text: 'Home', link: '/en/' },
-  { text: 'Documentation', link: '/en/guide/' },
+  { text: 'Product manual', link: '/en/guide/' },
   { text: 'Deploy Relay', link: '/en/guide/deploy-relay' },
   { text: 'Download', link: '/en/#downloads' },
 ]
-const zhSidebar = [{
-  text: '使用文档',
-  items: [
-    { text: '介绍与快速上手', link: '/guide/' },
-    { text: '远程接管与会话侧栏', link: '/guide/remote-takeover' },
-    { text: '端到端加密与安全', link: '/guide/e2ee' },
-    { text: '部署 Relay', link: '/guide/deploy-relay' },
-    { text: '部署 Rendezvous', link: '/guide/deploy-rendezvous' },
-    { text: 'AI Agent 与 Feishu', link: '/guide/ai-agents' },
-    { text: 'FAQ / 故障排查', link: '/guide/faq' },
-  ],
-}]
-const enSidebar = [{
-  text: 'Documentation',
-  items: [
-    { text: 'Introduction and quick start', link: '/en/guide/' },
-    { text: 'Remote takeover and sessions', link: '/en/guide/remote-takeover' },
-    { text: 'End-to-end encryption', link: '/en/guide/e2ee' },
-    { text: 'Deploy Relay', link: '/en/guide/deploy-relay' },
-    { text: 'Deploy Rendezvous', link: '/en/guide/deploy-rendezvous' },
-    { text: 'AI agents and Feishu', link: '/en/guide/ai-agents' },
-    { text: 'FAQ and troubleshooting', link: '/en/guide/faq' },
-  ],
-}]
+const zhSidebar = [
+  {
+    text: '开始使用',
+    items: [
+      { text: '产品手册总览', link: '/guide/' },
+      { text: '安装与快速上手', link: '/guide/getting-started' },
+    ],
+  },
+  {
+    text: '桌面工作区',
+    items: [
+      { text: '工作区与会话', link: '/guide/workspace' },
+      { text: 'SSH 与文件', link: '/guide/ssh-files' },
+      { text: '效率工具', link: '/guide/productivity' },
+      { text: 'AI Agent 与 Feishu', link: '/guide/ai-agents' },
+      { text: '设置', link: '/guide/settings' },
+    ],
+  },
+  {
+    text: '远程接管',
+    items: [
+      { text: '远程接管与会话侧栏', link: '/guide/remote-takeover' },
+      { text: '跨设备客户端', link: '/guide/remote-clients' },
+      { text: '端到端加密与安全', link: '/guide/e2ee' },
+    ],
+  },
+  {
+    text: '自托管',
+    items: [
+      { text: '部署 Relay', link: '/guide/deploy-relay' },
+      { text: '管理后台', link: '/guide/admin' },
+      { text: '部署 Rendezvous', link: '/guide/deploy-rendezvous' },
+    ],
+  },
+  {
+    text: '参考资料',
+    items: [
+      { text: 'FAQ / 故障排查', link: '/guide/faq' },
+    ],
+  },
+]
+const enSidebar = [
+  {
+    text: 'Get started',
+    items: [
+      { text: 'Product manual overview', link: '/en/guide/' },
+      { text: 'Install and quick start', link: '/en/guide/getting-started' },
+    ],
+  },
+  {
+    text: 'Desktop workspace',
+    items: [
+      { text: 'Workspace and sessions', link: '/en/guide/workspace' },
+      { text: 'SSH and files', link: '/en/guide/ssh-files' },
+      { text: 'Productivity tools', link: '/en/guide/productivity' },
+      { text: 'AI agents and Feishu', link: '/en/guide/ai-agents' },
+      { text: 'Settings', link: '/en/guide/settings' },
+    ],
+  },
+  {
+    text: 'Remote access',
+    items: [
+      { text: 'Remote takeover and sessions', link: '/en/guide/remote-takeover' },
+      { text: 'Cross-device clients', link: '/en/guide/remote-clients' },
+      { text: 'End-to-end encryption', link: '/en/guide/e2ee' },
+    ],
+  },
+  {
+    text: 'Self-hosting',
+    items: [
+      { text: 'Deploy Relay', link: '/en/guide/deploy-relay' },
+      { text: 'Admin console', link: '/en/guide/admin' },
+      { text: 'Deploy Rendezvous', link: '/en/guide/deploy-rendezvous' },
+    ],
+  },
+  {
+    text: 'Reference',
+    items: [
+      { text: 'FAQ and troubleshooting', link: '/en/guide/faq' },
+    ],
+  },
+]
 
 function canonicalURL(page) {
   let route = page.replace(/\\/g, '/').replace(/\.md$/, '')
@@ -60,8 +118,18 @@ export default defineConfig({
   base: '/atterm/',
   lang: 'zh-CN',
   locales: {
-    root: { label: '简体中文', lang: 'zh-CN', link: '/' },
-    en: { label: 'English', lang: 'en-US', link: '/en/' },
+    root: {
+      label: '简体中文',
+      lang: 'zh-CN',
+      link: '/',
+      themeConfig: { nav: zhNav, sidebar: { '/guide/': zhSidebar } },
+    },
+    en: {
+      label: 'English',
+      lang: 'en-US',
+      link: '/en/',
+      themeConfig: { nav: enNav, sidebar: { '/en/guide/': enSidebar } },
+    },
   },
   title: 'AT Term',
   titleTemplate: ':title | AT Term',
@@ -126,10 +194,6 @@ export default defineConfig({
     return head
   },
   themeConfig: {
-    locales: {
-      root: { label: '简体中文', nav: zhNav, sidebar: { '/guide/': zhSidebar } },
-      en: { label: 'English', nav: enNav, sidebar: { '/en/guide/': enSidebar } },
-    },
     socialLinks: [{ icon: 'github', link: 'https://github.com/attson/atterm' }],
     search: { provider: 'local' },
   },

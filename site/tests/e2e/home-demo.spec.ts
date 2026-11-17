@@ -210,7 +210,7 @@ test('restores page globals and preserves user storage after the demo unmounts',
 
   await page.getByTestId('demo-start').click()
   await expect(page.locator('.home-demo-frame .app')).toBeVisible({ timeout: 15_000 })
-  await page.getByRole('link', { name: '使用文档' }).first().click()
+  await page.getByRole('link', { name: '产品手册' }).first().click()
   await expect(page).toHaveURL(/\/atterm\/guide\/$/)
 
   const restored = await page.evaluate(() => {
@@ -231,6 +231,16 @@ test.describe('mobile home', () => {
   test('keeps the page and the running demo within the viewport', async ({ page }) => {
     const failures = captureRuntimeFailures(page)
     await page.goto('./')
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('AI 时代的跨设备终端')
+    await expect(page.getByLabel('产品卖点').getByRole('listitem')).toHaveText([
+      'AI 任务状态',
+      '远程查看与接管',
+      'SSH 主机管理',
+      '文件浏览与编辑',
+      '端到端加密',
+      '配置同步',
+      '全平台支持',
+    ])
     await expect(page.getByTestId('demo-poster')).toBeVisible()
 
     const initialOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -248,6 +258,78 @@ test.describe('mobile home', () => {
     expect(widths.scroll - widths.client).toBeLessThanOrEqual(1)
     expect(failures).toEqual([])
   })
+})
+
+test('presents the Chinese guides as one task-oriented product manual', async ({ page }) => {
+  await page.goto('./guide/')
+
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('AT Term 产品手册')
+  await expect(page.locator('.VPSidebar')).toContainText('开始使用')
+  await expect(page.locator('.VPSidebar')).toContainText('桌面工作区')
+  await expect(page.locator('.VPSidebar')).toContainText('工作区与会话')
+  await expect(page.locator('.VPSidebar')).toContainText('SSH 与文件')
+  await expect(page.locator('.VPSidebar')).toContainText('效率工具')
+  await expect(page.locator('.VPSidebar')).toContainText('设置')
+  await expect(page.locator('.VPSidebar')).toContainText('远程接管')
+  await expect(page.locator('.VPSidebar')).toContainText('跨设备客户端')
+  await expect(page.locator('.VPSidebar')).toContainText('自托管')
+  await expect(page.locator('.VPSidebar')).toContainText('管理后台')
+  await expect(page.locator('.VPSidebar')).toContainText('参考资料')
+  await expect(page.getByRole('link', { name: '产品手册', exact: true }).first()).toHaveAttribute(
+    'href',
+    '/atterm/guide/',
+  )
+
+  for (const route of [
+    'guide/',
+    'guide/getting-started.html',
+    'guide/workspace.html',
+    'guide/ssh-files.html',
+    'guide/productivity.html',
+    'guide/settings.html',
+    'guide/remote-clients.html',
+    'guide/remote-takeover.html',
+    'guide/e2ee.html',
+    'guide/deploy-relay.html',
+    'guide/deploy-rendezvous.html',
+    'guide/admin.html',
+    'guide/ai-agents.html',
+    'guide/faq.html',
+  ]) {
+    const response = await page.goto(`./${route}`)
+    expect(response?.ok(), route).toBe(true)
+    await expect(page.locator('main h1')).toBeVisible()
+  }
+
+  await page.goto('./guide/workspace.html')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('工作区与会话')
+  await expect(page.getByRole('img', { name: 'AT Term 工作区中的会话侧栏、标签页与终端' })).toBeVisible()
+
+  await page.goto('./guide/ssh-files.html')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('SSH 与文件')
+  await expect(page.getByRole('img', { name: 'AT Term 文件浏览器与文件预览' })).toBeVisible()
+
+  await page.goto('./guide/productivity.html')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('效率工具与快捷键')
+  await expect(page.getByRole('img', { name: 'AT Term 输入历史面板' })).toBeVisible()
+})
+
+test('keeps the product manual within a mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  for (const route of [
+    'guide/',
+    'guide/workspace.html',
+    'guide/ssh-files.html',
+    'guide/productivity.html',
+    'guide/remote-clients.html',
+    'guide/admin.html',
+  ]) {
+    await page.goto(`./${route}`)
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    expect(overflow, route).toBeLessThanOrEqual(1)
+  }
 })
 
 test('publishes direct release downloads and a large product share card', async ({ page }) => {
@@ -290,7 +372,7 @@ test('serves a complete English locale with locale-specific metadata', async ({ 
 
   await expect(page.getByRole('heading', { level: 1 })).toContainText('AT Term')
   await expect(page.getByText('Choose how you connect')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Documentation' })).toHaveAttribute('href', '/atterm/en/guide/')
+  await expect(page.getByRole('link', { name: 'Product manual' }).first()).toHaveAttribute('href', '/atterm/en/guide/')
   await expect(page.getByRole('link', { name: 'Deploy your Relay' })).toHaveAttribute(
     'href',
     '/atterm/en/guide/deploy-relay.html',
@@ -301,12 +383,33 @@ test('serves a complete English locale with locale-specific metadata', async ({ 
     'https://attson.github.io/atterm/en/',
   )
 
+  await page.goto('./en/guide/')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('AT Term product manual')
+  await expect(page.locator('.VPSidebar')).toContainText('Get started')
+  await expect(page.locator('.VPSidebar')).toContainText('Desktop workspace')
+  await expect(page.locator('.VPSidebar')).toContainText('Workspace and sessions')
+  await expect(page.locator('.VPSidebar')).toContainText('SSH and files')
+  await expect(page.locator('.VPSidebar')).toContainText('Productivity tools')
+  await expect(page.locator('.VPSidebar')).toContainText('Settings')
+  await expect(page.locator('.VPSidebar')).toContainText('Remote access')
+  await expect(page.locator('.VPSidebar')).toContainText('Cross-device clients')
+  await expect(page.locator('.VPSidebar')).toContainText('Self-hosting')
+  await expect(page.locator('.VPSidebar')).toContainText('Admin console')
+  await expect(page.locator('.VPSidebar')).toContainText('Reference')
+
   for (const route of [
     'guide/',
+    'guide/getting-started.html',
+    'guide/workspace.html',
+    'guide/ssh-files.html',
+    'guide/productivity.html',
+    'guide/settings.html',
+    'guide/remote-clients.html',
     'guide/remote-takeover.html',
     'guide/e2ee.html',
     'guide/deploy-relay.html',
     'guide/deploy-rendezvous.html',
+    'guide/admin.html',
     'guide/ai-agents.html',
     'guide/faq.html',
   ]) {
@@ -314,11 +417,72 @@ test('serves a complete English locale with locale-specific metadata', async ({ 
     expect(response?.ok(), route).toBe(true)
     await expect(page.locator('main h1')).toBeVisible()
   }
+
+  await page.goto('./en/guide/workspace.html')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Workspace and sessions')
+  await expect(page.getByRole('img', { name: 'Session sidebar, tabs, and terminal in the AT Term workspace' })).toBeVisible()
+})
+
+test('keeps bilingual manual navigation symmetric and all manual links reachable', async ({ page, request }) => {
+  await page.goto('./guide/')
+  const zhLinks = await page.locator('.VPSidebar a').evaluateAll((links) =>
+    links.map((link) => new URL((link as HTMLAnchorElement).href).pathname.replace('/atterm', '')),
+  )
+
+  await page.goto('./en/guide/')
+  const enLinks = await page.locator('.VPSidebar a').evaluateAll((links) =>
+    links.map((link) => new URL((link as HTMLAnchorElement).href).pathname.replace('/atterm/en', '')),
+  )
+  expect(enLinks).toEqual(zhLinks)
+
+  const manualRoutes = [
+    'guide/',
+    'guide/getting-started.html',
+    'guide/workspace.html',
+    'guide/ssh-files.html',
+    'guide/productivity.html',
+    'guide/ai-agents.html',
+    'guide/settings.html',
+    'guide/remote-takeover.html',
+    'guide/remote-clients.html',
+    'guide/e2ee.html',
+    'guide/deploy-relay.html',
+    'guide/deploy-rendezvous.html',
+    'guide/admin.html',
+    'guide/faq.html',
+  ]
+  const targets = new Set<string>()
+  for (const prefix of ['', 'en/']) {
+    for (const route of manualRoutes) {
+      const response = await page.goto(`./${prefix}${route}`)
+      expect(response?.ok(), `${prefix}${route}`).toBe(true)
+      for (const href of await page.locator('main a').evaluateAll((links) =>
+        links.map((link) => (link as HTMLAnchorElement).href)
+          .filter((href) => new URL(href).pathname.startsWith('/atterm/guide/') || new URL(href).pathname.startsWith('/atterm/en/guide/')),
+      )) targets.add(href.split('#')[0])
+    }
+  }
+  for (const target of targets) {
+    const response = await request.get(target)
+    expect(response.ok(), target).toBe(true)
+  }
 })
 
 test('keeps the English hero within a medium desktop viewport', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 800 })
   await page.goto('./en/')
+
+  await expect(page.locator('.VPNavBarTranslations > button')).toHaveCSS('border-top-width', '0px')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('A cross-device terminal for the AI era')
+  await expect(page.getByLabel('Product highlights').getByRole('listitem')).toHaveText([
+    'AI task status',
+    'Remote view and control',
+    'SSH host management',
+    'File browsing and editing',
+    'End-to-end encryption',
+    'Configuration sync',
+    'Cross-platform',
+  ])
 
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,

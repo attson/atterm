@@ -22,15 +22,15 @@ Set `ATTERM_BOOTSTRAP_ADMIN_EMAIL` and inspect `docker compose logs atterm-relay
 
 ## Desktop cannot connect to Relay
 
-Use an HTTPS/WSS URL, confirm the browser Origin is in `ATTERM_ORIGINS`, and enable insecure mode only for a trusted plaintext network.
+Use an HTTPS/WSS URL, confirm the browser Origin is in `ATTERM_ORIGINS`, and enable insecure mode only for a trusted plaintext network. See [Deploy Relay](/en/guide/deploy-relay).
 
 ## I can see a session but cannot type
 
-Remote attach starts in viewer mode. Press Space to take over, then check the owner's `remote_permission`: `view` is read-only, `control` allows input, and `full` also permits file operations.
+Remote attach starts in viewer mode. Press Space to take over, then check the owner's `remote_permission`: `view` is read-only, `control` allows input, and `full` also permits file operations. See [Cross-device clients](/en/guide/remote-clients).
 
 ## Notifications do not appear
 
-Grant notification permission, subscribe to Web Push in the Web/PWA client, and verify Feishu binding under Settings when using cards.
+Grant notification permission, subscribe to Web Push in the Web/PWA client, and verify Feishu binding under Settings when using cards. Relay-managed Feishu also needs to be enabled in [Admin console](/en/guide/admin).
 
 ## macOS says the developer cannot be verified
 

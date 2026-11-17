@@ -152,3 +152,5 @@ contract 会验证 health、subprotocol、challenge、presence、在线投递、
 
 浏览器客户端只有在安全上下文、WebCrypto 和 `RTCPeerConnection` 三项均可用时才会开始注册。
 公网 HTTP 会在生成 Peer 身份或创建 WebRTC 连接前失败；`localhost` 仅用于本机开发。
+
+客户端加入 Peer Space、导入连接 bundle 和接管会话的步骤见 [远程接管与会话侧栏](/guide/remote-takeover) 与 [跨设备客户端](/guide/remote-clients)。

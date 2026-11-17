@@ -9,6 +9,10 @@ import { __resetForTests as resetPins } from "../composables/useSessionPins";
 import { __resetForTests as resetSel, useSessionSelection } from "../composables/useSessionSelection";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
+import {
+  __resetForTests as resetLabelAppearance,
+  useSessionLabelAppearance,
+} from "../composables/useSessionLabelAppearance";
 
 vi.mock("../lib/api", () => ({
   getUserHomeDir: vi.fn().mockResolvedValue("/Users/attson"),
@@ -20,6 +24,8 @@ vi.mock("../lib/api", () => ({
 // lib/api mock.
 let platform: ReturnType<typeof createFakePlatform>;
 beforeEach(() => {
+  localStorage.clear();
+  resetLabelAppearance();
   platform = createFakePlatform();
   __setPlatformForTests(platform);
 });
@@ -1187,6 +1193,50 @@ describe("TaskGroupedList focused row hierarchy", () => {
 // unread sessions (the fold carries its own "mark all read"), so an unread one
 // must keep the stronger icon/title treatment without colouring the whole row.
 describe("TaskGroupedList completed fold unread", () => {
+  test("labels a saved-host SSH session in the completed fold", async () => {
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: {},
+        primaryStateForHost: () => "completed",
+        completedSeen: [
+          mk({
+            session_id: "ssh-completed",
+            task_state: "completed",
+            ssh_host_alias: "Jumpserver",
+            type: "ai",
+            current_command: "codex",
+          }),
+        ],
+      },
+    });
+    await w.get('[data-test="completed-fold-toggle"]').trigger("click");
+    expect(w.get('[data-test="completed-fold-row"] [data-test="row-kind"]').text()).toBe("SSH");
+  });
+
+  test("completed fold follows the configured label appearance", async () => {
+    useSessionLabelAppearance().setColor("ssh", "#112233");
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [mk({
+          session_id: "ssh-done-color",
+          task_state: "completed",
+          ssh_host_alias: "production",
+        })],
+      },
+    });
+    await w.get('[data-test="completed-fold-toggle"]').trigger("click");
+    const badge = w.get('[data-test="completed-fold-row"] [data-test="row-kind"]');
+    expect(badge.classes()).toContain("kind-colored");
+    expect(badge.attributes("style")).toContain("--kind-color: #112233");
+
+    useSessionLabelAppearance().setMode("neutral");
+    await nextTick();
+    expect(badge.classes()).not.toContain("kind-colored");
+    expect(badge.attributes("style")).toBeUndefined();
+  });
+
   test("keeps an unread folded row neutral and lifts it out of the dim treatment", async () => {
     const w = mount(TaskGroupedList, {
       props: {

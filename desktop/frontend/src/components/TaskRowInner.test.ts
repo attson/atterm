@@ -1,10 +1,16 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import { mount } from "@vue/test-utils";
 import TaskRowInner from "./TaskRowInner.vue";
 import source from "./TaskRowInner.vue?raw";
 import type { RemoteSession } from "../platform/types";
+import { __resetForTests, useSessionLabelAppearance } from "../composables/useSessionLabelAppearance";
 
 const NOW = 1_800_000_000_000;
+
+beforeEach(() => {
+  localStorage.clear();
+  __resetForTests();
+});
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -107,6 +113,37 @@ describe("TaskRowInner layout", () => {
     expect(ai.get('[data-test="row-kind"]').text()).toBe("claude");
     const shell = factory({ type: "shell", current_command: "zsh", cwd: "/tmp" });
     expect(shell.find('[data-test="row-kind"]').exists()).toBe(false);
+  });
+
+  test("labels a saved-host SSH session instead of its workload kind", () => {
+    const w = factory({
+      ssh_host_alias: "Jumpserver",
+      type: "ai",
+      current_command: "codex",
+      cwd: "/tmp",
+    });
+    expect(w.get('[data-test="row-kind"]').text()).toBe("SSH");
+  });
+
+  test("uses the configured category color for known labels", () => {
+    useSessionLabelAppearance().setColor("ssh", "#112233");
+    const w = factory({ ssh_host_alias: "Jumpserver", current_command: "zsh" });
+    const badge = w.get('[data-test="row-kind"]');
+    expect(badge.classes()).toContain("kind-colored");
+    expect(badge.attributes("style")).toContain("--kind-color: #112233");
+  });
+
+  test("neutral mode keeps the original uncolored badge", () => {
+    useSessionLabelAppearance().setMode("neutral");
+    const w = factory({ type: "ai", current_command: "claude" });
+    const badge = w.get('[data-test="row-kind"]');
+    expect(badge.classes()).not.toContain("kind-colored");
+    expect(badge.attributes("style")).toBeUndefined();
+  });
+
+  test("unknown AI labels remain neutral in category mode", () => {
+    const w = factory({ type: "ai", current_command: "aider" });
+    expect(w.get('[data-test="row-kind"]').classes()).not.toContain("kind-colored");
   });
 
   test("stacks kind above last output in the tail, matching the desk widget", () => {

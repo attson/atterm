@@ -66,7 +66,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					Op:        "unwatch_dir",
 					WatchID:   watch.watchID,
 				}
-				payload, err := json.Marshal(request)
+				payload, err := proto.EncodeFSHead(request)
 				if err != nil {
 					continue
 				}
@@ -414,7 +414,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			var request proto.FSRequestPayload
 			// Segment 0 carries op / request_id in the clear precisely so
 			// this gate keeps working without the relay holding a key.
-			if err := proto.DecodeFSHead(f.Payload, &request); err != nil || request.RequestID == "" || request.Op == "" || f.SessionID != sess.ID {
+			segments, err := proto.DecodeSegments(f.Payload)
+			if err != nil {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, "", "invalid_request")
+				continue
+			}
+			if err := json.Unmarshal(segments[0], &request); err != nil || request.RequestID == "" || request.Op == "" || f.SessionID != sess.ID {
 				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
 				continue
 			}
@@ -453,7 +458,15 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				}
 			}
 			request.ClientID = clientID
-			payload, err := json.Marshal(request)
+			head, err := json.Marshal(request)
+			if err != nil {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
+				continue
+			}
+			// Replace only the routing head. The host expects segmented
+			// framing, and later segments contain paths sealed by the client.
+			segments[0] = head
+			payload, err := proto.EncodeSegments(segments)
 			if err != nil {
 				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
 				continue

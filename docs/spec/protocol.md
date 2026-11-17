@@ -524,7 +524,7 @@ payload := segment_count(1B) || segment*
 segment := length(4B BE) || bytes
 ```
 
-segment 0 恒为明文 JSON，只放 relay 转发和鉴权真正需要的字段：`FS_REQUEST` 的 `request_id` / `op` / `client_id` / `max_bytes` / `offset` / `length` / `watch_id`，`FS_RESPONSE` 的 `request_id` / `ok` / `watch_id`，`FS_EVENT` 的 `watch_id` / `event`。relay 靠 `op` 执行只读白名单（`isReadOnlyFSOperation`）、靠 `request_id` / `watch_id` 路由，全程不持有 key——它通过 `proto.DecodeFSHead` / `EncodeFSHead` 只读写 segment 0。
+segment 0 恒为明文 JSON，只放 relay 转发和鉴权真正需要的字段：`FS_REQUEST` 的 `request_id` / `op` / `client_id` / `max_bytes` / `offset` / `length` / `watch_id`，`FS_RESPONSE` 的 `request_id` / `ok` / `watch_id`，`FS_EVENT` 的 `watch_id` / `event`。relay 靠 `op` 执行只读白名单（`isReadOnlyFSOperation`）、靠 `request_id` / `watch_id` 路由，全程不持有 key。读取 head 使用 `proto.DecodeFSHead`；覆盖 `client_id` 时只重写 segment 0，再用 `proto.EncodeSegments` 连同原样保留的后续 segment 重新封装，不能转成裸 JSON 或丢弃 sealed segment。relay 自己生成的断线清理 `unwatch_dir` 请求使用 `proto.EncodeFSHead` 生成单段 payload。
 
 其余字段（路径、文件名、目录列表、metadata、agent 侧 error 文本、文件内容字节）走后续 segment 的 [§E2EE 信封](#e2ee-信封)，AAD 鉴别字节见该节表格。文件字节单独占一个 segment 且**不经 base64**——`FileContent.Data` 本来就被 `encoding/json` base64 过一次，若再把信封 base64 进 JSON 字段会叠成 1.78× 膨胀；分段后维持在约 1.0×。
 

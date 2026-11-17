@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -437,7 +438,7 @@ func TestClientFSRequestInjectsSubscriberClientID(t *testing.T) {
 			t.Fatalf("inbound type = %v, want FS_REQUEST", got.Type)
 		}
 		var forwarded map[string]any
-		if err := json.Unmarshal(got.Payload, &forwarded); err != nil {
+		if err := proto.DecodeFSHead(got.Payload, &forwarded); err != nil {
 			t.Fatalf("decode forwarded FS_REQUEST: %v", err)
 		}
 		if forwarded["client_id"] != "actual-client" {
@@ -445,6 +446,79 @@ func TestClientFSRequestInjectsSubscriberClientID(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("FS request was not forwarded")
+	}
+}
+
+// Exercise the host decoder, not just the relay's routing head: rewriting
+// the request as bare JSON or dropping its sealed tail breaks real hosts.
+func TestClientFSRequestPreservesSegmentedPayload(t *testing.T) {
+	for _, sealed := range []bool{false, true} {
+		name := "plaintext"
+		var key []byte
+		if sealed {
+			name = "sealed"
+			key = bytes.Repeat([]byte{0x42}, 32)
+		}
+		t.Run(name, func(t *testing.T) {
+			srv, token, userID := serverWithSessionAndUser(t)
+			httpSrv := newRelayHTTPServer(t, srv)
+			sessionID := uuid.New()
+			sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "actual-client")
+			defer client.Close(websocket.StatusNormalClosure, "")
+			drainAttachIntro(t, ctx, client)
+
+			payload, err := proto.EncodeFSRequest(proto.FSRequestPayload{
+				RequestID: "list-project", Op: "list_dir", Path: "/home/u/project", ClientID: "forged-client",
+			}, key, sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, payload)
+			forwarded := readNextFSInbound(t, ctx, sess)
+			request, err := proto.DecodeFSRequest(forwarded.Payload, key, sessionID)
+			if err != nil {
+				t.Fatalf("host cannot decode forwarded request: %v", err)
+			}
+			if request.RequestID != "list-project" || request.Op != "list_dir" || request.Path != "/home/u/project" || request.ClientID != "actual-client" {
+				t.Fatalf("forwarded request lost path or trusted identity: %+v", request)
+			}
+			if sealed {
+				before, _ := proto.DecodeSegments(payload)
+				after, _ := proto.DecodeSegments(forwarded.Payload)
+				if len(after) != 2 || !bytes.Equal(before[1], after[1]) {
+					t.Fatal("relay changed the sealed request segment")
+				}
+				var head proto.FSRequestPayload
+				if err := proto.DecodeFSHead(forwarded.Payload, &head); err != nil || head.Path != "" {
+					t.Fatalf("relay exposed sealed path in head: %+v, %v", head, err)
+				}
+			}
+
+			response, err := proto.EncodeFSResponse(proto.FSResponsePayload{
+				RequestID: request.RequestID, OK: true, Entries: []proto.DirEntry{{Name: "README.md"}},
+			}, key, sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: response}) {
+				t.Fatal("directory response was not routed to requester")
+			}
+			_, data, err := client.Read(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame, err := proto.Unmarshal(data)
+			if err != nil || frame.Type != proto.TypeFSResponse {
+				t.Fatalf("invalid directory response: type=%v, error=%v", frame.Type, err)
+			}
+			listing, err := proto.DecodeFSResponse(frame.Payload, key, sessionID)
+			if err != nil || !listing.OK || len(listing.Entries) != 1 || listing.Entries[0].Name != "README.md" {
+				t.Fatalf("client did not receive directory entries: %+v, %v", listing, err)
+			}
+		})
 	}
 }
 
@@ -698,8 +772,8 @@ func TestClientFSDisconnectSendsUnwatchForOwnedWatches(t *testing.T) {
 
 	_ = client.Close(websocket.StatusNormalClosure, "")
 	got := readNextFSInbound(t, ctx, sess)
-	var request proto.FSRequestPayload
-	if err := json.Unmarshal(got.Payload, &request); err != nil {
+	request, err := proto.DecodeFSRequest(got.Payload, nil, sessionID)
+	if err != nil {
 		t.Fatalf("decode cleanup FS_REQUEST: %v", err)
 	}
 	if request.Op != "unwatch_dir" || request.WatchID != "watch-1" || request.RequestID == "" {
@@ -732,8 +806,8 @@ func TestClientFSDisconnectDoesNotUnwatchOtherClientWatches(t *testing.T) {
 
 	_ = owner.Close(websocket.StatusNormalClosure, "")
 	got := readNextFSInbound(t, ctx, sess)
-	var request proto.FSRequestPayload
-	if err := json.Unmarshal(got.Payload, &request); err != nil {
+	request, err := proto.DecodeFSRequest(got.Payload, nil, sessionID)
+	if err != nil {
 		t.Fatalf("decode cleanup FS_REQUEST: %v", err)
 	}
 	if request.Op != "unwatch_dir" || request.WatchID != "watch-owned" {

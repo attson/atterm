@@ -286,6 +286,13 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
   legacy/compressed 双输出流、远程文件、按需输入历史和 Web Preview 已实现。
 - **跨端前端**：桌面、Web 主入口和 Capacitor iOS 都挂载共享 `App.vue` / `TerminalView.vue`；
   平台差异收敛到 `platform/{wails,web,capacitor}.ts` 与少量 capability gate。
+  终端首次加载在中央显示连接、历史回放（有总量时显示真实进度）、xterm 渲染状态；
+  桌面 loopback WS proxy 先完成上游 DNS/TLS/鉴权，再打开本地 WebSocket，避免把网络等待显示成历史回放。
+  恢复的远程 pane 在连接端点尚未就绪时显示连接状态、已等待时长和设置入口，
+  根据已知配置区分初始化、暂停、未配置、需要登录及通道不可用，不再显示通用空面板。
+  relay 空缓存的回放结束后，远程会话继续显示等待主机输出，直到首批内容写入 xterm。
+  后续重连保留已有画面并显示角落状态。空格和按钮接管共用等待反馈，收到 driver META
+  确认后结束；等待期间禁止重复请求，15 秒无确认则提示并恢复重试入口。
 - **账户与安全**：OPAQUE、`account_key` E2EE、QR pairing、Web Push、Admin、SQLite/Postgres
   和多实例 realm/home routing 已实现。通用 outbound webhook 已退休，不得作为现役能力引用。
 - **AI/SSH 工作台**：任务状态与摘要、AI 会话恢复、Quick/Snippet、输入历史、飞书、

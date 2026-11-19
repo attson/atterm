@@ -179,15 +179,27 @@ export class MockSocket {
       } else if (this.isLocal || isLocalSid(sidStr)) {
         this.prompt = LOCAL_PROMPT
       }
+      const totalBytes = script.reduce((total, chunk) => total + enc.encode(chunk).byteLength, 0)
+      let replayedBytes = 0
+      const progress = (phase: 'start' | 'chunk' | 'end') => this.deliver(encodeFrame(
+        TYPE.REPLAY_PROGRESS, frame.sid,
+        enc.encode(JSON.stringify({ phase, bytes: replayedBytes, total_bytes: totalBytes })),
+      ))
+      progress('start')
       let delay = 60
       for (const chunk of script) {
         const s = frame.sid
-        setTimeout(() => this.out(s, chunk), delay)
+        setTimeout(() => {
+          this.out(s, chunk)
+          replayedBytes += enc.encode(chunk).byteLength
+          progress('chunk')
+        }, delay)
         delay += 220
       }
       // 所有会话回放完成后都授予 driver,让访客在任意会话都能敲命令(真实
       // atterm 里 remote 会话默认 viewer 需 take over;demo 为体验起见直接授权)。
       setTimeout(() => {
+        progress('end')
         this.grantDriver(frame.sid)
         this.replaying = false
         this.flushQueuedInput()

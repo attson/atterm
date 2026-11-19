@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProbeRelayVersion_Success(t *testing.T) {
@@ -27,6 +29,39 @@ func TestProbeRelayVersion_Success(t *testing.T) {
 	version, err := app.FetchRelayVersion(srv.URL, false)
 	if err != nil || version != "v0.2.99" {
 		t.Fatalf("FetchRelayVersion: version=%q err=%v", version, err)
+	}
+}
+
+func TestProbeRelayVersion_AllowsSlowDNS(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"version":"v0.2.99"}`)
+	}))
+	defer srv.Close()
+
+	// Some routers take a full DNS retry interval before answering the
+	// combined A/AAAA lookup. Reproduce that delay before TCP connects.
+	original := http.DefaultTransport
+	transport := original.(*http.Transport).Clone()
+	dial := transport.DialContext
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		timer := time.NewTimer(5100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return dial(ctx, network, addr)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	http.DefaultTransport = transport
+	t.Cleanup(func() {
+		http.DefaultTransport = original
+		transport.CloseIdleConnections()
+	})
+
+	app := &App{ctx: context.Background()}
+	if err := app.ProbeRelayVersion(srv.URL, false); err != nil {
+		t.Fatalf("healthy relay rejected after slow DNS: %v", err)
 	}
 }
 

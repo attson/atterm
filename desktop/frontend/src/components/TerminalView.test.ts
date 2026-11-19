@@ -247,7 +247,7 @@ describe("TerminalView replay scroll", () => {
   test("routes output through the bounded xterm write queue", () => {
     expect(source).toContain('createTerminalWriteQueue');
     expect(source).toMatch(/terminalWriteQueue = createTerminalWriteQueue\(term\)/);
-    expect(source).toMatch(/onOutput: \(data\) => terminalWriteQueue\?\.write\(data\)/);
+    expect(source).toMatch(/onOutput: \(data\) => \{\s*terminalWriteQueue\?\.write\(data\)/);
     expect(source).toMatch(/onClose: \(info\) => \{[\s\S]*?terminalWriteQueue\?\.write\(/);
     expect(source).not.toMatch(/onOutput: \(data\) => term\?\.write\(data\)/);
   });
@@ -256,7 +256,7 @@ describe("TerminalView replay scroll", () => {
     expect(source).toMatch(/function scrollToBottomAfterWriteQueue\(done\?: \(\) => void\)/);
     expect(source).toMatch(/currentQueue\.drain\(\(\) => \{/);
     expect(source).toMatch(/progress\.phase === "start" \|\| progress\.phase === "chunk"/);
-    expect(source).toMatch(/replayInputGuard\.onProgress\("end"[\s\S]*scrollToBottomAfterWriteQueue\(release\)/);
+    expect(source).toMatch(/replayInputGuard\.onProgress\("end"[\s\S]*scrollToBottomAfterWriteQueue\(\(\) => \{\s*release\(\);\s*rendered\?\.\(\)/);
   });
 });
 
@@ -1093,7 +1093,7 @@ describe("TerminalView viewer overlay", () => {
     expect(source).toContain('class="viewer-overlay"');
     expect(source).toContain('class="viewer-overlay-card"');
     expect(source).toContain('t("terminal.remoteHasTakenControl")');
-    expect(source).toContain('t("terminal.pressSpaceToTakeBack")');
+    expect(source).toContain('"terminal.pressSpaceToTakeBack"');
     expect(source).toMatch(/v-if=["']!isDriver["']/);
   });
 

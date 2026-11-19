@@ -1489,6 +1489,36 @@ describe("recovery snapshot gated on caps.wailsBindings (web)", () => {
     sessionStorage.clear();
   });
 
+  it("shows restored remote connection feedback without endpoints and opens the web account settings", async () => {
+    location.hash = "";
+    const platform = createFakePlatform();
+    platform.caps = { ...platform.caps, wailsBindings: false, localPty: false, windowControls: false };
+    platform.relay.load = vi.fn().mockResolvedValue(null);
+    __setPlatformForTests(platform);
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true, TabBar: true, TaskSidebar: true,
+          PluginHost: true, TranslatePanelHost: true, ShortcutHints: true,
+          SettingsDialog: {
+            props: ["initialTab"],
+            template: `<button data-testid="settings-dialog" :data-tab="initialTab" @click="$emit('close')">close settings</button>`,
+          },
+        },
+      },
+    });
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="remote-connection-placeholder"]').exists()).toBe(true);
+    });
+    expect(wrapper.text()).toContain("Sign in to reconnect");
+    // Boot prompts for login; close it before checking the pane's action.
+    await wrapper.get('[data-testid="settings-dialog"]').trigger("click");
+    await wrapper.get('[data-testid="remote-connection-settings"]').trigger("click");
+    expect(wrapper.get('[data-testid="settings-dialog"]').attributes("data-tab")).toBe("account");
+    wrapper.unmount();
+  });
+
   it("never calls saveRecoverySnapshot and does not throw when restoring a web tabs snapshot", async () => {
     const saveSpy = vi.spyOn(api, "saveRecoverySnapshot");
 

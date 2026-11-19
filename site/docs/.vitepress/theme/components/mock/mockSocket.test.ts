@@ -50,11 +50,27 @@ describe('MockSocket', () => {
     await vi.waitFor(() => expect(sock.readyState).toBe(MockSocket.OPEN))
     const sid = uuidParse(IDLE_SESSION_ID)
     sock.send(encodeFrame(TYPE.ATTACH, sid, encodeText('{}')))
-    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0), { timeout: 2000 })
-    const f = decodeFrame(frames[0])
+    await vi.waitFor(() => expect(frames.some(bytes => decodeFrame(bytes).type === TYPE.OUT)).toBe(true), { timeout: 2000 })
+    const f = frames.map(decodeFrame).find(frame => frame.type === TYPE.OUT)!
     expect(f.type).toBe(TYPE.OUT)
     const { data } = decodeOutPayload(f.payload)
     expect(decodeText(data).length).toBeGreaterThan(0)
+  })
+
+  it('reports replay progress through end so the shared terminal can dismiss loading', async () => {
+    const sock = new MockSocket('wss://demo/client')
+    const frames = collect(sock)
+    await vi.waitFor(() => expect(sock.readyState).toBe(MockSocket.OPEN))
+    sock.send(encodeFrame(TYPE.ATTACH, uuidParse(IDLE_SESSION_ID), encodeText('{}')))
+    const progress = () => frames.map(decodeFrame)
+      .filter(frame => frame.type === TYPE.REPLAY_PROGRESS)
+      .map(frame => JSON.parse(decodeText(frame.payload)))
+    await vi.waitFor(() => expect(progress().at(-1)?.phase).toBe('end'), { timeout: 2500 })
+    expect(progress()[0]).toMatchObject({ phase: 'start', bytes: 0 })
+    const end = progress().at(-1)
+    expect(end.bytes).toBeGreaterThan(0)
+    expect(end.bytes).toBe(end.total_bytes)
+    sock.close()
   })
 
   it('echoes input on the idle session', async () => {

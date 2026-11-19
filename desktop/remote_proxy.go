@@ -202,22 +202,6 @@ func (p *remoteProxy) handleWSProxy(w http.ResponseWriter, r *http.Request, rela
 		return
 	}
 
-	// Echo the client's requested atterm-token subprotocol so the browser WS
-	// handshake completes; the real credential for the relay dial comes from
-	// config below, not from this subprotocol.
-	acceptOpts := &websocket.AcceptOptions{InsecureSkipVerify: true} // loopback only
-	if sp := r.Header.Get("Sec-WebSocket-Protocol"); sp != "" {
-		if first := strings.TrimSpace(strings.Split(sp, ",")[0]); first != "" {
-			acceptOpts.Subprotocols = []string{first}
-		}
-	}
-	local, err := websocket.Accept(w, r, acceptOpts)
-	if err != nil {
-		return
-	}
-	local.SetReadLimit(remoteProxyReadLimit)
-	defer local.Close(websocket.StatusInternalError, "")
-
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -235,11 +219,30 @@ func (p *remoteProxy) handleWSProxy(w http.ResponseWriter, r *http.Request, rela
 	cancelDial()
 	if err != nil {
 		logWarn("remote-proxy", "dial relay %s: %v", relayPath, err)
-		local.Close(websocket.StatusTryAgainLater, "relay dial failed")
+		http.Error(w, "relay dial failed", http.StatusServiceUnavailable)
 		return
 	}
 	remote.SetReadLimit(remoteProxyReadLimit)
 	defer remote.Close(websocket.StatusInternalError, "")
+
+	// Keep the renderer in CONNECTING while DNS/TLS/authentication runs.
+	// Opening loopback first falsely reports an attached terminal before the
+	// remote relay is ready and labels network waits as history replay.
+	// Echo the client's requested atterm-token subprotocol so the browser WS
+	// handshake completes; the real credential for the relay dial comes from
+	// config below, not from this subprotocol.
+	acceptOpts := &websocket.AcceptOptions{InsecureSkipVerify: true} // loopback only
+	if sp := r.Header.Get("Sec-WebSocket-Protocol"); sp != "" {
+		if first := strings.TrimSpace(strings.Split(sp, ",")[0]); first != "" {
+			acceptOpts.Subprotocols = []string{first}
+		}
+	}
+	local, err := websocket.Accept(w, r, acceptOpts)
+	if err != nil {
+		return
+	}
+	local.SetReadLimit(remoteProxyReadLimit)
+	defer local.Close(websocket.StatusInternalError, "")
 
 	// Pipe both directions; the first error tears the other down via cancel.
 	errc := make(chan error, 2)

@@ -1081,6 +1081,7 @@ export class SessionConnection {
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     const receive = this.createProtocolQueue(DirectRoute.Relay, generation, () => this.ws === ws);
+    let relayConfirmed = false;
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
 
     ws.onopen = () => {
@@ -1091,9 +1092,6 @@ export class SessionConnection {
       this.retiredFSRequestIDs.clear();
       this.recoverDriverIfVacant = this.isDriverRole;
       this.recoverDriverVacant = false;
-      if (this.route.state !== DirectRouteState.RelayReattaching) {
-        this.handlers.onStatus?.("attached");
-      }
       const attachPayload = encodeText(
         JSON.stringify({
           session_id: this.sessionId,
@@ -1118,9 +1116,16 @@ export class SessionConnection {
       } catch {
         return;
       }
+      if (!this.sameSessionID(f.sid)) return;
       // See SessionListConnection: a local proxy onopen does not prove its
       // upstream websocket was authenticated. A valid protocol frame does.
       this.reconnectAttempts = 0;
+      if (!relayConfirmed) {
+        relayConfirmed = true;
+        if (this.route.state !== DirectRouteState.RelayReattaching) {
+          this.handlers.onStatus?.("attached");
+        }
+      }
       receive((isCurrent) => this.handleProtocolFrame(f, DirectRoute.Relay, generation, isCurrent));
     };
 

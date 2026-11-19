@@ -1031,6 +1031,60 @@ describe("reconnect backoff across proxy-accepted failures", () => {
     expect(FakeWebSocket.instances).toHaveLength(4);
     conn.detach();
   });
+
+  test("session waits for a matching relay frame before reporting attached", () => {
+    const statuses: string[] = [];
+    const conn = new SessionConnection(endpoint, sessionId, {
+      onStatus: (status) => statuses.push(status),
+    });
+
+    conn.attach();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+
+    expect(statuses).toEqual(["connecting"]);
+
+    ws.emit(TYPE.META, uuidParse(sessionId), encodeText(JSON.stringify({ cols: 80, rows: 24 })));
+
+    expect(statuses).toEqual(["connecting", "attached"]);
+    conn.detach();
+  });
+
+  test("session stays reconnecting when a proxy-only reconnect opens then closes", () => {
+    const statuses: string[] = [];
+    const conn = new SessionConnection(endpoint, sessionId, {
+      onStatus: (status) => statuses.push(status),
+    });
+
+    conn.attach();
+    const initial = FakeWebSocket.instances[0];
+    initial.open();
+    initial.emit(TYPE.META, uuidParse(sessionId), encodeText(JSON.stringify({ cols: 80, rows: 24 })));
+    initial.closeFromPeer();
+    expect(statuses.at(-1)).toBe("reconnecting");
+
+    vi.advanceTimersByTime(500);
+    const reconnect = FakeWebSocket.instances[1];
+    reconnect.open();
+    reconnect.emit(
+      TYPE.META,
+      uuidParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+      encodeText(JSON.stringify({ cols: 80, rows: 24 })),
+    );
+
+    expect(statuses.at(-1)).toBe("reconnecting");
+    expect(statuses.filter((status) => status === "attached")).toHaveLength(1);
+
+    reconnect.closeFromPeer();
+    expect(statuses.at(-1)).toBe("reconnecting");
+    expect(statuses.filter((status) => status === "attached")).toHaveLength(1);
+
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(3);
+    conn.detach();
+  });
 });
 
 describe("openWS sync-throw isolation", () => {

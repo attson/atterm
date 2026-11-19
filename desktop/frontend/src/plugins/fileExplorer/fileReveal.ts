@@ -9,13 +9,17 @@ import { ref } from "vue";
  */
 export const useFileRevealStore = defineStore("fileReveal", () => {
   const pending = ref<string | null>(null);
+  const requestSeq = ref(0);
   function request(path: string) {
+    requestSeq.value++;
     pending.value = path;
+    return requestSeq.value;
   }
-  function consume(): string | null {
+  function consume(expectedSeq = requestSeq.value): string | null {
+    if (expectedSeq !== requestSeq.value) return null;
     const p = pending.value;
     pending.value = null;
     return p;
   }
-  return { pending, request, consume };
+  return { pending, requestSeq, request, consume };
 });

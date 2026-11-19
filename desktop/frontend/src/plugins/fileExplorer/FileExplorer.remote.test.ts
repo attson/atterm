@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { computed, ref, shallowRef } from "vue";
+import { computed, defineComponent, h, ref, shallowRef } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import FileExplorer from "./FileExplorer.vue";
@@ -147,6 +147,215 @@ describe("FileExplorer filesystem bridge", () => {
     expect(revealStore.pending).toBeNull();
     expect(wrapper.get(`.node[data-path="${target}"]`).classes()).toContain("selected");
     expect(wrapper.text()).toContain("demo.mp4");
+  });
+
+  it("keeps a terminal file reveal pending until the session cwd and tree are ready", async () => {
+    const target = "/workspace/src/app.ts";
+    const activeCwd = ref<string | null>(null);
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/workspace") return [{ name: "src", isDir: true }];
+      if (path === "/workspace/src") return [{ name: "app.ts", isDir: false }];
+      return [];
+    });
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => activeCwd.value),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+    const revealStore = useFileRevealStore();
+    revealStore.request(target);
+
+    const wrapper = mount(FileExplorer, {
+      props: { context },
+      global: { stubs: { FileEditor: true } },
+    });
+    await flushPromises();
+
+    expect(revealStore.pending).toBe(target);
+
+    activeCwd.value = "/workspace";
+    await flushPromises();
+
+    expect(revealStore.pending).toBeNull();
+    expect(wrapper.get(`.node[data-path="${target}"]`).classes()).toContain("selected");
+    expect(wrapper.findComponent({ name: "FileEditor" }).exists()).toBe(true);
+  });
+
+  it("processes repeated requests for the same path without letting the older reveal consume the newer one", async () => {
+    const target = "/workspace/app.ts";
+    let resolveFirst!: (isFile: boolean) => void;
+    let resolveSecond!: (isFile: boolean) => void;
+    const revealPath = vi.fn()
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveSecond = resolve; }));
+    const FileTreeStub = defineComponent({
+      name: "FileTree",
+      setup(_props, { expose }) {
+        expose({ revealPath, refresh: vi.fn(), refreshDir: vi.fn(), collapseAll: vi.fn() });
+        return () => h("div", { "data-test": "file-tree-stub" });
+      },
+    });
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/workspace"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+    const revealStore = useFileRevealStore();
+    revealStore.request(target);
+
+    const wrapper = mount(FileExplorer, {
+      props: { context },
+      global: { stubs: { FileTree: FileTreeStub, FileEditor: true } },
+    });
+    await flushPromises();
+    expect(revealPath).toHaveBeenCalledTimes(1);
+
+    revealStore.request(target);
+    await flushPromises();
+    expect(revealPath).toHaveBeenCalledTimes(2);
+
+    resolveFirst(false);
+    await flushPromises();
+    expect(revealStore.pending).toBe(target);
+    expect(context.showToast).not.toHaveBeenCalled();
+
+    resolveSecond(true);
+    await flushPromises();
+    expect(revealStore.pending).toBeNull();
+    expect(wrapper.findComponent({ name: "FileEditor" }).exists()).toBe(true);
+  });
+
+  it("does not let a reveal started for an old root consume the current request", async () => {
+    const target = "/workspace-a/app.ts";
+    const activeCwd = ref("/workspace-a");
+    let resolveFirst!: (isFile: boolean) => void;
+    let resolveSecond!: (isFile: boolean) => void;
+    const revealPath = vi.fn()
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveSecond = resolve; }));
+    const FileTreeStub = defineComponent({
+      name: "FileTree",
+      setup(_props, { expose }) {
+        expose({ revealPath, refresh: vi.fn(), refreshDir: vi.fn(), collapseAll: vi.fn() });
+        return () => h("div", { "data-test": "file-tree-stub" });
+      },
+    });
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => activeCwd.value),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+    const revealStore = useFileRevealStore();
+    revealStore.request(target);
+
+    const wrapper = mount(FileExplorer, {
+      props: { context },
+      global: { stubs: { FileTree: FileTreeStub, FileEditor: true } },
+    });
+    await flushPromises();
+    expect(revealPath).toHaveBeenCalledTimes(1);
+
+    activeCwd.value = "/workspace-b";
+    await flushPromises();
+    expect(revealPath).toHaveBeenCalledTimes(2);
+
+    resolveFirst(true);
+    await flushPromises();
+    expect(revealStore.pending).toBe(target);
+    expect(wrapper.findComponent({ name: "FileEditor" }).exists()).toBe(false);
+
+    resolveSecond(true);
+    await flushPromises();
+    expect(revealStore.pending).toBeNull();
+    expect(wrapper.findComponent({ name: "FileEditor" }).exists()).toBe(true);
+  });
+
+  it("surfaces a terminal file reveal that cannot locate a file", async () => {
+    const target = "/workspace/missing.ts";
+    const revealPath = vi.fn().mockResolvedValue(false);
+    const FileTreeStub = defineComponent({
+      name: "FileTree",
+      setup(_props, { expose }) {
+        expose({ revealPath, refresh: vi.fn(), refreshDir: vi.fn(), collapseAll: vi.fn() });
+        return () => h("div", { "data-test": "file-tree-stub" });
+      },
+    });
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/workspace"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+    const revealStore = useFileRevealStore();
+    revealStore.request(target);
+
+    const wrapper = mount(FileExplorer, {
+      props: { context },
+      global: { stubs: { FileTree: FileTreeStub, FileEditor: true } },
+    });
+    await flushPromises();
+
+    expect(revealStore.pending).toBeNull();
+    expect(context.showToast).toHaveBeenCalledWith("Failed to open link");
+    expect(wrapper.findComponent({ name: "FileEditor" }).exists()).toBe(false);
+  });
+
+  it("surfaces an error thrown while revealing a terminal file", async () => {
+    const target = "/workspace/broken.ts";
+    const revealPath = vi.fn().mockRejectedValue(new Error("listing failed"));
+    const FileTreeStub = defineComponent({
+      name: "FileTree",
+      setup(_props, { expose }) {
+        expose({ revealPath, refresh: vi.fn(), refreshDir: vi.fn(), collapseAll: vi.fn() });
+        return () => h("div", { "data-test": "file-tree-stub" });
+      },
+    });
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/workspace"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+    const revealStore = useFileRevealStore();
+    revealStore.request(target);
+
+    const wrapper = mount(FileExplorer, {
+      props: { context },
+      global: { stubs: { FileTree: FileTreeStub, FileEditor: true } },
+    });
+    await flushPromises();
+
+    expect(revealStore.pending).toBeNull();
+    expect(context.showToast).toHaveBeenCalledWith("Failed to open link");
+    expect(wrapper.findComponent({ name: "FileEditor" }).exists()).toBe(false);
   });
 
   it("keeps both directory tree and editor mounted after opening a file", async () => {

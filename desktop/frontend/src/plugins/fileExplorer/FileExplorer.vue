@@ -245,16 +245,31 @@ async function onUploadPicked(ev: Event) {
 // Consume a reveal request from the terminal: expand/select the path in the
 // tree and, when it's a file, open a preview tab.
 watch(
-  () => fileRevealStore.pending,
-  async (p) => {
-    if (!p || !fs.value) return;
-    await nextTick(); // let the tree mount if the panel just opened
-    const isFile = (await fileTreeRef.value?.revealPath(p)) ?? false;
-    if (isFile) {
+  () => [fileRevealStore.requestSeq, fileRevealStore.pending, fs.value, root.value, fileTreeRef.value] as const,
+  async ([requestSeq, p, bridge, currentRoot, tree]) => {
+    if (!p || !bridge || !currentRoot || !tree) return;
+    const isCurrentReveal = () =>
+      fileRevealStore.requestSeq === requestSeq &&
+      fs.value === bridge &&
+      root.value === currentRoot &&
+      fileTreeRef.value === tree;
+    try {
+      const isFile = await tree.revealPath(p);
+      if (!isCurrentReveal()) return;
+      if (!isFile) {
+        fileRevealStore.consume(requestSeq);
+        logWarn("file-explorer", "terminal file reveal did not find a file", { path: p });
+        props.context.showToast(t("terminal.link.openFailed"));
+        return;
+      }
       tabsState.value = openPath(tabsState.value, p, "persistent");
+      fileRevealStore.consume(requestSeq);
+    } catch (err) {
+      if (!isCurrentReveal()) return;
+      fileRevealStore.consume(requestSeq);
+      logWarn("file-explorer", "terminal file reveal failed", { path: p, error: errText(err) });
+      props.context.showToast(t("terminal.link.openFailed"));
     }
-    // Do not clear a newer request that arrived while the tree was expanding.
-    if (fileRevealStore.pending === p) fileRevealStore.consume();
   },
   { immediate: true },
 );

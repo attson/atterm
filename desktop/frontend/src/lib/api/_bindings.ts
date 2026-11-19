@@ -426,6 +426,7 @@ export interface RelayConfig {
   // loginRemoteRelay writes it.
   last_email: string;
   connected: boolean;
+  paused?: boolean;
   // Loopback ws:// base the frontend attaches remote sessions through (the Go
   // remoteProxy). Read-only; empty when unavailable. Remote /client attaches
   // tunnel through Go because the WebView can't TLS-dial the relay directly on

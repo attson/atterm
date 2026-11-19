@@ -4,6 +4,7 @@ import PaneGrid from "./PaneGrid.vue";
 import SelectDropdown from "./SelectDropdown.vue";
 import source from "./PaneGrid.vue?raw";
 import type { Tab } from "../lib/types";
+import type { RemoteConnectionReason } from "../lib/remoteConnectionFeedback";
 import type { SessionInfo } from "../lib/connection";
 
 vi.mock("./TerminalView.vue", () => ({
@@ -593,4 +594,71 @@ test("updates background subscription policy on every mounted terminal", async (
   expect(terminals.map((terminal) => terminal.props("pauseRemoteSubscriptionsInBackground"))).toEqual([true, true]);
   await wrapper.setProps({ pauseRemoteSubscriptionsInBackground: false });
   expect(terminals.map((terminal) => terminal.props("pauseRemoteSubscriptionsInBackground"))).toEqual([false, false]);
+});
+
+describe("PaneGrid remote connection placeholder", () => {
+  function mountWaiting(reason: RemoteConnectionReason = "initializing", remote = true, sessionId: string | null = "remote-session") {
+    return mount(PaneGrid, {
+      props: {
+        tab: {
+          id: "waiting", layout: "single", activePaneIdx: 0,
+          panes: [{ sessionId, remote }], colRatio: 0.5, rowRatio: 0.5,
+        } as Tab,
+        endpointFor: () => null,
+        sessionInfoFor: () => null,
+        remoteConnectionReason: reason,
+        active: true,
+        terminalTheme: {},
+        commandNotifyThresholdSec: 10,
+      },
+    });
+  }
+
+  test("shows remote connection preparation instead of the empty-pane hint, then mounts the terminal when ready", async () => {
+    const wrapper = mountWaiting();
+    expect(wrapper.find('[data-testid="remote-connection-placeholder"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("Connecting to remote session");
+    expect(wrapper.text()).toContain("Reading connection settings");
+    expect(wrapper.text()).not.toContain("[empty pane");
+    await wrapper.setProps({ endpointFor: () => ({ url: "ws://localhost:1", session_token: "test" }) });
+    expect(wrapper.find('[data-testid="remote-connection-placeholder"]').exists()).toBe(false);
+    expect(wrapper.findComponent({ name: "TerminalView" }).exists()).toBe(true);
+  });
+
+  test("shows the actual paused reason and routes the settings action to the parent", async () => {
+    const wrapper = mountWaiting("paused");
+    expect(wrapper.text()).toContain("Remote connection paused");
+    expect(wrapper.text()).toContain("Relay connection is paused in settings");
+    expect(wrapper.get('[role="status"]').attributes("aria-busy")).toBe("false");
+    await wrapper.get('[data-testid="remote-connection-settings"]').trigger("click");
+    expect(wrapper.emitted("open-connection-settings")).toEqual([[]]);
+  });
+
+  test("updates elapsed time, adds guidance for long waits, and stops the timer when hidden or unmounted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-19T04:00:00Z"));
+    const wrapper = mountWaiting("connecting");
+    try {
+      expect(wrapper.text()).toContain("Waiting 00:00");
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(wrapper.text()).toContain("Waiting 00:12");
+      expect(wrapper.text()).toContain("Taking longer than usual");
+      await wrapper.setProps({ active: false });
+      expect(vi.getTimerCount()).toBe(0);
+      vi.setSystemTime(new Date("2026-11-19T04:01:03Z"));
+      await wrapper.setProps({ active: true });
+      expect(wrapper.text()).toContain("Waiting 01:03");
+      wrapper.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  test("keeps a genuinely empty pane as an empty pane", () => {
+    const wrapper = mountWaiting("initializing", false, null);
+    expect(wrapper.text()).toContain("[empty pane");
+    expect(wrapper.find('[data-testid="remote-connection-placeholder"]').exists()).toBe(false);
+  });
 });

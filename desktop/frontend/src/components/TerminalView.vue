@@ -11,7 +11,8 @@ import { SessionConnection, SessionInputHistoryError, type ConnectionHandlers, t
 import { PeerSessionConnection } from "../lib/peerSessionConnection";
 import type { Endpoint } from "../lib/api";
 import type { TerminalAppearance } from "../lib/types";
-import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
+import { formatReplayProgress, progressPercent } from "../lib/replayProgress";
+import { useTerminalFeedback } from "../composables/useTerminalFeedback";
 import { createReplayInputGuard } from "../lib/replayInputGuard";
 import { createTerminalWriteQueue, type TerminalWriteQueue } from "../lib/terminalWriteQueue";
 import { scheduleTerminalActivation } from "../lib/terminalActivation";
@@ -189,7 +190,11 @@ const { t, resolvedLocale } = useI18n();
 
 const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
-const replayProgress = ref<ReplayProgress | null>(null);
+const feedback = useTerminalFeedback(status, () => emit("toast", t("terminal.takeControlTimeout")), !props.isLocalSession);
+const { replayProgress, renderingReplay, loading, initialLoading, waitingForOutput, takeoverPending, takeoverQueued } = feedback;
+const takeControlHint = computed(() => t(takeoverPending.value
+  ? (takeoverQueued.value || status.value === "reconnecting" ? "terminal.takeControlQueued" : "terminal.waitingForControl")
+  : "terminal.pressSpaceToTakeBack"));
 const routeDiagnostics = ref<SessionRouteDiagnostics>({ route: "relay" });
 const peerQuickTunnelAvailable = ref(false);
 let peerRouteStatusPromise: Promise<PeerSessionRouteStatus> | null = null;
@@ -279,6 +284,11 @@ const isDriver = ref(props.isLocalSession ?? true);
 // textarea (see syncTerminalInputMode) and focus falls to document.body —
 // the .term-container keydown listener never fires and Space appears dead.
 const takeControlBtnRef = ref<HTMLButtonElement | null>(null);
+watch(initialLoading, (pending) => {
+  if (!pending && !isDriver.value && (props.active || props.focused)) {
+    nextTick(() => takeControlBtnRef.value?.focus());
+  }
+});
 const ptyCols = ref<number | null>(null);
 const ptyRows = ref<number | null>(null);
 // Keep this separate from the dimensions advertised by META. A reconnect
@@ -1374,7 +1384,13 @@ function handleViewerKeydown(event: KeyboardEvent) {
 }
 
 function takeControl() {
-  if (!conn?.claimDriver()) emit("toast", t("terminal.takeControlQueued"));
+  if (isDriver.value || !conn || status.value === "ended" || status.value === "error") return;
+  try {
+    feedback.requestTakeControl(() => conn!.claimDriver());
+  } catch (error) {
+    logWarn("term", "failed to take control", { error: errText(error) });
+    emit("toast", t("terminal.connectionError"));
+  }
 }
 
 async function handleCopyShortcut(e: KeyboardEvent) {
@@ -2762,7 +2778,11 @@ function ensureConnection(): SessionConnection | PeerSessionConnection | null {
   if (!term) return null;
   if (conn) return conn;
   const handlers: ConnectionHandlers = {
-    onOutput: (data) => terminalWriteQueue?.write(data),
+    onOutput: (data) => {
+      terminalWriteQueue?.write(data);
+      const rendered = feedback.onOutput();
+      if (rendered) terminalWriteQueue?.drain(rendered);
+    },
     onClose: (info) => {
       terminalWriteQueue?.write(
         `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`,
@@ -2774,11 +2794,14 @@ function ensureConnection(): SessionConnection | PeerSessionConnection | null {
       if (s !== "attached" && previews.value.length) void stopAllPreviews();
     },
     onReplayProgress: (progress) => {
-      replayProgress.value = progress.phase === "end" ? null : progress;
+      const rendered = feedback.onReplayProgress(progress);
       if (progress.phase === "start" || progress.phase === "chunk") {
         replayInputGuard.onProgress(progress.phase);
       } else {
-        replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(release));
+        replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(() => {
+          release();
+          rendered?.();
+        }));
       }
     },
     onRouteChange: (diagnostics) => {
@@ -2791,6 +2814,7 @@ function ensureConnection(): SessionConnection | PeerSessionConnection | null {
       applyViewerSize();
     },
     onDriverChange: (_driverID, isMe, driverName) => {
+      feedback.onDriverChange(isMe);
       const wasDriver = isDriver.value;
       isDriver.value = isMe;
       driverHostname.value = isMe ? "" : driverName;
@@ -3558,13 +3582,20 @@ watch(
       @cancel="exitSelection"
     />
     <div
-      v-if="active && (status !== 'attached' || replayProgress)"
+      v-if="active && (status !== 'attached' || loading)"
       class="overlay"
-      :class="{ 'avoid-top-right-badge': avoidTopRightBadge }"
+      :class="{ 'avoid-top-right-badge': avoidTopRightBadge, 'initial-loading': initialLoading }"
+      role="status"
+      :aria-busy="loading"
+      data-testid="terminal-loading"
     >
-      <template v-if="replayProgress">
+      <span v-if="loading" class="terminal-loading-spinner" aria-hidden="true"></span>
+      <span v-if="renderingReplay">{{ t("terminal.renderingHistory") }}</span>
+      <template v-else-if="replayProgress">
         <span>{{ formatReplayProgress(replayProgress) }}</span>
-        <div class="progress-track" aria-hidden="true">
+        <div v-if="replayProgress.total_bytes > 0" class="progress-track" role="progressbar"
+          :aria-label="t('terminal.loadingHistory')" :aria-valuenow="progressPercent(replayProgress)"
+          :aria-valuemin="0" :aria-valuemax="100">
           <div class="progress-fill" :style="{ width: `${progressPercent(replayProgress)}%` }"></div>
         </div>
       </template>
@@ -3587,8 +3618,17 @@ watch(
           {{ t("terminal.route.retryQuickTunnel") }}
         </button>
       </template>
+      <span v-else-if="waitingForOutput">{{ t("terminal.waitingForOutput") }}</span>
+      <span v-else-if="loading">{{ t("terminal.loadingHistory") }}</span>
       <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
       <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
+      <button v-if="initialLoading && !isDriver"
+        class="viewer-overlay-btn" data-testid="take-control" :disabled="takeoverPending"
+        :aria-busy="takeoverPending" @click="takeControl">
+        <span v-if="takeoverPending" class="terminal-loading-spinner" aria-hidden="true"></span>
+        {{ t(takeoverPending ? "terminal.takingControl" : "terminal.takeControl") }}
+      </button>
+      <span v-if="initialLoading && !isDriver" class="viewer-overlay-hint">{{ takeControlHint }}</span>
     </div>
     <Teleport v-if="!isLocalSession" defer :to="routeIndicatorTarget">
       <span
@@ -3634,12 +3674,16 @@ watch(
         <span>↑ ↓ · Tab · Esc</span>
       </li>
     </ol>
-    <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
+    <div v-if="!isDriver" v-show="!initialLoading && status !== 'ended' && status !== 'error'" class="viewer-overlay" aria-live="polite">
       <div class="viewer-overlay-card">
         <div class="viewer-overlay-title">{{ t("terminal.remoteHasTakenControl") }}</div>
         <div v-if="driverHostname" class="viewer-overlay-host">{{ t("terminal.byHost", { host: driverHostname }) }}</div>
-        <div class="viewer-overlay-hint">{{ t("terminal.pressSpaceToTakeBack") }}</div>
-        <button ref="takeControlBtnRef" class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">{{ t("terminal.takeControl") }}</button>
+        <div class="viewer-overlay-hint">{{ takeControlHint }}</div>
+        <button ref="takeControlBtnRef" class="viewer-overlay-btn" data-testid="take-control"
+          :disabled="takeoverPending" :aria-busy="takeoverPending" @click="takeControl">
+          <span v-if="takeoverPending" class="terminal-loading-spinner" aria-hidden="true"></span>
+          {{ t(takeoverPending ? "terminal.takingControl" : "terminal.takeControl") }}
+        </button>
       </div>
     </div>
     <Teleport to="body">
@@ -4505,6 +4549,50 @@ watch(
 .overlay.avoid-top-right-badge {
   top: 34px;
 }
+.overlay.initial-loading {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  box-sizing: border-box;
+  padding: 18px 24px;
+  border-radius: 10px;
+  text-align: center;
+  color: var(--fg);
+}
+.terminal-loading-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  vertical-align: middle;
+  animation: terminal-loading-spin 800ms linear infinite;
+}
+.overlay:not(.initial-loading) > .terminal-loading-spinner {
+  margin-right: 6px;
+}
+.initial-loading > .terminal-loading-spinner {
+  width: 22px;
+  height: 22px;
+  margin-bottom: 4px;
+}
+@keyframes terminal-loading-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-loading-spinner { animation: none; }
+  .overlay .progress-fill { transition: none; }
+}
 :global(.session-route-indicator) {
   display: inline-flex;
   align-items: center;
@@ -4570,11 +4658,23 @@ watch(
   padding: 6px 14px;
   border: none;
   border-radius: 8px;
-  background: #3b82f6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--accent);
   color: #fff;
   font-weight: 600;
   pointer-events: auto;
   cursor: pointer;
+}
+.viewer-overlay-btn:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+.viewer-overlay-btn .terminal-loading-spinner {
+  border-color: currentColor;
+  border-top-color: transparent;
 }
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }

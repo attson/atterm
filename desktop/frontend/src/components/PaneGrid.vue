@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from "vue";
 import { Eye, Palette } from "lucide-vue-next";
 import TerminalView from "./TerminalView.vue";
+import RemoteConnectionPlaceholder from "./RemoteConnectionPlaceholder.vue";
+import type { RemoteConnectionReason } from "../lib/remoteConnectionFeedback";
 import PaneSplitter from "./PaneSplitter.vue";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import type { Endpoint } from "../lib/api";
@@ -28,6 +30,7 @@ import {
 const props = defineProps<{
   tab: Tab;
   endpointFor: (pane: Pane) => Endpoint | null;
+  remoteConnectionReason?: RemoteConnectionReason;
   directEndpoint?: Endpoint | null;
   preferDirect?: boolean;
   pauseRemoteSubscriptionsInBackground?: boolean;
@@ -48,6 +51,7 @@ const emit = defineEmits<{
   (e: "drop-session", payload: { paneIdx: number; sessionId: string }): void;
   (e: "detach-session", sessionId: string): void;
   (e: "toast", message: string): void;
+  (e: "open-connection-settings"): void;
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "update:col-ratio", ratio: number): void;
   (e: "update:row-ratio", ratio: number): void;
@@ -314,6 +318,12 @@ function requestServicePreview(pane: Pane): void {
           :appearance="appearanceFor(pane)"
           @toast="emit('toast', $event)"
           @detach="pane.sessionId && emit('detach-session', pane.sessionId)"
+        />
+        <RemoteConnectionPlaceholder
+          v-else-if="pane.remote && pane.sessionId"
+          :reason="remoteConnectionReason ?? 'initializing'"
+          :active="active"
+          @open-settings="emit('open-connection-settings')"
         />
         <div v-else class="empty">{{ t("terminal.emptyPaneHint") }}</div>
       </div>

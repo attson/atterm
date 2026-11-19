@@ -236,8 +236,8 @@ func (a *App) RememberRelayPassword(password string) error {
 // the frontend surfaces as "无法连接到 relay" inline beneath the URL field.
 //
 // /api/version is auth-less per the session-token spec, so no credentials
-// are sent. 5-second timeout keeps the UI from blocking on a stalled
-// connection — the user can re-click "保存并连接" if the relay just woke up.
+// are sent. Allow 15 seconds for DNS, TLS and response headers: some routers
+// spend a full 5-second DNS retry interval resolving A/AAAA before connecting.
 func (a *App) ProbeRelayVersion(relayURL string, allowInsecure bool) error {
 	_, err := a.FetchRelayVersion(relayURL, allowInsecure)
 	return err
@@ -264,7 +264,7 @@ func (a *App) FetchRelayVersion(relayURL string, allowInsecure bool) (string, er
 	if err != nil {
 		return "", err
 	}
-	client := relayHTTPClient(allowInsecure, 5*time.Second)
+	client := relayHTTPClient(allowInsecure, 15*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("connect: %w", err)

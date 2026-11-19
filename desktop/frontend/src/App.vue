@@ -76,6 +76,7 @@ import type { RemoteSession } from "./platform/types";
 import { type SessionFSConnection, type SessionInfo } from "./lib/connection";
 import { buildRelayWebSocketEndpoint } from "./lib/relayEndpoint";
 import { mergeLocalSessions } from "./lib/localListMerge";
+import { resolveRemoteConnectionReason, type RemoteConnectionReason } from "./lib/remoteConnectionFeedback";
 import { SeenReceiptOverlay } from "./lib/seenReceiptOverlay";
 import { mergeVisibleRemoteSessions } from "./lib/routeCandidates";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
@@ -132,6 +133,11 @@ function openSettingsRelay() {
   showSettings.value = true;
 }
 
+function openRemoteConnectionSettings() {
+  if (caps.wailsBindings) openSettingsRelay();
+  else openSettingsAccount();
+}
+
 function openSettingsAccount() {
   settingsInitialTab.value = "account";
   showSettings.value = true;
@@ -142,6 +148,7 @@ const settingsInitialTab = ref<"general" | "account" | "relay" | "logging" | "up
 
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
+const remoteConnectionReason = ref<RemoteConnectionReason>("initializing");
 const directSignalEndpoint = ref<Endpoint | null>(null);
 const preferDirectConnection = ref(false);
 const pauseRemoteSubscriptionsInBackground = ref(false);
@@ -929,7 +936,14 @@ async function pollRemoteSessionsViaPlatform() {
 }
 
 async function refreshPlatformRelayState(): Promise<boolean> {
-  const relayCfg = await $platform.relay.load();
+  let relayCfg: RelayConfig | null;
+  try {
+    relayCfg = await $platform.relay.load();
+  } catch (error) {
+    remoteConnectionReason.value = "unavailable";
+    throw error;
+  }
+  remoteConnectionReason.value = relayCfg?.token ? "connecting" : "signed-out";
   const endpoint = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null;
   remoteEndpoint.value = endpoint;
   directSignalEndpoint.value = endpoint;
@@ -981,6 +995,7 @@ async function refreshRelayConfig() {
     url: string;
     token: string;
     connected: boolean;
+    paused?: boolean;
     remote_proxy_url?: string;
     remote_http_proxy_url?: string;
     home_instance_url?: string;
@@ -993,7 +1008,10 @@ async function refreshRelayConfig() {
     cfg = await getRelayConfig();
   } catch (e) {
     logDebug("app", "getRelayConfig failed; keeping last known", { error: errText(e) });
+    remoteConnectionReason.value = "unavailable";
+    return;
   }
+  remoteConnectionReason.value = resolveRemoteConnectionReason(cfg);
   // Point apiFetch's baseURL at the Go loopback HTTP proxy (remote_http_proxy_url
   // + "/relay-http") so REST calls (admin/api, api/push, ...) tunnel through Go.
   // The desktop build otherwise has no relay baseURL in localStorage at all, so
@@ -2064,7 +2082,7 @@ defineExpose({ me });
       />
       <main class="main">
         <AdminPanel v-if="adminViewOpen" />
-        <template v-else-if="localEndpoint || remoteEndpoint">
+        <template v-else-if="localEndpoint || remoteEndpoint || mountedTabs.length > 0">
           <div v-if="tabs.length === 0" class="empty">
             {{ emptyMainMessage }}
           </div>
@@ -2074,6 +2092,7 @@ defineExpose({ me });
             :key="t.id"
             :tab="t"
             :endpoint-for="endpointFor"
+            :remote-connection-reason="remoteConnectionReason"
             :direct-endpoint="directSignalEndpoint"
             :prefer-direct="preferDirectConnection"
             :pause-remote-subscriptions-in-background="pauseRemoteSubscriptionsInBackground"
@@ -2090,6 +2109,7 @@ defineExpose({ me });
             @close-pane="(idx) => requestClosePane(t, idx)"
             @drop-session="(p) => onPaneDropSession(t, p)"
             @detach-session="onDetachSessionToTab"
+            @open-connection-settings="openRemoteConnectionSettings"
             @toast="showToast"
             @terminal-theme-changed="onToolbarThemeChanged"
             @update:col-ratio="(r) => { t.colRatio = r; }"

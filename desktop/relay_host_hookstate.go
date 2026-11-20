@@ -21,3 +21,25 @@ func (h *relayHost) ApplyHookTaskState(sid uuid.UUID, state string) {
 	}
 	sess.ApplyHookState(state)
 }
+
+// ApplyCodexHookTaskState applies state only if the routed pane still owns the
+// same Codex conversation. Resolution and consumption are separate hook-server
+// steps, so this final guard closes the generation-switch race between them.
+func (h *relayHost) ApplyCodexHookTaskState(sid uuid.UUID, aiSessionID, state string) {
+	if h.server == nil || aiSessionID == "" {
+		return
+	}
+	h.mu.Lock()
+	active := h.sessions[sid]
+	h.mu.Unlock()
+	if active == nil || active.matchesCodexConversation == nil {
+		return
+	}
+	sess, ok := h.server.Registry().Get(sid)
+	if !ok {
+		return
+	}
+	sess.ApplyHookStateIf(state, func() bool {
+		return active.matchesCodexConversation(aiSessionID)
+	})
+}

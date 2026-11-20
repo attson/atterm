@@ -29,12 +29,21 @@ type SessionLookup interface {
 // terminates the HTTP request, it does not know what a session is.
 type TaskStateSink interface {
 	ApplyHookTaskState(sid uuid.UUID, state string)
+	ApplyCodexHookTaskState(sid uuid.UUID, aiSessionID, state string)
 }
 
-// AISessionIdentitySink receives an agent-native conversation id already
-// bound to the local atterm session whose environment launched the hook. This
-// direct binding is stronger than filesystem mtime/process-tree heuristics and
-// is therefore suitable as a recovery credential.
+// CodexSessionResolver maps the conversation id carried by every Codex hook to
+// the one active atterm session that already owns it. Codex hooks are spawned by
+// a user-global app-server daemon, so its inherited ATTERM_SESSION_ID cannot be
+// used for routing.
+type CodexSessionResolver interface {
+	ResolveCodexSession(aiSessionID string) (uuid.UUID, bool)
+}
+
+// AISessionIdentitySink receives a SessionStart identity only after the Codex
+// conversation resolver has matched it to one existing active atterm session.
+// It confirms an established binding; it must never create one from daemon
+// environment state.
 type AISessionIdentitySink interface {
 	ApplyHookAISessionIdentity(sid uuid.UUID, kind, aiSessionID string)
 }
@@ -63,13 +72,14 @@ type HookServer struct {
 	disp       WaitingDispatcher
 	sessions   SessionLookup
 	taskSink   TaskStateSink
+	codex      CodexSessionResolver
 	aiSink     AISessionIdentitySink
 	promptSink PromptSink
 	onSuspect  func()
 }
 
 type hookNotifyRequest struct {
-	SessionID   string          `json:"session_id"`
+	SessionID   string          `json:"session_id,omitempty"`
 	AgentKind   string          `json:"agent_kind"`
 	HookInput   json.RawMessage `json:"hook_input"`
 	HookVersion string          `json:"hook_version,omitempty"`
@@ -94,9 +104,21 @@ func (h *HookServer) taskStateSink() TaskStateSink {
 	return h.taskSink
 }
 
-// SetAISessionIdentitySink registers where authoritative agent conversation
-// ids go. The listener outlives service rebuilds, so this is swappable just
-// like the task-state sink.
+func (h *HookServer) SetCodexSessionResolver(resolver CodexSessionResolver) {
+	h.mu.Lock()
+	h.codex = resolver
+	h.mu.Unlock()
+}
+
+func (h *HookServer) codexSessionResolver() CodexSessionResolver {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.codex
+}
+
+// SetAISessionIdentitySink registers where resolver-confirmed agent conversation
+// ids go. The listener outlives service rebuilds, so this is swappable just like
+// the task-state sink.
 func (h *HookServer) SetAISessionIdentitySink(sink AISessionIdentitySink) {
 	h.mu.Lock()
 	h.aiSink = sink
@@ -194,21 +216,49 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logging.Debug("feishu-hook", "arrive sid_raw=%q agent=%q body_len=%d",
 		req.SessionID, req.AgentKind, len(req.HookInput))
 
-	sid, err := uuid.Parse(strings.TrimSpace(req.SessionID))
-	if err != nil || sid == uuid.Nil {
-		http.Error(w, "bad session id", http.StatusBadRequest)
-		return
-	}
-	if h.sessions != nil && !h.sessions.Exists(sid) {
-		logging.Warn("feishu-hook", "drop reason=session-unknown sid=%s", sid)
-		http.Error(w, "unknown session", http.StatusNotFound)
-		return
+	var sid uuid.UUID
+	var codexConversationID string
+	if req.AgentKind == "codex" {
+		aiSessionID, status := codexConversationIDForHook(req.HookInput)
+		if status != aiIdentityValid {
+			logging.Warn("feishu-hook", "drop codex reason=%s fields=hook_event_name,session_id", status)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		resolver := h.codexSessionResolver()
+		var ok bool
+		if resolver != nil {
+			sid, ok = resolver.ResolveCodexSession(aiSessionID)
+		}
+		if !ok || sid == uuid.Nil {
+			logging.Debug("feishu-hook", "drop codex reason=conversation-unbound ai_session_id=%s", aiSessionID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		codexConversationID = aiSessionID
+		if h.sessions != nil && !h.sessions.Exists(sid) {
+			logging.Warn("feishu-hook", "drop codex reason=session-unknown sid=%s", sid)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	} else {
+		var err error
+		sid, err = uuid.Parse(strings.TrimSpace(req.SessionID))
+		if err != nil || sid == uuid.Nil {
+			http.Error(w, "bad session id", http.StatusBadRequest)
+			return
+		}
+		if h.sessions != nil && !h.sessions.Exists(sid) {
+			logging.Warn("feishu-hook", "drop reason=session-unknown sid=%s", sid)
+			http.Error(w, "unknown session", http.StatusNotFound)
+			return
+		}
 	}
 
-	// Codex SessionStart is emitted by the exact CLI instance that inherited
-	// ATTERM_SESSION_ID, and its inner session_id is the resume credential for
-	// that conversation. Consume only SessionStart: tool/subagent hooks may be
-	// delayed or nested and must never replace the pane's root conversation.
+	// A Codex SessionStart carries the native conversation ID, but the shared
+	// app-server gives its inherited environment no pane-routing semantics.
+	// Consume only SessionStart and let the sink confirm the resolver's existing
+	// binding; delayed or nested hooks must never replace the root conversation.
 	if kind, aiSessionID, status := aiSessionIdentityForHook(req.AgentKind, req.HookInput); status == aiIdentityValid {
 		if sink := h.aiSessionIdentitySink(); sink != nil {
 			sink.ApplyHookAISessionIdentity(sid, kind, aiSessionID)
@@ -229,7 +279,11 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// docs/superpowers/specs/2026-08-16-hook-driven-task-state-design.md.
 	if state, ok := TaskStateForHook(req.AgentKind, req.HookInput); ok {
 		if sink := h.taskStateSink(); sink != nil {
-			sink.ApplyHookTaskState(sid, state)
+			if req.AgentKind == "codex" {
+				sink.ApplyCodexHookTaskState(sid, codexConversationID, state)
+			} else {
+				sink.ApplyHookTaskState(sid, state)
+			}
 		}
 	}
 
@@ -327,6 +381,23 @@ const (
 	aiIdentityInvalidID       aiIdentityStatus = "session-id-invalid"
 	aiIdentityValid           aiIdentityStatus = "valid"
 )
+
+func codexConversationIDForHook(raw json.RawMessage) (string, aiIdentityStatus) {
+	var payload struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", aiIdentityInvalidJSON
+	}
+	if strings.TrimSpace(payload.SessionID) == "" {
+		return "", aiIdentityMissingID
+	}
+	id, err := uuid.Parse(strings.TrimSpace(payload.SessionID))
+	if err != nil || id == uuid.Nil {
+		return "", aiIdentityInvalidID
+	}
+	return id.String(), aiIdentityValid
+}
 
 func aiSessionIdentityForHook(agentKind string, raw json.RawMessage) (kind, sessionID string, status aiIdentityStatus) {
 	if agentKind != "codex" {

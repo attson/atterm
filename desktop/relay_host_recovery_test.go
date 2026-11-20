@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
 )
@@ -68,6 +69,9 @@ func TestRelayHost_NewSession_RestoredInitialAISessionIDCapturedImmediately(t *t
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
+	}
+	if got, ok := h.ResolveCodexSession("019fae95-43eb-7491-9341-05c156228664"); !ok || got != id {
+		t.Fatalf("ResolveCodexSession(initial) = %s, %v, want %s, true", got, ok, id)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -192,7 +196,7 @@ func TestRelayHost_NewSession_OnAIClassified_StartsSniff(t *testing.T) {
 	}
 }
 
-func TestRelayHost_CodexHookIdentitySupersedesHeuristic(t *testing.T) {
+func TestRelayHost_CodexHookIdentityOnlyConfirmsCurrentResolverBinding(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	h := newTestRelayHost(t)
 
@@ -228,32 +232,61 @@ func TestRelayHost_CodexHookIdentitySupersedesHeuristic(t *testing.T) {
 		t.Fatalf("initial event = %+v, want codex clear", got)
 	}
 
-	wantSID := "01a17b28-7aff-72c1-b292-a4510d537d46"
-	h.ApplyHookAISessionIdentity(id, "codex", wantSID)
-	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: wantSID}) {
-		t.Fatalf("hook identity event = %+v", got)
+	firstSID := "01a17b28-7aff-72c1-b292-a4510d537d46"
+	probe.capture(firstSID)
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: firstSID}) {
+		t.Fatalf("resolver identity event = %+v", got)
+	}
+	if got, ok := h.ResolveCodexSession(firstSID); !ok || got != id {
+		t.Fatalf("ResolveCodexSession(first) = %s, %v, want %s, true", got, ok, id)
+	}
+
+	// SessionStart only confirms the resolver-owned identity. It must not
+	// republish it or replace/cancel the generation that established it.
+	h.ApplyHookAISessionIdentity(id, "codex", firstSID)
+	select {
+	case got := <-events:
+		t.Fatalf("confirming hook identity republished: %+v", got)
+	case <-time.After(50 * time.Millisecond):
 	}
 	select {
 	case <-probe.ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("heuristic resolver was not cancelled by authoritative hook identity")
+		t.Fatal("confirming hook identity cancelled its resolver generation")
+	default:
 	}
 
-	// A callback already racing out of the cancelled resolver cannot overwrite
-	// the hook-bound credential with another same-cwd conversation.
-	probe.capture("01a17b28-7aff-72c1-b292-a4510d537d47")
+	// Reproduce the resolve/apply race: after HookServer resolved firstSID to
+	// this pane, a new same-kind generation starts before the sink call arrives.
+	sess.PushOut(2, []byte("\x1b]133;D;0\x07"))
+	sess.PushOut(3, []byte("\x1b]133;C;codex\x07"))
+	second := receiveAIEvent(t, started)
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: ""}) {
+		t.Fatalf("second generation event = %+v, want codex clear", got)
+	}
+	h.ApplyHookAISessionIdentity(id, "codex", firstSID)
 	select {
 	case got := <-events:
-		t.Fatalf("stale heuristic overwrote hook identity: %+v", got)
+		t.Fatalf("delayed hook rolled back the new generation: %+v", got)
 	case <-time.After(50 * time.Millisecond):
 	}
-
-	// SessionStart may be retried; the same identity is idempotent.
-	h.ApplyHookAISessionIdentity(id, "codex", wantSID)
 	select {
-	case got := <-events:
-		t.Fatalf("duplicate hook identity republished: %+v", got)
-	case <-time.After(50 * time.Millisecond):
+	case <-second.ctx.Done():
+		t.Fatal("delayed hook cancelled the new resolver generation")
+	default:
+	}
+	h.ApplyCodexHookTaskState(id, firstSID, proto.TaskStateWaitingInput)
+	if got := sess.Info().TaskState; got != proto.TaskStateRunning {
+		t.Fatalf("stale hook task state = %q, want %q", got, proto.TaskStateRunning)
+	}
+
+	secondSID := "01a17b28-7aff-72c1-b292-a4510d537d47"
+	second.capture(secondSID)
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: secondSID}) {
+		t.Fatalf("second resolver identity event = %+v", got)
+	}
+	h.ApplyCodexHookTaskState(id, secondSID, proto.TaskStateWaitingInput)
+	if got := sess.Info().TaskState; got != proto.TaskStateWaitingInput {
+		t.Fatalf("current hook task state = %q, want %q", got, proto.TaskStateWaitingInput)
 	}
 }
 

@@ -19,10 +19,22 @@ import (
 // moves between. Anything else is a caller bug and is dropped rather than
 // stored, so a malformed payload cannot invent a state.
 func (s *Session) ApplyHookState(next string) {
+	s.ApplyHookStateIf(next, nil)
+}
+
+// ApplyHookStateIf applies a hook state only when accept still holds while the
+// session state lock is held. The predicate must not call back into Session.
+// Desktop uses this to bind Codex hook state to the resolver generation that
+// owns the hook's conversation ID.
+func (s *Session) ApplyHookStateIf(next string, accept func() bool) {
 	if next != proto.TaskStateRunning && next != proto.TaskStateWaitingInput {
 		return
 	}
 	s.mu.Lock()
+	if accept != nil && !accept() {
+		s.mu.Unlock()
+		return
+	}
 	// Only AI sessions. A hook event can arrive just after the CLI exited, and
 	// moving the shell that took its place would be worse than losing the event.
 	if s.meta.Type != SessionTypeAI {

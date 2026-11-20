@@ -250,8 +250,19 @@ func mustJSONBytes(t *testing.T, v any) []byte {
 }
 
 type taskSinkFake struct {
-	mu    sync.Mutex
-	calls []string
+	mu              sync.Mutex
+	calls           []string
+	sessionIDs      []uuid.UUID
+	conversationIDs []string
+}
+
+type codexSessionResolverFake struct {
+	byConversation map[string]uuid.UUID
+}
+
+func (f *codexSessionResolverFake) ResolveCodexSession(aiSessionID string) (uuid.UUID, bool) {
+	sid, ok := f.byConversation[aiSessionID]
+	return sid, ok
 }
 
 type aiIdentityCall struct {
@@ -373,16 +384,38 @@ func TestHookHasPromptField(t *testing.T) {
 	}
 }
 
-func (f *taskSinkFake) ApplyHookTaskState(_ uuid.UUID, state string) {
+func (f *taskSinkFake) ApplyHookTaskState(sid uuid.UUID, state string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, state)
+	f.sessionIDs = append(f.sessionIDs, sid)
+	f.conversationIDs = append(f.conversationIDs, "")
+}
+
+func (f *taskSinkFake) ApplyCodexHookTaskState(sid uuid.UUID, aiSessionID, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, state)
+	f.sessionIDs = append(f.sessionIDs, sid)
+	f.conversationIDs = append(f.conversationIDs, aiSessionID)
 }
 
 func (f *taskSinkFake) states() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.calls...)
+}
+
+func (f *taskSinkFake) sessions() []uuid.UUID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]uuid.UUID(nil), f.sessionIDs...)
+}
+
+func (f *taskSinkFake) conversations() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.conversationIDs...)
 }
 
 func postHook(t *testing.T, h *HookServer, sid uuid.UUID, agent, hookInput string) {
@@ -442,37 +475,74 @@ func TestHookServer_UnknownSessionReachesNoSink(t *testing.T) {
 	}
 }
 
-// Codex rides the same ingress; only the attention event name differs.
-func TestHookServer_ForwardsCodexTaskState(t *testing.T) {
-	sid := uuid.MustParse("00000000-0000-0000-0000-0000000000cc")
-	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+func TestHookServer_RoutesCodexByInnerConversationID(t *testing.T) {
+	conversationID := "01a17b28-7aff-72c1-b292-a4510d537d46"
+	wantSID := uuid.MustParse("00000000-0000-0000-0000-0000000000cc")
+	staleDaemonSID := uuid.MustParse("00000000-0000-0000-0000-0000000000dd")
+	sessions := &sessionsFake{known: map[string]bool{
+		wantSID.String():        true,
+		staleDaemonSID.String(): true,
+	}}
 	h := NewHookServer(&recordingDispatcher{}, sessions)
+	h.SetCodexSessionResolver(&codexSessionResolverFake{byConversation: map[string]uuid.UUID{
+		conversationID: wantSID,
+	}})
 	sink := &taskSinkFake{}
 	h.SetTaskStateSink(sink)
 
-	postHook(t, h, sid, "codex", `{"hook_event_name":"UserPromptSubmit"}`)
-	postHook(t, h, sid, "codex", `{"hook_event_name":"PermissionRequest"}`)
+	postHook(t, h, staleDaemonSID, "codex", `{"hook_event_name":"UserPromptSubmit","session_id":"`+conversationID+`"}`)
+	postHook(t, h, staleDaemonSID, "codex", `{"hook_event_name":"PermissionRequest","session_id":"`+conversationID+`"}`)
 
 	want := []string{"running", "waiting_input"}
 	got := sink.states()
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("sink states = %v, want %v", got, want)
 	}
+	if gotSessions := sink.sessions(); !reflect.DeepEqual(gotSessions, []uuid.UUID{wantSID, wantSID}) {
+		t.Fatalf("sink sessions = %v, want only %s", gotSessions, wantSID)
+	}
+	if gotConversations := sink.conversations(); !reflect.DeepEqual(gotConversations, []string{conversationID, conversationID}) {
+		t.Fatalf("sink conversations = %v, want only %s", gotConversations, conversationID)
+	}
 }
 
 func TestHookServer_ForwardsCodexSessionStartIdentity(t *testing.T) {
 	localSID := uuid.MustParse("00000000-0000-0000-0000-0000000000dd")
+	staleDaemonSID := uuid.MustParse("00000000-0000-0000-0000-0000000000de")
 	aiSID := "01a17b28-7aff-72c1-b292-a4510d537d46"
-	sessions := &sessionsFake{known: map[string]bool{localSID.String(): true}}
+	sessions := &sessionsFake{known: map[string]bool{localSID.String(): true, staleDaemonSID.String(): true}}
 	h := NewHookServer(&recordingDispatcher{}, sessions)
+	h.SetCodexSessionResolver(&codexSessionResolverFake{byConversation: map[string]uuid.UUID{aiSID: localSID}})
 	sink := &aiIdentitySinkFake{}
 	h.SetAISessionIdentitySink(sink)
 
-	postHook(t, h, localSID, "codex", `{"hook_event_name":"SessionStart","session_id":"`+aiSID+`"}`)
+	postHook(t, h, staleDaemonSID, "codex", `{"hook_event_name":"SessionStart","session_id":"`+aiSID+`"}`)
 
 	want := []aiIdentityCall{{sid: localSID.String(), kind: "codex", aiSessionID: aiSID}}
 	if got := sink.identities(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("identity calls = %+v, want %+v", got, want)
+	}
+}
+
+func TestHookServer_DropsUnboundCodexHooksBeforeConsumers(t *testing.T) {
+	staleDaemonSID := uuid.MustParse("00000000-0000-0000-0000-0000000000ef")
+	aiSID := "01a17b28-7aff-72c1-b292-a4510d537d46"
+	h := NewHookServer(&recordingDispatcher{}, &sessionsFake{known: map[string]bool{staleDaemonSID.String(): true}})
+	h.SetCodexSessionResolver(&codexSessionResolverFake{byConversation: map[string]uuid.UUID{}})
+	taskSink := &taskSinkFake{}
+	identitySink := &aiIdentitySinkFake{}
+	h.SetTaskStateSink(taskSink)
+	h.SetAISessionIdentitySink(identitySink)
+
+	postHook(t, h, staleDaemonSID, "codex", `{"hook_event_name":"UserPromptSubmit","session_id":"`+aiSID+`"}`)
+	postHook(t, h, staleDaemonSID, "codex", `{"hook_event_name":"SessionStart","session_id":"`+aiSID+`"}`)
+	postHook(t, h, staleDaemonSID, "codex", `{"hook_event_name":"Stop","session_id":"not-a-uuid"}`)
+
+	if got := taskSink.states(); len(got) != 0 {
+		t.Fatalf("unbound hook reached task sink: %v", got)
+	}
+	if got := identitySink.identities(); len(got) != 0 {
+		t.Fatalf("unbound hook reached identity sink: %+v", got)
 	}
 }
 

@@ -25,7 +25,7 @@ const (
 )
 
 type hookNotifyRequest struct {
-	SessionID   string          `json:"session_id"`
+	SessionID   string          `json:"session_id,omitempty"`
 	AgentKind   string          `json:"agent_kind"`
 	HookInput   json.RawMessage `json:"hook_input"`
 	HookVersion string          `json:"hook_version,omitempty"`
@@ -68,9 +68,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	sessionID := os.Getenv("ATTERM_SESSION_ID")
-	if sessionID == "" {
-		os.Exit(0)
+	agentKind := agentKindFromArgs(os.Args[1:])
+	var sessionID string
+	if agentKind != "codex" {
+		sessionID = os.Getenv("ATTERM_SESSION_ID")
+		if sessionID == "" {
+			os.Exit(0)
+		}
 	}
 
 	endpoint := resolveEndpoint()
@@ -80,7 +84,7 @@ func main() {
 
 	req := hookNotifyRequest{
 		SessionID: sessionID,
-		AgentKind: agentKindFromArgs(os.Args[1:]),
+		AgentKind: agentKind,
 		HookInput: json.RawMessage(body),
 	}
 	if v := os.Getenv("CLAUDE_CODE_VERSION"); v != "" {

@@ -116,7 +116,7 @@ Anchor controls 以手机宽度为基准,一行最多四列。Shell 默认只保
 
 同一 PTY 从 shell 启动 AI CLI 时必须原地升级 anchor:先把 `anchorRuntime.aiMode` 置为 true,让已经在 drain 中的 shell flush 失效；再清空 `lastInner` / `lastOutputAt` 并立即 render,移除旧的“第 N/N 页”正文；最后挂 `AIChunker` 并把按钮切为 AI controls。顺序不能反,否则慢到达的 shell PATCH 会把已经切换的 AI 正文覆盖回去。
 
-结构化 turn 有两个来源:Claude 由 `UserPromptSubmit` / `Stop` / `PreToolUse` / `PostToolUse` hooks 进入 `AIChunker`;Codex 由已经绑定到当前 PTY 的 rollout JSONL 增量读取 `item_completed.UserMessage` / `AgentMessage`,并从 `response_item.function_call(name=request_user_input)` 提取交互式问题。Codex 的绑定 SID 优先来自 `SessionStart` hook payload（内层 Codex `session_id` 与外层 `ATTERM_SESSION_ID` 直接配对）；rollout 进程归属/文件变化只为旧版或无 hook 环境兜底。Codex 新会话解析 SID 时首个 turn 往往已经落盘,允许回放当前文件；恢复会话从 EOF 开始,禁止把历史对话整批重发到卡片。新版 Codex 可能由独立 app-server daemon 持有 rollout fd；fallback 仅在同 cwd 只有一个 resolver 时使用新建/变更文件，多个同 cwd resolver 时仍宁可不抓也不能串会话。
+结构化 turn 有两个来源:Claude 由 `UserPromptSubmit` / `Stop` / `PreToolUse` / `PostToolUse` hooks 进入 `AIChunker`;Codex 由已经绑定到当前 PTY 的 rollout JSONL 增量读取 `item_completed.UserMessage` / `AgentMessage`,并从 `response_item.function_call(name=request_user_input)` 提取交互式问题。Codex managed app-server 是用户级共享 daemon，hook 子进程继承的 `ATTERM_SESSION_ID` 不能代表事件所属 pane；Codex hook 必须用 payload 内层 `session_id` 反查当前 generation 已确认的唯一 conversation 绑定，未绑定或歧义时丢弃，不能建立或覆盖恢复身份。绑定来自恢复时的精确 SID 或进程/rollout resolver 的精确结果。Codex 新会话解析 SID 时首个 turn 往往已经落盘,允许回放当前文件；恢复会话从 EOF 开始,禁止把历史对话整批重发到卡片。新版 Codex 可能由独立 app-server daemon 持有 rollout fd；fallback 仅在同 cwd 只有一个 resolver 时使用新建/变更文件，多个同 cwd resolver 时仍宁可不抓也不能串会话。
 
 Claude `AskUserQuestion` 与 Codex `request_user_input` 可复用同一套飞书 form,但不能复用同一套 PTY 按键序列:Claude 每题完成后还会进入 review 页并用 `1` 确认;Codex 的数字键会直接提交当前选项并前进,最后一题立即完成,自定义内容则走“方向键选中目标 → Tab 进入 notes → 文本 → Enter”。`AskFormQuestion.InputMode` 必须跟随 form 挂载到 `CardAnchor.PendingForm`,提交时按 mode 分流;禁止在 Claude 的 `buildQuestionStrokes` 上叠加 Codex 分支。
 
@@ -237,8 +237,10 @@ handleAskFormSubmit(sessionID, operatorOpenID, formValue)
 
 atterm 桌面在 pty 环境注入两个变量:
 
-- `ATTERM_SESSION_ID` — session id,让 hook payload 认得回哪个 session
+- `ATTERM_SESSION_ID` — Claude Code hook 的 session id,让 hook payload 认得回哪个 session
 - `ATTERM_HOOK_ENDPOINT` — `http://127.0.0.1:<mini-relay port>/hook`,`atterm-hook` CLI POST 到这里
+
+Codex 进程也会继承这两个变量，但共享 app-server 下只有 endpoint 可用；`atterm-hook --agent codex` 必须忽略 `ATTERM_SESSION_ID`，按 3.1 节所述用 hook payload 内层 conversation `session_id` 路由。
 
 atterm 拦截的 hook 事件类型:
 

@@ -2,10 +2,9 @@ package main
 
 import "github.com/google/uuid"
 
-// ApplyHookAISessionIdentity accepts an agent-native recovery credential from
-// the localhost hook bridge. The active session owns generation validation:
-// a hook for an old process must not revive a credential after a newer AI
-// command has become authoritative in the same PTY.
+// ApplyHookAISessionIdentity accepts an agent-native recovery credential after
+// the localhost hook bridge has resolved its conversation id to this exact
+// active session. The active session still owns generation validation.
 func (h *relayHost) ApplyHookAISessionIdentity(sid uuid.UUID, kind, aiSessionID string) {
 	h.mu.Lock()
 	active := h.sessions[sid]

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // buildHook compiles the CLI into a temp binary once per test run.
@@ -27,9 +28,9 @@ func buildHook(t *testing.T) string {
 	return bin
 }
 
-func runHook(t *testing.T, bin string, env []string, stdin string) (stdout, stderr string, exit int) {
+func runHookArgs(t *testing.T, bin string, args, env []string, stdin string) (stdout, stderr string, exit int) {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, args...)
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
@@ -44,6 +45,11 @@ func runHook(t *testing.T, bin string, env []string, stdin string) (stdout, stde
 	}
 	t.Fatalf("run: %v", err)
 	return "", "", -1
+}
+
+func runHook(t *testing.T, bin string, env []string, stdin string) (stdout, stderr string, exit int) {
+	t.Helper()
+	return runHookArgs(t, bin, nil, env, stdin)
 }
 
 func TestHook_HappyPath(t *testing.T) {
@@ -81,6 +87,58 @@ func TestHook_HappyPath(t *testing.T) {
 	}
 	if req["agent_kind"] != "claude-code" {
 		t.Fatalf("agent_kind: %v", req["agent_kind"])
+	}
+}
+
+func TestHook_CodexDoesNotSendDaemonSessionID(t *testing.T) {
+	bin := buildHook(t)
+	requests := make(chan map[string]any, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]any
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Errorf("body not JSON: %v", err)
+		}
+		requests <- req
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	hookInput := `{"hook_event_name":"Stop","session_id":"01a17b28-7aff-72c1-b292-a4510d537d46"}`
+	for _, tc := range []struct {
+		name string
+		env  []string
+	}{
+		{
+			name: "stale daemon session id",
+			env: []string{
+				"ATTERM_SESSION_ID=00000000-0000-0000-0000-000000000099",
+				"ATTERM_HOOK_ENDPOINT=" + srv.URL,
+			},
+		},
+		{
+			name: "no daemon session id",
+			env:  []string{"ATTERM_HOOK_ENDPOINT=" + srv.URL},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, exit := runHookArgs(t, bin, []string{"--agent", "codex"}, tc.env, hookInput)
+			if exit != 0 {
+				t.Fatalf("exit=%d stderr=%s", exit, stderr)
+			}
+			var req map[string]any
+			select {
+			case req = <-requests:
+			case <-time.After(time.Second):
+				t.Fatal("codex hook did not POST")
+			}
+			if _, ok := req["session_id"]; ok {
+				t.Fatalf("codex request leaked daemon session_id: %v", req["session_id"])
+			}
+			if req["agent_kind"] != "codex" {
+				t.Fatalf("agent_kind: %v", req["agent_kind"])
+			}
+		})
 	}
 }
 

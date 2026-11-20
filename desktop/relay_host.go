@@ -210,12 +210,13 @@ type sessionPTY interface {
 }
 
 type activeSession struct {
-	host                sessionPTY
-	cleanup             func()
-	restored            bool // true when NewSession was invoked with AIKind set (recovery path)
-	applyHookAIIdentity func(kind, aiSessionID string)
-	feishuUserActivated atomic.Bool
-	inputHistory        *sessionInputHistory
+	host                     sessionPTY
+	cleanup                  func()
+	restored                 bool // true when NewSession was invoked with AIKind set (recovery path)
+	applyHookAIIdentity      func(kind, aiSessionID string)
+	matchesCodexConversation func(aiSessionID string) bool
+	feishuUserActivated      atomic.Bool
+	inputHistory             *sessionInputHistory
 }
 
 // startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
@@ -814,6 +815,8 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				currentResolveCancel()
 			}
 			resolveGeneration++
+			currentResolveKind = ""
+			currentAISessionID = ""
 			resolveMu.Unlock()
 			resolveCancel()
 			cleanup()
@@ -828,6 +831,14 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		restored:     req.AIKind != "",
 		inputHistory: h.newSessionInputHistory(id),
 	}
+	active.matchesCodexConversation = func(aiSessionID string) bool {
+		if aiSessionID == "" {
+			return false
+		}
+		resolveMu.Lock()
+		defer resolveMu.Unlock()
+		return currentResolveKind == "codex" && currentAISessionID == aiSessionID
+	}
 	if req.InputHistoryFromSessionID != "" {
 		previousID, err := uuid.Parse(req.InputHistoryFromSessionID)
 		if err != nil || previousID == uuid.Nil {
@@ -837,54 +848,21 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		}
 	}
 	active.applyHookAIIdentity = func(kind, aiSessionID string) {
-		var codexSession *session.Session
-		var codexCwd string
-		if kind == "codex" {
-			if sess, ok := h.server.Registry().Get(id); ok {
-				codexSession = sess
-				codexCwd = sess.Info().Cwd
-			}
-		}
 		resolveMu.Lock()
+		defer resolveMu.Unlock()
 		if kind == "" || aiSessionID == "" {
 			logWarn("ai-sid", "ignore hook identity session=%s reason=empty-identity", id)
-			resolveMu.Unlock()
 			return
 		}
 		if currentResolveKind != kind {
 			logDebug("ai-sid", "ignore hook identity session=%s kind=%s reason=kind-mismatch current_kind=%s", id, kind, currentResolveKind)
-			resolveMu.Unlock()
 			return
 		}
-		if currentAISessionID == aiSessionID {
-			logDebug("ai-sid", "ignore hook identity session=%s kind=%s reason=duplicate", id, kind)
-			resolveMu.Unlock()
+		if currentAISessionID != aiSessionID {
+			logDebug("ai-sid", "ignore hook identity session=%s kind=%s reason=conversation-mismatch", id, kind)
 			return
 		}
-		// The hook is directly bound by ATTERM_SESSION_ID, so it supersedes the
-		// filesystem/process heuristic for this generation. Bump the generation
-		// before publishing so any callback already racing out of the cancelled
-		// resolver is rejected by its generation check.
-		if currentResolveCancel != nil {
-			currentResolveCancel()
-		}
-		resolveGeneration++
-		generationCtx, generationCancel := context.WithCancel(resolveCtx)
-		currentResolveCancel = generationCancel
-		currentAISessionID = aiSessionID
-		if codexCwd != "" {
-			holdCodexBinding(generationCtx, codexCwd, aiSessionID)
-		}
-		h.onAISidCaptured(id, kind, aiSessionID)
-		logInfo("ai-sid", "applied hook identity session=%s kind=%s source=session-start", id, kind)
-		resolveMu.Unlock()
-
-		if codexSession != nil {
-			go startCodexTurnStream(generationCtx, codexCwd, aiSessionID, false, func(turn codexTranscriptTurn) {
-				h.handleCodexTranscriptTurn(id, aiSessionID, turn)
-			})
-			go startCodexKnownTitleResolve(generationCtx, codexSession, codexCwd, aiSessionID)
-		}
+		logDebug("ai-sid", "confirmed hook identity session=%s kind=%s source=session-start", id, kind)
 	}
 	active.feishuUserActivated.Store(!req.Recovered)
 

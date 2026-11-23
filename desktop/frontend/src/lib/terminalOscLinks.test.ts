@@ -79,6 +79,68 @@ describe("createTerminalOscLinkController", () => {
     });
   });
 
+  it("strips URL-encoded prose after an OSC 8 Markdown URL", () => {
+    const openLink = vi.fn();
+    const controller = createTerminalOscLinkController({
+      isMac: false,
+      getDownPos: () => ({ x: 10, y: 10 }),
+      resolveVisibleLink: () => null,
+      openLink,
+      clearSelection: vi.fn(),
+      onError: vi.fn(),
+    });
+    const encoded =
+      "http://git.hzwxbz2.cn/back_end/advertisement/ad-ai-platform-front/" +
+      "merge_requests/893),%20%E6%97%A0%E5%86%B2%E7%AA%81";
+
+    const expected = {
+      start: 0,
+      end: 84,
+      text: "http://git.hzwxbz2.cn/back_end/advertisement/ad-ai-platform-front/merge_requests/893",
+      kind: "http",
+    };
+    for (const target of [encoded, encoded.replace("),", "%29,")]) {
+      controller.handler.activate(
+        new MouseEvent("click", { ctrlKey: true, clientX: 10, clientY: 10 }),
+        target,
+        range,
+      );
+    }
+    controller.handler.hover!(
+      new MouseEvent("mousemove"),
+      encoded.replace("),", "%29,"),
+      range,
+    );
+
+    expect(openLink).toHaveBeenCalledTimes(2);
+    expect(openLink).toHaveBeenNthCalledWith(1, expected);
+    expect(openLink).toHaveBeenNthCalledWith(2, expected);
+    expect(controller.linkAtBufferCell(0, 3)).toEqual(expected);
+  });
+
+  it.each([
+    ["https://example.test/docs/My%20File", 35],
+    ["https://en.wikipedia.org/wiki/Foo_%28bar%29", 43],
+  ])("preserves a valid encoded OSC 8 URL: %s", (url, end) => {
+    const openLink = vi.fn();
+    const controller = createTerminalOscLinkController({
+      isMac: false,
+      getDownPos: () => ({ x: 10, y: 10 }),
+      resolveVisibleLink: () => null,
+      openLink,
+      clearSelection: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    controller.handler.activate(
+      new MouseEvent("click", { ctrlKey: true, clientX: 10, clientY: 10 }),
+      url,
+      range,
+    );
+
+    expect(openLink).toHaveBeenCalledWith({ start: 0, end, text: url, kind: "http" });
+  });
+
   it("prefers a complete visible link over an overlapping OSC 8 prefix", () => {
     const openLink = vi.fn();
     const complete = {

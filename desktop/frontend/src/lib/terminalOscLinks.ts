@@ -61,6 +61,40 @@ export function createTerminalOscLinkController(
 }
 
 function httpMatch(text: string): LinkMatch | null {
-  const match = detectLinks(text).find((candidate) => candidate.start === 0);
+  const match = detectLinks(stripEncodedMarkdownSuffix(text))
+    .find((candidate) => candidate.start === 0);
   return match?.kind === "http" ? match : null;
+}
+
+function stripEncodedMarkdownSuffix(text: string): string {
+  let parenDepth = 0;
+  for (let index = 0; index < text.length;) {
+    const encoded = text.slice(index, index + 3).toLowerCase();
+    const tokenLength = encoded === "%28" || encoded === "%29" ? 3 : 1;
+    const ch = encoded === "%28" ? "(" : encoded === "%29" ? ")" : text[index];
+    if (ch === "(") {
+      parenDepth++;
+    } else if (ch === ")") {
+      if (parenDepth > 0) {
+        parenDepth--;
+      } else if (startsEncodedProseSuffix(text.slice(index + tokenLength))) {
+        return text.slice(0, index);
+      }
+    }
+    index += tokenLength;
+  }
+  return text;
+}
+
+function startsEncodedProseSuffix(suffix: string): boolean {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(suffix);
+  } catch {
+    return false;
+  }
+  if (!decoded) return true;
+  const punctuation = /^[.,;:!?"'\u3002\uff0c\uff1b\uff1a\uff01\uff1f\u201d\u2019\u300d\u300f]*/;
+  const afterPunctuation = decoded.slice(decoded.match(punctuation)?.[0].length ?? 0);
+  return /^\s/.test(afterPunctuation);
 }

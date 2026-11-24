@@ -1645,9 +1645,12 @@ func (a *App) SetPinnedSessionIds(ids []string) error {
 // list. Local receipts must not depend on a remote relay being configured.
 func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	remoteIDs := ids
+	if all {
+		remoteIDs = nil
+	}
 	if h := a.host; h != nil && h.server != nil && h.store != nil {
 		var localIDs []string
-		remoteIDs = nil
+		allSelectedSessionsLocal := !all
 		if all {
 			h.server.Registry().ForEach(func(s *session.Session) bool {
 				if s.OwnerUserID == h.adminUserID {
@@ -1664,7 +1667,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 						continue
 					}
 				}
-				remoteIDs = append(remoteIDs, raw)
+				allSelectedSessionsLocal = false
 			}
 		}
 		if len(localIDs) > 0 {
@@ -1673,10 +1676,23 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 			}
 			h.server.Registry().NotifyChange()
 		}
-		if !all && len(remoteIDs) == 0 {
+		var remoteCfg appConfig
+		if a.cfgStore != nil {
+			remoteCfg = a.cfgStore.Get()
+		}
+		remoteConfigured := remoteCfg.RelayURL != "" && remoteCfg.RelaySessionToken != ""
+		if !all && allSelectedSessionsLocal {
+			if remoteConfigured {
+				idsCopy := append([]string(nil), remoteIDs...)
+				go func() {
+					if err := postRemoteSeenReceipt(remoteCfg, idsCopy, false, 10*time.Second); err != nil {
+						logWarn("sessions", "mirror local seen receipt to relay: %v", err)
+					}
+				}()
+			}
 			return nil
 		}
-		if all && (a.cfgStore == nil || a.cfgStore.Get().RelayURL == "" || a.cfgStore.Get().RelaySessionToken == "") {
+		if all && !remoteConfigured {
 			return nil
 		}
 	}
@@ -1687,9 +1703,13 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return fmt.Errorf("no relay configured")
 	}
+	return postRemoteSeenReceipt(cfg, remoteIDs, all, 0)
+}
+
+func postRemoteSeenReceipt(cfg appConfig, ids []string, all bool, timeout time.Duration) error {
 	baseHTTP := relayHTTPBase(cfg.RelayURL)
 	body, err := json.Marshal(map[string]any{
-		"session_ids": remoteIDs,
+		"session_ids": ids,
 		"all":         all,
 	})
 	if err != nil {
@@ -1701,7 +1721,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := relayHTTPClient(cfg.AllowInsecureRelay, 0).Do(req)
+	resp, err := relayHTTPClient(cfg.AllowInsecureRelay, timeout).Do(req)
 	if err != nil {
 		return err
 	}

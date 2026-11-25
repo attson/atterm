@@ -727,7 +727,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	var currentAISessionID string
 	var restoredStartKind string
 
-	startResolveGeneration := func(sess *session.Session, kind, resolveCwd, initialSID string, awaitRestoredStart bool) {
+	startResolveGeneration := func(sess *session.Session, kind, resolveCwd, initialSID string, awaitRestoredStart, blockCodexHeuristic bool) {
 		resolveMu.Lock()
 		if currentResolveCancel != nil {
 			currentResolveCancel()
@@ -795,7 +795,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			// this PTY. Running it here could replace the known SID with a VS Code
 			// or another terminal's conversation. Keep tracking the known rollout's
 			// title below, but never guess a replacement SID for this generation.
-			if kind == "codex" && (initialSID != "" || initialBindingRejected) {
+			if kind == "codex" && (initialSID != "" || initialBindingRejected || blockCodexHeuristic) {
 				return
 			}
 			logDebug("ai-sid", "classified session=%s kind=%s generation=%d — start resolve", id, kind, generation)
@@ -905,16 +905,20 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			resolveMu.Unlock()
 			if !confirmedRestoredStart {
 				initialSID := ""
+				blockCodexHeuristic := false
 				if kind == "codex" {
-					if sid, explicit := explicitCodexResumeSID(commandLine); explicit {
+					if sid, resumeCommand := explicitCodexResumeSID(commandLine); resumeCommand {
+						blockCodexHeuristic = true
 						if home, err := os.UserHomeDir(); err == nil {
-							if _, valid := codexRolloutPathBySid(home, cwd, sid); valid {
-								initialSID = sid
+							if sid != "" {
+								if _, valid := codexRolloutPathBySid(home, cwd, sid); valid {
+									initialSID = sid
+								}
 							}
 						}
 					}
 				}
-				startResolveGeneration(sess, kind, cwd, initialSID, false)
+				startResolveGeneration(sess, kind, cwd, initialSID, false, blockCodexHeuristic)
 			}
 			// autoAttach="all" may have created this card while the PTY was
 			// still a shell. Switch its body source before the first AI hook
@@ -1020,7 +1024,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		if sess, ok := h.server.Registry().Get(id); ok {
 			sidCopy := id
 			resumeArgv := computeResumeArgs(req.AIKind, req.InitialAISessionID, req.InitialAICommandLine)
-			startResolveGeneration(sess, req.AIKind, cwd, req.InitialAISessionID, resumeArgv != nil)
+			startResolveGeneration(sess, req.AIKind, cwd, req.InitialAISessionID, resumeArgv != nil, false)
 			if resumeArgv != nil {
 				line := strings.Join(resumeArgv, " ") + "\n"
 				ptyCopy := pty

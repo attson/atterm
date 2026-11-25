@@ -1123,8 +1123,10 @@ func codexRolloutMeta(path, sid, cwd string) (time.Time, bool) {
 	if first.Payload.ThreadSource != "" && first.Payload.ThreadSource != "user" {
 		return time.Time{}, false
 	}
-	if cwd != "" && first.Payload.Cwd != "" && filepath.Clean(first.Payload.Cwd) != filepath.Clean(cwd) {
-		return time.Time{}, false
+	if cwd != "" {
+		if first.Payload.Cwd == "" || filepath.Clean(first.Payload.Cwd) != filepath.Clean(cwd) {
+			return time.Time{}, false
+		}
 	}
 	var startedAt time.Time
 	if first.Payload.Timestamp != "" {

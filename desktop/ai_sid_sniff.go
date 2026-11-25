@@ -163,12 +163,18 @@ func explicitCodexResumeSID(commandLine string) (string, bool) {
 	for len(tokens) > 0 && (envAssignFromCommand(tokens[0]) || isAIWrapper(tokens[0])) {
 		tokens = tokens[1:]
 	}
-	if len(tokens) < 3 || filepath.Base(tokens[0]) != "codex" || tokens[1] != "resume" {
+	if len(tokens) < 2 || filepath.Base(tokens[0]) != "codex" || tokens[1] != "resume" {
 		return "", false
+	}
+	// The bool reports that this is a resume invocation, even when it does not
+	// carry an exact SID. Interactive/--last/malformed resume commands must not
+	// fall back to cwd-based rollout inference.
+	if len(tokens) < 3 {
+		return "", true
 	}
 	sid, err := uuid.Parse(tokens[2])
 	if err != nil || sid.String() != strings.ToLower(tokens[2]) {
-		return "", false
+		return "", true
 	}
 	return sid.String(), true
 }

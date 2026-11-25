@@ -306,6 +306,40 @@ func TestRelayHost_ExplicitCodexResumeRejectsActiveBinding(t *testing.T) {
 	}
 }
 
+func TestRelayHost_UnresolvedCodexResumeDoesNotStartHeuristicResolver(t *testing.T) {
+	for _, command := range []string{
+		"codex resume",
+		"codex resume --last",
+		"codex resume 019fae95-43eb-7491-9341-05c156228664",
+	} {
+		t.Run(command, func(t *testing.T) {
+			h := newTestRelayHost(t)
+			resolverStarted := make(chan struct{}, 1)
+			h.startSniffFn = func(_ context.Context, _ *session.Session, _, _ string, _ int, _ func(string)) {
+				resolverStarted <- struct{}{}
+			}
+
+			id, err := h.NewSession(context.Background(), NewSessionReq{
+				Command: "/bin/sh", Cwd: t.TempDir(), Cols: 80, Rows: 24,
+			})
+			if err != nil {
+				t.Fatalf("NewSession: %v", err)
+			}
+			sess, ok := h.server.Registry().Get(id)
+			if !ok {
+				t.Fatalf("session %s not found", id)
+			}
+			sess.PushOut(1, []byte("\x1b]133;C;"+command+"\x07"))
+
+			select {
+			case <-resolverStarted:
+				t.Fatal("unresolved resume fell back to heuristic resolver")
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
+	}
+}
+
 func TestRelayHost_CodexHookIdentityOnlyConfirmsCurrentResolverBinding(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	h := newTestRelayHost(t)

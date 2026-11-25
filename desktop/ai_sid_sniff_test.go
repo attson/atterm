@@ -182,13 +182,12 @@ func TestExplicitCodexResumeSID(t *testing.T) {
 			t.Errorf("explicitCodexResumeSID(%q) = %q, %v", command, got, ok)
 		}
 	}
-	for _, command := range []string{
-		"codex",
-		"codex resume",
-		"codex resume --last",
-		"codex resume not-a-uuid",
-		"claude --resume " + sid,
-	} {
+	for _, command := range []string{"codex resume", "codex resume --last", "codex resume not-a-uuid"} {
+		if got, ok := explicitCodexResumeSID(command); !ok || got != "" {
+			t.Errorf("explicitCodexResumeSID(%q) = %q, %v; want unresolved resume", command, got, ok)
+		}
+	}
+	for _, command := range []string{"codex", "claude --resume " + sid} {
 		if got, ok := explicitCodexResumeSID(command); ok || got != "" {
 			t.Errorf("explicitCodexResumeSID(%q) = %q, %v; want no explicit sid", command, got, ok)
 		}

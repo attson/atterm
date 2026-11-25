@@ -532,6 +532,35 @@ func TestStartCodexFileResolve_RejectsFreshRolloutWithoutLogicalStart(t *testing
 	}
 }
 
+func TestStartCodexFileResolve_RejectsGenerationRolloutWithoutCwd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	captured := make(chan string, 1)
+	go startCodexFileResolve(ctx, sess, cwd, 0, func(sid string) { captured <- sid })
+	time.Sleep(codexResolveInterval * 2)
+
+	sid := "019fae77-52c1-7201-bbdc-078634559f21"
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-23-23-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"`+startedAt+`","thread_source":"user"}}`,
+	)
+	select {
+	case got := <-captured:
+		t.Fatalf("captured rollout without cwd %q", got)
+	case <-time.After(codexResolveInterval * 3):
+	}
+}
+
 func TestStartCodexFileResolve_RejectsMultipleGenerationCandidates(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

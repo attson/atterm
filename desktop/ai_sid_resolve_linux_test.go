@@ -135,8 +135,9 @@ func TestStartCodexFileResolve_FallsBackWhenDaemonOwnsRollout(t *testing.T) {
 	time.Sleep(codexResolveInterval * 2)
 
 	sid := "01a14354-6bac-7050-a300-e3a51298ca68"
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	writeJsonl(t, filepath.Join(dir, "rollout-2026-10-16T14-09-28-"+sid+".jsonl"),
-		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"`+startedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
 	)
 

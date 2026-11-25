@@ -410,12 +410,16 @@ func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home st
 	}
 }
 
-// codexResolveInterval / codexResolveBudget bound the codex new-file watch.
+// Codex rollout files can be materialized minutes after the PTY command starts,
+// so discovery follows the resolver generation lifetime instead of a fixed
+// timeout. The embedded session start time distinguishes that delayed file
+// from an older same-cwd rollout that merely advances later.
 const (
-	codexResolveInterval = 200 * time.Millisecond
-	codexResolveBudget   = 30 * time.Second
-	codexTitleInterval   = 1 * time.Second
-	codexTitleMaxRunes   = 80
+	codexResolveInterval     = 200 * time.Millisecond
+	codexGenerationStartSkew = 5 * time.Second
+	codexCandidateSettle     = 2 * codexResolveInterval
+	codexTitleInterval       = 1 * time.Second
+	codexTitleMaxRunes       = 80
 )
 
 var activeCodexResolvers = struct {
@@ -544,28 +548,24 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		trackCodexUserTitle(ctx, sess, path)
 		return true
 	}
-	before := codexRolloutFileInfos(dir, cwd)
-	deadline := time.Now().Add(codexResolveBudget)
-	for time.Now().Before(deadline) {
+	generationStartedAt := time.Now()
+	pendingSID := ""
+	var pendingSince time.Time
+	sawPeerResolver := false
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(codexResolveInterval):
 		}
 		var fresh []string
-		var advanced []string
 		files := codexRolloutFileInfos(dir, cwd)
 		for sid, file := range files {
 			if codexBindingClaimed(cwd, sid) {
 				continue
 			}
-			prev, seen := before[sid]
-			if !seen {
+			if codexRolloutStartedInGeneration(file.StartedAt, generationStartedAt, time.Now()) {
 				fresh = append(fresh, sid)
-				continue
-			}
-			if file.ModTime.After(prev.ModTime) {
-				advanced = append(advanced, sid)
 			}
 		}
 		if codexProcessRolloutLookupSupported && rootPID > 0 {
@@ -590,30 +590,44 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		// the same files; assigning one here would attach another conversation's
 		// recovery id and title to an arbitrary pane.
 		if codexResolverCount(cwd) > 1 {
-			before = files
+			sawPeerResolver = true
+			pendingSID = ""
+			pendingSince = time.Time{}
+			continue
+		}
+		if sawPeerResolver {
 			continue
 		}
 		switch {
 		case len(fresh) == 1:
 			sid := fresh[0]
+			if pendingSID != sid {
+				pendingSID = sid
+				pendingSince = time.Now()
+				continue
+			}
+			if time.Since(pendingSince) < codexCandidateSettle {
+				continue
+			}
 			if capture(sid, files[sid].Path) {
 				return
 			}
 		case len(fresh) >= 2:
 			logWarn("ai-sid", "codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
 			return
-		case len(advanced) == 1:
-			sid := advanced[0]
-			if capture(sid, files[sid].Path) {
-				return
-			}
-		case len(advanced) >= 2:
-			logWarn("ai-sid", "codex resolve ambiguous (%d advanced in %s) — abort", len(advanced), dir)
-			return
+		default:
+			pendingSID = ""
+			pendingSince = time.Time{}
 		}
-		before = files
 	}
-	logWarn("ai-sid", "codex resolve timeout in %s", dir)
+}
+
+func codexRolloutStartedInGeneration(startedAt, generationStartedAt, now time.Time) bool {
+	if startedAt.IsZero() {
+		return false
+	}
+	return !startedAt.Before(generationStartedAt.Add(-codexGenerationStartSkew)) &&
+		!startedAt.After(now.Add(codexGenerationStartSkew))
 }
 
 func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string) {
@@ -1042,8 +1056,9 @@ func codexRolloutPathBySid(home, cwd, sid string) (string, bool) {
 }
 
 type codexRolloutFileInfo struct {
-	Path    string
-	ModTime time.Time
+	Path      string
+	ModTime   time.Time
+	StartedAt time.Time
 }
 
 func codexRolloutFileInfos(dir, cwd string) map[string]codexRolloutFileInfo {
@@ -1062,8 +1077,8 @@ func codexRolloutFileInfos(dir, cwd string) map[string]codexRolloutFileInfo {
 				continue
 			}
 			path := filepath.Join(dir, e.Name())
-			if codexRolloutIsResumableForCwd(path, sid, cwd) {
-				out[sid] = codexRolloutFileInfo{Path: path, ModTime: info.ModTime()}
+			if startedAt, ok := codexRolloutMeta(path, sid, cwd); ok {
+				out[sid] = codexRolloutFileInfo{Path: path, ModTime: info.ModTime(), StartedAt: startedAt}
 			}
 		}
 	}
@@ -1075,37 +1090,53 @@ func codexRolloutIsResumable(path, sid string) bool {
 }
 
 func codexRolloutIsResumableForCwd(path, sid, cwd string) bool {
+	_, ok := codexRolloutMeta(path, sid, cwd)
+	return ok
+}
+
+func codexRolloutMeta(path, sid, cwd string) (time.Time, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
 	if !sc.Scan() {
-		return false
+		return time.Time{}, false
 	}
 	var first struct {
 		Type    string `json:"type"`
 		Payload struct {
 			ID           string `json:"id"`
+			Timestamp    string `json:"timestamp"`
 			ThreadSource string `json:"thread_source"`
 			Cwd          string `json:"cwd"`
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(sc.Bytes(), &first); err != nil {
-		return false
+		return time.Time{}, false
 	}
 	if first.Type != "session_meta" || first.Payload.ID != sid {
-		return false
+		return time.Time{}, false
 	}
 	if first.Payload.ThreadSource != "" && first.Payload.ThreadSource != "user" {
-		return false
+		return time.Time{}, false
 	}
-	if cwd != "" && first.Payload.Cwd != "" && filepath.Clean(first.Payload.Cwd) != filepath.Clean(cwd) {
-		return false
+	if cwd != "" {
+		if first.Payload.Cwd == "" || filepath.Clean(first.Payload.Cwd) != filepath.Clean(cwd) {
+			return time.Time{}, false
+		}
 	}
-	return true
+	var startedAt time.Time
+	if first.Payload.Timestamp != "" {
+		parsed, err := time.ParseInLocation(time.RFC3339Nano, first.Payload.Timestamp, time.UTC)
+		if err != nil {
+			return time.Time{}, false
+		}
+		startedAt = parsed
+	}
+	return startedAt, true
 }
 
 // startAIResolve dispatches AI session-id resolution. Claude uses title

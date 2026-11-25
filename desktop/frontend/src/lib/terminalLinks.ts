@@ -20,7 +20,7 @@ const URL_RE = /\b(https?|file):\/\/[^\s\x00-\x1f]+/g;
 // the delimiter avoids lookbehind, which older WebKit rejects at module load.
 // Classification below keeps this token sweep conservative for bare relative
 // paths while still accepting explicit ./ and ../ forms.
-const PATH_TOKEN_RE = /(^|[\s(){}\[\]<>"'`])([^\s\x00-\x1f]+)/g;
+const PATH_TOKEN_RE = /(^|[\s(){}\[\]<>"'`（）【】]+)([^\s\x00-\x1f]+)/g;
 
 const TRAILING_TRIM = new Set([
   ".", ",", ";", ":", "!", "?", '"', "'",
@@ -55,6 +55,19 @@ function trimTrailing(text: string): string {
     break;
   }
   return text.slice(0, end);
+}
+
+function trimPathToken(text: string): { text: string; leadingTrim: number } {
+  let trimmed = trimTrailing(text);
+  let leadingTrim = 0;
+  while (trimmed.length >= 2) {
+    const open = trimmed[0];
+    const close = trimmed[trimmed.length - 1];
+    if (BALANCED_CLOSERS[close] !== open) break;
+    trimmed = trimTrailing(trimmed.slice(1, -1));
+    leadingTrim++;
+  }
+  return { text: trimmed, leadingTrim };
 }
 
 function countChar(s: string, ch: string): number {
@@ -108,9 +121,9 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
     // drop it so start/text describe just the path itself.
     const lead = m[1];
     const raw = m[2];
-    const trimmed = trimTrailing(raw);
+    const { text: trimmed, leadingTrim } = trimPathToken(raw);
     if (!trimmed || !isPathCandidate(trimmed)) continue;
-    const start = m.index + lead.length;
+    const start = m.index + lead.length + leadingTrim;
     const end = start + trimmed.length;
     // Skip if this overlaps with any URL match already produced.
     if (out.some((u) => start < u.end && end > u.start)) continue;
@@ -119,6 +132,54 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
 
   out.sort((a, b) => a.start - b.start);
   return out;
+}
+
+/** Canonicalize a detected/OSC link before any user action consumes it. */
+export function normalizeLinkMatch(match: LinkMatch): LinkMatch | null {
+  const text = stripEncodedMarkdownSuffix(match.text);
+  const normalized = detectLinks(text).find((candidate) =>
+    candidate.kind === match.kind && (match.kind === "path" || candidate.start === 0),
+  );
+  if (!normalized) return null;
+  return {
+    start: 0,
+    end: normalized.text.length,
+    text: normalized.text,
+    kind: normalized.kind,
+  };
+}
+
+function stripEncodedMarkdownSuffix(text: string): string {
+  let parenDepth = 0;
+  for (let index = 0; index < text.length;) {
+    const encoded = text.slice(index, index + 3).toLowerCase();
+    const tokenLength = encoded === "%28" || encoded === "%29" ? 3 : 1;
+    const ch = encoded === "%28" ? "(" : encoded === "%29" ? ")" : text[index];
+    if (ch === "(") {
+      parenDepth++;
+    } else if (ch === ")") {
+      if (parenDepth > 0) {
+        parenDepth--;
+      } else if (startsEncodedProseSuffix(text.slice(index + tokenLength))) {
+        return text.slice(0, index);
+      }
+    }
+    index += tokenLength;
+  }
+  return text;
+}
+
+function startsEncodedProseSuffix(suffix: string): boolean {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(suffix);
+  } catch {
+    return false;
+  }
+  if (!decoded) return true;
+  const punctuation = /^[.,;:!?"'\u3002\uff0c\uff1b\uff1a\uff01\uff1f\u201d\u2019\u300d\u300f]*/;
+  const afterPunctuation = decoded.slice(decoded.match(punctuation)?.[0].length ?? 0);
+  return /^\s/.test(afterPunctuation);
 }
 
 /** Minimal slice of xterm's IBufferCell the cell mapper needs. */

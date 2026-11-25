@@ -3,6 +3,8 @@ package main
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // AI CLI metadata: how to resume each kind, and command-line classification.
@@ -154,6 +156,21 @@ func classifyAIKindFromCommand(commandLine string) string {
 		return first
 	}
 	return ""
+}
+
+func explicitCodexResumeSID(commandLine string) (string, bool) {
+	tokens := strings.Fields(commandLine)
+	for len(tokens) > 0 && (envAssignFromCommand(tokens[0]) || isAIWrapper(tokens[0])) {
+		tokens = tokens[1:]
+	}
+	if len(tokens) < 3 || filepath.Base(tokens[0]) != "codex" || tokens[1] != "resume" {
+		return "", false
+	}
+	sid, err := uuid.Parse(tokens[2])
+	if err != nil || sid.String() != strings.ToLower(tokens[2]) {
+		return "", false
+	}
+	return sid.String(), true
 }
 
 var aiWrappers = map[string]struct{}{

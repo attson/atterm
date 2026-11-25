@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -193,6 +195,114 @@ func TestRelayHost_NewSession_OnAIClassified_StartsSniff(t *testing.T) {
 	}
 	if capturedRootPID <= 0 {
 		t.Fatalf("resolver root pid = %d, want spawned PTY pid", capturedRootPID)
+	}
+}
+
+func TestRelayHost_ExplicitCodexResumeBindsWithoutRolloutWrite(t *testing.T) {
+	h := newTestRelayHost(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	if err := os.MkdirAll(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sid := "019fae95-43eb-7491-9341-05c156228664"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-11-25T13-04-45-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"2026-11-25T05:04:45Z","cwd":"`+cwd+`","thread_source":"user"}}`,
+	)
+	if parsed, ok := explicitCodexResumeSID("codex resume " + sid); !ok || parsed != sid {
+		t.Fatalf("explicitCodexResumeSID = %q, %v", parsed, ok)
+	}
+	if _, ok := codexRolloutPathBySid(home, cwd, sid); !ok {
+		t.Fatal("explicit resume rollout was not uniquely resolvable")
+	}
+
+	resolverStarted := make(chan struct{}, 1)
+	h.startSniffFn = func(_ context.Context, _ *session.Session, _, _ string, _ int, _ func(string)) {
+		resolverStarted <- struct{}{}
+	}
+	type event struct{ kind, sid string }
+	events := make(chan event, 2)
+	h.aiSidCallback = func(_ uuid.UUID, kind, gotSID string) {
+		events <- event{kind: kind, sid: gotSID}
+	}
+
+	id, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh", Cwd: cwd, Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatalf("session %s not found", id)
+	}
+	sess.PushOut(1, []byte("\x1b]133;C;codex resume "+sid+"\x07"))
+
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: sid}) {
+		t.Fatalf("explicit resume event = %+v, want codex sid", got)
+	}
+	select {
+	case <-resolverStarted:
+		t.Fatal("explicit resume started heuristic resolver")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got, ok := h.ResolveCodexSession(sid); !ok || got != id {
+		t.Fatalf("ResolveCodexSession(explicit) = %s, %v, want %s, true", got, ok, id)
+	}
+}
+
+func TestRelayHost_ExplicitCodexResumeRejectsActiveBinding(t *testing.T) {
+	h := newTestRelayHost(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	if err := os.MkdirAll(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sid := "019fae95-43eb-7491-9341-05c156228664"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-11-25T13-04-45-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"2026-11-25T05:04:45Z","cwd":"`+cwd+`","thread_source":"user"}}`,
+	)
+
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	defer cancelOwner()
+	holdCodexBinding(ownerCtx, cwd, sid)
+	resolverStarted := make(chan struct{}, 1)
+	h.startSniffFn = func(_ context.Context, _ *session.Session, _, _ string, _ int, _ func(string)) {
+		resolverStarted <- struct{}{}
+	}
+	type event struct{ kind, sid string }
+	events := make(chan event, 2)
+	h.aiSidCallback = func(_ uuid.UUID, kind, gotSID string) { events <- event{kind, gotSID} }
+
+	id, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh", Cwd: cwd, Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatalf("session %s not found", id)
+	}
+	sess.PushOut(1, []byte("\x1b]133;C;codex resume "+sid+"\x07"))
+
+	if got := receiveAIEvent(t, events); got != (event{kind: "codex", sid: ""}) {
+		t.Fatalf("duplicate resume event = %+v, want unresolved", got)
+	}
+	select {
+	case <-resolverStarted:
+		t.Fatal("duplicate explicit resume fell back to heuristic resolver")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

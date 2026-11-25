@@ -170,3 +170,27 @@ func TestClassifyAIKindFromCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestExplicitCodexResumeSID(t *testing.T) {
+	const sid = "019fae95-43eb-7491-9341-05c156228664"
+	for _, command := range []string{
+		"codex resume " + sid,
+		"env FOO=bar codex resume " + sid,
+		"/usr/local/bin/codex resume " + sid,
+	} {
+		if got, ok := explicitCodexResumeSID(command); !ok || got != sid {
+			t.Errorf("explicitCodexResumeSID(%q) = %q, %v", command, got, ok)
+		}
+	}
+	for _, command := range []string{
+		"codex",
+		"codex resume",
+		"codex resume --last",
+		"codex resume not-a-uuid",
+		"claude --resume " + sid,
+	} {
+		if got, ok := explicitCodexResumeSID(command); ok || got != "" {
+			t.Errorf("explicitCodexResumeSID(%q) = %q, %v; want no explicit sid", command, got, ok)
+		}
+	}
+}

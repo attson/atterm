@@ -736,15 +736,26 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		generation := resolveGeneration
 		generationCtx, generationCancel := context.WithCancel(resolveCtx)
 		currentResolveCancel = generationCancel
+		initialBindingRejected := false
+		if kind == "codex" && initialSID != "" {
+			release, ok := tryRegisterCodexBinding(resolveCwd, initialSID)
+			if !ok {
+				logWarn("ai-sid", "reject duplicate codex binding sid=%s cwd=%q", initialSID, resolveCwd)
+				initialSID = ""
+				initialBindingRejected = true
+			} else {
+				go func() {
+					<-generationCtx.Done()
+					release()
+				}()
+			}
+		}
 		currentResolveKind = kind
 		currentAISessionID = initialSID
 		if awaitRestoredStart {
 			restoredStartKind = kind
 		} else {
 			restoredStartKind = ""
-		}
-		if kind == "codex" && initialSID != "" {
-			holdCodexBinding(generationCtx, resolveCwd, initialSID)
 		}
 		resolveMu.Unlock()
 		var codexStreamOnce sync.Once
@@ -784,7 +795,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			// this PTY. Running it here could replace the known SID with a VS Code
 			// or another terminal's conversation. Keep tracking the known rollout's
 			// title below, but never guess a replacement SID for this generation.
-			if kind == "codex" && initialSID != "" {
+			if kind == "codex" && (initialSID != "" || initialBindingRejected) {
 				return
 			}
 			logDebug("ai-sid", "classified session=%s kind=%s generation=%d — start resolve", id, kind, generation)
@@ -893,7 +904,17 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			restoredStartKind = ""
 			resolveMu.Unlock()
 			if !confirmedRestoredStart {
-				startResolveGeneration(sess, kind, cwd, "", false)
+				initialSID := ""
+				if kind == "codex" {
+					if sid, explicit := explicitCodexResumeSID(commandLine); explicit {
+						if home, err := os.UserHomeDir(); err == nil {
+							if _, valid := codexRolloutPathBySid(home, cwd, sid); valid {
+								initialSID = sid
+							}
+						}
+					}
+				}
+				startResolveGeneration(sess, kind, cwd, initialSID, false)
 			}
 			// autoAttach="all" may have created this card while the PTY was
 			// still a shell. Switch its body source before the first AI hook

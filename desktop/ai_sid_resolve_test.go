@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -381,8 +382,9 @@ func TestStartCodexFileResolve_CapturesSidAndMirrorsUserTitle(t *testing.T) {
 
 	time.Sleep(codexResolveInterval * 2)
 	sid := "019fac4f-bd07-7630-8ea5-30ed7515a488"
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T13-18-54-"+sid+".jsonl"),
-		`{"type":"session_meta","payload":{"id":"`+sid+`","thread_source":"user"}}`,
+		`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"`+startedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"修改site展示页面，同步最新内容"}}`,
 	)
 
@@ -405,7 +407,38 @@ func TestStartCodexFileResolve_CapturesSidAndMirrorsUserTitle(t *testing.T) {
 	t.Fatalf("session title = %q, want codex user message", sess.Info().Title)
 }
 
-func TestStartCodexFileResolve_CapturesResumedExistingRollout(t *testing.T) {
+func TestStartCodexFileResolve_CapturesGenerationRolloutAlreadyMaterialized(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sid := "019fac4f-bd07-7630-8ea5-30ed7515a489"
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T13-18-55-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"`+startedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+	)
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	captured := make(chan string, 1)
+	go startCodexFileResolve(ctx, sess, cwd, 0, func(got string) { captured <- got })
+
+	select {
+	case got := <-captured:
+		if got != sid {
+			t.Fatalf("captured sid = %q, want %q", got, sid)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("materialized generation rollout was not captured")
+	}
+}
+
+func TestStartCodexFileResolve_OldUnboundRolloutCannotStealDelayedNewLaunch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	cwd := filepath.Join(home, "work", "repo")
@@ -414,14 +447,14 @@ func TestStartCodexFileResolve_CapturesResumedExistingRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sid := "019fae77-52c1-7201-bbdc-078634559f19"
-	path := filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+sid+".jsonl")
-	writeJsonl(t, path,
-		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+	oldSID := "019fae77-52c1-7201-bbdc-078634559f19"
+	oldPath := filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+oldSID+".jsonl")
+	writeJsonl(t, oldPath,
+		`{"type":"session_meta","payload":{"id":"`+oldSID+`","timestamp":"2026-07-29T15:21:23Z","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"web 端这里是不是应该换一种提示"}}`,
 	)
 	old := time.Now().Add(-1 * time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
+	if err := os.Chtimes(oldPath, old, old); err != nil {
 		t.Fatal(err)
 	}
 
@@ -435,25 +468,101 @@ func TestStartCodexFileResolve_CapturesResumedExistingRollout(t *testing.T) {
 	})
 
 	time.Sleep(codexResolveInterval * 2)
-	appendJsonl(t, path, `{"type":"event_msg","payload":{"type":"agent_message","message":"resume selected"}}`)
+	appendJsonl(t, oldPath, `{"type":"event_msg","payload":{"type":"agent_message","message":"old pane is still active"}}`)
+	select {
+	case got := <-gotSid:
+		t.Fatalf("captured old unbound rollout %q", got)
+	case <-time.After(codexResolveInterval * 3):
+	}
+
+	// Codex app-server may materialize this file well after the resolver starts.
+	// Its embedded logical start still belongs to this resolver generation.
+	newSID := "019fae77-52c1-7201-bbdc-078634559f20"
+	newPath := filepath.Join(dir, "rollout-2026-07-29T23-22-23-"+newSID+".jsonl")
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	writeJsonl(t, newPath,
+		`{"type":"session_meta","payload":{"id":"`+newSID+`","timestamp":"`+startedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"new pane prompt"}}`,
+	)
 
 	select {
 	case got := <-gotSid:
-		if got != sid {
-			t.Fatalf("captured sid = %q, want %q", got, sid)
+		if got != newSID {
+			t.Fatalf("captured sid = %q, want %q", got, newSID)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for resumed codex sid capture")
+		t.Fatal("timed out waiting for delayed new codex sid capture")
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if got := sess.Info().Title; got == "web 端这里是不是应该换一种提示" {
+		if got := sess.Info().Title; got == "new pane prompt" {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("session title = %q, want codex user message", sess.Info().Title)
+	t.Fatalf("session title = %q, want new pane prompt", sess.Info().Title)
+}
+
+func TestStartCodexFileResolve_RejectsFreshRolloutWithoutLogicalStart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	captured := make(chan string, 1)
+	go startCodexFileResolve(ctx, sess, cwd, 0, func(sid string) { captured <- sid })
+
+	time.Sleep(codexResolveInterval * 2)
+	sid := "019fae77-52c1-7201-bbdc-078634559f21"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-23-23-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+	)
+	select {
+	case got := <-captured:
+		t.Fatalf("captured rollout without logical start %q", got)
+	case <-time.After(codexResolveInterval * 3):
+	}
+}
+
+func TestStartCodexFileResolve_RejectsMultipleGenerationCandidates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	captured := make(chan string, 1)
+	go startCodexFileResolve(ctx, sess, cwd, 0, func(sid string) { captured <- sid })
+
+	time.Sleep(codexResolveInterval * 2)
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	for i, sid := range []string{
+		"019fae77-52c1-7201-bbdc-078634559f22",
+		"019fae77-52c1-7201-bbdc-078634559f23",
+	} {
+		writeJsonl(t, filepath.Join(dir, fmt.Sprintf("rollout-2026-07-29T23-24-%02d-%s.jsonl", i, sid)),
+			`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"`+startedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		)
+	}
+	select {
+	case got := <-captured:
+		t.Fatalf("captured ambiguous generation candidate %q", got)
+	case <-time.After(codexResolveInterval * 3):
+	}
 }
 
 func TestStartCodexFileResolve_SameCwdResolversDoNotShareRollout(t *testing.T) {
@@ -465,22 +574,25 @@ func TestStartCodexFileResolve_SameCwdResolversDoNotShareRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
 	first := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
 	defer first.Close()
 	second := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
 	defer second.Close()
 	captured := make(chan string, 2)
-	go startCodexFileResolve(ctx, first, cwd, 0, func(sid string) { captured <- sid })
-	go startCodexFileResolve(ctx, second, cwd, 0, func(sid string) { captured <- sid })
+	go startCodexFileResolve(firstCtx, first, cwd, 0, func(sid string) { captured <- sid })
+	go startCodexFileResolve(secondCtx, second, cwd, 0, func(sid string) { captured <- sid })
 
-	// Both resolvers have the same baseline before either Codex process creates
-	// its rollout. A cwd-only watcher cannot know which PTY owns the first file.
+	// Both resolvers observe the same rollout. A cwd-only watcher cannot know
+	// which PTY owns it.
 	time.Sleep(codexResolveInterval * 2)
 	sid := "019fae77-52c1-7201-bbdc-078634559f19"
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+sid+".jsonl"),
-		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"session_meta","payload":{"id":"`+sid+`","timestamp":"`+startedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"belongs to exactly one pane"}}`,
 	)
 
@@ -494,6 +606,15 @@ func TestStartCodexFileResolve_SameCwdResolversDoNotShareRollout(t *testing.T) {
 	}
 	if got := second.Info().Title; got == "belongs to exactly one pane" {
 		t.Fatalf("second pane adopted an ambiguous title %q", got)
+	}
+
+	// Once this generation observed a same-cwd peer, the heuristic remains
+	// disabled even if that peer exits; the file could have belonged to it.
+	cancelSecond()
+	select {
+	case got := <-captured:
+		t.Fatalf("remaining resolver captured peer-era rollout %q", got)
+	case <-time.After(codexResolveInterval * 3):
 	}
 }
 
@@ -517,8 +638,9 @@ func TestStartCodexFileResolve_SequentialSameCwdResolversBothCapture(t *testing.
 
 	time.Sleep(codexResolveInterval * 2)
 	firstSID := "019fae77-52c1-7201-bbdc-078634559f19"
+	firstStartedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+firstSID+".jsonl"),
-		`{"type":"session_meta","payload":{"id":"`+firstSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"session_meta","payload":{"id":"`+firstSID+`","timestamp":"`+firstStartedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"first pane"}}`,
 	)
 	select {
@@ -548,8 +670,9 @@ func TestStartCodexFileResolve_SequentialSameCwdResolversBothCapture(t *testing.
 
 	time.Sleep(codexResolveInterval * 2)
 	secondSID := "019fae77-52c1-7201-bbdc-078634559f20"
+	secondStartedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-22-23-"+secondSID+".jsonl"),
-		`{"type":"session_meta","payload":{"id":"`+secondSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"session_meta","payload":{"id":"`+secondSID+`","timestamp":"`+secondStartedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"second pane"}}`,
 	)
 	select {
@@ -583,8 +706,9 @@ func TestStartCodexFileResolve_DoesNotCaptureAnotherActiveSameCwdBinding(t *test
 	time.Sleep(codexResolveInterval * 2)
 	firstSID := "019fae77-52c1-7201-bbdc-078634559f19"
 	firstPath := filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+firstSID+".jsonl")
+	firstStartedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	writeJsonl(t, firstPath,
-		`{"type":"session_meta","payload":{"id":"`+firstSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"session_meta","payload":{"id":"`+firstSID+`","timestamp":"`+firstStartedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"first pane"}}`,
 	)
 	select {
@@ -616,8 +740,9 @@ func TestStartCodexFileResolve_DoesNotCaptureAnotherActiveSameCwdBinding(t *test
 	}
 
 	secondSID := "019fae77-52c1-7201-bbdc-078634559f20"
+	secondStartedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T23-22-23-"+secondSID+".jsonl"),
-		`{"type":"session_meta","payload":{"id":"`+secondSID+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"session_meta","payload":{"id":"`+secondSID+`","timestamp":"`+secondStartedAt+`","cwd":"`+cwd+`","thread_source":"user"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"second pane"}}`,
 	)
 	select {

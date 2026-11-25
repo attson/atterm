@@ -6,6 +6,7 @@ import {
   linkSegmentsAtBufferRow,
   mapBufferLineCells,
   mapWrappedLogicalLine,
+  normalizeLinkMatch,
   normalizeForOpen,
   isPathWithinRoot,
   resolvePathForReveal,
@@ -142,6 +143,23 @@ describe("detectLinks — trailing punctuation", () => {
 });
 
 describe("detectLinks — paths", () => {
+  it.each([
+    ["(docs/tasks/2026-11-25/platform-asset-library-canvas/p1/spec.html)"],
+    ["（docs/tasks/2026-11-25/platform-asset-library-canvas/p1/spec.html）"],
+  ])("strips Markdown wrappers from a relative file path: %s", (wrapped) => {
+    const path = "docs/tasks/2026-11-25/platform-asset-library-canvas/p1/spec.html";
+    const line = `打开 P1 详细技术方案 HTML ${wrapped}`;
+
+    expect(detectLinks(line)).toEqual([
+      {
+        start: line.indexOf(path),
+        end: line.indexOf(path) + path.length,
+        text: path,
+        kind: "path",
+      },
+    ]);
+  });
+
   it("matches an absolute POSIX path", () => {
     expect(detectLinks("log: /var/log/x.log here")).toEqual([
       { start: 5, end: 19, text: "/var/log/x.log", kind: "path" },
@@ -238,6 +256,44 @@ describe("normalizeForOpen", () => {
 
   it("strips trailing slash from homeDir before joining", () => {
     expect(normalizeForOpen(home, "/Users/me/")).toBe("file:///Users/me/Projects/foo");
+  });
+});
+
+describe("normalizeLinkMatch", () => {
+  it("strips an encoded Markdown suffix from a copied MR target", () => {
+    const url = "http://git.hzwxbz2.cn/back_end/advertisement/ad-user/merge_requests/889";
+
+    expect(normalizeLinkMatch({
+      start: 0,
+      end: url.length + 10,
+      text: `${url}%29, 12 个文件`,
+      kind: "http",
+    })).toEqual({
+      start: 0,
+      end: url.length,
+      text: url,
+      kind: "http",
+    });
+  });
+
+  it("produces a cwd-resolvable target from a wrapped relative file link", () => {
+    const path = "docs/tasks/2026-11-25/platform-asset-library-canvas/p1/spec.html";
+    const normalized = normalizeLinkMatch({
+      start: 0,
+      end: path.length + 2,
+      text: `(${path})`,
+      kind: "path",
+    });
+
+    expect(normalized).toEqual({
+      start: 0,
+      end: path.length,
+      text: path,
+      kind: "path",
+    });
+    expect(resolvePathForReveal(normalized!, "", "/work/atterm")).toBe(
+      `/work/atterm/${path}`,
+    );
   });
 });
 

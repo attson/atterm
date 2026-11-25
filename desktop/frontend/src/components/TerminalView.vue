@@ -58,6 +58,7 @@ import {
 import {
   isPathWithinRoot,
   linkSegmentsAtBufferRow,
+  normalizeLinkMatch,
   normalizeForOpen,
   resolvePathForReveal,
   shouldActivateLink,
@@ -2118,6 +2119,12 @@ async function onMenuOpenLink() {
 }
 
 async function openLinkMatch(hit: LinkMatch) {
+  const normalized = normalizeLinkMatch(hit);
+  if (!normalized) {
+    emit("toast", t("terminal.link.openFailed"));
+    return;
+  }
+  hit = normalized;
   // Keep the built-in explorer rooted at the session cwd. A local target
   // outside that tree belongs in the OS file manager; remote targets must
   // stay in the remote explorer because the local OS cannot resolve them.
@@ -2172,7 +2179,7 @@ function onTerminalMouseUp(e: MouseEvent) {
 }
 
 async function onMenuCopyLink() {
-  const hit = menuLinkHit.value;
+  const hit = menuLinkHit.value ? normalizeLinkMatch(menuLinkHit.value) : null;
   closeContextMenu();
   if (!hit) return;
   try {

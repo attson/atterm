@@ -225,4 +225,24 @@ describe("createTerminalOscLinkController", () => {
 
     expect(openLink).not.toHaveBeenCalled();
   });
+
+  it("rejects an HTTP-looking substring inside a non-HTTP OSC 8 target", () => {
+    const openLink = vi.fn();
+    const controller = createTerminalOscLinkController({
+      isMac: false,
+      getDownPos: () => null,
+      resolveVisibleLink: () => null,
+      openLink,
+      clearSelection: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    controller.handler.activate(
+      new MouseEvent("click", { ctrlKey: true }),
+      "javascript:https://example.test/evil",
+      range,
+    );
+
+    expect(openLink).not.toHaveBeenCalled();
+  });
 });

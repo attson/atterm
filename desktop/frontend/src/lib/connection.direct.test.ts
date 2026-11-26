@@ -289,6 +289,52 @@ describe("SessionConnection direct route handover", () => {
     expect(statuses.at(-1)).toBe("attached");
   });
 
+  test("keeps viewer writes queued until a direct takeover is confirmed", () => {
+    const conn = new SessionConnection(relayEndpoint, sessionId, {}, {
+      clientName: "viewer-device",
+      remote: true,
+      preferDirect: true,
+      directEndpoint,
+      directTransportFactory: directFactory,
+    });
+
+    conn.attach();
+    const relay = FakeWebSocket.instances[0];
+    relay.open();
+    const attach = JSON.parse(decodeText(decodeFrame(relay.sent[0]).payload)) as { client_id: string };
+    relay.emitJSON(TYPE.META, { driver_client_id: "other-client", driver_client_name: "other-device" });
+    conn.sendResize(100, 30);
+    conn.sendInput("queued-before-direct");
+    relay.emitJSON(TYPE.REPLAY_PROGRESS, { phase: "end", seq: 0 });
+
+    const direct = directInstances[0];
+    direct.authenticate();
+    direct.ready(0);
+    conn.sendResize(132, 44);
+    conn.sendInput("queued-after-direct");
+
+    expect(relay.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(direct.sent).toEqual([]);
+
+    expect(conn.claimDriver()).toBe(true);
+    expect(direct.sent.map((frame) => decodeFrame(frame).type)).toEqual([TYPE.CLAIM_DRIVER]);
+    direct.emitFrame(TYPE.META, encodeText(JSON.stringify({
+      driver_client_id: attach.client_id,
+      driver_client_name: "viewer-device",
+    })));
+
+    expect(direct.sent.map((frame) => decodeFrame(frame).type)).toEqual([
+      TYPE.CLAIM_DRIVER,
+      TYPE.RESIZE,
+      TYPE.IN,
+      TYPE.IN,
+    ]);
+    expect(direct.sent.slice(2).map((frame) => decodeText(decodeFrame(frame).payload))).toEqual([
+      "queued-before-direct",
+      "queued-after-direct",
+    ]);
+  });
+
   test("holds the Relay writer during rich paste and rejects a paste reservation after direct activation", () => {
     const conn = new SessionConnection(relayEndpoint, sessionId, {}, {
       remote: true, preferDirect: true, directEndpoint, directTransportFactory: directFactory,

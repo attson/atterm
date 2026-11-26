@@ -947,6 +947,10 @@ export class SessionConnection {
   sendInput(s: string): void {
     const route = this.route.inputRoute();
     if (route === DirectRoute.Direct) {
+      if (!this.isDriverRole) {
+        this.pendingInputs.push(s);
+        return;
+      }
       if (!this.direct?.sendFrame(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)))) {
         this.pendingInputs.push(s);
       }
@@ -1049,6 +1053,10 @@ export class SessionConnection {
   sendResize(cols: number, rows: number): void {
     const route = this.route.inputRoute();
     if (route === DirectRoute.Direct) {
+      if (!this.isDriverRole) {
+        this.pendingResize = { cols, rows };
+        return;
+      }
       if (this.direct?.sendFrame(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))) {
         this.pendingResize = null;
       } else {
@@ -1376,6 +1384,9 @@ export class SessionConnection {
         /* isolate UI role rendering from transport authority state */
       }
     }
+    if (route === DirectRoute.Direct && isMe && this.route.inputRoute() === DirectRoute.Direct && this.direct) {
+      this.flushPendingDirectWrites(this.direct);
+    }
     if (route === DirectRoute.Relay && isMe && this.ws?.readyState === WebSocket.OPEN) {
       this.flushPendingRelayDriverWrites(this.ws);
     }
@@ -1541,6 +1552,7 @@ export class SessionConnection {
       if (!transport.sendFrame(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload))) return;
       this.pendingDriverClaim = false;
     }
+    if (!this.isDriverRole) return;
     if (this.pendingResize) {
       const { cols, rows } = this.pendingResize;
       if (!transport.sendFrame(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))) return;

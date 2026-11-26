@@ -162,6 +162,10 @@ func main() {
 		adminCfg.DebugScopes = append(adminCfg.DebugScopes, relay.DebugScopePayload)
 		seeded = true
 	}
+	if *directSignal && !adminCfg.DirectSignalEnabled {
+		adminCfg.DirectSignalEnabled = true
+		seeded = true
+	}
 	if seeded {
 		if err := adminStore.Set(ctx, adminCfg); err != nil {
 			logging.Warn("relay-config", "persist seeded relay config: %v", err)
@@ -211,7 +215,7 @@ func main() {
 		BootstrapAdminEmail:  bootstrapEmail,
 		RealmID:              realmID,
 		InstancePublicURL:    instancePublicURL,
-		DirectSignalEnabled:  *directSignal,
+		DirectSignalEnabled:  adminCfg.DirectSignalEnabled,
 	}
 
 	// VAPID subject is consumed once here; changing it later needs a restart.

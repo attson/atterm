@@ -111,7 +111,7 @@ func collectHealth(ctx context.Context, s *Server, r *http.Request) HealthPayloa
 		RelayInstances:          1,
 		TrafficFlushIntervalSec: int(trafficFlushInterval / time.Second),
 		DirectAttempts:          direct.Attempts,
-		DirectSignalEnabled:     cfg.DirectSignalEnabled,
+		DirectSignalEnabled:     s.directSignalEnabled(),
 		DirectSuccesses:         direct.Successes,
 		DirectFallbacks:         direct.Fallbacks,
 		DirectBytesAvoided:      direct.BytesAvoided,

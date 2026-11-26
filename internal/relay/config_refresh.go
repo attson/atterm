@@ -33,6 +33,7 @@ func (s *Server) refreshConfigOnce(ctx context.Context) (bool, error) {
 func (s *Server) applyConfigToCaches(cfg AdminConfig) {
 	s.SetAllowedOrigins(OriginPatterns(cfg.AllowedOrigins))
 	s.SetDebugScopes(cfg.Debug, cfg.DebugScopes, cfg.DebugUntil)
+	s.setDirectSignalEnabled(cfg.DirectSignalEnabled)
 	s.applyRuntimeLimits(cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
 	if keyBytes, err := cfg.DecodeFeishuKey(); err == nil && cfg.FeishuEnabled {
 		if err := s.ApplyFeishuConfig(true, keyBytes, cfg.FeishuBaseURL); err != nil {

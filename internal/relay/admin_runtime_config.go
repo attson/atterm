@@ -29,7 +29,8 @@ type adminConfigResponse struct {
 	// AllowedOrigins is the current HTTP/WS Origin allow-list. Editable via
 	// PUT with allowed_origins in the body. An empty list means "any origin"
 	// (dev mode). Mobile Capacitor clients need "capacitor://localhost" here.
-	AllowedOrigins []string `json:"allowed_origins"`
+	AllowedOrigins      []string `json:"allowed_origins"`
+	DirectSignalEnabled bool     `json:"direct_signal_enabled"`
 
 	Version string `json:"version"`
 }
@@ -59,6 +60,7 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 			DebugScopes          *[]string `json:"debug_scopes,omitempty"`
 			DebugUntil           *string   `json:"debug_until,omitempty"`
 			DebugPayload         *bool     `json:"debug_payload,omitempty"`
+			DirectSignalEnabled  *bool     `json:"direct_signal_enabled,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -98,6 +100,9 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				cfg.DebugScopes = scopes
 			}
+			if req.DirectSignalEnabled != nil {
+				cfg.DirectSignalEnabled = *req.DirectSignalEnabled
+			}
 			return cfg
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -112,6 +117,9 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 		if req.Debug != nil || req.DebugScopes != nil || req.DebugUntil != nil || req.DebugPayload != nil {
 			cur := s.cfg.AdminConfigStore.Snapshot()
 			s.SetDebugScopes(cur.Debug, cur.DebugScopes, cur.DebugUntil)
+		}
+		if req.DirectSignalEnabled != nil {
+			s.setDirectSignalEnabled(*req.DirectSignalEnabled)
 		}
 		writeJSON(w, s.adminConfigResponse())
 	default:
@@ -136,6 +144,7 @@ func (s *Server) adminConfigResponse() adminConfigResponse {
 		DebugUntil:                  cfg.DebugUntil,
 		DebugPayload:                s.debugPayloadOn(),
 		AllowedOrigins:              append([]string(nil), cfg.AllowedOrigins...),
+		DirectSignalEnabled:         s.directSignalEnabled(),
 		Version:                     s.cfg.Version,
 	}
 }

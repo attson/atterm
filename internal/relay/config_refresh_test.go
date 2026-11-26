@@ -2,10 +2,14 @@ package relay
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/attson/atterm/internal/userstore"
+	"nhooyr.io/websocket"
 )
 
 // newConfigRefreshTestServer builds a minimal *Server wired to the given store,
@@ -66,6 +70,70 @@ func TestConfigRefresherAppliesRemoteChange(t *testing.T) {
 	// After normalization: "https://a.example" → "a.example", "https://b.example" → "b.example".
 	if got := srv.currentAllowedOrigins(); len(got) < 2 || got[0] != "a.example" || got[1] != "b.example" {
 		t.Fatalf("after refresh origins = %v", got)
+	}
+}
+
+func TestConfigRefresherHotAppliesDirectSignal(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if _, err := store.SetRelayConfig(ctx, userstore.RelayConfig{}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	user, err := store.CreateOpaqueUser(ctx, "direct-refresh@example.com")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	token, _, err := store.CreateSession(ctx, user.ID, "config-refresh", "127.0.0.1", time.Hour)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	srv := newConfigRefreshTestServer(t, store)
+	if srv.directSignalEnabled() {
+		t.Fatal("direct signaling unexpectedly enabled before remote change")
+	}
+	httpServer := httptest.NewServer(srv)
+	t.Cleanup(httpServer.Close)
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/direct-signal"
+	dialOptions := &websocket.DialOptions{HTTPHeader: http.Header{
+		"Authorization": []string{"Bearer " + token},
+	}}
+	if conn, response, err := websocket.Dial(ctx, wsURL, dialOptions); err == nil || response == nil || response.StatusCode != http.StatusNotFound {
+		if conn != nil {
+			conn.CloseNow()
+		}
+		t.Fatalf("disabled dial err=%v status=%v; want 404", err, response)
+	}
+
+	if _, err := store.SetRelayConfig(ctx, userstore.RelayConfig{DirectSignalEnabled: true}); err != nil {
+		t.Fatalf("remote change: %v", err)
+	}
+	if applied, err := srv.refreshConfigOnce(ctx); err != nil || !applied {
+		t.Fatalf("refresh applied=%v err=%v", applied, err)
+	}
+	if !srv.directSignalEnabled() {
+		t.Fatal("direct signaling was not hot-applied by config refresh")
+	}
+	conn, response, err := websocket.Dial(ctx, wsURL, dialOptions)
+	if err != nil {
+		t.Fatalf("enabled dial err=%v status=%v", err, response)
+	}
+	conn.CloseNow()
+
+	if _, err := store.SetRelayConfig(ctx, userstore.RelayConfig{DirectSignalEnabled: false}); err != nil {
+		t.Fatalf("remote disable: %v", err)
+	}
+	if applied, err := srv.refreshConfigOnce(ctx); err != nil || !applied {
+		t.Fatalf("disable refresh applied=%v err=%v", applied, err)
+	}
+	if conn, response, err := websocket.Dial(ctx, wsURL, dialOptions); err == nil || response == nil || response.StatusCode != http.StatusNotFound {
+		if conn != nil {
+			conn.CloseNow()
+		}
+		t.Fatalf("re-disabled dial err=%v status=%v; want 404", err, response)
 	}
 }
 

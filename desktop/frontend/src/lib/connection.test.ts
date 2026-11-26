@@ -4,7 +4,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { utf8ToBytes, randomBytes } from "@noble/hashes/utils.js";
 import source from "./connection.ts?raw";
-import { decryptSessionFields, SessionConnection, SessionListConnection, type FSResponse, type SessionInfo } from "./connection";
+import { decryptSessionFields, directFallbackReason, SessionConnection, SessionListConnection, type FSResponse, type SessionInfo } from "./connection";
 import { setAccountKeyProvider } from "./account-key";
 import { sealUnsequenced, type SealedSessionFields } from "./opaque";
 import { TYPE, NIL_SID, decodeFrame, decodeText, encodeFrame, encodeText, uuidParse } from "./proto";
@@ -17,6 +17,13 @@ vi.mock("./log", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./log")>()),
   logWarn: vi.fn(),
 }));
+
+describe("directFallbackReason", () => {
+  test("classifies a 404 WebSocket handshake as an unavailable signal endpoint", () => {
+    expect(directFallbackReason(new Error("expected handshake response status code 101 but got 404")))
+      .toBe("signal_endpoint_unavailable");
+  });
+});
 
 // FS frames are segment-framed; everything else stays a bare JSON payload.
 function isFSFrameType(type: number): boolean {

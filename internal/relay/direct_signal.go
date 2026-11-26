@@ -102,7 +102,7 @@ func newDirectSignalHub(metrics ...*directMetrics) *directSignalHub {
 }
 
 func (s *Server) handleDirectSignalHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.DirectSignalEnabled {
+	if !s.directSignalEnabled() {
 		http.NotFound(w, r)
 		return
 	}

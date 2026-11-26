@@ -21,6 +21,7 @@ type RelayConfig struct {
 	Debug                bool
 	DebugScopes          []string
 	DebugUntil           int64
+	DirectSignalEnabled  bool
 	// DebugPayload is retained for config migration from releases that used a
 	// separate payload switch. New callers should use the "payload" scope.
 	DebugPayload     bool
@@ -35,17 +36,17 @@ type RelayConfig struct {
 // treat Version==0 as "not configured yet".
 func (s *DBStore) GetRelayConfig(ctx context.Context) (RelayConfig, error) {
 	var (
-		c                                  RelayConfig
-		originsRaw, debugScopesRaw         string
-		debug, debugPayload, feishuEnabled int64
+		c                                                       RelayConfig
+		originsRaw, debugScopesRaw                              string
+		debug, debugPayload, directSignalEnabled, feishuEnabled int64
 	)
 	err := s.db.QueryRowContext(ctx, s.dia.Rebind(
 		`SELECT rate_limit_per_minute, max_connections_per_key, allowed_origins,
-		        vapid_subject, debug, debug_payload, debug_scopes, debug_until, feishu_enabled,
+		        vapid_subject, debug, debug_payload, debug_scopes, debug_until, direct_signal_enabled, feishu_enabled,
 		        feishu_encrypt_key, feishu_base_url, version
 		 FROM relay_config WHERE id = 1`)).
 		Scan(&c.RateLimitPerMinute, &c.MaxConnectionsPerKey, &originsRaw,
-			&c.VAPIDSubject, &debug, &debugPayload, &debugScopesRaw, &c.DebugUntil, &feishuEnabled,
+			&c.VAPIDSubject, &debug, &debugPayload, &debugScopesRaw, &c.DebugUntil, &directSignalEnabled, &feishuEnabled,
 			&c.FeishuEncryptKey, &c.FeishuBaseURL, &c.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RelayConfig{Version: 0}, nil
@@ -55,6 +56,7 @@ func (s *DBStore) GetRelayConfig(ctx context.Context) (RelayConfig, error) {
 	}
 	c.Debug = debug != 0
 	c.DebugPayload = debugPayload != 0
+	c.DirectSignalEnabled = directSignalEnabled != 0
 	c.FeishuEnabled = feishuEnabled != 0
 	if originsRaw != "" {
 		if err := json.Unmarshal([]byte(originsRaw), &c.AllowedOrigins); err != nil {
@@ -93,9 +95,9 @@ func (s *DBStore) SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayCon
 	err = s.db.QueryRowContext(ctx, s.dia.Rebind(
 		`INSERT INTO relay_config(
 		     id, rate_limit_per_minute, max_connections_per_key, allowed_origins,
-		     vapid_subject, debug, debug_payload, debug_scopes, debug_until, feishu_enabled,
+		     vapid_subject, debug, debug_payload, debug_scopes, debug_until, direct_signal_enabled, feishu_enabled,
 		     feishu_encrypt_key, feishu_base_url, version, updated_at)
-		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		     rate_limit_per_minute   = excluded.rate_limit_per_minute,
 		     max_connections_per_key = excluded.max_connections_per_key,
@@ -105,6 +107,7 @@ func (s *DBStore) SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayCon
 		     debug_payload           = excluded.debug_payload,
 		     debug_scopes            = excluded.debug_scopes,
 		     debug_until             = excluded.debug_until,
+		     direct_signal_enabled   = excluded.direct_signal_enabled,
 		     feishu_enabled          = excluded.feishu_enabled,
 		     feishu_encrypt_key      = excluded.feishu_encrypt_key,
 		     feishu_base_url         = excluded.feishu_base_url,
@@ -112,7 +115,7 @@ func (s *DBStore) SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayCon
 		     updated_at              = excluded.updated_at
 		 RETURNING version`),
 		cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey, string(originsJSON),
-		cfg.VAPIDSubject, b2i(cfg.Debug), b2i(cfg.DebugPayload), string(debugScopesJSON), cfg.DebugUntil, b2i(cfg.FeishuEnabled),
+		cfg.VAPIDSubject, b2i(cfg.Debug), b2i(cfg.DebugPayload), string(debugScopesJSON), cfg.DebugUntil, b2i(cfg.DirectSignalEnabled), b2i(cfg.FeishuEnabled),
 		cfg.FeishuEncryptKey, cfg.FeishuBaseURL, now).Scan(&newVersion)
 	if err != nil {
 		return RelayConfig{}, fmt.Errorf("set relay_config: %w", err)

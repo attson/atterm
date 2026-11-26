@@ -383,9 +383,9 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 
 ### 运行时配置（DB `relay_config` + 管理后台）
 
-`relay.json` 已完全下线：`docker-compose.yml` 明确注释「no longer written or read」，仓库内 `internal/`、`cmd/` 下已无非测试引用。启动所需 env 已收窄到「核心」（bootstrap email、origins、DB 后端选择）；飞书、限流、Origin 白名单、VAPID subject、详细日志等都下沉到 `internal/relay/admin_config.go` 的 `AdminConfig`，由 `/admin/api/config` 与 `/admin/api/feishu` 读写并热应用：
+`relay.json` 已完全下线：`docker-compose.yml` 明确注释「no longer written or read」，仓库内 `internal/`、`cmd/` 下已无非测试引用。启动所需 env 已收窄到「核心」（bootstrap email、origins、DB 后端选择）；飞书、限流、Origin 白名单、直连信令、VAPID subject、详细日志等都下沉到 `internal/relay/admin_config.go` 的 `AdminConfig`，由 `/admin/api/config` 与 `/admin/api/feishu` 读写并热应用：
 
-- **热生效（不重启）**：origins / debug 走 `Server` 上的 `atomic.Pointer`；限流走 `applyRuntimeLimits`（`ATTERM_RATE_LIMIT_PER_MINUTE` / `ATTERM_MAX_CONNECTIONS_PER_KEY` 例外，仍是 per-instance 进程内 map，改后需重启该实例）；飞书走 `Server.ApplyFeishuConfig`（运行时建/拆 secret cipher + handler，路由常注册后按原子 handler 门控，因为 `http.ServeMux` 不支持注销路由）。
+- **热生效（不重启）**：origins / debug 走 `Server` 上的 `atomic.Pointer`，直连信令走 `atomic.Bool`（关闭后只拒绝新的 `/direct-signal` upgrade）；限流走 `applyRuntimeLimits`（`ATTERM_RATE_LIMIT_PER_MINUTE` / `ATTERM_MAX_CONNECTIONS_PER_KEY` 例外，仍是 per-instance 进程内 map，改后需重启该实例）；飞书走 `Server.ApplyFeishuConfig`（运行时建/拆 secret cipher + handler，路由常注册后按原子 handler 门控，因为 `http.ServeMux` 不支持注销路由）。
 - **范围化 DEBUG**：`debug` 是总开关，`debug_scopes` 决定生成哪些记录，可选 RFC3339 `debug_until` 到期后自动停止。`*` 只包含普通范围，永远不包含高敏感的 `payload`；后者必须显式选择。旧 `debug_payload` 字段只作为旧实例/旧客户端迁移入口保留。
 - **客户端诊断同构**：桌面 Settings → Logging 将 `debug_enabled` / `debug_scopes` / `debug_until` 写入本机 `config.json` 并热应用。`state-sync` 记录 ANNOUNCE 发送或抑制原因，relay 同名 scope 记录 reconcile 与 LIST_RESP 的触发原因、会话数和 wire bytes；两端均不在该 scope 记录 title/cwd/command。
 - **唯一因架构限制需重启**：VAPID subject（`webpush.Open` 启动时一次性消费）。
@@ -610,7 +610,7 @@ handler 同时服务 Quick Tunnel 与 Manual LAN，无法可靠区分来源时�
 里发布 `remote_permission`。远端 relay 计算 principal scope 与 owner 权限的交集：
 session token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
 
-relay admin 配置（`AdminConfig` / DB `relay_config`）覆盖运维场景：rate limit、连接数、Origin 白名单、范围化 DEBUG（含自动过期），以及飞书集成（开关 + 加密密钥 + base URL）。改动经 `/admin/api/config` 与 `/admin/api/feishu` 热生效（见上「运行时配置」）。用户账号管理（邀请、用户列表、提权）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。前端对应 `desktop/frontend/src/components/admin/{Config,FeishuConfig,Users,Invitations}.vue`：admin 面板由主 `App.vue` 内嵌为 `AdminPanel.vue` 主区域视图，经 TabBar admin 按钮切换渲染，不再是独立的 `web/src/admin/` MPA entry / `admin.html`。
+relay admin 配置（`AdminConfig` / DB `relay_config`）覆盖运维场景：rate limit、连接数、Origin 白名单、直连信令、范围化 DEBUG（含自动过期），以及飞书集成（开关 + 加密密钥 + base URL）。改动经 `/admin/api/config` 与 `/admin/api/feishu` 热生效（见上「运行时配置」）。用户账号管理（邀请、用户列表、提权）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。前端对应 `desktop/frontend/src/components/admin/{Config,FeishuConfig,Users,Invitations}.vue`：admin 面板由主 `App.vue` 内嵌为 `AdminPanel.vue` 主区域视图，经 TabBar admin 按钮切换渲染，不再是独立的 `web/src/admin/` MPA entry / `admin.html`。
 
 ## 前端架构细节
 

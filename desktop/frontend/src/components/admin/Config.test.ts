@@ -15,4 +15,11 @@ describe("admin Config layout", () => {
     expect(source).toMatch(/\.limits-grid,[\s\S]*?\.debug-controls\s*\{\s*grid-template-columns:\s*1fr/);
     expect(source).not.toContain("<n-card");
   });
+
+  test("loads, saves, and renders the direct signaling switch", () => {
+    expect(source).toContain("directSignalInput.value = c.direct_signal_enabled");
+    expect(source).toContain("direct_signal_enabled: directSignalInput.value");
+    expect(source).toContain('data-testid="cfg-direct-signal"');
+    expect(source).toContain("admin.config.directSignal");
+  });
 });

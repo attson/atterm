@@ -120,6 +120,7 @@ export interface AdminConfig {
   /** Legacy compatibility; use the payload scope. */
   debug_payload: boolean
   allowed_origins: string[]
+  direct_signal_enabled: boolean
   version: string
 }
 
@@ -132,6 +133,7 @@ export interface AdminConfigUpdate {
   /** Legacy compatibility; use the payload scope. */
   debug_payload?: boolean
   allowed_origins?: string[]
+  direct_signal_enabled?: boolean
 }
 
 // FeishuAdminConfig is the masked Feishu integration view (GET /admin/api/feishu).

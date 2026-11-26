@@ -858,7 +858,7 @@ host pattern，这样桌面客户端和同源 web 客户端都能连接。
 
 `/direct-signal` 是 v0.6 Relay-assisted P2P 的控制面，不承载 terminal frame 或 PTY 字节。它使用 text WebSocket JSON，每条消息都有独立的 `version: 1`；因此 `internal/proto.Version` 仍为 `1`，现有 `/client`、`/uplink` 和 frame payload 均不改变。
 
-Relay 端默认关闭该端点，关闭时 upgrade 返回 `404`。操作员必须显式传 `--direct-signal` 或设置 `ATTERM_DIRECT_SIGNAL_ENABLED=1`。端点复用现有 session auth、Origin allow-list、HTTP/WS rate limit 与连接数限制；token 仍只允许放在 `Authorization: Bearer` 或 `Sec-WebSocket-Protocol`，不允许 query token。
+Relay 端默认关闭该端点，关闭时新的 upgrade 返回 `404`。管理员可在 Admin → Config 打开“直连信令”，配置写入 DB `relay_config.direct_signal_enabled` 并在当前实例立即生效；共享同一 Postgres 的其它实例通过 `relay_config.version` 轮询热应用。关闭后拒绝新连接，已有信令连接允许自然结束。`--direct-signal` / `ATTERM_DIRECT_SIGNAL_ENABLED=1` 仅作为首次启动时的 DB 播种输入，之后以管理配置为准。端点复用现有 session auth、Origin allow-list、HTTP/WS rate limit 与连接数限制；token 仍只允许放在 `Authorization: Bearer` 或 `Sec-WebSocket-Protocol`，不允许 query token。
 
 ### 连接 hello 与 host 注册
 

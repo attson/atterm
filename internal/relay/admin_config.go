@@ -29,6 +29,9 @@ type AdminConfig struct {
 	// VAPIDSubject is persisted but applied only at startup (webpush.Open
 	// consumes it once); changing it needs a relay restart.
 	VAPIDSubject string `json:"vapid_subject,omitempty"`
+	// DirectSignalEnabled gates new /direct-signal WebSocket upgrades. It is
+	// cluster-wide and hot-reloadable through relay_config version polling.
+	DirectSignalEnabled bool `json:"direct_signal_enabled,omitempty"`
 
 	// DebugScopes controls which verbose records are generated. DebugUntil is
 	// RFC3339; an empty value means no automatic expiry. The payload scope is
@@ -131,6 +134,7 @@ func relayConfigToAdmin(rc userstore.RelayConfig) AdminConfig {
 		MaxConnectionsPerKey: rc.MaxConnectionsPerKey,
 		AllowedOrigins:       append([]string(nil), rc.AllowedOrigins...),
 		VAPIDSubject:         rc.VAPIDSubject,
+		DirectSignalEnabled:  rc.DirectSignalEnabled,
 		Debug:                rc.Debug,
 		DebugScopes:          debugScopes,
 		DebugUntil:           debugUntil,
@@ -153,6 +157,7 @@ func adminToRelayConfig(c AdminConfig) userstore.RelayConfig {
 		MaxConnectionsPerKey: c.MaxConnectionsPerKey,
 		AllowedOrigins:       append([]string(nil), c.AllowedOrigins...),
 		VAPIDSubject:         c.VAPIDSubject,
+		DirectSignalEnabled:  c.DirectSignalEnabled,
 		Debug:                c.Debug,
 		DebugScopes:          normalizeDebugScopes(c.DebugScopes),
 		DebugUntil:           debugUntil,

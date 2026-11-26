@@ -89,9 +89,8 @@ type Config struct {
 	// instance_id in the relay_instances registry). Empty disables node
 	// registration / selection (single-instance/dev).
 	InstancePublicURL string
-	// DirectSignalEnabled mounts the v0.6 beta WebRTC signaling surface. It
-	// defaults off so upgrading a Relay cannot change terminal routing until an
-	// operator explicitly joins the beta.
+	// DirectSignalEnabled is the initial v0.6 WebRTC signaling gate. Admin
+	// config updates replace it at runtime through Server.directSignalOn.
 	DirectSignalEnabled bool
 }
 
@@ -119,6 +118,9 @@ type Server struct {
 	// debugConfig is immutable after publication and replaced atomically when
 	// Admin Config changes on this or another relay instance.
 	debugConfig atomic.Pointer[debugRuntimeConfig]
+	// directSignalOn gates new signaling upgrades and is updated atomically by
+	// both local admin writes and cross-instance config refreshes.
+	directSignalOn atomic.Bool
 	// traffic accumulates per-user byte/frame counts on the send/receive
 	// paths; flushStop signals the flush goroutine to drain and exit, and
 	// flushDone is closed once it has.
@@ -153,6 +155,7 @@ func NewServer(cfg Config) *Server {
 	}
 	originsInit := append([]string(nil), cfg.AllowedOrigins...)
 	s.allowedOrigins.Store(&originsInit)
+	s.directSignalOn.Store(cfg.DirectSignalEnabled)
 	debugScopes := append([]string(nil), cfg.DebugScopes...)
 	if (cfg.Debug || cfg.DebugPayload) && len(debugScopes) == 0 {
 		debugScopes = append(debugScopes, DebugScopeAll)
@@ -269,6 +272,14 @@ func NewServer(cfg Config) *Server {
 	}
 
 	return s
+}
+
+func (s *Server) directSignalEnabled() bool {
+	return s.directSignalOn.Load()
+}
+
+func (s *Server) setDirectSignalEnabled(enabled bool) {
+	s.directSignalOn.Store(enabled)
 }
 
 type versionResponse struct {

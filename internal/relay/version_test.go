@@ -178,7 +178,7 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 		AdminConfigStore: cfgStore,
 	})
 
-	body := strings.NewReader(`{"rate_limit_per_minute":33,"max_connections_per_key":4}`)
+	body := strings.NewReader(`{"rate_limit_per_minute":33,"max_connections_per_key":4,"direct_signal_enabled":true}`)
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", body)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
@@ -190,8 +190,18 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	}
 	// Verify the config was persisted to the DB.
 	snap := cfgStore.Snapshot()
-	if snap.RateLimitPerMinute != 33 || snap.MaxConnectionsPerKey != 4 {
-		t.Fatalf("persisted limits=%d/%d; want 33/4", snap.RateLimitPerMinute, snap.MaxConnectionsPerKey)
+	if snap.RateLimitPerMinute != 33 || snap.MaxConnectionsPerKey != 4 || !snap.DirectSignalEnabled {
+		t.Fatalf("persisted config=%+v; want limits 33/4 and direct signaling enabled", snap)
+	}
+	if !srv.directSignalEnabled() {
+		t.Fatal("direct signaling was not hot-applied after admin PUT")
+	}
+	var response adminConfigResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.DirectSignalEnabled {
+		t.Fatal("admin response did not report direct signaling enabled")
 	}
 }
 

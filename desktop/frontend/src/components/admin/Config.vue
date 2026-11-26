@@ -14,6 +14,7 @@ const debugInput = ref(false)
 const debugScopesInput = ref<string[]>([])
 const debugUntilInput = ref<number | null>(null)
 const originsInput = ref<string>('')
+const directSignalInput = ref(false)
 const loading = ref(true)
 const saving = ref(false)
 const errorMsg = ref('')
@@ -63,6 +64,7 @@ async function load() {
     debugScopesInput.value = [...(c.debug_scopes ?? [])]
     debugUntilInput.value = c.debug_until ? Date.parse(c.debug_until) : null
     originsInput.value = (c.allowed_origins ?? []).join('\n')
+    directSignalInput.value = c.direct_signal_enabled
   } catch (e) {
     if (e instanceof ApiError) errorMsg.value = t('admin.config.loadFailed')
   } finally {
@@ -82,6 +84,7 @@ async function onSave() {
       debug_scopes: debugScopesInput.value,
       debug_until: debugUntilInput.value ? new Date(debugUntilInput.value).toISOString() : '',
       allowed_origins: parseOrigins(originsInput.value),
+      direct_signal_enabled: directSignalInput.value,
     })
     cfg.value = updated
     rateInput.value = updated.rate_limit_per_minute
@@ -90,6 +93,7 @@ async function onSave() {
     debugScopesInput.value = [...(updated.debug_scopes ?? [])]
     debugUntilInput.value = updated.debug_until ? Date.parse(updated.debug_until) : null
     originsInput.value = (updated.allowed_origins ?? []).join('\n')
+    directSignalInput.value = updated.direct_signal_enabled
     message.success(t('setup.saved'))
   } catch (e) {
     if (e instanceof ApiError) errorMsg.value = t('admin.config.saveFailed')
@@ -136,6 +140,16 @@ onMounted(load)
               <span class="muted">{{ connEffective }}</span>
             </div>
           </n-form-item>
+        </div>
+      </div>
+
+      <div class="config-section direct-section">
+        <div class="setting-row">
+          <div>
+            <h2>{{ t('admin.config.directSignal') }}</h2>
+            <p class="muted">{{ t('admin.config.directSignalHint') }}</p>
+          </div>
+          <n-switch v-model:value="directSignalInput" data-testid="cfg-direct-signal" />
         </div>
       </div>
 
@@ -219,6 +233,16 @@ onMounted(load)
 .config-section :deep(.n-form-item) { margin: 0; }
 .inline-field { display: flex; align-items: center; gap: 12px; width: 100%; }
 .inline-field :deep(.n-input-number) { width: min(180px, 52%); flex: 0 0 auto; }
+.setting-row {
+  min-height: 42px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+.setting-row h2 { margin: 0; color: var(--fg); font-size: 14px; line-height: 1.4; font-weight: 600; letter-spacing: 0; }
+.setting-row p { margin: 4px 0 0; line-height: 1.5; }
+.setting-row :deep(.n-switch) { flex: 0 0 auto; margin-top: 2px; }
 .debug-heading {
   min-height: 42px;
   margin-bottom: 16px;

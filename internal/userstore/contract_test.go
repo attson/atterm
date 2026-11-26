@@ -150,7 +150,8 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 			AllowedOrigins: []string{"https://a.example", "https://b.example"},
 			VAPIDSubject:   "mailto:x@y.z", Debug: true,
 			DebugScopes: []string{"state-sync", "payload"}, DebugUntil: 1_800_000_000,
-			FeishuEnabled: true, FeishuEncryptKey: "k", FeishuBaseURL: "https://f",
+			DirectSignalEnabled: true,
+			FeishuEnabled:       true, FeishuEncryptKey: "k", FeishuBaseURL: "https://f",
 		}
 		w1, err := st.SetRelayConfig(ctx, in)
 		if err != nil {
@@ -163,6 +164,7 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		if got2.RateLimitPerMinute != 600 || len(got2.AllowedOrigins) != 2 ||
 			got2.AllowedOrigins[0] != "https://a.example" || !got2.Debug ||
 			len(got2.DebugScopes) != 2 || got2.DebugScopes[0] != "state-sync" || got2.DebugUntil != 1_800_000_000 ||
+			!got2.DirectSignalEnabled ||
 			!got2.FeishuEnabled || got2.FeishuEncryptKey != "k" || got2.Version != 1 {
 			t.Fatalf("readback mismatch: %+v", got2)
 		}

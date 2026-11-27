@@ -99,7 +99,7 @@ describe("createSSHHostFS", () => {
     await expect(fs.assetUrlFor("/srv/x")).rejects.not.toThrow(/assetUrlFor/);
   });
 
-  it("deletes a single remote file but refuses a directory", async () => {
+  it("forwards both single-file and explicitly confirmed recursive deletes", async () => {
     const SFTPRemove = vi.fn().mockResolvedValue(undefined);
     bindingsWith({ SFTPRemove });
     const fs = createSSHHostFS("h1");
@@ -107,11 +107,8 @@ describe("createSSHHostFS", () => {
     await fs.remove("/srv/one.log", false);
     expect(SFTPRemove).toHaveBeenCalledWith("h1", "/srv/one.log", false);
 
-    // A recursive delete on a host with no trash is the one action here that
-    // nothing can undo, and roadmap item 28 does not claim it. The tree gates
-    // it too; this is the gate that does not depend on the UI asking nicely.
-    await expect(fs.remove("/srv", true)).rejects.toThrow(/permanently/i);
-    expect(SFTPRemove).toHaveBeenCalledTimes(1);
+    await fs.remove("/srv", true);
+    expect(SFTPRemove).toHaveBeenLastCalledWith("h1", "/srv", true);
   });
 
   it("declares a search budget sized for round trips, not for a page cache", async () => {
@@ -120,6 +117,6 @@ describe("createSSHHostFS", () => {
     // The search walks one directory per network round trip and re-runs per
     // keystroke burst; the local default of 2000 would be thousands of them.
     expect(fs.searchMaxDirs).toBeLessThanOrEqual(200);
-    expect(fs.dirRemovalRefusal?.("/srv")).toMatch(/permanently/i);
+    expect(fs.dirRemovalRefusal).toBeUndefined();
   });
 });

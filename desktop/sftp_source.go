@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/sftpfs"
+	"github.com/attson/atterm/internal/sshclient"
 	"github.com/pkg/sftp"
 )
 
@@ -656,9 +657,9 @@ func (a *App) dialSFTP(ctx context.Context, hostID string, accepted AcceptedHost
 	client, err := sftpfs.OpenContext(openCtx, conn)
 	if err != nil {
 		a.tunnels.releaseConn(hostID, hc)
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sshclient.ErrSFTPSubsystemUnavailable) {
 			return nil, nil, fmt.Errorf(
-				"the ssh connection is up but the host did not start an sftp session in time "+
+				"the ssh connection is up but the host did not start an sftp session "+
 					"(is sftp-server installed and enabled in its sshd_config?): %w", err)
 		}
 		return nil, nil, err

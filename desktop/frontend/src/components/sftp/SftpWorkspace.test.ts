@@ -18,7 +18,7 @@ const retrySourcePane = vi.fn();
 const SftpPaneStub = defineComponent({
   name: "SftpPane",
   props: ["state", "side", "hosts"],
-  emits: ["update:state", "transfer-selection", "host-key-required"],
+  emits: ["update:state", "transfer-selection", "host-key-required", "edit-host"],
   setup(props, { expose }) {
     expose({ refresh: refreshPane, retrySource: retrySourcePane });
     return () => h("div", {
@@ -165,6 +165,17 @@ describe("SftpWorkspace", () => {
     await wrapper.get('[data-test="edit-host-job-auth"]').trigger("click");
 
     expect(wrapper.emitted("edit-host")?.[0]).toEqual(["right-host"]);
+  });
+
+  it("routes a pane credential failure to editing the exact saved host", async () => {
+    __setBindingsForTest(bindings());
+    const wrapper = mountWorkspace();
+    await flushPromises();
+
+    wrapper.findAllComponents(SftpPaneStub)[0].vm.$emit("edit-host", "jump-host");
+    await nextTick();
+
+    expect(wrapper.emitted("edit-host")?.[0]).toEqual(["jump-host"]);
   });
 
   it.each(["replace", "rename"] as const)("uses the explicit %s conflict choice", async (conflict) => {

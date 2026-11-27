@@ -78,6 +78,13 @@ type trackedTransferEndpoint struct {
 	closed *atomic.Int32
 }
 
+type fakeCredentialHostError struct {
+	hostID string
+}
+
+func (e *fakeCredentialHostError) Error() string            { return errCredentialMissing }
+func (e *fakeCredentialHostError) CredentialHostID() string { return e.hostID }
+
 func (e *trackedTransferEndpoint) Close() error {
 	e.closed.Add(1)
 	return e.transferEndpoint.Close()
@@ -430,6 +437,29 @@ func TestFileTransferManagerMarksCredentialFailureWithEndpointHost(t *testing.T)
 	terminal := waitForTransferStates(t, recorder, []string{id})[id]
 	if terminal.CredentialHostID != "source" {
 		t.Fatalf("credential host id = %q, want source", terminal.CredentialHostID)
+	}
+}
+
+func TestFileTransferManagerMarksCredentialFailureWithJumpHost(t *testing.T) {
+	recorder := newTransferEventRecorder()
+	factory := func(_ context.Context, endpoint FileEndpoint, _ transferHostKeyAcceptance) (transferEndpoint, error) {
+		if endpoint.ID() == "ssh:source" {
+			return nil, &fakeCredentialHostError{hostID: "jump-host"}
+		}
+		return nil, errors.New("unexpected endpoint")
+	}
+	m := newFileTransferManager(context.Background(), factory, recorder.emit)
+	t.Cleanup(m.Shutdown)
+	id, err := m.Start(fileTransferRequest{
+		Source: FileEndpoint{Kind: "ssh", HostID: "source"}, Destination: FileEndpoint{Kind: "local"},
+		Paths: []string{"/from.txt"}, DestinationDir: "/to", Conflict: conflictSkip,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := waitForTransferStates(t, recorder, []string{id})[id]
+	if terminal.CredentialHostID != "jump-host" {
+		t.Fatalf("credential host id = %q, want jump-host", terminal.CredentialHostID)
 	}
 }
 

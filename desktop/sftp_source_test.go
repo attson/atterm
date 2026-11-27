@@ -569,6 +569,23 @@ func TestOpenSFTPSourceRequiresExactHostKeyPair(t *testing.T) {
 	}
 }
 
+func TestOpenSFTPSourceExplainsRejectedSubsystem(t *testing.T) {
+	addr, hostPub, _ := startSFTPSSHTestServerWithSubsystem(t, false)
+	a := newSFTPTestApp(t, addr, hostPub)
+	h, err := a.AddSSHHost(sshHostAt(addr), sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.OpenSFTPSource(h.ID, AcceptedHostKey{})
+	if err == nil {
+		t.Fatal("host that rejects the sftp subsystem must fail")
+	}
+	if !strings.Contains(err.Error(), "ssh connection is up") || !strings.Contains(err.Error(), "sftp") {
+		t.Fatalf("rejected subsystem must explain that SSH works but SFTP is unavailable, got %q", err)
+	}
+}
+
 // TestSFTPRedialsOverARealConnectionAfterTeardown is the fake-free half of
 // TestSFTPBrowserRedialsAfterChannelTeardown.
 //
@@ -708,6 +725,10 @@ type sftpSubsystemRequest struct{ Name string }
 // with a real pkg/sftp server instead of a shell. Nothing here fakes SFTP —
 // the bytes on the channel are the protocol.
 func startSFTPSSHTestServer(t *testing.T) (addr string, hostPub ssh.PublicKey, logins func() int) {
+	return startSFTPSSHTestServerWithSubsystem(t, true)
+}
+
+func startSFTPSSHTestServerWithSubsystem(t *testing.T, acceptSubsystem bool) (addr string, hostPub ssh.PublicKey, logins func() int) {
 	t.Helper()
 	hostKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -743,13 +764,13 @@ func startSFTPSSHTestServer(t *testing.T) (addr string, hostPub ssh.PublicKey, l
 				return
 			}
 			accepted.Add(1)
-			go serveSFTPConn(nc, cfg)
+			go serveSFTPConn(nc, cfg, acceptSubsystem)
 		}
 	}()
 	return ln.Addr().String(), signer.PublicKey(), func() int { return int(accepted.Load()) }
 }
 
-func serveSFTPConn(nc net.Conn, cfg *ssh.ServerConfig) {
+func serveSFTPConn(nc net.Conn, cfg *ssh.ServerConfig, acceptSubsystem bool) {
 	sc, chans, reqs, err := ssh.NewServerConn(nc, cfg)
 	if err != nil {
 		return
@@ -781,7 +802,10 @@ func serveSFTPConn(nc net.Conn, cfg *ssh.ServerConfig) {
 					continue
 				}
 				if r.WantReply {
-					_ = r.Reply(true, nil)
+					_ = r.Reply(acceptSubsystem, nil)
+				}
+				if !acceptSubsystem {
+					continue
 				}
 				srv, err := sftp.NewServer(ch)
 				if err != nil {

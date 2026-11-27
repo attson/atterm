@@ -272,8 +272,13 @@ func transferResultForError(ctx context.Context, err error) FileTransferResult {
 
 func transferResultForEndpointError(ctx context.Context, endpoint FileEndpoint, err error) FileTransferResult {
 	result := transferResultForError(ctx, err)
-	if result.State == fileTransferFailed && endpoint.Kind == "ssh" &&
-		(err.Error() == errCredentialMissing || err.Error() == errKeyMissing) {
+	if result.State != fileTransferFailed || endpoint.Kind != "ssh" {
+		return result
+	}
+	var credentialErr interface{ CredentialHostID() string }
+	if errors.As(err, &credentialErr) && credentialErr.CredentialHostID() != "" {
+		result.CredentialHostID = credentialErr.CredentialHostID()
+	} else if err.Error() == errCredentialMissing || err.Error() == errKeyMissing {
 		result.CredentialHostID = endpoint.HostID
 	}
 	return result

@@ -15,7 +15,7 @@ import {
 import type { AcceptedHostKey, SFTPDirEntry, SSHHost } from "../../lib/api";
 import { ACCEPT_NO_HOST_KEY, openSFTPSource } from "../../lib/api";
 import { useI18n } from "../../i18n/useI18n";
-import { parseHostKeyPrompt, type HostKeyPrompt } from "../../lib/sshHostKey";
+import { parseCredentialHostID, parseHostKeyPrompt, type HostKeyPrompt } from "../../lib/sshHostKey";
 import FileEditor from "../../plugins/fileExplorer/FileEditor.vue";
 import { createSSHHostFS } from "../../plugins/fileExplorer/sshHostFS";
 import type { DirListing, FileSystemBridge } from "../../plugins/fileExplorer/fsBridge";
@@ -43,6 +43,7 @@ const emit = defineEmits<{
   (event: "transfer-selection"): void;
   (event: "toast", message: string): void;
   (event: "host-key-required", payload: { hostId: string; prompt: HostKeyPrompt }): void;
+  (event: "edit-host", hostId: string): void;
 }>();
 
 const { t } = useI18n();
@@ -51,6 +52,7 @@ const currentFS = ref<FileSystemBridge | null>(props.state.source.kind === "loca
 const entries = ref<SFTPDirEntry[]>([]);
 const loading = ref(false);
 const loadError = ref("");
+const credentialHostID = ref("");
 const truncated = ref(false);
 const totalEntries = ref(0);
 const pathDraft = ref(props.state.cwd);
@@ -113,6 +115,7 @@ async function loadDirectory() {
 async function chooseSource(source: SftpSource, accepted: AcceptedHostKey = ACCEPT_NO_HOST_KEY) {
   if (sameSource(source, paneState.value.source) && !loadError.value) return;
   editorPath.value = "";
+  credentialHostID.value = "";
   if (source.kind === "local") {
     disposeRemoteBridge();
     currentFS.value = props.localFS;
@@ -121,18 +124,20 @@ async function chooseSource(source: SftpSource, accepted: AcceptedHostKey = ACCE
     return;
   }
 
+  disposeRemoteBridge();
+  currentFS.value = null;
   updateState(switchSource(paneState.value, source, "/"));
   loadError.value = "";
   loading.value = true;
   try {
     const info = await openSFTPSource(source.hostId, accepted);
-    disposeRemoteBridge();
     currentFS.value = createSSHHostFS(source.hostId);
     updateState(switchSource(paneState.value, source, info.initial_dir));
     await loadDirectory();
   } catch (error) {
     const prompt = parseHostKeyPrompt(error);
     if (prompt) emit("host-key-required", { hostId: source.hostId, prompt });
+    credentialHostID.value = parseCredentialHostID(error);
     loadError.value = prompt ? t("sftp.hostKeyRequired") : (error instanceof Error ? error.message : String(error));
     loading.value = false;
   }
@@ -353,6 +358,7 @@ onBeforeUnmount(() => {
     <div v-if="loadError" class="state error" data-test="load-error">
       <span>{{ loadError }}</span>
       <button data-test="retry" @click="retrySource()">{{ t("common.retry") }}</button>
+      <button v-if="credentialHostID" data-test="edit-credential-host" @click="emit('edit-host', credentialHostID)">{{ t("sftp.editHost") }}</button>
     </div>
     <div v-else-if="loading" class="state">{{ t("common.loading") }}</div>
     <div v-else class="file-list">

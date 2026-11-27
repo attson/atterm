@@ -159,6 +159,26 @@ const errCredentialMissing = "ssh_credential_missing"
 // exists in the vault.
 const errKeyMissing = "ssh_key_missing"
 
+// SSHCredentialError keeps the saved host that needs attention attached to a
+// missing-credential failure. Error() preserves the existing sentinel for a
+// destination host, while Message gives jump-host failures their actionable
+// wording. Wails exposes HostID alongside the rejected error so SFTP can open
+// the exact host editor instead of making the user search for it.
+type SSHCredentialError struct {
+	HostID  string
+	Code    string
+	Message string
+}
+
+func (e *SSHCredentialError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Code
+}
+
+func (e *SSHCredentialError) CredentialHostID() string { return e.HostID }
+
 // HostKeyUnknownError carries the fingerprint so the frontend can show the
 // TOFU dialog and retry with Host + Fingerprint echoed back in
 // SSHConnectReq.AcceptedHostKeyHost / AcceptedHostKeyFingerprint.

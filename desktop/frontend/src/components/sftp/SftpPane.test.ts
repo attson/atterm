@@ -29,6 +29,7 @@ function fakeFS(overrides: Partial<FileSystemBridge> = {}): FileSystemBridge {
 
 const hosts: SSHHost[] = [
   { id: "build", alias: "Build server", host: "build.example", user: "deploy", auth_kind: "password" },
+  { id: "archive", alias: "Archive server", host: "archive.example", user: "backup", auth_kind: "password" },
 ];
 
 function setSFTPBindings(overrides: Partial<AppBindings> = {}) {
@@ -93,6 +94,40 @@ describe("SftpPane", () => {
     expect(SFTPListDir).toHaveBeenCalledWith("build", "/srv/work");
     expect(wrapper.get('[data-test="path-input"]').attributes("value")).toBe("/srv/work");
     wrapper.unmount();
+  });
+
+  it.each(["build", "bastion"])("offers editing the exact %s host whose credential is missing", async (hostID) => {
+    const missing = Object.assign(new Error("ssh_credential_missing"), { HostID: hostID });
+    setSFTPBindings({ OpenSFTPSource: vi.fn().mockRejectedValue(missing) });
+    const wrapper = mountPane(fakeFS());
+    await flushPromises();
+
+    await wrapper.get('[data-test="source-picker"] [data-testid="select-trigger"]').trigger("click");
+    await wrapper.findAll('[data-testid="select-option"]')[1].trigger("click");
+    await flushPromises();
+
+    await wrapper.get('[data-test="edit-credential-host"]').trigger("click");
+    expect(wrapper.emitted("edit-host")?.[0]).toEqual([hostID]);
+  });
+
+  it("releases remote A before a failed switch to remote B", async () => {
+    const OpenSFTPSource = vi.fn()
+      .mockResolvedValueOnce({ host_id: "build", initial_dir: "/srv" })
+      .mockRejectedValueOnce(new Error("archive offline"));
+    const SFTPDisconnect = vi.fn().mockResolvedValue(undefined);
+    setSFTPBindings({ OpenSFTPSource, SFTPDisconnect });
+    const wrapper = mountPane(fakeFS());
+    await flushPromises();
+
+    await wrapper.get('[data-test="source-picker"] [data-testid="select-trigger"]').trigger("click");
+    await wrapper.findAll('[data-testid="select-option"]')[1].trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-test="source-picker"] [data-testid="select-trigger"]').trigger("click");
+    await wrapper.findAll('[data-testid="select-option"]')[2].trigger("click");
+    await flushPromises();
+
+    expect(SFTPDisconnect).toHaveBeenCalledWith("build");
+    expect(wrapper.get('[data-test="load-error"]').text()).toContain("archive offline");
   });
 
   it("navigates, filters, sorts, and keeps multi-selection stable", async () => {

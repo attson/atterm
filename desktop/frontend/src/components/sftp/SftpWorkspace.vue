@@ -329,6 +329,7 @@ onBeforeUnmount(() => {
           @update:state="setPane('left', $event)"
           @transfer-selection="beginSelectionTransfer('left')"
           @host-key-required="requestSourceHostKey('left', $event)"
+          @edit-host="emit('edit-host', $event)"
         />
       </div>
       <div class="transfer-controls">
@@ -346,6 +347,7 @@ onBeforeUnmount(() => {
           @update:state="setPane('right', $event)"
           @transfer-selection="beginSelectionTransfer('right')"
           @host-key-required="requestSourceHostKey('right', $event)"
+          @edit-host="emit('edit-host', $event)"
         />
       </div>
     </div>

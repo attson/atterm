@@ -54,6 +54,20 @@ func (f *fakeSFTPClient) ListDir(ctx context.Context, dir string) (sftpfs.Listin
 	return sftpfs.Listing{Path: dir}, nil
 }
 
+func (f *fakeSFTPClient) Getwd(context.Context) (string, error) { return "/", nil }
+
+func (f *fakeSFTPClient) Lstat(context.Context, string) (os.FileInfo, error) {
+	return nil, os.ErrNotExist
+}
+
+func (f *fakeSFTPClient) OpenReader(context.Context, string) (sftpfs.ReadHandle, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (f *fakeSFTPClient) CreateStagedWriter(context.Context, string) (sftpfs.StagedWriter, error) {
+	return nil, errors.New("not implemented by fake")
+}
+
 func (f *fakeSFTPClient) FileMeta(ctx context.Context, name string) (sftpfs.FileMetaInfo, error) {
 	return sftpfs.FileMetaInfo{Path: name}, nil
 }
@@ -120,7 +134,7 @@ type fakeDialer struct {
 	setup    func(*fakeSFTPClient)
 }
 
-func (d *fakeDialer) dial(hostID string) (sftpClient, func(), error) {
+func (d *fakeDialer) dial(hostID string, _ AcceptedHostKey) (sftpClient, func(), error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.err != nil {
@@ -434,6 +448,46 @@ func TestSFTPListDirOverARealSSHConnection(t *testing.T) {
 	// asks for, observed from the far side rather than from a counter.
 	if _, err := a.SFTPFileMeta(h.ID, filepath.Join(root, "deploy.sh")); err != nil {
 		t.Fatalf("file meta over the reused channel: %v", err)
+	}
+}
+
+func TestOpenSFTPSourceRequiresExactHostKeyPair(t *testing.T) {
+	addr, _, _ := startSFTPSSHTestServer(t)
+	useIsolatedKeyring(t)
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
+	t.Cleanup(func() {
+		if a.sftp != nil {
+			a.sftp.closeAll()
+		}
+		a.tunnels.stopAll()
+	})
+	h, err := a.AddSSHHost(sshHostAt(addr), sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.OpenSFTPSource(h.ID, AcceptedHostKey{})
+	var unknown *HostKeyUnknownError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("first open error = %v, want HostKeyUnknownError", err)
+	}
+	if unknown.Host == "" || unknown.Fingerprint == "" {
+		t.Fatalf("incomplete host-key prompt: %+v", unknown)
+	}
+
+	_, err = a.OpenSFTPSource(h.ID, AcceptedHostKey{Host: unknown.Host, Fingerprint: "SHA256:wrong"})
+	var wrong *HostKeyUnknownError
+	if !errors.As(err, &wrong) {
+		t.Fatalf("wrong accepted pair error = %v, want HostKeyUnknownError", err)
+	}
+
+	info, err := a.OpenSFTPSource(h.ID, AcceptedHostKey{Host: unknown.Host, Fingerprint: unknown.Fingerprint})
+	if err != nil {
+		t.Fatalf("open after exact acceptance: %v", err)
+	}
+	if info.HostID != h.ID || !strings.HasPrefix(info.InitialDir, "/") {
+		t.Fatalf("source info = %+v, want host id and absolute initial dir", info)
 	}
 }
 

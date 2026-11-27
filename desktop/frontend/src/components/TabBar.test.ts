@@ -198,6 +198,42 @@ describe("TabBar admin button", () => {
   });
 });
 
+describe("TabBar fixed SFTP tab", () => {
+  it("renders only when available and emits toggle-sftp", async () => {
+    const hidden = mount(TabBar, { props: { tabs: [], currentId: null, starting: false } });
+    expect(hidden.find('[data-test="sftp-tab"]').exists()).toBe(false);
+
+    const wrapper = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, sftpAvailable: true, sftpOpen: false },
+    });
+    await wrapper.get('[data-test="sftp-tab"]').trigger("click");
+    expect(wrapper.emitted("toggle-sftp")).toHaveLength(1);
+  });
+
+  it("is fixed before numbered terminal tabs and has no close or drag affordance", () => {
+    const wrapper = mount(TabBar, {
+      props: {
+        tabs: [
+          { ...baseTab, id: "t1", activeSession: null },
+          { ...baseTab, id: "t2", activeSession: null },
+        ],
+        currentId: "t1",
+        starting: false,
+        sftpAvailable: true,
+        sftpOpen: true,
+      },
+    });
+    const fixed = wrapper.get('[data-test="sftp-tab"]');
+    expect(fixed.classes()).toContain("active");
+    expect(fixed.text()).toContain("SFTP");
+    expect(fixed.find(".num").exists()).toBe(false);
+    expect(fixed.find(".close").exists()).toBe(false);
+    expect(fixed.attributes("data-tab-id")).toBeUndefined();
+    expect(wrapper.findAll(".tab .num").map((node) => node.text())).toEqual(["1:", "2:"]);
+    expect(wrapper.get(".tabbar").element.firstElementChild).toBe(fixed.element);
+  });
+});
+
 describe("TabBar state icon + unread", () => {
   test("uses TaskStateIcon for the active session's task_state", () => {
     const tab = {

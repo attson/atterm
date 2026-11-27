@@ -4,7 +4,7 @@ set -euo pipefail
 # Red line #11: the desktop's *local* filesystem bindings must not be reachable
 # via the uplink/relay path.
 #
-# There are two such binding surfaces, and both are here because in each case a
+# There are three such binding surfaces, and all are here because in each case a
 # safety property is carried by a comment rather than by code:
 #
 #   PluginFS      — the local filesystem. Its gate (fsAccess) bounds a relay
@@ -20,6 +20,12 @@ set -euo pipefail
 #                   channel; this script is what makes that a guard rather than
 #                   a sentence, by failing the build at the moment somebody
 #                   wires it into an uplink file.
+#
+#   file transfer — the top-level SFTP workspace's streaming manager and its
+#                   local/SFTP endpoint adapters. Remote-to-remote bytes are
+#                   deliberately relayed only inside the desktop Go process;
+#                   routing these symbols through uplink/relay would turn a
+#                   local tool into a server-side file transfer surface.
 #
 # Any reference from the uplink/relay side fails CI.
 
@@ -57,6 +63,16 @@ sftp_symbols=(
     SFTPDisconnect
 )
 
+transfer_symbols=(
+    fileTransferManager
+    StartFileTransfer
+    CancelFileTransfer
+    ListFileTransfers
+    buildTransferManifest
+    newLocalTransferEndpoint
+    newSFTPTransferEndpoint
+)
+
 source_file=desktop/sftp_source.go
 missing=()
 for sym in "${sftp_symbols[@]}"; do
@@ -71,6 +87,20 @@ if [ ${#missing[@]} -ne 0 ]; then
 fi
 
 sftp_pattern=$(IFS='|'; echo "\\b(${sftp_symbols[*]})\\b")
+
+transfer_source_files=(desktop/file_transfer*.go desktop/sftp_source.go)
+missing=()
+for sym in "${transfer_symbols[@]}"; do
+    grep -qE "\b${sym}\b" "${transfer_source_files[@]}" || missing+=("$sym")
+done
+if [ ${#missing[@]} -ne 0 ]; then
+    echo "ERROR: this guard has gone stale — these transfer symbols no longer exist:"
+    printf '  %s\n' "${missing[@]}"
+    echo "Update transfer_symbols in $0 to the current names."
+    exit 1
+fi
+
+transfer_pattern=$(IFS='|'; echo "\\b(${transfer_symbols[*]})\\b")
 
 fail=0
 
@@ -99,8 +129,21 @@ if [ -n "$sftp_hits" ]; then
     fail=1
 fi
 
+transfer_hits=$(grep -rnE "$transfer_pattern" \
+    --include='*.go' \
+    "${search_paths[@]}" 2>/dev/null || true)
+
+if [ -n "$transfer_hits" ]; then
+    echo "ERROR: the desktop streaming transfer engine is referenced from the uplink/relay side:"
+    echo "$transfer_hits"
+    echo
+    echo "Remote-to-remote bytes must stay inside the desktop Go process and its"
+    echo "local Wails binding surface; do not expose this manager through Relay."
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
 
-echo "ok: PluginFS and the SFTP file source stay on the local binding surface"
+echo "ok: PluginFS, SFTP browsing, and streaming transfers stay on the local binding surface"

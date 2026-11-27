@@ -1,3 +1,4 @@
+import { defineAsyncComponent, markRaw } from 'vue'
 import { getLocalePreference, setLocalePreference } from './lib/api'
 import { bootstrapApp } from './lib/bootstrapApp'
 import { createWailsPlatform } from './platform/wails'
@@ -5,6 +6,9 @@ import { EventsOn } from '../wailsjs/runtime/runtime'
 import './style.css'
 
 void bootstrapApp({
+  rootProps: {
+    sftpWorkspace: markRaw(defineAsyncComponent(() => import('./components/sftp/SftpWorkspace.vue'))),
+  },
   i18n: {
     loadPreference: getLocalePreference,
     savePreference: setLocalePreference,

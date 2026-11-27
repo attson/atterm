@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { ShieldUser, Server } from "lucide-vue-next";
+import { FolderSync, ShieldUser, Server } from "lucide-vue-next";
 import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
@@ -33,8 +33,19 @@ withDefaults(
     isAdmin?: boolean;
     // Whether the admin panel is the currently active main-area view.
     adminOpen?: boolean;
+    // Desktop-only fixed workspace. It is intentionally outside `tabs` so it
+    // never participates in terminal numbering, closing, or drag reordering.
+    sftpAvailable?: boolean;
+    sftpOpen?: boolean;
   }>(),
-  { canNewLocal: true, updateBadge: false, isAdmin: false, adminOpen: false },
+  {
+    canNewLocal: true,
+    updateBadge: false,
+    isAdmin: false,
+    adminOpen: false,
+    sftpAvailable: false,
+    sftpOpen: false,
+  },
 );
 
 const emit = defineEmits<{
@@ -48,6 +59,7 @@ const emit = defineEmits<{
   // entirely on web/mobile, but TabBar always renders alongside App.vue.
   (e: "open-settings"): void;
   (e: "toggle-admin"): void;
+  (e: "toggle-sftp"): void;
   /** A session was dragged out of a pane and dropped here: give it its own tab. */
   (e: "detach-session", sessionId: string): void;
 }>();
@@ -299,6 +311,18 @@ function onStripDrop(e: DragEvent) {
     @dragleave="onStripDragLeave"
     @drop="onStripDrop"
   >
+    <button
+      v-if="sftpAvailable"
+      class="sftp-tab"
+      :class="{ active: sftpOpen }"
+      type="button"
+      data-test="sftp-tab"
+      :aria-label="i18nT('sftp.workspace')"
+      @click="emit('toggle-sftp')"
+    >
+      <FolderSync :size="14" />
+      <span>{{ i18nT("sftp.workspace") }}</span>
+    </button>
     <div class="tabs" ref="tabsEl">
       <div
         v-for="(t, idx) in tabs"
@@ -306,7 +330,7 @@ function onStripDrop(e: DragEvent) {
         :data-tab-id="t.id"
         class="tab"
         :class="{
-          active: t.id === currentId,
+          active: !sftpOpen && !adminOpen && t.id === currentId,
           unread: t.activeSession?.unread === true,
           remote: t.activeRemote,
           disconnected: t.disconnected,
@@ -419,6 +443,19 @@ function onStripDrop(e: DragEvent) {
 }
 .tabs::-webkit-scrollbar { display: none; }
 
+.sftp-tab {
+  flex: 0 0 auto; min-width: 82px; padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 0; border-right: 1px solid var(--border);
+  background: transparent; color: var(--fg-dim); cursor: pointer;
+  font: inherit; font-size: 12px;
+}
+.sftp-tab:hover { background: rgba(255, 255, 255, 0.04); color: var(--fg); }
+.sftp-tab.active {
+  background: var(--bg); color: var(--fg);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .tab {
   display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px;
   border-right: 1px solid var(--border); font-size: 12px;
@@ -525,6 +562,7 @@ function onStripDrop(e: DragEvent) {
     opacity: 1;
     padding: 0 2px;
   }
+  .sftp-tab { min-width: 70px; padding: 0 9px; }
   .settings-btn,
   .admin-btn {
     min-width: 40px;

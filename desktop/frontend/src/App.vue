@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { errText, logDebug, logError, logWarn } from "./lib/log";
-import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide, reactive, ref, watch, type Component } from "vue";
 import TabBar from "./components/TabBar.vue";
 import TitleBar from "./components/TitleBar.vue";
 import TaskSidebar from "./components/TaskSidebar.vue";
@@ -104,6 +104,10 @@ import {
 import { useI18n } from "./i18n/useI18n";
 import type { MessageKey } from "./i18n";
 import type { SnippetSessionTargetRegistry } from "./lib/snippetSessionTargets";
+
+const props = defineProps<{
+  sftpWorkspace?: Component;
+}>();
 
 const { t: i18nT } = useI18n();
 
@@ -382,13 +386,31 @@ async function refreshRelayIdentity(expectedUserID = "", reportFailure = false) 
     }
   }
 }
-// Whether the main area shows AdminPanel instead of the pane-grid tabs.
-// Not persisted (see spec §4.10) — always starts closed.
-const adminViewOpen = ref(false);
+type MainView = "terminal" | "sftp" | "admin";
+const mainView = ref<MainView>("terminal");
+const sftpAvailable = Boolean(props.sftpWorkspace) && caps.wailsBindings && caps.pluginHost;
+const sftpVisited = ref(false);
+const adminViewOpen = computed(() => mainView.value === "admin");
+const sftpViewOpen = computed(() => mainView.value === "sftp");
+
+function toggleAdminView() {
+  mainView.value = mainView.value === "admin" ? "terminal" : "admin";
+}
+
+function toggleSftpView() {
+  if (!sftpAvailable) return;
+  if (mainView.value === "sftp") {
+    mainView.value = "terminal";
+    return;
+  }
+  sftpVisited.value = true;
+  mainView.value = "sftp";
+}
+
 // If admin rights are revoked mid-session, drop out of the admin view
 // automatically rather than leaving a non-admin staring at a stale panel.
 watch(isAdmin, (v) => {
-  if (!v) adminViewOpen.value = false;
+  if (!v && mainView.value === "admin") mainView.value = "terminal";
 });
 
 const quitDialogOpen = ref(false);
@@ -1184,9 +1206,8 @@ function gotoTab(id: string) {
   if (location.hash !== "#/t/" + id) {
     location.hash = "#/t/" + id;
   }
-  // Clicking a session tab always means "I want my terminal back" — close
-  // the admin view without touching tabs/currentTabId/hash otherwise.
-  adminViewOpen.value = false;
+  // A terminal tab is one of the three mutually exclusive top-level views.
+  mainView.value = "terminal";
 }
 
 function onTabReorder(fromId: string, targetId: string, position: "before" | "after") {
@@ -2043,6 +2064,8 @@ defineExpose({ me });
       :update-badge="updateBadge"
       :is-admin="isAdmin"
       :admin-open="adminViewOpen"
+      :sftp-available="sftpAvailable"
+      :sftp-open="sftpViewOpen"
       @activate="gotoTab"
       @detach-session="onDetachSessionToTab"
       @close="requestCloseTab"
@@ -2050,13 +2073,15 @@ defineExpose({ me });
       @new-ssh="showSshHosts = true"
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
-      @toggle-admin="adminViewOpen = !adminViewOpen"
+      @toggle-admin="toggleAdminView"
+      @toggle-sftp="toggleSftpView"
     />
 
     <StartupFatalPanel v-if="startupFatal" :fatal="startupFatal" @quit="onConfirmQuit" />
 
     <div v-else class="main-row">
       <TaskSidebar
+        v-if="mainView === 'terminal'"
         ref="taskSidebarRef"
         :collapsed="sidebarCollapsed"
         :by-host="sessions.byHost.value"
@@ -2081,8 +2106,14 @@ defineExpose({ me });
         @markSeen="onMarkSeen"
       />
       <main class="main">
-        <AdminPanel v-if="adminViewOpen" />
-        <template v-else-if="localEndpoint || remoteEndpoint || mountedTabs.length > 0">
+        <AdminPanel v-if="mainView === 'admin'" />
+        <component
+          :is="props.sftpWorkspace"
+          v-if="sftpAvailable && sftpVisited"
+          v-show="mainView === 'sftp'"
+          class="sftp-main"
+        />
+        <template v-if="mainView === 'terminal' && (localEndpoint || remoteEndpoint || mountedTabs.length > 0)">
           <div v-if="tabs.length === 0" class="empty">
             {{ emptyMainMessage }}
           </div>
@@ -2118,7 +2149,7 @@ defineExpose({ me });
         </template>
         <div v-if="toast" class="toast">{{ toast }}</div>
       </main>
-      <template v-if="caps.pluginHost && rightPanelHasPlugin">
+      <template v-if="mainView === 'terminal' && caps.pluginHost && rightPanelHasPlugin">
         <button class="panel-toggle" @click="togglePanel" v-tooltip="panelCollapsed ? i18nT('app.showPanel') : i18nT('app.hidePanel')">
           {{ panelCollapsed ? '‹' : '›' }}
         </button>
@@ -2133,12 +2164,12 @@ defineExpose({ me });
          instance persists across tab/pane switches. They target the active
          pane via pluginContext.activePane (a reactive ref). -->
     <PluginHost
-      v-if="caps.pluginHost"
+      v-if="mainView === 'terminal' && caps.pluginHost"
       slot-id="bottom-toolbar"
       :context="pluginContext"
       class="bottom-toolbar"
     />
-    <TranslatePanelHost v-if="caps.pluginHost" />
+    <TranslatePanelHost v-if="mainView === 'terminal' && caps.pluginHost" />
 
     <SettingsDialog
       v-if="showSettings"
@@ -2225,6 +2256,7 @@ defineExpose({ me });
   min-height: 0;
 }
 .main { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; background: #000; overflow: hidden; min-width: 0; }
+.sftp-main { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .right-resizer { width: 4px; cursor: col-resize; background: transparent; flex: 0 0 4px; }
 .right-resizer:hover { background: var(--ed-border, #2d333b); }
 .panel-toggle {

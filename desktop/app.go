@@ -349,6 +349,12 @@ type App struct {
 	sftpMu sync.Mutex
 	sftp   *sftpBrowser
 
+	// fileTransfers owns local/SFTP streaming copy jobs. Raw App literals in
+	// tests get it lazily through fileTransferManager; NewApp initializes it so
+	// production has one singleton queue for the lifetime of the window.
+	fileTransfersMu sync.Mutex
+	fileTransfers   *fileTransferManager
+
 	// prefsSync is layered behind the prefsSyncEngine interface (defined in
 	// prefs_sync_loop.go) rather than typed as *prefssync.Engine directly, so
 	// tests can substitute a fake without internal/prefssync growing any
@@ -493,6 +499,7 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 		windowActivator: activateMainWindow,
 	}
 	a.snippetDialer = a.dialSnippetConn
+	a.fileTransferManager()
 	a.updater = newUpdater(updaterConfig{
 		current:         Version,
 		repo:            "attson/atterm",
@@ -719,6 +726,10 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.updater != nil {
 		a.updater.Stop()
 	}
+	// Transfer jobs may hold their own SFTP channel references. Cancel them and
+	// wait for those references to close before retiring the shared browser and
+	// then the underlying SSH connections.
+	a.shutdownFileTransfers()
 	// End file browsing before the tunnels: an SFTP session holds a reference
 	// on the same per-host connection a tunnel does, so releasing it first is
 	// what lets stopAll actually close the login rather than leave it held by

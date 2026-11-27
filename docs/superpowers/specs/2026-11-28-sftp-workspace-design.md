@@ -149,8 +149,8 @@ func (a *App) ListFileTransfers() []FileTransferJob
 而不是要求用户先额外打开一次终端来写 known_hosts。
 
 任务事件通过 Wails `sftp:transfer-progress` 发布。事件包含 job id、阶段、当前相对路径、
-已处理/总字节、已处理/总条目、速度、错误摘要和终态。前端 mount 后先 List 再订阅，避免
-组件切换期间漏掉终态。
+已处理/总字节、已处理/总条目、速度、错误摘要和终态。前端 mount 后先订阅事件，再调用
+List 并按 job id/最新状态合并快照，避免订阅窗口或组件切换期间漏掉状态。
 
 ### 6.2 Endpoint 适配器
 

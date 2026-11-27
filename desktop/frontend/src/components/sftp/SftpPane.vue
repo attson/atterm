@@ -66,8 +66,15 @@ const remoteDeletePending = ref(false);
 const contextMenu = ref({ open: false, x: 0, y: 0 });
 
 watch(() => props.state, (next) => {
+  const cwdChanged = next.cwd !== paneState.value.cwd;
+  const sourceUnchanged = sameSource(next.source, paneState.value.source);
   paneState.value = cloneState(next);
   pathDraft.value = next.cwd;
+  // Parent bootstrap resolves the local home after this pane mounts. Reload
+  // that externally supplied cwd and supersede the speculative "/" request;
+  // child-originated navigation has already updated paneState, so it does not
+  // trigger a duplicate read when the emitted state comes back as a prop.
+  if (cwdChanged && sourceUnchanged) void loadDirectory();
 }, { deep: true });
 
 const shownEntries = computed(() => visibleEntries(entries.value, paneState.value));

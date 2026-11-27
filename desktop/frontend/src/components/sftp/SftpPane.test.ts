@@ -47,13 +47,17 @@ function setSFTPBindings(overrides: Partial<AppBindings> = {}) {
   } as unknown as AppBindings);
 }
 
-function mountPane(localFS: FileSystemBridge) {
+function mountPane(
+  localFS: FileSystemBridge,
+  state = createPaneState({ kind: "local" }, "/home/me"),
+  localHome = "/home/me",
+) {
   return mount(SftpPane, {
     props: {
-      state: createPaneState({ kind: "local" }, "/home/me"),
+      state,
       hosts,
       localFS,
-      localHome: "/home/me",
+      localHome,
     },
     global: {
       stubs: {
@@ -127,6 +131,33 @@ describe("SftpPane", () => {
     await wrapper.get('[data-test="query-input"]').setValue("Z.TXT");
     expect(wrapper.findAll('[data-test="file-row"]')).toHaveLength(1);
     expect(wrapper.get('[data-test="file-row"]').text()).toContain("z.txt");
+  });
+
+  it("reloads a parent-provided local cwd and ignores the stale initial request", async () => {
+    let rejectRoot!: (error: Error) => void;
+    const rootRequest = new Promise<never>((_resolve, reject) => { rejectRoot = reject; });
+    const listDirDetailed = vi.fn((path: string) => path === "/"
+      ? rootRequest
+      : Promise.resolve({
+          entries: [{ name: "Projects", isDir: true, size: 0, modTime: 1 }],
+          truncated: false,
+          total: 1,
+        }));
+    const wrapper = mountPane(
+      fakeFS({ listDirDetailed }),
+      createPaneState({ kind: "local" }, "/"),
+      "/home/me",
+    );
+
+    await wrapper.setProps({ state: createPaneState({ kind: "local" }, "/home/me") });
+    await flushPromises();
+    rejectRoot(new Error("plugin_fs: path forbidden: /"));
+    await flushPromises();
+
+    expect(listDirDetailed).toHaveBeenNthCalledWith(1, "/");
+    expect(listDirDetailed).toHaveBeenNthCalledWith(2, "/home/me");
+    expect(wrapper.find('[data-test="load-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="file-row"]').text()).toContain("Projects");
   });
 
   it("shows truncated and retryable failure states without changing the source or path", async () => {

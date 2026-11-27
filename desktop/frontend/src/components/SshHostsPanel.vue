@@ -14,6 +14,7 @@ import { useOptionalPlatform } from "../platform";
 import { sshCommandFor } from "../lib/sshCommand";
 import { allHostTags, hostHasAllTags, normalizeTags, parseTagInput } from "../lib/hostTags";
 import { fallbackCopyText } from "../lib/terminalCopy";
+import { matchesSSHHost, matchesSSHKey } from "../lib/sshListSearch";
 import { useI18n } from "../i18n/useI18n";
 import {
   listSSHHosts,
@@ -56,6 +57,7 @@ const hosts = ref<SSHHost[]>([]);
 const keys = ref<SSHKey[]>([]);
 const errorMsg = ref("");
 const query = ref("");
+const keyQuery = ref("");
 const connectingId = ref("");
 
 async function reload() {
@@ -121,15 +123,14 @@ const hostGroups = computed(() => {
   return [...groups].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name));
 });
 const filteredHosts = computed(() => {
-  const q = query.value.trim().toLowerCase();
+  const searching = query.value.trim() !== "";
   return hosts.value.filter((h) => {
-    if (h.group_path?.length) {
-      if (q ? !withinGroup(h.group_path, selectedGroupPath.value) : !sameGroupPath(h.group_path, selectedGroupPath.value)) return false;
-    } else if (!hostHasAllTags(h.tags, selectedGroupPath.value)) return false;
-    if (q === "") return true;
-    return `${h.alias ?? ""} ${h.host} ${h.user} ${(h.tags ?? []).join(" ")} ${(h.group_path ?? []).join(" ")}`.toLowerCase().includes(q);
+    if (searching) return matchesSSHHost(h, query.value);
+    if (h.group_path?.length) return sameGroupPath(h.group_path, selectedGroupPath.value);
+    return hostHasAllTags(h.tags, selectedGroupPath.value);
   }).sort((a, b) => (b.last_used_at ?? 0) - (a.last_used_at ?? 0));
 });
+const filteredKeys = computed(() => keys.value.filter((key) => matchesSSHKey(key, keyQuery.value)));
 function enterGroup(tag: string) {
   selectedGroupPath.value = [...selectedGroupPath.value, tag];
 }

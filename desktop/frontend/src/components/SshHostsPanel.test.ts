@@ -519,14 +519,14 @@ describe("SshHostsPanel 主机多 tag", () => {
     expect(wrapper.findAll('[data-test^="ssh-add-tag-chip-"]')).toHaveLength(1);
   });
 
-  it("分组内搜索无结果时显示空态并保留返回入口", async () => {
+  it("搜索时跨分组发现主机，清空后恢复当前分组", async () => {
     const wrapper = await mountWith([WEB, DB]);
     await wrapper.find('[data-test="ssh-tag-filter-web"]').trigger("click");
     await wrapper.find('[data-test="ssh-search"]').setValue("db-1");
-    expect(visibleAliases(wrapper)).toEqual([]);
-    expect(wrapper.find('[data-test="ssh-hosts-no-match"]').exists()).toBe(true);
-    await wrapper.find('[data-test="ssh-tag-filter-clear"]').trigger("click");
     expect(visibleAliases(wrapper)).toEqual(["db-1"]);
+    expect(wrapper.find('[data-test="ssh-tag-filter-clear"]').exists()).toBe(true);
+    await wrapper.find('[data-test="ssh-search"]').setValue("");
+    expect(visibleAliases(wrapper)).toEqual(["web-1"]);
   });
 });
 

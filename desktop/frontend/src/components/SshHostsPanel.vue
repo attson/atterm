@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
 import {
   Server, Plus, X, Pencil, Trash2, Search, KeyRound, Upload, FileUp, FileDown,
   Network, LayoutGrid, List, ArrowDownWideNarrow, Square, RefreshCw, Eye, EyeOff, Copy, Folder, ChevronRight, ChevronDown, ArrowLeft,
@@ -58,6 +58,8 @@ const keys = ref<SSHKey[]>([]);
 const errorMsg = ref("");
 const query = ref("");
 const keyQuery = ref("");
+const hostSearchInput = ref<HTMLInputElement | null>(null);
+const keySearchInput = ref<HTMLInputElement | null>(null);
 const connectingId = ref("");
 
 async function reload() {
@@ -1294,11 +1296,39 @@ async function confirmConfigImport() {
     configImporting.value = false;
   }
 }
+
+function onPanelKeydown(event: KeyboardEvent) {
+  if (activeTab.value !== "hosts" && activeTab.value !== "keys") return;
+  if (
+    hostDrawer.value || keyDrawer.value || tunnelDrawer.value ||
+    configImportDrawer.value || termiusDrawer.value || hostKey.value
+  ) return;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
+
+  const model = activeTab.value === "hosts" ? query : keyQuery;
+  if (event.key === "Escape") {
+    model.value = "";
+    event.preventDefault();
+    return;
+  }
+
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+  if (event.key.length !== 1) return;
+
+  model.value += event.key;
+  event.preventDefault();
+  void nextTick(() => {
+    const input = activeTab.value === "hosts" ? hostSearchInput.value : keySearchInput.value;
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  });
+}
 </script>
 
 <template>
   <div class="ssh-overlay" @click.self="$emit('close')">
-    <div class="ssh-shell">
+    <div class="ssh-shell" @keydown="onPanelKeydown">
       <!-- Header -->
       <header class="ssh-header">
         <div class="tabs">
@@ -1317,7 +1347,11 @@ async function confirmConfigImport() {
         </div>
         <div v-if="activeTab === 'hosts'" class="search">
           <Search :size="13" class="search-icon" />
-          <input v-model="query" data-test="ssh-search" :placeholder="t('ssh.filterPlaceholder')" spellcheck="false" autocomplete="off" />
+          <input ref="hostSearchInput" v-model="query" data-test="ssh-search" :placeholder="t('ssh.filterPlaceholder')" spellcheck="false" autocomplete="off" />
+        </div>
+        <div v-else-if="activeTab === 'keys'" class="search">
+          <Search :size="13" class="search-icon" />
+          <input ref="keySearchInput" v-model="keyQuery" data-test="ssh-key-search" :placeholder="t('ssh.keyFilterPlaceholder')" spellcheck="false" autocomplete="off" />
         </div>
         <div v-else class="search-spacer" />
         <button
@@ -1460,8 +1494,13 @@ async function confirmConfigImport() {
           <p class="empty-sub">{{ t("ssh.keys.emptySub") }}</p>
           <button class="new-btn ghost" @click="openNewKey"><Plus :size="14" /> {{ t("ssh.newKey") }}</button>
         </div>
+        <div v-else-if="filteredKeys.length === 0" class="empty" data-test="ssh-keys-no-match">
+          <KeyRound :size="40" class="empty-icon" />
+          <p class="empty-title">{{ t("ssh.keys.noMatchTitle") }}</p>
+          <p class="empty-sub">{{ t("ssh.keys.noMatchSub") }}</p>
+        </div>
         <div v-else class="card-grid">
-          <article v-for="k in keys" :key="k.id" class="card key-card" tabindex="0">
+          <article v-for="k in filteredKeys" :key="k.id" class="card key-card" tabindex="0">
             <div class="card-glyph"><KeyRound :size="16" /></div>
             <div class="card-main">
               <div class="card-label">{{ k.name }}</div>

@@ -311,6 +311,78 @@ describe("SshHostsPanel", () => {
   });
 });
 
+describe("SshHostsPanel type-to-search", () => {
+  it("routes printable keys to host search and focuses the field", async () => {
+    listSSHHosts.mockResolvedValue([
+      { id: "a", host: "alpha.example", user: "root", auth_kind: "password", alias: "Alpha" },
+      { id: "b", host: "beta.example", user: "root", auth_kind: "password", alias: "Beta" },
+    ]);
+    const wrapper = mount(SshHostsPanel, { attachTo: document.body });
+    await flushPromises();
+
+    await wrapper.get(".ssh-shell").trigger("keydown", { key: "b" });
+    await wrapper.vm.$nextTick();
+
+    const search = wrapper.get('[data-test="ssh-search"]');
+    expect((search.element as HTMLInputElement).value).toBe("b");
+    expect(document.activeElement).toBe(search.element);
+    expect(wrapper.findAll(".host-card").map((card) => card.text())).toEqual([
+      expect.stringContaining("Beta"),
+    ]);
+    wrapper.unmount();
+  });
+
+  it("keeps an independent key query and filters by key type", async () => {
+    listSSHKeys.mockResolvedValue([
+      { id: "ed", name: "Deploy", key_type: "ED25519" },
+      { id: "rsa", name: "Legacy", key_type: "RSA" },
+    ]);
+    const wrapper = mount(SshHostsPanel, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get('[data-test="ssh-tab-keys"]').trigger("click");
+
+    await wrapper.get(".ssh-shell").trigger("keydown", { key: "2" });
+    await wrapper.vm.$nextTick();
+
+    const search = wrapper.get('[data-test="ssh-key-search"]');
+    expect((search.element as HTMLInputElement).value).toBe("2");
+    expect(document.activeElement).toBe(search.element);
+    expect(wrapper.findAll(".key-card")).toHaveLength(1);
+    expect(wrapper.get(".key-card").text()).toContain("Deploy");
+    wrapper.unmount();
+  });
+
+  it("does not route text entered in a drawer field", async () => {
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.get('[data-test="ssh-tab-keys"]').trigger("click");
+    await wrapper.get('[data-test="ssh-key-new"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    const name = wrapper.get('[data-test="ssh-key-name"]');
+    await name.setValue("private");
+    await name.trigger("keydown", { key: "x" });
+
+    expect((wrapper.get('[data-test="ssh-key-search"]').element as HTMLInputElement).value).toBe("");
+    expect((name.element as HTMLInputElement).value).toBe("private");
+  });
+
+  it("Escape clears only the active tab query", async () => {
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.get('[data-test="ssh-search"]').setValue("host-filter");
+    await wrapper.get('[data-test="ssh-tab-keys"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-test="ssh-key-search"]').setValue("key-filter");
+
+    await wrapper.get(".ssh-shell").trigger("keydown", { key: "Escape" });
+
+    expect((wrapper.get('[data-test="ssh-key-search"]').element as HTMLInputElement).value).toBe("");
+    await wrapper.get('[data-test="ssh-tab-hosts"]').trigger("click");
+    expect((wrapper.get('[data-test="ssh-search"]').element as HTMLInputElement).value).toBe("host-filter");
+  });
+});
+
 describe("SshHostsPanel 分组层级", () => {
   it("分组内也按最近成功使用时间倒序展示主机", async () => {
     listSSHHosts.mockResolvedValue([

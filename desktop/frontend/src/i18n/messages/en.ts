@@ -354,6 +354,7 @@ export const en = {
     tabHosts: "Hosts",
     tabKeys: "Keys",
     filterPlaceholder: "Filter hosts…",
+    keyFilterPlaceholder: "Search keys…",
     newHost: "New Host",
     newKey: "New Key",
     edit: "Edit",
@@ -381,6 +382,8 @@ export const en = {
     keys: {
       emptyTitle: "No keys yet",
       emptySub: "Add a private key here, then reference it from a host.",
+      noMatchTitle: "No matching keys",
+      noMatchSub: "Try a different name or key type.",
       typeLabel: "Type {type}",
       genericSubtitle: "SSH key",
     },

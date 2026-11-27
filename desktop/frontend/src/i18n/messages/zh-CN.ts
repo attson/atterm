@@ -352,6 +352,7 @@ export const zhCN = {
     tabHosts: "主机",
     tabKeys: "密钥",
     filterPlaceholder: "筛选主机…",
+    keyFilterPlaceholder: "搜索密钥…",
     newHost: "新建主机",
     newKey: "新建密钥",
     edit: "编辑",
@@ -378,6 +379,8 @@ export const zhCN = {
     keys: {
       emptyTitle: "还没有密钥",
       emptySub: "先在这里添加私钥，再在主机里引用它。",
+      noMatchTitle: "没有匹配的密钥",
+      noMatchSub: "尝试其他名称或密钥类型。",
       typeLabel: "类型 {type}",
       genericSubtitle: "SSH 密钥",
     },

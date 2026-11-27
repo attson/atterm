@@ -326,3 +326,142 @@ func TestFileTransferManagerCancellationAndShutdownReleaseEndpointsOnce(t *testi
 		t.Fatal("Cancel accepted an unknown job id")
 	}
 }
+
+func TestFileTransferManagerPreservesHostKeyPromptOnAsyncOpenFailure(t *testing.T) {
+	recorder := newTransferEventRecorder()
+	factory := func(_ context.Context, _ FileEndpoint, _ transferHostKeyAcceptance) (transferEndpoint, error) {
+		return nil, &HostKeyUnknownError{
+			Host:        "jump.example:22",
+			Fingerprint: "SHA256:jump",
+			HopIndex:    1,
+			HopName:     "jump",
+		}
+	}
+	m := newFileTransferManager(context.Background(), factory, recorder.emit)
+	t.Cleanup(m.Shutdown)
+
+	id, err := m.Start(fileTransferRequest{
+		Source:         FileEndpoint{Kind: "ssh", HostID: "source"},
+		Destination:    FileEndpoint{Kind: "local"},
+		Paths:          []string{"/from/a.txt"},
+		DestinationDir: "/to",
+		Conflict:       conflictSkip,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := waitForTransferStates(t, recorder, []string{id})[id]
+	if terminal.HostKey == nil {
+		t.Fatalf("terminal job = %+v, want a structured host-key prompt", terminal)
+	}
+	if terminal.HostKey.Host != "jump.example:22" || terminal.HostKey.Fingerprint != "SHA256:jump" ||
+		terminal.HostKey.HopIndex != 1 || terminal.HostKey.HopName != "jump" {
+		t.Fatalf("host-key prompt = %+v", terminal.HostKey)
+	}
+}
+
+func TestFileTransferManagerRetriesFailedJobFromRetainedRequest(t *testing.T) {
+	recorder := newTransferEventRecorder()
+	var attempts atomic.Int32
+	var gotAccepted transferHostKeyAcceptance
+	factory := func(_ context.Context, endpoint FileEndpoint, accepted transferHostKeyAcceptance) (transferEndpoint, error) {
+		if endpoint.ID() == "ssh:source" {
+			gotAccepted = accepted
+			if attempts.Add(1) == 1 {
+				return nil, errors.New("temporary network failure")
+			}
+			source := newFakeTransferEndpoint("ssh:source")
+			source.nodes["/from.txt"] = &fakeTransferNode{kind: transferFile, data: []byte("data")}
+			return source, nil
+		}
+		destination := newFakeTransferEndpoint("local")
+		destination.nodes["/to"] = &fakeTransferNode{kind: transferDir}
+		return destination, nil
+	}
+	m := newFileTransferManager(context.Background(), factory, recorder.emit)
+	t.Cleanup(m.Shutdown)
+
+	paths := []string{"/from.txt"}
+	id, err := m.Start(fileTransferRequest{
+		Source: FileEndpoint{Kind: "ssh", HostID: "source"}, Destination: FileEndpoint{Kind: "local"},
+		Paths: paths, DestinationDir: "/to", Conflict: conflictSkip,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths[0] = "/mutated-after-start"
+	if got := waitForTransferStates(t, recorder, []string{id})[id].State; got != fileTransferFailed {
+		t.Fatalf("first state = %q, want failed", got)
+	}
+
+	retryID, err := m.Retry(id, transferHostKeyAcceptance{Host: "source:22", Fingerprint: "SHA256:source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retryID == id {
+		t.Fatal("retry reused the failed job id")
+	}
+	terminal := waitForTransferStates(t, recorder, []string{retryID})[retryID]
+	if terminal.State != fileTransferCompleted {
+		t.Fatalf("retry state = %q, want completed (%s)", terminal.State, terminal.Error)
+	}
+	if gotAccepted.Host != "source:22" || gotAccepted.Fingerprint != "SHA256:source" {
+		t.Fatalf("retry accepted host key = %+v", gotAccepted)
+	}
+}
+
+func TestFileTransferManagerMarksCredentialFailureWithEndpointHost(t *testing.T) {
+	recorder := newTransferEventRecorder()
+	factory := func(_ context.Context, endpoint FileEndpoint, _ transferHostKeyAcceptance) (transferEndpoint, error) {
+		if endpoint.ID() == "ssh:source" {
+			return nil, errors.New(errCredentialMissing)
+		}
+		return nil, errors.New("unexpected endpoint")
+	}
+	m := newFileTransferManager(context.Background(), factory, recorder.emit)
+	t.Cleanup(m.Shutdown)
+	id, err := m.Start(fileTransferRequest{
+		Source: FileEndpoint{Kind: "ssh", HostID: "source"}, Destination: FileEndpoint{Kind: "local"},
+		Paths: []string{"/from.txt"}, DestinationDir: "/to", Conflict: conflictSkip,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := waitForTransferStates(t, recorder, []string{id})[id]
+	if terminal.CredentialHostID != "source" {
+		t.Fatalf("credential host id = %q, want source", terminal.CredentialHostID)
+	}
+}
+
+func TestFileTransferManagerShutdownIsBoundedWhenFactoryIgnoresContext(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	factory := func(_ context.Context, _ FileEndpoint, _ transferHostKeyAcceptance) (transferEndpoint, error) {
+		close(started)
+		<-release
+		return nil, errors.New("released")
+	}
+	m := newFileTransferManager(context.Background(), factory, nil)
+	m.shutdownTimeout = 20 * time.Millisecond
+	if _, err := m.Start(fileTransferRequest{
+		Source: FileEndpoint{Kind: "local"}, Destination: FileEndpoint{Kind: "local"},
+		Paths: []string{"/from"}, DestinationDir: "/to", Conflict: conflictSkip,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		m.Shutdown()
+		close(shutdownDone)
+	}()
+	select {
+	case <-shutdownDone:
+	case <-time.After(200 * time.Millisecond):
+		close(release)
+		<-shutdownDone
+		t.Fatal("Shutdown waited indefinitely for an endpoint factory that ignored cancellation")
+	}
+	close(release)
+}

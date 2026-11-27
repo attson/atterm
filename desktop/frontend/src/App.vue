@@ -416,6 +416,22 @@ watch(isAdmin, (v) => {
 const quitDialogOpen = ref(false);
 const showSshDialog = ref(false);
 const showSshHosts = ref(false);
+const sshHostEditID = ref("");
+
+function openSshHosts() {
+  sshHostEditID.value = "";
+  showSshHosts.value = true;
+}
+
+function openSshHostEditor(hostID: string) {
+  sshHostEditID.value = hostID;
+  showSshHosts.value = true;
+}
+
+function closeSshHosts() {
+  showSshHosts.value = false;
+  sshHostEditID.value = "";
+}
 let quitListenerOff: (() => void) | null = null;
 let notificationClickListenerOff: (() => void) | null = null;
 let widgetActivateListenerOff: (() => void) | null = null;
@@ -1317,6 +1333,7 @@ function openSshTab(sessionId: string) {
 function onSshConnected(sessionId: string) {
   showSshDialog.value = false;
   showSshHosts.value = false;
+  sshHostEditID.value = "";
   openSshTab(sessionId);
 }
 
@@ -2070,7 +2087,7 @@ defineExpose({ me });
       @detach-session="onDetachSessionToTab"
       @close="requestCloseTab"
       @new="startNewTab"
-      @new-ssh="showSshHosts = true"
+      @new-ssh="openSshHosts"
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
       @toggle-admin="toggleAdminView"
@@ -2111,6 +2128,8 @@ defineExpose({ me });
           :is="props.sftpWorkspace"
           v-if="sftpAvailable && sftpVisited"
           v-show="mainView === 'sftp'"
+          :active="mainView === 'sftp'"
+          @edit-host="openSshHostEditor"
           class="sftp-main"
         />
         <template v-if="mainView === 'terminal' && (localEndpoint || remoteEndpoint || mountedTabs.length > 0)">
@@ -2193,8 +2212,9 @@ defineExpose({ me });
     />
     <SshHostsPanel
       v-if="showSshHosts"
+      :edit-host-id="sshHostEditID || undefined"
       @connected="onSshConnected"
-      @close="showSshHosts = false"
+      @close="closeSshHosts"
     />
     <ConfirmQuitDialog
       v-if="quitDialogOpen"

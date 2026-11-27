@@ -71,6 +71,7 @@ export const en = {
     failed: "Failed",
     cancelled: "Cancelled",
     cancelTransfer: "Cancel transfer",
+    editHost: "Edit SSH host credentials",
     hostKeyTitle: "Unknown SSH host key",
     hostKeyPrompt: "Verify this fingerprint before continuing.",
     rejectHostKey: "Reject",

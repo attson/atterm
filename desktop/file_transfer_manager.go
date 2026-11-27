@@ -22,6 +22,7 @@ const (
 
 	fileTransferMaxConcurrent = 2
 	fileTransferEmitInterval  = 100 * time.Millisecond
+	fileTransferShutdownWait  = 5 * time.Second
 )
 
 type FileEndpoint struct {
@@ -37,15 +38,24 @@ func (e FileEndpoint) ID() string {
 }
 
 type FileTransferJob struct {
-	ID           string   `json:"id"`
-	State        string   `json:"state"`
-	CurrentPath  string   `json:"current_path"`
-	Error        string   `json:"error,omitempty"`
-	BytesDone    int64    `json:"bytes_done"`
-	BytesTotal   int64    `json:"bytes_total"`
-	EntriesDone  int      `json:"entries_done"`
-	EntriesTotal int      `json:"entries_total"`
-	Warnings     []string `json:"warnings"`
+	ID               string                     `json:"id"`
+	State            string                     `json:"state"`
+	CurrentPath      string                     `json:"current_path"`
+	Error            string                     `json:"error,omitempty"`
+	BytesDone        int64                      `json:"bytes_done"`
+	BytesTotal       int64                      `json:"bytes_total"`
+	EntriesDone      int                        `json:"entries_done"`
+	EntriesTotal     int                        `json:"entries_total"`
+	Warnings         []string                   `json:"warnings"`
+	HostKey          *FileTransferHostKeyPrompt `json:"host_key,omitempty"`
+	CredentialHostID string                     `json:"credential_host_id,omitempty"`
+}
+
+type FileTransferHostKeyPrompt struct {
+	Fingerprint string `json:"fingerprint"`
+	Host        string `json:"host"`
+	HopIndex    int    `json:"hop_index"`
+	HopName     string `json:"hop_name"`
 }
 
 type transferHostKeyAcceptance struct {
@@ -80,11 +90,12 @@ type fileTransferManager struct {
 	emit   func(FileTransferJob)
 	sem    chan struct{}
 
-	mu     sync.Mutex
-	jobs   map[string]*fileTransferRecord
-	order  []string
-	closed bool
-	wg     sync.WaitGroup
+	mu              sync.Mutex
+	jobs            map[string]*fileTransferRecord
+	order           []string
+	closed          bool
+	wg              sync.WaitGroup
+	shutdownTimeout time.Duration
 
 	shutdownOnce sync.Once
 }
@@ -95,13 +106,14 @@ func newFileTransferManager(parent context.Context, open transferEndpointFactory
 	}
 	ctx, cancel := context.WithCancel(parent)
 	return &fileTransferManager{
-		ctx:    ctx,
-		cancel: cancel,
-		open:   open,
-		emit:   emit,
-		sem:    make(chan struct{}, fileTransferMaxConcurrent),
-		jobs:   map[string]*fileTransferRecord{},
-		order:  []string{},
+		ctx:             ctx,
+		cancel:          cancel,
+		open:            open,
+		emit:            emit,
+		sem:             make(chan struct{}, fileTransferMaxConcurrent),
+		jobs:            map[string]*fileTransferRecord{},
+		order:           []string{},
+		shutdownTimeout: fileTransferShutdownWait,
 	}
 }
 
@@ -112,6 +124,7 @@ func (m *fileTransferManager) Start(req fileTransferRequest) (string, error) {
 	if m.open == nil {
 		return "", errors.New("file transfer manager has no endpoint factory")
 	}
+	req = cloneFileTransferRequest(req)
 
 	m.mu.Lock()
 	if m.closed {
@@ -215,13 +228,13 @@ func (m *fileTransferManager) run(record *fileTransferRecord) {
 
 	source, err := m.open(record.ctx, record.req.Source, record.req.AcceptedHostKey)
 	if err != nil {
-		m.finish(record, transferResultForError(record.ctx, err))
+		m.finish(record, transferResultForEndpointError(record.ctx, record.req.Source, err))
 		return
 	}
 	destination, err := m.open(record.ctx, record.req.Destination, record.req.AcceptedHostKey)
 	if err != nil {
 		_ = source.Close()
-		m.finish(record, transferResultForError(record.ctx, err))
+		m.finish(record, transferResultForEndpointError(record.ctx, record.req.Destination, err))
 		return
 	}
 
@@ -244,7 +257,26 @@ func transferResultForError(ctx context.Context, err error) FileTransferResult {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return FileTransferResult{State: fileTransferCancelled, Warnings: []string{}}
 	}
-	return FileTransferResult{State: fileTransferFailed, Error: err.Error(), Warnings: []string{}}
+	result := FileTransferResult{State: fileTransferFailed, Error: err.Error(), Warnings: []string{}}
+	var hostKey *HostKeyUnknownError
+	if errors.As(err, &hostKey) {
+		result.HostKey = &FileTransferHostKeyPrompt{
+			Fingerprint: hostKey.Fingerprint,
+			Host:        hostKey.Host,
+			HopIndex:    hostKey.HopIndex,
+			HopName:     hostKey.HopName,
+		}
+	}
+	return result
+}
+
+func transferResultForEndpointError(ctx context.Context, endpoint FileEndpoint, err error) FileTransferResult {
+	result := transferResultForError(ctx, err)
+	if result.State == fileTransferFailed && endpoint.Kind == "ssh" &&
+		(err.Error() == errCredentialMissing || err.Error() == errKeyMissing) {
+		result.CredentialHostID = endpoint.HostID
+	}
+	return result
 }
 
 func (m *fileTransferManager) markRunning(record *fileTransferRecord) bool {
@@ -304,6 +336,8 @@ func (m *fileTransferManager) finish(record *fileTransferRecord, result FileTran
 	record.job.State = state
 	record.job.Error = result.Error
 	record.job.Warnings = append([]string{}, result.Warnings...)
+	record.job.HostKey = cloneFileTransferHostKeyPrompt(result.HostKey)
+	record.job.CredentialHostID = result.CredentialHostID
 	if state == fileTransferCompleted {
 		record.job.CurrentPath = ""
 	}
@@ -329,6 +363,25 @@ func (m *fileTransferManager) Cancel(id string) error {
 	return nil
 }
 
+func (m *fileTransferManager) Retry(id string, accepted transferHostKeyAcceptance) (string, error) {
+	m.mu.Lock()
+	record, ok := m.jobs[id]
+	if !ok {
+		m.mu.Unlock()
+		return "", fmt.Errorf("no such file transfer: %s", id)
+	}
+	if !record.terminal || record.job.State != fileTransferFailed {
+		m.mu.Unlock()
+		return "", fmt.Errorf("file transfer is not retryable: %s", id)
+	}
+	req := cloneFileTransferRequest(record.req)
+	m.mu.Unlock()
+	if accepted.Host != "" && accepted.Fingerprint != "" {
+		req.AcceptedHostKey = accepted
+	}
+	return m.Start(req)
+}
+
 func (m *fileTransferManager) List() []FileTransferJob {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -352,7 +405,19 @@ func (m *fileTransferManager) Shutdown() {
 			}
 		}
 		m.mu.Unlock()
-		m.wg.Wait()
+		done := make(chan struct{})
+		go func() {
+			m.wg.Wait()
+			close(done)
+		}()
+		timeout := m.shutdownTimeout
+		if timeout <= 0 {
+			timeout = fileTransferShutdownWait
+		}
+		select {
+		case <-done:
+		case <-time.After(timeout):
+		}
 	})
 }
 
@@ -364,7 +429,21 @@ func (m *fileTransferManager) emitJob(job FileTransferJob) {
 
 func cloneFileTransferJob(job FileTransferJob) FileTransferJob {
 	job.Warnings = append([]string{}, job.Warnings...)
+	job.HostKey = cloneFileTransferHostKeyPrompt(job.HostKey)
 	return job
+}
+
+func cloneFileTransferRequest(req fileTransferRequest) fileTransferRequest {
+	req.Paths = append([]string(nil), req.Paths...)
+	return req
+}
+
+func cloneFileTransferHostKeyPrompt(prompt *FileTransferHostKeyPrompt) *FileTransferHostKeyPrompt {
+	if prompt == nil {
+		return nil
+	}
+	copy := *prompt
+	return &copy
 }
 
 func isFileTransferTerminal(state string) bool {

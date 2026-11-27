@@ -280,6 +280,13 @@ export interface StartFileTransferReq {
 
 export type FileTransferState = "queued" | "running" | "completed" | "failed" | "cancelled";
 
+export interface FileTransferHostKeyPrompt {
+  fingerprint: string;
+  host: string;
+  hop_index: number;
+  hop_name: string;
+}
+
 export interface FileTransferJob {
   id: string;
   state: FileTransferState;
@@ -290,6 +297,8 @@ export interface FileTransferJob {
   entries_done: number;
   entries_total: number;
   warnings: string[];
+  host_key?: FileTransferHostKeyPrompt;
+  credential_host_id?: string;
 }
 
 // SSHCredential mirrors desktop sshCredential — only a password now; private
@@ -857,6 +866,7 @@ export interface AppBindings {
   ListSFTPHosts(): Promise<SSHHost[]>;
   OpenSFTPSource(hostID: string, accepted: AcceptedHostKey): Promise<SFTPSourceInfo>;
   StartFileTransfer(req: StartFileTransferReq): Promise<string>;
+  RetryFileTransfer(id: string, accepted: AcceptedHostKey): Promise<string>;
   CancelFileTransfer(id: string): Promise<void>;
   ListFileTransfers(): Promise<FileTransferJob[]>;
   SFTPListDir(hostID: string, path: string): Promise<SFTPListing>;

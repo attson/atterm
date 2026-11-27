@@ -34,6 +34,12 @@ func (a *App) CancelFileTransfer(id string) error {
 	return a.fileTransferManager().Cancel(id)
 }
 
+func (a *App) RetryFileTransfer(id string, accepted AcceptedHostKey) (string, error) {
+	return a.fileTransferManager().Retry(id, transferHostKeyAcceptance{
+		Host: accepted.Host, Fingerprint: accepted.Fingerprint,
+	})
+}
+
 func (a *App) ListFileTransfers() []FileTransferJob {
 	return a.fileTransferManager().List()
 }
@@ -55,7 +61,10 @@ func (a *App) fileTransferManager() *fileTransferManager {
 	return a.fileTransfers
 }
 
-func (a *App) openFileTransferEndpoint(_ context.Context, endpoint FileEndpoint, accepted transferHostKeyAcceptance) (transferEndpoint, error) {
+func (a *App) openFileTransferEndpoint(ctx context.Context, endpoint FileEndpoint, accepted transferHostKeyAcceptance) (transferEndpoint, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	switch endpoint.Kind {
 	case "local":
 		if a.pluginFS == nil || a.pluginFS.access == nil {
@@ -63,7 +72,7 @@ func (a *App) openFileTransferEndpoint(_ context.Context, endpoint FileEndpoint,
 		}
 		return newLocalTransferEndpoint(a.pluginFS.access), nil
 	case "ssh":
-		return a.newSFTPTransferEndpoint(endpoint.HostID, AcceptedHostKey{
+		return a.newSFTPTransferEndpoint(ctx, endpoint.HostID, AcceptedHostKey{
 			Host:        accepted.Host,
 			Fingerprint: accepted.Fingerprint,
 		})

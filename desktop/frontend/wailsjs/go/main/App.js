@@ -598,6 +598,10 @@ export function RestoreSessionInputHistory(arg1, arg2) {
   return window['go']['main']['App']['RestoreSessionInputHistory'](arg1, arg2);
 }
 
+export function RetryFileTransfer(arg1, arg2) {
+  return window['go']['main']['App']['RetryFileTransfer'](arg1, arg2);
+}
+
 export function RevealSSHKey(arg1) {
   return window['go']['main']['App']['RevealSSHKey'](arg1);
 }

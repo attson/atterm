@@ -135,9 +135,10 @@ func (e *localTransferEndpoint) CreateStagedWriter(ctx context.Context, name str
 		return nil, err
 	}
 	return &localStagedWriter{
-		file:   newLocalWatchedFile(ctx, file),
-		tmp:    file.Name(),
-		target: target,
+		file:        newLocalWatchedFile(ctx, file),
+		tmp:         file.Name(),
+		target:      target,
+		replaceFile: replaceLocalFileAtomically,
 	}, nil
 }
 
@@ -200,9 +201,10 @@ func (f *localWatchedFile) Close() error {
 }
 
 type localStagedWriter struct {
-	file   *localWatchedFile
-	tmp    string
-	target string
+	file        *localWatchedFile
+	tmp         string
+	target      string
+	replaceFile func(string, string) error
 
 	finishOne sync.Once
 	finishErr error
@@ -241,14 +243,11 @@ func (w *localStagedWriter) commit(ctx context.Context, replace bool) error {
 		}
 		return os.Remove(w.tmp)
 	}
-	if err := os.Rename(w.tmp, w.target); err == nil {
-		return nil
+	replaceFile := w.replaceFile
+	if replaceFile == nil {
+		replaceFile = replaceLocalFileAtomically
 	}
-	if err := os.Remove(w.target); err != nil && !errors.Is(err, os.ErrNotExist) {
-		_ = os.Remove(w.tmp)
-		return err
-	}
-	if err := os.Rename(w.tmp, w.target); err != nil {
+	if err := replaceFile(w.tmp, w.target); err != nil {
 		_ = os.Remove(w.tmp)
 		return err
 	}

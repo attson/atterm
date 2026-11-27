@@ -249,6 +249,13 @@ func (a *App) dialTunnelConnWithHostKey(h SSHHost, accepted acceptedHostKey) (*j
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	return a.dialTunnelConnWithHostKeyContext(ctx, h, accepted)
+}
+
+func (a *App) dialTunnelConnWithHostKeyContext(ctx context.Context, h SSHHost, accepted acceptedHostKey) (*jumpChain, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return a.dialThroughJumps(ctx, h, accepted)
 }
 
@@ -718,12 +725,24 @@ func (m *tunnelManager) serveRemoteConn(t *tunnel, remote net.Conn) {
 // acquireConn returns the host's shared connection, dialing it if this is the
 // first rule to need it. The caller owns exactly one reference on success.
 func (m *tunnelManager) acquireConn(hostID string, dial func() (*jumpChain, error)) (*hostConn, error) {
+	return m.acquireConnContext(context.Background(), hostID, dial)
+}
+
+func (m *tunnelManager) acquireConnContext(ctx context.Context, hostID string, dial func() (*jumpChain, error)) (*hostConn, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	m.mu.Lock()
 	m.ensureLocked()
 	if hc, ok := m.conns[hostID]; ok {
 		hc.refs++
 		m.mu.Unlock()
-		<-hc.ready // a concurrent first starter may still be dialing
+		select {
+		case <-hc.ready: // a concurrent first starter may still be dialing
+		case <-ctx.Done():
+			m.releaseConn(hostID, hc)
+			return nil, ctx.Err()
+		}
 		if hc.err != nil {
 			m.releaseConn(hostID, hc)
 			return nil, hc.err

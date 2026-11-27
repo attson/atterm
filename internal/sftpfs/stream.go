@@ -202,8 +202,10 @@ func (w *stagedWriter) commit(ctx context.Context, replace bool) error {
 		if w.client.posixRename {
 			return w.client.sc.PosixRename(w.tmp, w.target)
 		}
-		if removeErr := w.client.sc.Remove(w.target); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return removeErr
+		if _, statErr := w.client.sc.Lstat(w.target); statErr == nil {
+			return ErrAtomicReplace
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
 		}
 		return w.client.sc.Rename(w.tmp, w.target)
 	})

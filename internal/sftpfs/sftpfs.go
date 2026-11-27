@@ -110,6 +110,7 @@ var (
 	ErrNotFound      = errors.New("not_found")
 	ErrIsDirectory   = errors.New("is_directory")
 	ErrNotADirectory = errors.New("not_a_directory")
+	ErrAtomicReplace = errors.New("atomic_replace_unsupported")
 	ErrPathRelative  = errors.New("sftpfs: path must be absolute")
 )
 
@@ -675,6 +676,9 @@ func (c *Client) WriteFile(ctx context.Context, name string, data []byte, expect
 		default:
 			return statErr
 		}
+		if existed && !c.posixRename {
+			return ErrAtomicReplace
+		}
 
 		// Every write_denied below names the target rather than the staging file
 		// it may literally have failed on. That is deliberate: the staging file
@@ -708,16 +712,6 @@ func (c *Client) WriteFile(ctx context.Context, name string, data []byte, expect
 			}
 		} else if c.posixRename {
 			if err := c.sc.PosixRename(tmp, p); err != nil {
-				return fmt.Errorf("write_denied: %w", err)
-			}
-		} else {
-			// No atomic overwrite available. Unlink first, accepting a narrow
-			// window where the path does not exist; the alternative is not
-			// supporting overwrite at all on those servers.
-			if err := c.sc.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("write_denied: %w", err)
-			}
-			if err := c.sc.Rename(tmp, p); err != nil {
 				return fmt.Errorf("write_denied: %w", err)
 			}
 		}

@@ -303,6 +303,8 @@ export function RemoveKnownHost(arg1:string):Promise<void>;
 
 export function RestoreSessionInputHistory(arg1:string,arg2:string):Promise<void>;
 
+export function RetryFileTransfer(arg1:string,arg2:main.AcceptedHostKey):Promise<string>;
+
 export function RevealSSHKey(arg1:string):Promise<main.SSHKeySecret>;
 
 export function RevokePeerInvitation(arg1:string):Promise<void>;

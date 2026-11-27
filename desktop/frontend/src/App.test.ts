@@ -1338,7 +1338,11 @@ describe("admin view (main-area swap)", () => {
   function mountAdminApp() {
     return mount(App, {
       props: {
-        sftpWorkspace: markRaw(defineComponent({ template: `<div data-testid="sftp-workspace-stub" />` })),
+        sftpWorkspace: markRaw(defineComponent({
+          props: { active: Boolean },
+          emits: ["edit-host"],
+          template: `<div data-testid="sftp-workspace-stub" :data-active="active"><button data-testid="sftp-edit-host" @click="$emit('edit-host', 'host-2')">edit</button></div>`,
+        })),
       },
       global: {
         stubs: {
@@ -1349,6 +1353,10 @@ describe("admin view (main-area swap)", () => {
           ShortcutHints: true,
           PaneGrid: { template: `<div data-testid="pane-grid-stub" />` },
           AdminPanel: { template: `<div data-testid="admin-panel-stub" />` },
+          SshHostsPanel: {
+            props: ["editHostId"],
+            template: `<div data-testid="ssh-hosts-panel-stub" :data-edit-host-id="editHostId" />`,
+          },
           TabBar: tabBarStub,
         },
       },
@@ -1411,7 +1419,8 @@ describe("admin view (main-area swap)", () => {
     await wrapper.get('[data-testid="toggle-sftp"]').trigger("click");
     await flushPromises();
 
-    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').isVisible()).toBe(true);
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("data-active")).toBe("true");
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("style") ?? "").not.toContain("display: none");
     expect(wrapper.find('[data-testid="task-sidebar-stub"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="plugin-host-stub"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
@@ -1419,8 +1428,21 @@ describe("admin view (main-area swap)", () => {
     await wrapper.get('[data-testid="activate-session-tab"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-testid="sftp-workspace-stub"]').exists()).toBe(true);
-    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').isVisible()).toBe(false);
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("data-active")).toBe("false");
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("style")).toContain("display: none");
     expect(wrapper.find('[data-testid="task-sidebar-stub"]').exists()).toBe(true);
+  });
+
+  it("opens the exact SSH host editor requested by a failed SFTP job", async () => {
+    const platform = createFakePlatform();
+    __setPlatformForTests(platform);
+    const wrapper = mountAdminApp();
+    await flushPromises();
+    await wrapper.get('[data-testid="toggle-sftp"]').trigger("click");
+    await wrapper.get('[data-testid="sftp-edit-host"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="ssh-hosts-panel-stub"]').attributes("data-edit-host-id")).toBe("host-2");
   });
 
   it("opening admin closes the SFTP view", async () => {
@@ -1434,7 +1456,8 @@ describe("admin view (main-area swap)", () => {
     await wrapper.get('[data-testid="toggle-admin"]').trigger("click");
     await flushPromises();
     expect(wrapper.get('[data-testid="admin-panel-stub"]').isVisible()).toBe(true);
-    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').isVisible()).toBe(false);
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("data-active")).toBe("false");
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("style")).toContain("display: none");
   });
 
   it("isAdmin transitioning true -> false auto-resets adminViewOpen", async () => {

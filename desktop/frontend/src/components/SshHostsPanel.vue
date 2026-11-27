@@ -47,6 +47,7 @@ const emit = defineEmits<{
   (e: "connected", sessionId: string): void;
   (e: "close"): void;
 }>();
+const props = defineProps<{ editHostId?: string }>();
 
 const { t } = useI18n();
 
@@ -81,10 +82,16 @@ const FORWARD_POLL_MS = 3000;
 let forwardsPoll: ReturnType<typeof setInterval> | undefined;
 let stopNativeFileDrop: (() => void) | undefined;
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener("dragover", swallowStrayDrag);
   window.addEventListener("drop", swallowStrayDrag);
-  void reload();
+  try {
+    await reload();
+    const requested = props.editHostId ? hosts.value.find((host) => host.id === props.editHostId) : undefined;
+    if (requested) openEditHost(requested);
+  } catch (error) {
+    errorMsg.value = error instanceof Error ? error.message : String(error);
+  }
   void refreshActiveForwards();
   forwardsPoll = setInterval(() => void refreshActiveForwards(), FORWARD_POLL_MS);
   const nativeDrop = useOptionalPlatform()?.nativeFileDrop;

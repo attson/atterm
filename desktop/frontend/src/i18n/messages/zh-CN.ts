@@ -73,6 +73,7 @@ export const zhCN = {
     failed: "失败",
     cancelled: "已取消",
     cancelTransfer: "取消传输",
+    editHost: "编辑 SSH 主机凭据",
     hostKeyTitle: "未知 SSH 主机密钥",
     hostKeyPrompt: "继续前请核对该指纹。",
     rejectHostKey: "拒绝",

@@ -42,6 +42,17 @@ func TestLocalTransferEndpointRejectsOutsideAllowRoots(t *testing.T) {
 	}
 }
 
+func TestOpenFileTransferEndpointRejectsCancelledContext(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a := &App{pluginFS: &PluginFS{access: newFSAccess([]string{root}, false)}}
+
+	if endpoint, err := a.openFileTransferEndpoint(ctx, FileEndpoint{Kind: "local"}, transferHostKeyAcceptance{}); !errors.Is(err, context.Canceled) || endpoint != nil {
+		t.Fatalf("openFileTransferEndpoint = (%v, %v), want nil, context.Canceled", endpoint, err)
+	}
+}
+
 func TestLocalTransferEndpointStagedWriterDoesNotReplaceWithoutConsent(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target")
@@ -59,6 +70,42 @@ func TestLocalTransferEndpointStagedWriterDoesNotReplaceWithoutConsent(t *testin
 	}
 	if err := w.Commit(context.Background(), false); !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("Commit error = %v, want ErrAlreadyExists", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old" {
+		t.Fatalf("target = %q, want old", data)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, ".atterm-transfer-*.partial"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("partial files left behind: %v", matches)
+	}
+}
+
+func TestLocalTransferEndpointAtomicReplaceFailurePreservesOriginal(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ep := newLocalTransferEndpoint(newFSAccess([]string{root}, false))
+
+	w, err := ep.CreateStagedWriter(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := w.(*localStagedWriter)
+	staged.replaceFile = func(_, _ string) error { return errors.New("publish failed") }
+	if _, err := io.WriteString(w, "new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(context.Background(), true); err == nil {
+		t.Fatal("Commit succeeded after the atomic replace failed")
 	}
 	data, err := os.ReadFile(target)
 	if err != nil {

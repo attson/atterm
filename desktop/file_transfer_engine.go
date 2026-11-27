@@ -68,9 +68,11 @@ type FileTransferProgress struct {
 }
 
 type FileTransferResult struct {
-	State    string   `json:"state"`
-	Error    string   `json:"error,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
+	State            string                     `json:"state"`
+	Error            string                     `json:"error,omitempty"`
+	Warnings         []string                   `json:"warnings,omitempty"`
+	HostKey          *FileTransferHostKeyPrompt `json:"host_key,omitempty"`
+	CredentialHostID string                     `json:"credential_host_id,omitempty"`
 }
 
 func buildTransferManifest(ctx context.Context, src transferEndpoint, paths []string) ([]transferEntry, error) {

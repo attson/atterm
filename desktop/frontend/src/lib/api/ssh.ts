@@ -142,6 +142,10 @@ export function startFileTransfer(request: StartFileTransferReq): Promise<string
   return bindings().StartFileTransfer(request);
 }
 
+export function retryFileTransfer(id: string, accepted: AcceptedHostKey = ACCEPT_NO_HOST_KEY): Promise<string> {
+  return bindings().RetryFileTransfer(id, accepted);
+}
+
 export function cancelFileTransfer(id: string): Promise<void> {
   return bindings().CancelFileTransfer(id);
 }

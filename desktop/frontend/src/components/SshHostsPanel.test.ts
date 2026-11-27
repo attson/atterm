@@ -93,6 +93,17 @@ describe("SshHostsPanel", () => {
     expect(wrapper.text()).toContain("box");
   });
 
+  it("opens the requested saved host directly in the edit drawer", async () => {
+    listSSHHosts.mockResolvedValueOnce([
+      { id: "target", host: "target.example", user: "deploy", auth_kind: "password", alias: "Target" },
+    ]);
+    const wrapper = mount(SshHostsPanel, { props: { editHostId: "target" } });
+    await flushPromises();
+
+    expect((wrapper.get('[data-test="ssh-add-host"]').element as HTMLInputElement).value).toBe("target.example");
+    expect((wrapper.get('[data-test="ssh-add-user"]').element as HTMLInputElement).value).toBe("deploy");
+  });
+
   it("按最近成功使用时间倒序展示主机，未使用主机保持原相对顺序", async () => {
     listSSHHosts.mockResolvedValueOnce([
       { id: "unused-a", host: "a", user: "u", auth_kind: "password", alias: "unused A" },

@@ -17,7 +17,7 @@ const retrySourcePane = vi.fn();
 
 const SftpPaneStub = defineComponent({
   name: "SftpPane",
-  props: ["state", "side"],
+  props: ["state", "side", "hosts"],
   emits: ["update:state", "transfer-selection", "host-key-required"],
   setup(props, { expose }) {
     expose({ refresh: refreshPane, retrySource: retrySourcePane });
@@ -37,6 +37,7 @@ function bindings(overrides: Partial<AppBindings> = {}): AppBindings {
     GetUserHomeDir: vi.fn().mockResolvedValue("/home/me"),
     ListFileTransfers: vi.fn().mockResolvedValue([]),
     StartFileTransfer: vi.fn().mockResolvedValue("job-1"),
+    RetryFileTransfer: vi.fn().mockResolvedValue("job-retry"),
     CancelFileTransfer: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as AppBindings;
@@ -48,9 +49,10 @@ function makePlatform(): Platform {
   return platform;
 }
 
-function mountWorkspace(platform = makePlatform()): VueWrapper {
+function mountWorkspace(platform = makePlatform(), props: { active?: boolean } = {}): VueWrapper {
   __setPlatformForTests(platform);
   return mount(SftpWorkspace, {
+    props,
     global: { stubs: { SftpPane: SftpPaneStub } },
   });
 }
@@ -111,6 +113,60 @@ describe("SftpWorkspace", () => {
     });
   });
 
+  it("reloads saved hosts when the retained workspace becomes active again", async () => {
+    const ListSFTPHosts = vi.fn()
+      .mockResolvedValueOnce([{ id: "left-host", alias: "Left", host: "left.example", user: "me", auth_kind: "password" }])
+      .mockResolvedValueOnce([
+        { id: "left-host", alias: "Left", host: "left.example", user: "me", auth_kind: "password" },
+        { id: "new-host", alias: "New", host: "new.example", user: "me", auth_kind: "password" },
+      ]);
+    __setBindingsForTest(bindings({ ListSFTPHosts }));
+    const wrapper = mountWorkspace(makePlatform(), { active: true });
+    await flushPromises();
+    expect(ListSFTPHosts).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ active: false });
+    await wrapper.setProps({ active: true });
+    await flushPromises();
+
+    expect(ListSFTPHosts).toHaveBeenCalledTimes(2);
+    expect(wrapper.findAllComponents(SftpPaneStub)[0].props("hosts")).toHaveLength(2);
+  });
+
+  it("retries a restored failed job by id without reconstructing its request in the frontend", async () => {
+    const RetryFileTransfer = vi.fn().mockResolvedValue("job-retry");
+    __setBindingsForTest(bindings({
+      RetryFileTransfer,
+      ListFileTransfers: vi.fn().mockResolvedValue([{
+        id: "job-failed", state: "failed", current_path: "/from/a.txt", error: "connection reset",
+        bytes_done: 0, bytes_total: 10, entries_done: 0, entries_total: 1, warnings: [],
+      } satisfies FileTransferJob]),
+    }));
+    const wrapper = mountWorkspace();
+    await flushPromises();
+
+    await wrapper.get('[data-test="retry-job-job-failed"]').trigger("click");
+    await flushPromises();
+
+    expect(RetryFileTransfer).toHaveBeenCalledWith("job-failed", { host: "", fingerprint: "" });
+  });
+
+  it("routes a credential failure to editing the exact saved host", async () => {
+    __setBindingsForTest(bindings({
+      ListFileTransfers: vi.fn().mockResolvedValue([{
+        id: "job-auth", state: "failed", current_path: "/from/a.txt", error: "ssh_credential_missing",
+        bytes_done: 0, bytes_total: 0, entries_done: 0, entries_total: 0, warnings: [],
+        credential_host_id: "right-host",
+      } as FileTransferJob]),
+    }));
+    const wrapper = mountWorkspace();
+    await flushPromises();
+
+    await wrapper.get('[data-test="edit-host-job-auth"]').trigger("click");
+
+    expect(wrapper.emitted("edit-host")?.[0]).toEqual(["right-host"]);
+  });
+
   it.each(["replace", "rename"] as const)("uses the explicit %s conflict choice", async (conflict) => {
     const StartFileTransfer = vi.fn().mockResolvedValue("job-1");
     __setBindingsForTest(bindings({ StartFileTransfer }));
@@ -168,28 +224,41 @@ describe("SftpWorkspace", () => {
   });
 
   it("retries sequential TOFU prompts with only the exact accepted host/fingerprint pair", async () => {
-    const first = { Host: "jump:22", Fingerprint: "SHA256:jump", HopIndex: 1, HopName: "jump" };
-    const second = { Host: "target:22", Fingerprint: "SHA256:target", HopIndex: 2, HopName: "Right" };
-    const StartFileTransfer = vi.fn()
-      .mockRejectedValueOnce(first)
-      .mockRejectedValueOnce(second)
-      .mockResolvedValueOnce("job-1");
-    __setBindingsForTest(bindings({ StartFileTransfer }));
-    const wrapper = mountWorkspace();
+    const first = { host: "jump:22", fingerprint: "SHA256:jump", hop_index: 1, hop_name: "jump" };
+    const second = { host: "target:22", fingerprint: "SHA256:target", hop_index: 2, hop_name: "Right" };
+    const StartFileTransfer = vi.fn().mockResolvedValueOnce("job-1");
+    const RetryFileTransfer = vi.fn()
+      .mockResolvedValueOnce("job-2")
+      .mockResolvedValueOnce("job-3");
+    __setBindingsForTest(bindings({ StartFileTransfer, RetryFileTransfer }));
+    const platform = makePlatform();
+    const wrapper = mountWorkspace(platform);
     await flushPromises();
     await setPaneStates(wrapper);
     await wrapper.get('[data-test="transfer-right"]').trigger("click");
     await confirmTransfer(wrapper);
 
+    platform.events.emit("sftp:transfer-progress", {
+      id: "job-1", state: "failed", current_path: "", error: "ssh_host_key_unknown",
+      bytes_done: 0, bytes_total: 0, entries_done: 0, entries_total: 0, warnings: [], host_key: first,
+    } satisfies FileTransferJob);
+    await nextTick();
+
     expect(wrapper.get('[data-test="sftp-host-tofu"]').text()).toContain("SHA256:jump");
     await wrapper.get('[data-test="sftp-accept-hostkey"]').trigger("click");
     await flushPromises();
-    expect(StartFileTransfer.mock.calls[1][0].accepted_host_key).toEqual({ host: "jump:22", fingerprint: "SHA256:jump" });
+    expect(RetryFileTransfer).toHaveBeenNthCalledWith(1, "job-1", { host: "jump:22", fingerprint: "SHA256:jump" });
+
+    platform.events.emit("sftp:transfer-progress", {
+      id: "job-2", state: "failed", current_path: "", error: "ssh_host_key_unknown",
+      bytes_done: 0, bytes_total: 0, entries_done: 0, entries_total: 0, warnings: [], host_key: second,
+    } satisfies FileTransferJob);
+    await nextTick();
     expect(wrapper.get('[data-test="sftp-host-tofu"]').text()).toContain("SHA256:target");
 
     await wrapper.get('[data-test="sftp-accept-hostkey"]').trigger("click");
     await flushPromises();
-    expect(StartFileTransfer.mock.calls[2][0].accepted_host_key).toEqual({ host: "target:22", fingerprint: "SHA256:target" });
+    expect(RetryFileTransfer).toHaveBeenNthCalledWith(2, "job-2", { host: "target:22", fingerprint: "SHA256:target" });
   });
 
   it("retries a pane source connection with the exact accepted host key pair", async () => {

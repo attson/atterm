@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ArrowLeft, ArrowRight } from "lucide-vue-next";
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import {
   cancelFileTransfer,
   getUserHomeDir,
   listFileTransfers,
   listSFTPHosts,
+  retryFileTransfer,
   startFileTransfer,
   type FileEndpoint,
   type FileTransferConflict,
@@ -14,7 +15,7 @@ import {
   type StartFileTransferReq,
 } from "../../lib/api";
 import { useI18n } from "../../i18n/useI18n";
-import { parseHostKeyPrompt, type HostKeyPrompt } from "../../lib/sshHostKey";
+import type { HostKeyPrompt } from "../../lib/sshHostKey";
 import { usePlatform } from "../../platform";
 import { createLocalFSBridge } from "../../plugins/fileExplorer/fsBridge";
 import SftpPane from "./SftpPane.vue";
@@ -30,10 +31,12 @@ type Side = "left" | "right";
 type PaneHandle = { refresh(): Promise<void>; retrySource(accepted?: { host: string; fingerprint: string }): Promise<void> };
 type PendingTransfer = { request: StartFileTransferReq; destination: Side };
 type HostKeyRequest =
-  | (PendingTransfer & { kind: "transfer"; prompt: HostKeyPrompt })
+  | { kind: "transfer"; jobID: string; prompt: HostKeyPrompt }
   | { kind: "source"; side: Side; prompt: HostKeyPrompt };
 
 const INTERNAL_DRAG_MIME = "application/x-atterm-sftp-paths";
+const props = withDefaults(defineProps<{ active?: boolean }>(), { active: false });
+const emit = defineEmits<{ (event: "edit-host", hostId: string): void }>();
 const $platform = usePlatform();
 const { t } = useI18n();
 if (!$platform.pluginHost) throw new Error("SFTP workspace requires the desktop file-system bridge");
@@ -100,17 +103,13 @@ async function runTransfer(pending: PendingTransfer) {
     jobDestinations.set(id, pending.destination);
     const current = jobs.value.find((job) => job.id === id);
     if (current?.state === "completed") refreshDestination(id);
+    else if (current) promptForJobHostKey(current);
   } catch (error) {
-    const prompt = parseHostKeyPrompt(error);
-    if (prompt) {
-      hostKey.value = { kind: "transfer", ...pending, prompt };
-      return;
-    }
     transferError.value = t("sftp.transferError", { error: errorText(error) });
   }
 }
 
-function acceptHostKey() {
+async function acceptHostKey() {
   const pending = hostKey.value;
   if (!pending) return;
   hostKey.value = null;
@@ -122,13 +121,7 @@ function acceptHostKey() {
     void (pending.side === "left" ? leftPane.value : rightPane.value)?.retrySource(accepted);
     return;
   }
-  void runTransfer({
-    destination: pending.destination,
-    request: {
-      ...pending.request,
-      accepted_host_key: accepted,
-    },
-  });
+  await retryJob(pending.jobID, accepted);
 }
 
 function rejectHostKey() {
@@ -185,6 +178,24 @@ function onProgress(value: unknown) {
   if (!isTransferJob(value)) return;
   mergeJob(value);
   if (value.state === "completed") refreshDestination(value.id);
+  else promptForJobHostKey(value);
+}
+
+function promptForJobHostKey(job: FileTransferJob) {
+  const prompt = jobHostKeyPrompt(job);
+  if (!prompt) return;
+  hostKey.value = { kind: "transfer", jobID: job.id, prompt };
+}
+
+function jobHostKeyPrompt(job: FileTransferJob): HostKeyPrompt | null {
+  const prompt = job.host_key;
+  if (!prompt?.host || !prompt.fingerprint) return null;
+  return {
+    host: prompt.host,
+    fingerprint: prompt.fingerprint,
+    hopIndex: prompt.hop_index > 0 ? prompt.hop_index : 0,
+    hopName: prompt.hop_name ?? "",
+  };
 }
 
 function mergeJob(incoming: FileTransferJob) {
@@ -214,7 +225,11 @@ function jobPhase(state: FileTransferJob["state"]): number {
 }
 
 function normalizedJob(job: FileTransferJob): FileTransferJob {
-  return { ...job, warnings: Array.isArray(job.warnings) ? [...job.warnings] : [] };
+  return {
+    ...job,
+    warnings: Array.isArray(job.warnings) ? [...job.warnings] : [],
+    host_key: job.host_key ? { ...job.host_key } : undefined,
+  };
 }
 
 function isTransferJob(value: unknown): value is FileTransferJob {
@@ -226,9 +241,13 @@ function isTransferJob(value: unknown): value is FileTransferJob {
 function refreshDestination(id: string) {
   if (refreshedJobs.has(id)) return;
   const destination = jobDestinations.get(id);
-  if (!destination) return;
   refreshedJobs.add(id);
-  void (destination === "left" ? leftPane.value : rightPane.value)?.refresh();
+  if (destination) {
+    void (destination === "left" ? leftPane.value : rightPane.value)?.refresh();
+    return;
+  }
+  void leftPane.value?.refresh();
+  void rightPane.value?.refresh();
 }
 
 function cancelJob(id: string) {
@@ -237,9 +256,35 @@ function cancelJob(id: string) {
   });
 }
 
+async function retryJob(id: string, accepted = { host: "", fingerprint: "" }) {
+  transferError.value = "";
+  try {
+    const retryID = await retryFileTransfer(id, accepted);
+    const destination = jobDestinations.get(id);
+    if (destination) jobDestinations.set(retryID, destination);
+    const current = jobs.value.find((job) => job.id === retryID);
+    if (current?.state === "completed") refreshDestination(retryID);
+    else if (current) promptForJobHostKey(current);
+  } catch (error) {
+    transferError.value = t("sftp.transferError", { error: errorText(error) });
+  }
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+async function reloadHosts() {
+  try {
+    hosts.value = await listSFTPHosts();
+  } catch (error) {
+    workspaceError.value = t("sftp.loadError", { error: errorText(error) });
+  }
+}
+
+watch(() => props.active, (active, previous) => {
+  if (active && previous === false) void reloadHosts();
+});
 
 onMounted(async () => {
   stopProgress = $platform.events.on("sftp:transfer-progress", onProgress);
@@ -305,7 +350,12 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <SftpTransferQueue :jobs="jobs" @cancel="cancelJob" />
+    <SftpTransferQueue
+      :jobs="jobs"
+      @cancel="cancelJob"
+      @retry="retryJob"
+      @edit-host="emit('edit-host', $event)"
+    />
 
     <div v-if="pendingTransfer" class="modal-backdrop" role="dialog" :aria-label="t('sftp.conflictTitle')">
       <div class="modal">

@@ -308,6 +308,84 @@ func TestSFTPBrowserReleasesTheConnectionOnClose(t *testing.T) {
 	b.closeAll()
 }
 
+func TestSFTPSourceKeepsSharedClientUntilLastPaneDisconnects(t *testing.T) {
+	d := &fakeDialer{}
+	a := &App{ctx: context.Background(), sftp: newTestSFTPBrowser(d)}
+	t.Cleanup(func() { a.sftp.closeAll() })
+
+	if _, err := a.OpenSFTPSource("h1", AcceptedHostKey{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.OpenSFTPSource("h1", AcceptedHostKey{}); err != nil {
+		t.Fatal(err)
+	}
+	a.SFTPDisconnect("h1")
+	if got := d.releaseCount(); got != 0 {
+		t.Fatalf("first pane disconnect released a client still leased by the second pane (%d releases)", got)
+	}
+	if _, err := a.SFTPListDir("h1", "/srv"); err != nil {
+		t.Fatalf("second pane lost its source after the first disconnected: %v", err)
+	}
+	if got := d.dialCount(); got != 1 {
+		t.Fatalf("second pane had to redial after the first disconnected: %d dials", got)
+	}
+
+	a.SFTPDisconnect("h1")
+	if got := d.releaseCount(); got != 1 {
+		t.Fatalf("last pane disconnect produced %d releases, want 1", got)
+	}
+}
+
+func TestSFTPSourceAcquireOverlappingLastDisconnectKeepsNewClientOpen(t *testing.T) {
+	var mu sync.Mutex
+	clients := []*fakeSFTPClient{}
+	secondDialStarted := make(chan struct{})
+	releaseSecondDial := make(chan struct{})
+	dial := func(_ string, _ AcceptedHostKey) (sftpClient, func(), error) {
+		mu.Lock()
+		client := newFakeSFTPClient(len(clients) + 1)
+		clients = append(clients, client)
+		dialNumber := len(clients)
+		mu.Unlock()
+		if dialNumber == 2 {
+			close(secondDialStarted)
+			<-releaseSecondDial
+		}
+		return client, func() { _ = client.Close() }, nil
+	}
+	b := newSFTPBrowser(context.Background(), dial)
+	defer b.closeAll()
+	if _, err := b.acquireSource("h1", AcceptedHostKey{}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	clients[0].tearDown()
+	mu.Unlock()
+
+	acquired := make(chan sftpClient, 1)
+	acquireErr := make(chan error, 1)
+	go func() {
+		client, err := b.acquireSource("h1", AcceptedHostKey{})
+		acquired <- client
+		acquireErr <- err
+	}()
+	<-secondDialStarted
+	disconnected := make(chan struct{})
+	go func() {
+		b.disconnect("h1")
+		close(disconnected)
+	}()
+	close(releaseSecondDial)
+	client := <-acquired
+	if err := <-acquireErr; err != nil {
+		t.Fatal(err)
+	}
+	<-disconnected
+	if !sftpClientAlive(client) {
+		t.Fatal("last old-pane disconnect closed the client acquired by the new pane")
+	}
+}
+
 // TestSFTPBrowserDoesNotCacheAFailedDial: a wrong password or an unreachable
 // host must not poison the entry, or the user's retry after fixing it returns
 // the stale error forever.

@@ -110,6 +110,28 @@ func TestStagedWriterRefusesOccupiedTargetWithoutReplace(t *testing.T) {
 	assertNoTransferPartials(t, root)
 }
 
+func TestStagedWriterReplaceWithoutPosixRenamePreservesOriginal(t *testing.T) {
+	c, root, _ := newTestClient(t)
+	c.posixRename = false
+	target := path.Join(root, "dst")
+	mustWrite(t, filepath.Join(root, "dst"), "original")
+
+	w, err := c.CreateStagedWriter(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("replacement")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(context.Background(), true); err == nil {
+		t.Fatal("Commit replaced an occupied target without atomic rename support")
+	}
+	if got := readBack(t, filepath.Join(root, "dst")); got != "original" {
+		t.Fatalf("occupied target changed to %q", got)
+	}
+	assertNoTransferPartials(t, root)
+}
+
 func TestStagedWriterAbortAndCancellationRemovePartial(t *testing.T) {
 	c, root, _ := newTestClient(t)
 	ctx, cancel := context.WithCancel(context.Background())

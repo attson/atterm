@@ -1790,6 +1790,31 @@ func TestFailedDialLeavesNoPoisonedConnection(t *testing.T) {
 	}
 }
 
+func TestAcquireConnContextStopsWaitingForConcurrentDial(t *testing.T) {
+	m := &tunnelManager{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	dial := func() (*jumpChain, error) {
+		close(started)
+		<-release
+		return nil, errors.New("dial refused")
+	}
+	firstDone := make(chan struct{})
+	go func() {
+		_, _ = m.acquireConn("h", dial)
+		close(firstDone)
+	}()
+	<-started
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.acquireConnContext(ctx, "h", dial); !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquireConnContext error = %v, want context.Canceled", err)
+	}
+	close(release)
+	<-firstDone
+}
+
 // TestConnectionLostOnlyTouchesItsOwnConnection pins the instance match
 // deterministically, which the stop/restart test above cannot: whether the old
 // connection's watcher wakes before or after the restart is a race, so that

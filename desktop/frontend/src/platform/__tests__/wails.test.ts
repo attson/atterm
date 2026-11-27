@@ -199,7 +199,7 @@ describe('createWailsPlatform', () => {
 
     const callback = (OnFileDrop as ReturnType<typeof vi.fn>).mock.calls[0][0]
     callback(10, 20, ['/home/test/.ssh/id_ed25519'])
-    expect(handler).toHaveBeenCalledWith(['/home/test/.ssh/id_ed25519'])
+    expect(handler).toHaveBeenCalledWith(['/home/test/.ssh/id_ed25519'], { x: 10, y: 20 })
 
     await expect(p.nativeFileDrop!.readSSHKeyFile('/home/test/.ssh/id_ed25519'))
       .resolves.toEqual({ name: 'id_ed25519', content: 'pem' })

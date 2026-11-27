@@ -287,8 +287,8 @@ onBeforeUnmount(() => {
         />
       </div>
       <div class="transfer-controls">
-        <button data-test="transfer-left" :title="t('sftp.transferLeft')" :disabled="!canTransferLeft" @click="beginSelectionTransfer('right')"><ArrowLeft :size="18" /></button>
-        <button data-test="transfer-right" :title="t('sftp.transferRight')" :disabled="!canTransferRight" @click="beginSelectionTransfer('left')"><ArrowRight :size="18" /></button>
+        <button data-test="transfer-left" v-tooltip="t('sftp.transferLeft')" :disabled="!canTransferLeft" @click="beginSelectionTransfer('right')"><ArrowLeft :size="18" /></button>
+        <button data-test="transfer-right" v-tooltip="t('sftp.transferRight')" :disabled="!canTransferRight" @click="beginSelectionTransfer('left')"><ArrowRight :size="18" /></button>
       </div>
       <div data-test="drop-right" data-sftp-side="right" class="pane-drop" @dragover.prevent @drop="onInternalDrop($event, 'right')">
         <SftpPane

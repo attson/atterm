@@ -21,13 +21,13 @@ function progress(job: FileTransferJob): number {
     <div class="job-list">
       <div v-for="job in jobs" :key="job.id" class="transfer-job" :data-test="`transfer-job-${job.id}`">
         <div class="job-main">
-          <span class="job-path" :title="job.current_path">{{ job.current_path || job.id }}</span>
+          <span class="job-path" v-tooltip="job.current_path">{{ job.current_path || job.id }}</span>
           <span class="job-state">{{ t(`sftp.${job.state}`) }}</span>
           <span class="job-percent">{{ progress(job) }}%</span>
           <button
             v-if="job.state === 'queued' || job.state === 'running'"
             :data-test="`cancel-job-${job.id}`"
-            :title="t('sftp.cancelTransfer')"
+            v-tooltip="t('sftp.cancelTransfer')"
             @click="$emit('cancel', job.id)"
           ><X :size="15" /></button>
         </div>

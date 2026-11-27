@@ -318,10 +318,10 @@ onBeforeUnmount(() => {
         @select="chooseSource"
       />
       <div class="nav-controls">
-        <button data-test="nav-back" :title="t('sftp.back')" :disabled="!paneState.back.length" @click="moveTo(goBack(paneState))"><ArrowLeft :size="16" /></button>
-        <button data-test="nav-forward" :title="t('sftp.forward')" :disabled="!paneState.forward.length" @click="moveTo(goForward(paneState))"><ArrowRight :size="16" /></button>
-        <button data-test="nav-up" :title="t('sftp.up')" @click="moveTo(navigate(paneState, upPath(paneState.cwd)))"><ArrowUp :size="16" /></button>
-        <button :title="t('common.refresh')" @click="loadDirectory"><RefreshCw :size="16" /></button>
+        <button data-test="nav-back" v-tooltip="t('sftp.back')" :disabled="!paneState.back.length" @click="moveTo(goBack(paneState))"><ArrowLeft :size="16" /></button>
+        <button data-test="nav-forward" v-tooltip="t('sftp.forward')" :disabled="!paneState.forward.length" @click="moveTo(goForward(paneState))"><ArrowRight :size="16" /></button>
+        <button data-test="nav-up" v-tooltip="t('sftp.up')" @click="moveTo(navigate(paneState, upPath(paneState.cwd)))"><ArrowUp :size="16" /></button>
+        <button v-tooltip="t('common.refresh')" @click="loadDirectory"><RefreshCw :size="16" /></button>
       </div>
     </header>
 
@@ -334,11 +334,11 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="action-row">
-      <button data-test="create-dir" :title="t('sftp.createDirectory')" @click="openAction('mkdir')"><FolderPlus :size="16" /></button>
-      <button data-test="rename" :title="t('sftp.rename')" :disabled="!canRename" @click="openAction('rename')"><Pencil :size="16" /></button>
-      <button data-test="delete" :title="t('common.delete')" :disabled="!canDelete" @click="openAction('delete')"><Trash2 :size="16" /></button>
+      <button data-test="create-dir" v-tooltip="t('sftp.createDirectory')" @click="openAction('mkdir')"><FolderPlus :size="16" /></button>
+      <button data-test="rename" v-tooltip="t('sftp.rename')" :disabled="!canRename" @click="openAction('rename')"><Pencil :size="16" /></button>
+      <button data-test="delete" v-tooltip="t('common.delete')" :disabled="!canDelete" @click="openAction('delete')"><Trash2 :size="16" /></button>
       <span class="action-spacer"></span>
-      <button data-test="sort-name" :class="{ active: paneState.sort === 'name' }" :title="t('sftp.sortName')" @click="cycleSort('name')"><ArrowDownAZ :size="15" />{{ t("sftp.name") }}</button>
+      <button data-test="sort-name" :class="{ active: paneState.sort === 'name' }" v-tooltip="t('sftp.sortName')" @click="cycleSort('name')"><ArrowDownAZ :size="15" />{{ t("sftp.name") }}</button>
       <button data-test="sort-size" :class="{ active: paneState.sort === 'size' }" @click="cycleSort('size')">{{ t("sftp.size") }}</button>
       <button data-test="sort-modified" :class="{ active: paneState.sort === 'modified' }" @click="cycleSort('modified')">{{ t("sftp.modified") }}</button>
     </div>
@@ -366,7 +366,7 @@ onBeforeUnmount(() => {
             @dragstart="onDragStart($event, entry)"
           >
             <td><input :data-test="`row-select-${entryPath(entry)}`" type="checkbox" :checked="paneState.selectedPaths.has(entryPath(entry))" @change="toggleSelection(entryPath(entry), ($event.target as HTMLInputElement).checked)" /></td>
-            <td class="name-cell" :title="entry.name">{{ entry.name }}</td>
+            <td class="name-cell" v-tooltip="entry.name">{{ entry.name }}</td>
             <td>{{ entry.modTime ? new Date(entry.modTime).toLocaleString() : "—" }}</td>
             <td>{{ entry.isDir ? "—" : (entry.size ?? 0).toLocaleString() }}</td>
             <td>{{ entry.isDir ? t("sftp.directory") : t("sftp.file") }}</td>
@@ -386,7 +386,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="editorPath && currentFS" class="editor-overlay">
-      <div class="editor-header"><span :title="editorPath">{{ editorPath }}</span><button :title="t('common.close')" @click="editorPath = ''"><X :size="16" /></button></div>
+      <div class="editor-header"><span v-tooltip="editorPath">{{ editorPath }}</span><button v-tooltip="t('common.close')" @click="editorPath = ''"><X :size="16" /></button></div>
       <FileEditor :fs="currentFS" :path="editorPath" :show-line-numbers="true" theme="dimmed" view-mode="code" />
     </div>
 

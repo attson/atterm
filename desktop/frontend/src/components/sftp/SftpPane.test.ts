@@ -185,4 +185,55 @@ describe("SftpPane", () => {
     await flushPromises();
     expect(wrapper.get('[data-test="file-editor-stub"]').text()).toBe("/home/me/note.txt");
   });
+
+  it("requires a second explicit confirmation before recursively deleting a remote directory", async () => {
+    const SFTPRemove = vi.fn().mockResolvedValue(undefined);
+    setSFTPBindings({
+      SFTPListDir: vi.fn().mockResolvedValue({
+        path: "/srv",
+        entries: [{ name: "release", isDir: true, size: 0, modTime: 1 }],
+        truncated: false,
+        total: 1,
+      }),
+      SFTPRemove,
+    });
+    const wrapper = mountPane(fakeFS());
+    await flushPromises();
+
+    await wrapper.get('[data-test="source-picker"] [data-testid="select-trigger"]').trigger("click");
+    await wrapper.findAll('[data-testid="select-option"]')[1].trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-test="row-select-/srv/release"]').setValue(true);
+    await wrapper.get('[data-test="delete"]').trigger("click");
+    await wrapper.get('[data-test="action-confirm"]').trigger("click");
+    await flushPromises();
+
+    expect(SFTPRemove).not.toHaveBeenCalled();
+    expect(wrapper.get('[data-test="remote-delete-confirm"]').text()).toContain("release");
+
+    await wrapper.get('[data-test="remote-delete-confirm-button"]').trigger("click");
+    await flushPromises();
+    expect(SFTPRemove).toHaveBeenCalledWith("build", "/srv/release", true);
+    wrapper.unmount();
+  });
+
+  it("offers context-menu transfer and writes endpoint-only internal drag data", async () => {
+    const wrapper = mountPane(fakeFS({
+      listDir: vi.fn().mockResolvedValue([{ name: "note.txt", isDir: false, size: 1, modTime: 1 }]),
+    }));
+    await flushPromises();
+
+    await wrapper.get('[data-path="/home/me/note.txt"]').trigger("contextmenu", { clientX: 12, clientY: 18 });
+    await wrapper.get('[data-test="context-transfer"]').trigger("click");
+    expect(wrapper.emitted("transfer-selection")).toHaveLength(1);
+
+    const setData = vi.fn();
+    await wrapper.get('[data-path="/home/me/note.txt"]').trigger("dragstart", {
+      dataTransfer: { setData, effectAllowed: "" },
+    });
+    expect(setData).toHaveBeenCalledWith("application/x-atterm-sftp-paths", JSON.stringify({
+      endpoint: { kind: "local" },
+      paths: ["/home/me/note.txt"],
+    }));
+  });
 });

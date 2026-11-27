@@ -35,6 +35,7 @@ const props = defineProps<{
   hosts: SSHHost[];
   localFS: FileSystemBridge;
   localHome: string;
+  side?: "left" | "right";
 }>();
 
 const emit = defineEmits<{
@@ -61,6 +62,8 @@ const action = ref<ActionKind | null>(null);
 const actionInput = ref("");
 const actionBusy = ref(false);
 const actionError = ref("");
+const remoteDeletePending = ref(false);
+const contextMenu = ref({ open: false, x: 0, y: 0 });
 
 watch(() => props.state, (next) => {
   paneState.value = cloneState(next);
@@ -136,7 +139,7 @@ async function retrySource(accepted: AcceptedHostKey = ACCEPT_NO_HOST_KEY) {
   }
 }
 
-defineExpose({ retrySource });
+defineExpose({ retrySource, refresh: loadDirectory });
 
 async function moveTo(next: SftpPaneState) {
   updateState(next);
@@ -194,6 +197,7 @@ function cycleSort(sort: SftpPaneState["sort"]) {
 function openAction(kind: ActionKind) {
   action.value = kind;
   actionError.value = "";
+  remoteDeletePending.value = false;
   if (kind === "mkdir") actionInput.value = "";
   if (kind === "rename") actionInput.value = selectedEntries.value[0]?.name ?? "";
 }
@@ -201,6 +205,15 @@ function openAction(kind: ActionKind) {
 async function confirmAction() {
   const fs = currentFS.value;
   if (!fs || !action.value) return;
+  if (
+    action.value === "delete" &&
+    paneState.value.source.kind === "ssh" &&
+    selectedEntries.value.some((entry) => entry.isDir) &&
+    !remoteDeletePending.value
+  ) {
+    remoteDeletePending.value = true;
+    return;
+  }
   actionBusy.value = true;
   actionError.value = "";
   try {
@@ -221,6 +234,7 @@ async function confirmAction() {
       }
     }
     action.value = null;
+    remoteDeletePending.value = false;
     const next = cloneState(paneState.value);
     next.selectedPaths.clear();
     updateState(next);
@@ -230,6 +244,39 @@ async function confirmAction() {
   } finally {
     actionBusy.value = false;
   }
+}
+
+function closeAction() {
+  action.value = null;
+  remoteDeletePending.value = false;
+}
+
+function openContextMenu(event: MouseEvent, entry: SFTPDirEntry) {
+  const path = entryPath(entry);
+  if (!paneState.value.selectedPaths.has(path)) {
+    const next = cloneState(paneState.value);
+    next.selectedPaths = new Set([path]);
+    updateState(next);
+  }
+  contextMenu.value = { open: true, x: event.offsetX, y: event.offsetY };
+}
+
+function transferSelection() {
+  contextMenu.value.open = false;
+  emit("transfer-selection");
+}
+
+function onDragStart(event: DragEvent, entry: SFTPDirEntry) {
+  if (!event.dataTransfer) return;
+  const path = entryPath(entry);
+  const paths = paneState.value.selectedPaths.has(path)
+    ? Array.from(paneState.value.selectedPaths)
+    : [path];
+  const endpoint = paneState.value.source.kind === "local"
+    ? { kind: "local" as const }
+    : { kind: "ssh" as const, host_id: paneState.value.source.hostId };
+  event.dataTransfer.effectAllowed = "copy";
+  event.dataTransfer.setData("application/x-atterm-sftp-paths", JSON.stringify({ endpoint, paths }));
 }
 
 function disposeRemoteBridge() {
@@ -313,7 +360,10 @@ onBeforeUnmount(() => {
             :data-path="entryPath(entry)"
             :class="{ selected: paneState.selectedPaths.has(entryPath(entry)) }"
             tabindex="0"
+            draggable="true"
             @dblclick="onRowDoubleClick(entry)"
+            @contextmenu.prevent="openContextMenu($event, entry)"
+            @dragstart="onDragStart($event, entry)"
           >
             <td><input :data-test="`row-select-${entryPath(entry)}`" type="checkbox" :checked="paneState.selectedPaths.has(entryPath(entry))" @change="toggleSelection(entryPath(entry), ($event.target as HTMLInputElement).checked)" /></td>
             <td class="name-cell" :title="entry.name">{{ entry.name }}</td>
@@ -326,6 +376,15 @@ onBeforeUnmount(() => {
       </table>
     </div>
 
+    <div
+      v-if="contextMenu.open"
+      class="context-menu"
+      :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+      @mouseleave="contextMenu.open = false"
+    >
+      <button data-test="context-transfer" @click="transferSelection">{{ t("sftp.copyToOtherPane") }}</button>
+    </div>
+
     <div v-if="editorPath && currentFS" class="editor-overlay">
       <div class="editor-header"><span :title="editorPath">{{ editorPath }}</span><button :title="t('common.close')" @click="editorPath = ''"><X :size="16" /></button></div>
       <FileEditor :fs="currentFS" :path="editorPath" :show-line-numbers="true" theme="dimmed" view-mode="code" />
@@ -334,12 +393,20 @@ onBeforeUnmount(() => {
     <div v-if="action" class="action-dialog" role="dialog" :aria-label="t(`sftp.${action}`)">
       <div class="dialog-body">
         <h3>{{ t(`sftp.${action}`) }}</h3>
-        <p v-if="action === 'delete'">{{ t("sftp.deleteConfirm", { count: selectedEntries.length }) }}</p>
+        <p v-if="action === 'delete' && !remoteDeletePending">{{ t("sftp.deleteConfirm", { count: selectedEntries.length }) }}</p>
+        <div v-else-if="action === 'delete'" data-test="remote-delete-confirm">
+          <p>{{ t("sftp.remoteDeleteConfirm", { names: selectedEntries.filter((entry) => entry.isDir).map((entry) => entry.name).join(", ") }) }}</p>
+        </div>
         <input v-else data-test="action-input" v-model="actionInput" :placeholder="t('sftp.name')" @keydown.enter="confirmAction" />
         <p v-if="actionError" class="dialog-error">{{ actionError }}</p>
         <div class="dialog-actions">
-          <button :disabled="actionBusy" @click="action = null">{{ t("common.cancel") }}</button>
-          <button data-test="action-confirm" class="primary" :disabled="actionBusy" @click="confirmAction">{{ action === "delete" ? t("common.delete") : t("common.save") }}</button>
+          <button :disabled="actionBusy" @click="closeAction">{{ t("common.cancel") }}</button>
+          <button
+            :data-test="remoteDeletePending ? 'remote-delete-confirm-button' : 'action-confirm'"
+            class="primary"
+            :disabled="actionBusy"
+            @click="confirmAction"
+          >{{ action === "delete" ? t("common.delete") : t("common.save") }}</button>
         </div>
       </div>
     </div>
@@ -382,6 +449,8 @@ tbody tr:hover td { background: #1f242c; }
 .editor-header span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .editor-overlay :deep(.file-editor-host) { flex: 1; min-height: 0; }
 .action-dialog { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; background: rgba(1, 4, 9, .68); padding: 16px; }
+.context-menu { position: absolute; z-index: 7; min-width: 170px; padding: 4px; border: 1px solid #30363d; border-radius: 5px; background: #21262d; box-shadow: 0 10px 28px rgba(0,0,0,.4); }
+.context-menu button { width: 100%; justify-content: flex-start; padding: 0 10px; border: 0; }
 .dialog-body { width: min(340px, 100%); padding: 16px; border: 1px solid #30363d; border-radius: 7px; background: #21262d; box-shadow: 0 16px 36px rgba(0,0,0,.42); }
 .dialog-body h3 { margin: 0 0 12px; font-size: 15px; letter-spacing: 0; }
 .dialog-body p { color: #b1bac4; font-size: 13px; }

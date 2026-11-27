@@ -204,7 +204,7 @@ export function createWailsPlatform(): Platform {
     },
     nativeFileDrop: {
       onFileDrop: (handler) => {
-        OnFileDrop((_x, _y, paths) => handler(paths), true)
+        OnFileDrop((x, y, paths) => handler(paths, { x, y }), true)
         return () => OnFileDropOff()
       },
       readSSHKeyFile: async (path) => {

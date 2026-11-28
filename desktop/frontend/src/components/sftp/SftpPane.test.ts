@@ -188,10 +188,20 @@ describe("SftpPane", () => {
 
     await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
     expect(wrapper.get('[data-test="actions-menu"]').isVisible()).toBe(true);
-    await wrapper.get('[data-test="toggle-hidden"]').trigger("click");
+    const showHidden = wrapper.get('[data-test="toggle-hidden"]');
+    expect(showHidden.text()).toContain("Show hidden files");
+    expect(showHidden.find('[data-test="show-hidden-icon"]').exists()).toBe(true);
+    expect(showHidden.find(".menu-check").exists()).toBe(false);
+    expect(wrapper.find('[data-test="select-all"] [data-test="select-all-icon"]').exists()).toBe(true);
+    await showHidden.trigger("click");
 
     expect(wrapper.findAll('[data-test="file-row"]')).toHaveLength(3);
     expect(wrapper.find('[data-path="/home/me/.env"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
+    const hideHidden = wrapper.get('[data-test="toggle-hidden"]');
+    expect(hideHidden.text()).toContain("Hide hidden files");
+    expect(hideHidden.find('[data-test="hide-hidden-icon"]').exists()).toBe(true);
   });
 
   it("keeps navigation entries out of selection, transfer, rename, and delete actions", async () => {

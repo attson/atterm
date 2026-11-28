@@ -37,6 +37,7 @@ export const en = {
     actions: "Actions",
     open: "Open",
     showHidden: "Show hidden files",
+    hideHidden: "Hide hidden files",
     selectAll: "Select all",
     back: "Back",
     forward: "Forward",

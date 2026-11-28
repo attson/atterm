@@ -39,6 +39,7 @@ export const zhCN = {
     actions: "操作",
     open: "打开",
     showHidden: "显示隐藏文件",
+    hideHidden: "不显示隐藏文件",
     selectAll: "全选",
     back: "后退",
     forward: "前进",

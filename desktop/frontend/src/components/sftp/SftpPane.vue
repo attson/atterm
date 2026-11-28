@@ -5,12 +5,14 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  Check,
   ChevronDown,
   Copy,
+  Eye,
+  EyeOff,
   File,
   Folder,
   FolderPlus,
+  ListChecks,
   Pencil,
   RefreshCw,
   Search,
@@ -429,9 +431,11 @@ onBeforeUnmount(() => {
           <button data-test="action-refresh" :disabled="!fsReady" @click="refreshFromMenu"><RefreshCw :size="15" />{{ t("common.refresh") }}</button>
           <button data-test="create-dir" :disabled="!fsReady" @click="openActionFromMenu('mkdir')"><FolderPlus :size="15" />{{ t("sftp.createDirectory") }}</button>
           <button data-test="toggle-hidden" :aria-pressed="paneState.showHidden" @click="toggleHidden">
-            <span class="menu-check"><Check v-if="paneState.showHidden" :size="14" /></span>{{ t("sftp.showHidden") }}
+            <EyeOff v-if="paneState.showHidden" data-test="hide-hidden-icon" :size="15" />
+            <Eye v-else data-test="show-hidden-icon" :size="15" />
+            {{ t(paneState.showHidden ? "sftp.hideHidden" : "sftp.showHidden") }}
           </button>
-          <button data-test="select-all" :disabled="!fsReady || selectableEntries.length === 0" @click="selectAll"><Check :size="15" />{{ t("sftp.selectAll") }}</button>
+          <button data-test="select-all" :disabled="!fsReady || selectableEntries.length === 0" @click="selectAll"><ListChecks data-test="select-all-icon" :size="15" />{{ t("sftp.selectAll") }}</button>
         </div>
       </div>
     </div>
@@ -550,7 +554,6 @@ input { box-sizing: border-box; min-width: 0; height: 30px; border: 1px solid #3
 .actions-menu button:hover:not(:disabled) { background: #30363d; }
 .actions-menu button > svg { flex: 0 0 auto; }
 .menu-separator { display: block; height: 1px; margin: 4px 5px; background: #30363d; }
-.menu-check { width: 15px; height: 15px; display: inline-grid; place-items: center; flex: 0 0 auto; }
 .action-row { min-height: 32px; }
 .action-row button { width: auto; padding: 0 8px; font-size: 12px; }
 .action-spacer { flex: 1; }

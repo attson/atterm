@@ -212,7 +212,7 @@ export interface EventBus {
 
 export interface NativeFileDropBridge {
   /** Registers the Wails native listener, restricted to CSS drop targets. */
-  onFileDrop(handler: (paths: string[]) => void): () => void
+  onFileDrop(handler: (paths: string[], point?: { x: number; y: number }) => void): () => void
   /** Reads one path received from onFileDrop through the SSH-key-only binding. */
   readSSHKeyFile(path: string): Promise<{ name: string; content: string }>
 }

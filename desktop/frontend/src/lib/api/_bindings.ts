@@ -257,6 +257,50 @@ export interface SFTPListing {
   total: number;
 }
 
+export interface SFTPSourceInfo {
+  host_id: string;
+  initial_dir: string;
+}
+
+export interface FileEndpoint {
+  kind: "local" | "ssh";
+  host_id?: string;
+}
+
+export type FileTransferConflict = "skip" | "replace" | "rename";
+
+export interface StartFileTransferReq {
+  source: FileEndpoint;
+  destination: FileEndpoint;
+  paths: string[];
+  destination_dir: string;
+  conflict: FileTransferConflict;
+  accepted_host_key: AcceptedHostKey;
+}
+
+export type FileTransferState = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export interface FileTransferHostKeyPrompt {
+  fingerprint: string;
+  host: string;
+  hop_index: number;
+  hop_name: string;
+}
+
+export interface FileTransferJob {
+  id: string;
+  state: FileTransferState;
+  current_path: string;
+  error?: string;
+  bytes_done: number;
+  bytes_total: number;
+  entries_done: number;
+  entries_total: number;
+  warnings: string[];
+  host_key?: FileTransferHostKeyPrompt;
+  credential_host_id?: string;
+}
+
 // SSHCredential mirrors desktop sshCredential — only a password now; private
 // keys live in the key vault (SSHKey), not on the host.
 export interface SSHCredential {
@@ -820,6 +864,11 @@ export interface AppBindings {
   // the saved hosts atterm will actually dial, so a ProxyCommand host is
   // absent rather than present-and-broken.
   ListSFTPHosts(): Promise<SSHHost[]>;
+  OpenSFTPSource(hostID: string, accepted: AcceptedHostKey): Promise<SFTPSourceInfo>;
+  StartFileTransfer(req: StartFileTransferReq): Promise<string>;
+  RetryFileTransfer(id: string, accepted: AcceptedHostKey): Promise<string>;
+  CancelFileTransfer(id: string): Promise<void>;
+  ListFileTransfers(): Promise<FileTransferJob[]>;
   SFTPListDir(hostID: string, path: string): Promise<SFTPListing>;
   SFTPFileMeta(hostID: string, path: string): Promise<SFTPFileMetaInfo>;
   SFTPReadFile(hostID: string, path: string, maxBytes: number): Promise<SFTPFileContent>;

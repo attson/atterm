@@ -54,6 +54,20 @@ func (f *fakeSFTPClient) ListDir(ctx context.Context, dir string) (sftpfs.Listin
 	return sftpfs.Listing{Path: dir}, nil
 }
 
+func (f *fakeSFTPClient) Getwd(context.Context) (string, error) { return "/", nil }
+
+func (f *fakeSFTPClient) Lstat(context.Context, string) (os.FileInfo, error) {
+	return nil, os.ErrNotExist
+}
+
+func (f *fakeSFTPClient) OpenReader(context.Context, string) (sftpfs.ReadHandle, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
+func (f *fakeSFTPClient) CreateStagedWriter(context.Context, string) (sftpfs.StagedWriter, error) {
+	return nil, errors.New("not implemented by fake")
+}
+
 func (f *fakeSFTPClient) FileMeta(ctx context.Context, name string) (sftpfs.FileMetaInfo, error) {
 	return sftpfs.FileMetaInfo{Path: name}, nil
 }
@@ -120,7 +134,7 @@ type fakeDialer struct {
 	setup    func(*fakeSFTPClient)
 }
 
-func (d *fakeDialer) dial(hostID string) (sftpClient, func(), error) {
+func (d *fakeDialer) dial(hostID string, _ AcceptedHostKey) (sftpClient, func(), error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.err != nil {
@@ -294,6 +308,84 @@ func TestSFTPBrowserReleasesTheConnectionOnClose(t *testing.T) {
 	b.closeAll()
 }
 
+func TestSFTPSourceKeepsSharedClientUntilLastPaneDisconnects(t *testing.T) {
+	d := &fakeDialer{}
+	a := &App{ctx: context.Background(), sftp: newTestSFTPBrowser(d)}
+	t.Cleanup(func() { a.sftp.closeAll() })
+
+	if _, err := a.OpenSFTPSource("h1", AcceptedHostKey{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.OpenSFTPSource("h1", AcceptedHostKey{}); err != nil {
+		t.Fatal(err)
+	}
+	a.SFTPDisconnect("h1")
+	if got := d.releaseCount(); got != 0 {
+		t.Fatalf("first pane disconnect released a client still leased by the second pane (%d releases)", got)
+	}
+	if _, err := a.SFTPListDir("h1", "/srv"); err != nil {
+		t.Fatalf("second pane lost its source after the first disconnected: %v", err)
+	}
+	if got := d.dialCount(); got != 1 {
+		t.Fatalf("second pane had to redial after the first disconnected: %d dials", got)
+	}
+
+	a.SFTPDisconnect("h1")
+	if got := d.releaseCount(); got != 1 {
+		t.Fatalf("last pane disconnect produced %d releases, want 1", got)
+	}
+}
+
+func TestSFTPSourceAcquireOverlappingLastDisconnectKeepsNewClientOpen(t *testing.T) {
+	var mu sync.Mutex
+	clients := []*fakeSFTPClient{}
+	secondDialStarted := make(chan struct{})
+	releaseSecondDial := make(chan struct{})
+	dial := func(_ string, _ AcceptedHostKey) (sftpClient, func(), error) {
+		mu.Lock()
+		client := newFakeSFTPClient(len(clients) + 1)
+		clients = append(clients, client)
+		dialNumber := len(clients)
+		mu.Unlock()
+		if dialNumber == 2 {
+			close(secondDialStarted)
+			<-releaseSecondDial
+		}
+		return client, func() { _ = client.Close() }, nil
+	}
+	b := newSFTPBrowser(context.Background(), dial)
+	defer b.closeAll()
+	if _, err := b.acquireSource("h1", AcceptedHostKey{}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	clients[0].tearDown()
+	mu.Unlock()
+
+	acquired := make(chan sftpClient, 1)
+	acquireErr := make(chan error, 1)
+	go func() {
+		client, err := b.acquireSource("h1", AcceptedHostKey{})
+		acquired <- client
+		acquireErr <- err
+	}()
+	<-secondDialStarted
+	disconnected := make(chan struct{})
+	go func() {
+		b.disconnect("h1")
+		close(disconnected)
+	}()
+	close(releaseSecondDial)
+	client := <-acquired
+	if err := <-acquireErr; err != nil {
+		t.Fatal(err)
+	}
+	<-disconnected
+	if !sftpClientAlive(client) {
+		t.Fatal("last old-pane disconnect closed the client acquired by the new pane")
+	}
+}
+
 // TestSFTPBrowserDoesNotCacheAFailedDial: a wrong password or an unreachable
 // host must not poison the entry, or the user's retry after fixing it returns
 // the stale error forever.
@@ -437,6 +529,63 @@ func TestSFTPListDirOverARealSSHConnection(t *testing.T) {
 	}
 }
 
+func TestOpenSFTPSourceRequiresExactHostKeyPair(t *testing.T) {
+	addr, _, _ := startSFTPSSHTestServer(t)
+	useIsolatedKeyring(t)
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
+	t.Cleanup(func() {
+		if a.sftp != nil {
+			a.sftp.closeAll()
+		}
+		a.tunnels.stopAll()
+	})
+	h, err := a.AddSSHHost(sshHostAt(addr), sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.OpenSFTPSource(h.ID, AcceptedHostKey{})
+	var unknown *HostKeyUnknownError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("first open error = %v, want HostKeyUnknownError", err)
+	}
+	if unknown.Host == "" || unknown.Fingerprint == "" {
+		t.Fatalf("incomplete host-key prompt: %+v", unknown)
+	}
+
+	_, err = a.OpenSFTPSource(h.ID, AcceptedHostKey{Host: unknown.Host, Fingerprint: "SHA256:wrong"})
+	var wrong *HostKeyUnknownError
+	if !errors.As(err, &wrong) {
+		t.Fatalf("wrong accepted pair error = %v, want HostKeyUnknownError", err)
+	}
+
+	info, err := a.OpenSFTPSource(h.ID, AcceptedHostKey{Host: unknown.Host, Fingerprint: unknown.Fingerprint})
+	if err != nil {
+		t.Fatalf("open after exact acceptance: %v", err)
+	}
+	if info.HostID != h.ID || !strings.HasPrefix(info.InitialDir, "/") {
+		t.Fatalf("source info = %+v, want host id and absolute initial dir", info)
+	}
+}
+
+func TestOpenSFTPSourceExplainsRejectedSubsystem(t *testing.T) {
+	addr, hostPub, _ := startSFTPSSHTestServerWithSubsystem(t, false)
+	a := newSFTPTestApp(t, addr, hostPub)
+	h, err := a.AddSSHHost(sshHostAt(addr), sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.OpenSFTPSource(h.ID, AcceptedHostKey{})
+	if err == nil {
+		t.Fatal("host that rejects the sftp subsystem must fail")
+	}
+	if !strings.Contains(err.Error(), "ssh connection is up") || !strings.Contains(err.Error(), "sftp") {
+		t.Fatalf("rejected subsystem must explain that SSH works but SFTP is unavailable, got %q", err)
+	}
+}
+
 // TestSFTPRedialsOverARealConnectionAfterTeardown is the fake-free half of
 // TestSFTPBrowserRedialsAfterChannelTeardown.
 //
@@ -576,6 +725,10 @@ type sftpSubsystemRequest struct{ Name string }
 // with a real pkg/sftp server instead of a shell. Nothing here fakes SFTP —
 // the bytes on the channel are the protocol.
 func startSFTPSSHTestServer(t *testing.T) (addr string, hostPub ssh.PublicKey, logins func() int) {
+	return startSFTPSSHTestServerWithSubsystem(t, true)
+}
+
+func startSFTPSSHTestServerWithSubsystem(t *testing.T, acceptSubsystem bool) (addr string, hostPub ssh.PublicKey, logins func() int) {
 	t.Helper()
 	hostKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -611,13 +764,13 @@ func startSFTPSSHTestServer(t *testing.T) (addr string, hostPub ssh.PublicKey, l
 				return
 			}
 			accepted.Add(1)
-			go serveSFTPConn(nc, cfg)
+			go serveSFTPConn(nc, cfg, acceptSubsystem)
 		}
 	}()
 	return ln.Addr().String(), signer.PublicKey(), func() int { return int(accepted.Load()) }
 }
 
-func serveSFTPConn(nc net.Conn, cfg *ssh.ServerConfig) {
+func serveSFTPConn(nc net.Conn, cfg *ssh.ServerConfig, acceptSubsystem bool) {
 	sc, chans, reqs, err := ssh.NewServerConn(nc, cfg)
 	if err != nil {
 		return
@@ -649,7 +802,10 @@ func serveSFTPConn(nc net.Conn, cfg *ssh.ServerConfig) {
 					continue
 				}
 				if r.WantReply {
-					_ = r.Reply(true, nil)
+					_ = r.Reply(acceptSubsystem, nil)
+				}
+				if !acceptSubsystem {
+					continue
 				}
 				srv, err := sftp.NewServer(ch)
 				if err != nil {

@@ -83,6 +83,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/uplink.go` | desktop | 远程 relay 客户端（lazy 协议） | 不直接拥有 PTY |
 | `prefssync` / `configsync` | `internal/prefssync/` + `internal/configsync/` | 账号 Relay 的 per-key LWW 偏好同步，以及 Peer Space 的签名配置复制/materialize | 不同步设备本地网络、凭据或运行态 |
 | `desktop/remote_fs.go` | desktop | 远程文件浏览器桥接：本机文件系统 CRUD + 回收站 + watch，响应 `FS_REQUEST`/发 `FS_EVENT`，受 `remote_permission=full` 门控；Relay 经 `internal/relay/fs_router.go` 按 requester 路由，Peer route 按 attempt 生命周期隔离 | 不做前端 UI、不越权访问未授权 session 的 host |
+| `desktop/file_transfer*.go` | desktop | 顶层 SFTP 工作区的 endpoint-neutral 传输引擎、local/SFTP adapter 与最多 2 并发的任务管理器；远端到远端字节仅在本进程以 256 KiB buffer 中转 | 不经过 WebView、uplink、Relay 或 terminal FS frame；不持久化 SSH credential |
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
@@ -240,6 +241,28 @@ Direct 与 Quick Tunnel 共用相同 message codec。owner 对每次 open/收发
 membership、session scope、双方 `full` permission 和 current driver。route replacement、pane
 detach、权限降级或 driver 转移立即关闭 service。renderer 只持有 Go 进程内 opaque attempt id，
 看不到 endpoint、membership token、Peer key 或 Relay credential。
+
+### 流 6：桌面顶层 SFTP 工作区
+
+SFTP 是 desktop-only 的固定顶层 view，不属于终端 `Tab[]`，不参与终端编号、关闭或
+拖拽排序。`App.vue` 用单一 `mainView = terminal | sftp | admin` 切换主区域；SFTP
+首次打开后保持 mounted，返回终端时只用 `v-show` 隐藏，因此左右来源、路径和传输队列
+不会丢失。入口必须同时满足 `caps.wailsBindings && caps.pluginHost`，Web/Capacitor
+不显示该页签。
+
+左右 pane 各自选择 local 或任意 saved SSH host，因此支持 local↔remote 以及
+remote A↔remote B。浏览/预览复用 `FileSystemBridge` 和 5 MiB 上限的 editor 路径；
+大文件复制走 `desktop/file_transfer*.go` 的独立流式路径：manifest 不跟随 symlink，
+实际内容由 Go `io.CopyBuffer` 使用固定 256 KiB buffer 读取 source endpoint 并写入
+destination endpoint。remote A→remote B 的字节不会进入 Vue state、WebView、Relay
+frame 或第三台机器。
+
+目标先写同目录 `.atterm-transfer-<uuid>.partial`，成功后原子 rename；失败和取消会
+best-effort 清理 partial。冲突默认 `skip`，`replace` / `rename` 必须由用户显式选择。
+unknown host key 只把弹窗展示的精确 `(host, fingerprint)` pair 回送一次，jump chain
+逐 hop 重试。传输事件名为 `sftp:transfer-progress`；前端必须先订阅再调用
+`ListFileTransfers`，并按 job id 合并，避免初始化窗口丢进度。该整条路径是本机 Wails
+binding surface，`.github/scripts/check-plugin-fs-isolation.sh` 禁止 uplink/relay 引用。
 
 ## 会话生命周期
 
@@ -623,7 +646,8 @@ desktop/frontend/src/
                            tabs 模型：每 tab 持 layout (single/vertical/horizontal/grid2x2)
                            + panes[]；boot 时挂 measure probe（FitAddon proposeDimensions）
                            预测 PTY cols/rows，避免开局 SIGWINCH；⚙ 按钮 dot badge
-                           跟着 update state.available || ready
+                           跟着 update state.available || ready；mainView 在 terminal /
+                           desktop-only SFTP / admin 三个顶层视图间互斥切换
 ├── components/
 │   ├── TabBar.vue         tab 编号 + layout icon + active pane session 标题
 │   ├── TerminalView.vue   xterm.js + FitAddon；多实例 v-show 切换；
@@ -650,6 +674,8 @@ desktop/frontend/src/
 │   ├── SessionInputHistoryPanel.vue 当前 pane 输入历史；本地直接读，远端走
 │   │                                  request/response + E2EE，支持图文复制
 │   ├── AdminPanel.vue     主 App 内嵌管理视图；桌面宽导航 + 窄屏横向 tabs
+│   ├── sftp/              固定顶层双 pane 工作区、来源选择、冲突确认与任务队列；
+│   │                      pane 独立选择 local / saved SSH host
 │   ├── TaskSidebar.vue    会话侧栏容器：header 内联 `<input type="search">`
 │                          （`Cmd/Ctrl+Shift+F` focus，`Esc` 清空）+ `defineExpose({
 │                          focusSearch })`；`.title` ellipsis 应对窄侧栏

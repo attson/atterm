@@ -482,11 +482,7 @@ func TestWriteFileRefusesDirectory(t *testing.T) {
 	}
 }
 
-// TestWriteFileOverwriteWithoutPosixRename covers the servers that do not
-// advertise posix-rename@openssh.com: SFTP v3's plain rename refuses an
-// existing target, so the overwrite has to unlink first. Same observable
-// outcome, one more round trip and a narrow window.
-func TestWriteFileOverwriteWithoutPosixRename(t *testing.T) {
+func TestWriteFileOverwriteWithoutPosixRenamePreservesOriginal(t *testing.T) {
 	c, root, _ := newTestClient(t)
 	c.posixRename = false
 	disk := filepath.Join(root, "doc.txt")
@@ -496,11 +492,11 @@ func TestWriteFileOverwriteWithoutPosixRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.WriteFile(context.Background(), path.Join(root, "doc.txt"), []byte("REPLACED"), before.ModTime, false); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if _, err := c.WriteFile(context.Background(), path.Join(root, "doc.txt"), []byte("REPLACED"), before.ModTime, false); err == nil {
+		t.Fatal("WriteFile replaced an occupied target without atomic rename support")
 	}
-	if got := readBack(t, disk); got != "REPLACED" {
-		t.Fatalf("on-disk = %q, want REPLACED", got)
+	if got := readBack(t, disk); got != "original" {
+		t.Fatalf("on-disk = %q, want original", got)
 	}
 	assertNoTempLeftovers(t, root)
 }
@@ -509,7 +505,7 @@ func TestWriteFileOverwriteWithoutPosixRename(t *testing.T) {
 // renaming would otherwise hand the target whatever the remote umask produces,
 // quietly widening a 0600 file to 0644.
 func TestWriteFileOverwritePreservesMode(t *testing.T) {
-	for _, posix := range []bool{true, false} {
+	for _, posix := range []bool{true} {
 		name := "posix-rename"
 		if !posix {
 			name = "unlink-fallback"

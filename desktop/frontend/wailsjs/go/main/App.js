@@ -38,6 +38,10 @@ export function CancelDownload() {
   return window['go']['main']['App']['CancelDownload']();
 }
 
+export function CancelFileTransfer(arg1) {
+  return window['go']['main']['App']['CancelFileTransfer'](arg1);
+}
+
 export function CancelSnippetRun(arg1) {
   return window['go']['main']['App']['CancelSnippetRun'](arg1);
 }
@@ -430,6 +434,10 @@ export function ListActiveForwards() {
   return window['go']['main']['App']['ListActiveForwards']();
 }
 
+export function ListFileTransfers() {
+  return window['go']['main']['App']['ListFileTransfers']();
+}
+
 export function ListKnownHosts() {
   return window['go']['main']['App']['ListKnownHosts']();
 }
@@ -500,6 +508,10 @@ export function NewSshSession(arg1) {
 
 export function NewSshSessionByID(arg1, arg2) {
   return window['go']['main']['App']['NewSshSessionByID'](arg1, arg2);
+}
+
+export function OpenSFTPSource(arg1, arg2) {
+  return window['go']['main']['App']['OpenSFTPSource'](arg1, arg2);
 }
 
 export function PickLogFilePath() {
@@ -584,6 +596,10 @@ export function RemoveKnownHost(arg1) {
 
 export function RestoreSessionInputHistory(arg1, arg2) {
   return window['go']['main']['App']['RestoreSessionInputHistory'](arg1, arg2);
+}
+
+export function RetryFileTransfer(arg1, arg2) {
+  return window['go']['main']['App']['RetryFileTransfer'](arg1, arg2);
 }
 
 export function RevealSSHKey(arg1) {
@@ -852,6 +868,10 @@ export function SignOutOtherRelaySessions() {
 
 export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
+}
+
+export function StartFileTransfer(arg1) {
+  return window['go']['main']['App']['StartFileTransfer'](arg1);
 }
 
 export function StartForward(arg1, arg2) {

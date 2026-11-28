@@ -24,6 +24,11 @@ import (
 
 // --- helpers ----------------------------------------------------------------
 
+type credentialHostError interface {
+	error
+	CredentialHostID() string
+}
+
 // newJumpTestApp builds an App whose known_hosts already trusts exactly the
 // given servers. Anything not listed is an unknown host key, which is how the
 // TOFU tests pick which hop the user gets asked about.
@@ -647,6 +652,13 @@ func TestDirectHostMissingCredentialKeepsTheSentinel(t *testing.T) {
 	if err == nil || err.Error() != errCredentialMissing {
 		t.Fatalf("want the bare %q sentinel, got %v", errCredentialMissing, err)
 	}
+	var credentialErr credentialHostError
+	if !errors.As(err, &credentialErr) {
+		t.Fatalf("missing credential error must identify the saved host, got %T", err)
+	}
+	if got := credentialErr.CredentialHostID(); got != host.ID {
+		t.Fatalf("credential host id = %q, want %q", got, host.ID)
+	}
 	assertNoDials(t, srv, "missing credential")
 }
 
@@ -700,7 +712,7 @@ func TestJumpHopWithoutCredentialFailsBeforeAnyDial(t *testing.T) {
 
 	a := newJumpTestApp(t, srv1, srv2, srvT)
 	addServerHost(t, a, "h1", srv1, "u1", "p1", "")
-	addServerHost(t, a, "h2", srv2, "u2", "", "") // saved, but no credential
+	h2 := addServerHost(t, a, "h2", srv2, "u2", "", "") // saved, but no credential
 	target := addServerHost(t, a, "db", srvT, "ut", "pt", "h1,h2")
 
 	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
@@ -714,6 +726,13 @@ func TestJumpHopWithoutCredentialFailsBeforeAnyDial(t *testing.T) {
 	if err.Error() == errCredentialMissing {
 		t.Fatal("a hop's missing credential must not masquerade as the target's " +
 			"(the frontend would prompt for the wrong host)")
+	}
+	var credentialErr credentialHostError
+	if !errors.As(err, &credentialErr) {
+		t.Fatalf("jump credential error must identify the saved host, got %T", err)
+	}
+	if got := credentialErr.CredentialHostID(); got != h2.ID {
+		t.Fatalf("credential host id = %q, want jump host %q", got, h2.ID)
 	}
 	assertNoDials(t, srv1, "hop 1 while a later hop has no credential")
 	assertNoDials(t, srvT, "target while a hop has no credential")

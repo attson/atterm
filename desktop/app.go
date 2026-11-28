@@ -159,6 +159,26 @@ const errCredentialMissing = "ssh_credential_missing"
 // exists in the vault.
 const errKeyMissing = "ssh_key_missing"
 
+// SSHCredentialError keeps the saved host that needs attention attached to a
+// missing-credential failure. Error() preserves the existing sentinel for a
+// destination host, while Message gives jump-host failures their actionable
+// wording. Wails exposes HostID alongside the rejected error so SFTP can open
+// the exact host editor instead of making the user search for it.
+type SSHCredentialError struct {
+	HostID  string
+	Code    string
+	Message string
+}
+
+func (e *SSHCredentialError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Code
+}
+
+func (e *SSHCredentialError) CredentialHostID() string { return e.HostID }
+
 // HostKeyUnknownError carries the fingerprint so the frontend can show the
 // TOFU dialog and retry with Host + Fingerprint echoed back in
 // SSHConnectReq.AcceptedHostKeyHost / AcceptedHostKeyFingerprint.
@@ -349,6 +369,12 @@ type App struct {
 	sftpMu sync.Mutex
 	sftp   *sftpBrowser
 
+	// fileTransfers owns local/SFTP streaming copy jobs. Raw App literals in
+	// tests get it lazily through fileTransferManager; NewApp initializes it so
+	// production has one singleton queue for the lifetime of the window.
+	fileTransfersMu sync.Mutex
+	fileTransfers   *fileTransferManager
+
 	// prefsSync is layered behind the prefsSyncEngine interface (defined in
 	// prefs_sync_loop.go) rather than typed as *prefssync.Engine directly, so
 	// tests can substitute a fake without internal/prefssync growing any
@@ -493,6 +519,7 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 		windowActivator: activateMainWindow,
 	}
 	a.snippetDialer = a.dialSnippetConn
+	a.fileTransferManager()
 	a.updater = newUpdater(updaterConfig{
 		current:         Version,
 		repo:            "attson/atterm",
@@ -719,6 +746,10 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.updater != nil {
 		a.updater.Stop()
 	}
+	// Transfer jobs may hold their own SFTP channel references. Cancel them and
+	// wait for those references to close before retiring the shared browser and
+	// then the underlying SSH connections.
+	a.shutdownFileTransfers()
 	// End file browsing before the tunnels: an SFTP session holds a reference
 	// on the same per-host connection a tunnel does, so releasing it first is
 	// what lets stopAll actually close the login rather than leave it held by

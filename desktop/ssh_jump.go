@@ -181,7 +181,7 @@ func (a *App) dialThroughJumps(ctx context.Context, h SSHHost, accepted accepted
 	// discovering it is missing after logging into three bastions spends every
 	// side effect the static checks exist to avoid.
 	if _, err := sshAuthForHost(h); err != nil {
-		return nil, err // bare sentinel: the frontend prompts for this host
+		return nil, credentialError(h, err)
 	}
 	chain, err := a.dialJumpHops(ctx, h, accepted)
 	if err != nil {
@@ -252,12 +252,9 @@ func (a *App) dialJumpHops(ctx context.Context, h SSHHost, accepted acceptedHost
 // host-key check, over via (nil for the first hop, which is dialled from this
 // machine).
 //
-// isTarget only changes how errors are worded and whether the missing-credential
-// sentinels are passed through untouched: the frontend reacts to a bare
-// errCredentialMissing by prompting for the host the user asked to connect,
-// which is the right thing for the target and the wrong thing for a bastion —
-// there the user has to go and fill in that *other* host's credential, so the
-// message has to say which.
+// isTarget only changes how credential errors are worded. Both variants retain
+// the saved-host ID, but a destination preserves the existing sentinel string
+// while a bastion error names the hop that must be edited.
 func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *sshclient.Conn, accepted acceptedHostKey, isTarget bool) (*sshclient.Conn, error) {
 	name := sshHostLabel(h)
 
@@ -267,7 +264,7 @@ func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *ssh
 	auth, err := sshAuthForHost(h)
 	if err != nil {
 		if isTarget {
-			return nil, err // bare sentinel: the frontend prompts for this host
+			return nil, credentialError(h, err)
 		}
 		return nil, jumpCredentialError(h, hopIndex, err)
 	}
@@ -336,14 +333,17 @@ func jumpProxyCommandError(h SSHHost, hopIndex int) error {
 		sshHostLabel(h), hopIndex, h.ProxyCommand)
 }
 
-// jumpCredentialError words a hop's missing credential. It deliberately does
-// not return the bare errCredentialMissing / errKeyMissing sentinel the target
-// path returns: the frontend answers that sentinel by prompting for the host
-// the user asked to connect, and here the credential that is missing belongs to
-// a *different* host, which the user has to go and fill in.
+func credentialError(h SSHHost, err error) *SSHCredentialError {
+	return &SSHCredentialError{HostID: h.ID, Code: err.Error()}
+}
+
+// jumpCredentialError words a hop's missing credential while retaining the
+// exact saved-host ID for callers that can offer an edit action.
 func jumpCredentialError(h SSHHost, hopIndex int, err error) error {
-	return fmt.Errorf("jump host %q (hop %d) has no usable credential (%s); "+
+	credentialErr := credentialError(h, err)
+	credentialErr.Message = fmt.Sprintf("jump host %q (hop %d) has no usable credential (%s); "+
 		"open that host and supply one", sshHostLabel(h), hopIndex, err)
+	return credentialErr
 }
 
 // resolveJumpHops expands h's ProxyJump into the hops to dial, in dial order,

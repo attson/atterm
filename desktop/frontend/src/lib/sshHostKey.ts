@@ -55,3 +55,9 @@ export function parseHostKeyPrompt(err: unknown): HostKeyPrompt | null {
   const hopName = typeof e.HopName === "string" ? e.HopName : "";
   return { fingerprint, host, hopIndex, hopName };
 }
+
+export function parseCredentialHostID(err: unknown): string {
+  if (!err || typeof err !== "object") return "";
+  const hostID = (err as Record<string, unknown>).HostID;
+  return typeof hostID === "string" ? hostID : "";
+}

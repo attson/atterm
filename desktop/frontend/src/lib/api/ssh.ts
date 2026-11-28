@@ -2,10 +2,13 @@ import { bindings } from "./_bindings";
 import type {
   AcceptedHostKey,
   ActiveForward,
+  FileTransferJob,
   NewSessionResp,
   SFTPFileContent,
   SFTPFileMetaInfo,
   SFTPListing,
+  SFTPSourceInfo,
+  StartFileTransferReq,
   SSHConfigImportPreview,
   SSHConnectReq,
   SSHCredential,
@@ -19,11 +22,17 @@ import type {
 export type {
   AcceptedHostKey,
   ActiveForward,
+  FileEndpoint,
+  FileTransferConflict,
+  FileTransferJob,
+  FileTransferState,
   ForwardRule,
   SFTPDirEntry,
   SFTPFileContent,
   SFTPFileMetaInfo,
   SFTPListing,
+  SFTPSourceInfo,
+  StartFileTransferReq,
   SSHConfigImportPreview,
   SSHConfigImportSkipped,
   SSHConnectReq,
@@ -120,6 +129,29 @@ export function listActiveForwards(): Promise<ActiveForward[]> {
 // the browse path runs, so the two cannot disagree.
 export function listSFTPHosts(): Promise<SSHHost[]> {
   return bindings().ListSFTPHosts();
+}
+
+export function openSFTPSource(
+  hostID: string,
+  accepted: AcceptedHostKey = ACCEPT_NO_HOST_KEY,
+): Promise<SFTPSourceInfo> {
+  return bindings().OpenSFTPSource(hostID, accepted);
+}
+
+export function startFileTransfer(request: StartFileTransferReq): Promise<string> {
+  return bindings().StartFileTransfer(request);
+}
+
+export function retryFileTransfer(id: string, accepted: AcceptedHostKey = ACCEPT_NO_HOST_KEY): Promise<string> {
+  return bindings().RetryFileTransfer(id, accepted);
+}
+
+export function cancelFileTransfer(id: string): Promise<void> {
+  return bindings().CancelFileTransfer(id);
+}
+
+export function listFileTransfers(): Promise<FileTransferJob[]> {
+  return bindings().ListFileTransfers();
 }
 
 export function sftpListDir(hostID: string, path: string): Promise<SFTPListing> {

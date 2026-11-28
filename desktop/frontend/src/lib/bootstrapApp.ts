@@ -29,6 +29,9 @@ import { installTooltip } from "../directives/tooltip";
  * / `afterMount`.
  */
 export interface BootstrapAppOptions {
+  /** Props for the shared root App. Platform-only views are injected here so
+   *  their modules never enter another platform's import graph. */
+  rootProps?: Record<string, unknown>;
   /** Locale load/save hooks handed to initI18n. Different per entry:
    *  Wails proxies through the Go bindings, web reads localStorage
    *  directly, capacitor reads localStorage with an iOS-safe try/catch. */
@@ -63,7 +66,7 @@ export async function bootstrapApp(opts: BootstrapAppOptions): Promise<void> {
   const platform = initPlatform(opts.createPlatform);
   await opts.beforeMount?.(platform);
 
-  const app = createApp(App);
+  const app = createApp(App, opts.rootProps);
   app.use(createPinia());
   installTooltip(app);
   app.provide("platform", platform);

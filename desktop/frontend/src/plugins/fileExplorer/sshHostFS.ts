@@ -43,13 +43,6 @@ const NO_TRASH = "no platform trash command available";
  *  the search says plainly that it stopped early. */
 const SSH_SEARCH_MAX_DIRS = 200;
 
-/** The one sentence behind both halves of the recursive-delete refusal: the
- *  tree shows it instead of opening a confirmation, and the bridge throws it
- *  if the call is made anyway. */
-export function sshNoRecursiveDelete(path: string): string {
-  return t("plugins.fileExplorer.sshNoRecursiveDelete", { path });
-}
-
 export interface SSHHostFileSystemBridge extends FileSystemBridge {
   listDirDetailed(path: string): Promise<DirListing>;
   dispose(): void;
@@ -160,25 +153,9 @@ export function createSSHHostFS(hostID: string): SSHHostFileSystemBridge {
     }
   }
 
-  /**
-   * remove deletes a single remote file, and refuses a directory.
-   *
-   * The refusal is the decision, not a limitation waiting to be lifted.
-   * Roadmap item 28 is scoped to browsing plus a single-file transfer, and a
-   * recursive delete is the one operation on this source that no part of the
-   * system can walk back: there is no trash on the far side, no versioning,
-   * and a delete that fails halfway leaves a half-deleted tree. The tree
-   * declines it before the confirmation appears (dirRemovalRefusal), and this
-   * is the second gate so that the refusal does not depend on the UI asking
-   * nicely. Deleting a remote directory is a shell command away, in the
-   * terminal that opens on the same host with the same credential.
-   */
   async function remove(path: string, recursive: boolean): Promise<void> {
     ensureLive();
-    if (recursive) {
-      throw new Error(sshNoRecursiveDelete(path));
-    }
-    await sftpRemove(hostID, path, false);
+    await sftpRemove(hostID, path, recursive);
   }
 
   function dispose(): void {
@@ -210,7 +187,6 @@ export function createSSHHostFS(hostID: string): SSHHostFileSystemBridge {
   return {
     identity: `ssh:${hostID}`,
     searchMaxDirs: SSH_SEARCH_MAX_DIRS,
-    dirRemovalRefusal: sshNoRecursiveDelete,
     listDir,
     listDirDetailed,
     fileMeta,

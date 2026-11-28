@@ -241,6 +241,23 @@ export function useSessionPins() {
   组件都要读写"时才用；单一组件内部状态还是用 `ref` + props/emit，不要为了
   "统一写法"到处开 module-level singleton。
 
+#### 桌面顶层 SFTP 工作区
+
+- SFTP 是 `App.vue` 的固定顶层 view，不得塞进终端 `Tab[]`，也不得参与 tab 编号、关闭、
+  recovery snapshot 或 reorder。`mainView` 统一管理 `terminal | sftp | admin` 互斥状态。
+- 入口只在 `caps.wailsBindings && caps.pluginHost` 时显示。首次打开后组件保持 mounted，
+  切回终端只用 `v-show`，确保左右 pane 状态和运行中的队列不因视图切换丢失。
+- pane 来源是 endpoint-neutral 的 local / saved SSH host；左右两边没有“本机侧”和“远端侧”
+  的固定含义。任何 UI 或 request builder 都必须允许 remote A→remote B。
+- 大文件字节禁止进入 Vue state、WebView、terminal `FS_REQUEST`、uplink 或 Relay。
+  `desktop/file_transfer*.go` 使用固定 256 KiB buffer 流式中转，目标经同目录 partial +
+  atomic rename 提交；cancel/error 必须 best-effort Abort。
+- conflict 默认 `skip`；`replace` / `rename` 只能来自用户显式选择。远端非空目录递归删除
+  必须双确认。TOFU retry 必须原样回送弹窗给出的 `(host, fingerprint)`，jump chain 每 hop
+  单独询问，不能从 saved host 字段重建地址。
+- `sftp:transfer-progress` 监听必须先于 `ListFileTransfers()` 注册；初始化 list 与实时 event
+  按 job id/进度阶段合并，terminal 状态不可被迟到的 queued/running snapshot 覆盖。
+
 ### CSS
 
 - 用 CSS 变量（`--bg`、`--accent` 等，定义在 `style.css :root`）

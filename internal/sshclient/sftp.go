@@ -1,12 +1,15 @@
 package sshclient
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
+
+var ErrSFTPSubsystemUnavailable = errors.New("sshclient: sftp subsystem unavailable")
 
 // SFTPStream is one open SFTP subsystem channel on a Conn: Read yields the
 // remote sftp-server's stdout, Write feeds its stdin, Close ends that channel
@@ -56,7 +59,7 @@ func (c *Conn) OpenSFTP() (*SFTPStream, error) {
 	}
 	if err := sess.RequestSubsystem("sftp"); err != nil {
 		_ = sess.Close()
-		return nil, fmt.Errorf("sshclient: request sftp subsystem: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrSFTPSubsystemUnavailable, err)
 	}
 	return &SFTPStream{sess: sess, stdin: stdin, stdout: stdout}, nil
 }

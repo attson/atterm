@@ -1,13 +1,13 @@
 export namespace connhealth {
-	
+
 	export class ByteStats {
 	    in_per_sec: number;
 	    out_per_sec: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ByteStats(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.in_per_sec = source["in_per_sec"];
@@ -17,11 +17,11 @@ export namespace connhealth {
 	export class RTTSample {
 	    at_ms: number;
 	    rtt_ms: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RTTSample(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.at_ms = source["at_ms"];
@@ -32,11 +32,11 @@ export namespace connhealth {
 	    last_ms?: number;
 	    p50_ms?: number;
 	    p95_ms?: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RTTStats(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.last_ms = source["last_ms"];
@@ -48,11 +48,11 @@ export namespace connhealth {
 	    at_ms: number;
 	    reason: string;
 	    duration_ms: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ReconnectEvent(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.at_ms = source["at_ms"];
@@ -65,11 +65,11 @@ export namespace connhealth {
 	    last_at_ms?: number;
 	    last_reason: string;
 	    history: ReconnectEvent[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ReconnectStats(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.count_last_hour = source["count_last_hour"];
@@ -77,7 +77,7 @@ export namespace connhealth {
 	        this.last_reason = source["last_reason"];
 	        this.history = this.convertValues(source["history"], ReconnectEvent);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -103,11 +103,11 @@ export namespace connhealth {
 	    reconnect: ReconnectStats;
 	    bytes: ByteStats;
 	    seq_gaps: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Snapshot(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.state = source["state"];
@@ -589,6 +589,20 @@ export namespace main {
 	        this.truncatedAt = source["truncatedAt"];
 	    }
 	}
+	export class FileEndpoint {
+	    kind: string;
+	    host_id?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new FileEndpoint(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.host_id = source["host_id"];
+	    }
+	}
 	export class FileExplorerConfig {
 	    enabled: boolean;
 	    panelWidthPx: number;
@@ -628,6 +642,74 @@ export namespace main {
 	        this.modTime = source["modTime"];
 	        this.isBinary = source["isBinary"];
 	    }
+	}
+	export class FileTransferHostKeyPrompt {
+	    fingerprint: string;
+	    host: string;
+	    hop_index: number;
+	    hop_name: string;
+
+	    static createFrom(source: any = {}) {
+	        return new FileTransferHostKeyPrompt(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fingerprint = source["fingerprint"];
+	        this.host = source["host"];
+	        this.hop_index = source["hop_index"];
+	        this.hop_name = source["hop_name"];
+	    }
+	}
+	export class FileTransferJob {
+	    id: string;
+	    state: string;
+	    current_path: string;
+	    error?: string;
+	    bytes_done: number;
+	    bytes_total: number;
+	    entries_done: number;
+	    entries_total: number;
+	    warnings: string[];
+	    host_key?: FileTransferHostKeyPrompt;
+	    credential_host_id?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new FileTransferJob(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.state = source["state"];
+	        this.current_path = source["current_path"];
+	        this.error = source["error"];
+	        this.bytes_done = source["bytes_done"];
+	        this.bytes_total = source["bytes_total"];
+	        this.entries_done = source["entries_done"];
+	        this.entries_total = source["entries_total"];
+	        this.warnings = source["warnings"];
+	        this.host_key = this.convertValues(source["host_key"], FileTransferHostKeyPrompt);
+	        this.credential_host_id = source["credential_host_id"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ForwardRule {
 	    id: string;
@@ -1778,6 +1860,20 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class SFTPSourceInfo {
+	    host_id: string;
+	    initial_dir: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SFTPSourceInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host_id = source["host_id"];
+	        this.initial_dir = source["initial_dir"];
+	    }
+	}
 	export class SSHConfigImportSkipped {
 	    alias: string;
 	    reason: string;
@@ -2230,15 +2326,55 @@ export namespace main {
 	        this.text = source["text"];
 	    }
 	}
+	export class StartFileTransferReq {
+	    source: FileEndpoint;
+	    destination: FileEndpoint;
+	    paths: string[];
+	    destination_dir: string;
+	    conflict: string;
+	    accepted_host_key: AcceptedHostKey;
+
+	    static createFrom(source: any = {}) {
+	        return new StartFileTransferReq(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = this.convertValues(source["source"], FileEndpoint);
+	        this.destination = this.convertValues(source["destination"], FileEndpoint);
+	        this.paths = source["paths"];
+	        this.destination_dir = source["destination_dir"];
+	        this.conflict = source["conflict"];
+	        this.accepted_host_key = this.convertValues(source["accepted_host_key"], AcceptedHostKey);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class StartupError {
 	    fatal: boolean;
 	    message: string;
 	    log_path: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new StartupError(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fatal = source["fatal"];

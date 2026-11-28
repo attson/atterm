@@ -20,11 +20,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/attson/atterm/internal/sftpfs"
+	"github.com/attson/atterm/internal/sshclient"
+	"github.com/pkg/sftp"
 )
 
 const (
@@ -160,6 +163,10 @@ type SFTPListing struct {
 // so the browser's lifecycle — which is the part with the interesting failure
 // modes — can be tested without an SSH server anywhere in sight.
 type sftpClient interface {
+	Getwd(ctx context.Context) (string, error)
+	Lstat(ctx context.Context, name string) (os.FileInfo, error)
+	OpenReader(ctx context.Context, name string) (sftpfs.ReadHandle, error)
+	CreateStagedWriter(ctx context.Context, target string) (sftpfs.StagedWriter, error)
 	ListDir(ctx context.Context, dir string) (sftpfs.Listing, error)
 	FileMeta(ctx context.Context, name string) (sftpfs.FileMetaInfo, error)
 	ReadChunk(ctx context.Context, name string, offset, length int64) (sftpfs.Chunk, error)
@@ -191,10 +198,11 @@ type sftpBrowser struct {
 	// dial opens an SFTP client on the host's shared connection and returns
 	// the release to call when the client is retired. Injected so the
 	// lifecycle above is testable without SSH.
-	dial func(hostID string) (sftpClient, func(), error)
+	dial func(hostID string, accepted AcceptedHostKey) (sftpClient, func(), error)
 
 	mu      sync.Mutex
 	entries map[string]*sftpBrowserEntry
+	leases  map[string]int
 }
 
 // sftpBrowserEntry is one host's client, or the in-flight dial for it. ready
@@ -210,11 +218,38 @@ type sftpBrowserEntry struct {
 	retireOnce sync.Once
 }
 
-func newSFTPBrowser(ctx context.Context, dial func(string) (sftpClient, func(), error)) *sftpBrowser {
+func newSFTPBrowser(ctx context.Context, dial func(string, AcceptedHostKey) (sftpClient, func(), error)) *sftpBrowser {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &sftpBrowser{ctx: ctx, dial: dial, entries: map[string]*sftpBrowserEntry{}}
+	return &sftpBrowser{ctx: ctx, dial: dial, entries: map[string]*sftpBrowserEntry{}, leases: map[string]int{}}
+}
+
+func (b *sftpBrowser) acquireSource(hostID string, accepted AcceptedHostKey) (sftpClient, error) {
+	b.mu.Lock()
+	b.leases[hostID]++
+	b.mu.Unlock()
+	client, err := b.clientWithHostKey(hostID, accepted)
+	if err != nil {
+		b.releaseLease(hostID)
+		return nil, err
+	}
+	return client, nil
+}
+
+func (b *sftpBrowser) releaseLease(hostID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	leases := b.leases[hostID]
+	if leases > 1 {
+		b.leases[hostID] = leases - 1
+		return false
+	}
+	if leases == 1 {
+		delete(b.leases, hostID)
+		return true
+	}
+	return false
 }
 
 // client returns a usable client for hostID, dialing or redialing as needed.
@@ -224,6 +259,10 @@ func newSFTPBrowser(ctx context.Context, dial func(string) (sftpClient, func(), 
 // client at once — the loser takes the winner's replacement rather than
 // dialing a second one.
 func (b *sftpBrowser) client(hostID string) (sftpClient, error) {
+	return b.clientWithHostKey(hostID, AcceptedHostKey{})
+}
+
+func (b *sftpBrowser) clientWithHostKey(hostID string, accepted AcceptedHostKey) (sftpClient, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		b.mu.Lock()
 		existing, ok := b.entries[hostID]
@@ -231,7 +270,7 @@ func (b *sftpBrowser) client(hostID string) (sftpClient, error) {
 			fresh := &sftpBrowserEntry{ready: make(chan struct{})}
 			b.entries[hostID] = fresh
 			b.mu.Unlock()
-			return b.fill(hostID, fresh, nil)
+			return b.fill(hostID, accepted, fresh, nil)
 		}
 		b.mu.Unlock()
 
@@ -240,6 +279,9 @@ func (b *sftpBrowser) client(hostID string) (sftpClient, error) {
 			// A failed dial is removed from the map before ready closes, so
 			// this can only be a straggler that read the entry first. Report
 			// it; the next call dials again.
+			if accepted.Host != "" || accepted.Fingerprint != "" {
+				continue
+			}
 			return nil, existing.err
 		}
 		if sftpClientAlive(existing.cl) {
@@ -254,7 +296,7 @@ func (b *sftpBrowser) client(hostID string) (sftpClient, error) {
 		fresh := &sftpBrowserEntry{ready: make(chan struct{})}
 		b.entries[hostID] = fresh
 		b.mu.Unlock()
-		return b.fill(hostID, fresh, existing)
+		return b.fill(hostID, accepted, fresh, existing)
 	}
 	return nil, fmt.Errorf("sftp: could not get a usable sftp session for host %s", hostID)
 }
@@ -268,8 +310,8 @@ func (b *sftpBrowser) client(hostID string) (sftpClient, error) {
 // reconnect, with another line in the remote's auth log every time. Item 26's
 // refcount is what makes the overlap free: the replacement takes a second
 // reference on the same connection before the first is given back.
-func (b *sftpBrowser) fill(hostID string, e, replaced *sftpBrowserEntry) (sftpClient, error) {
-	e.cl, e.release, e.err = b.dial(hostID)
+func (b *sftpBrowser) fill(hostID string, accepted AcceptedHostKey, e, replaced *sftpBrowserEntry) (sftpClient, error) {
+	e.cl, e.release, e.err = b.dial(hostID, accepted)
 	if e.err != nil {
 		// Never cache a failed dial: a wrong password the user then fixes, or
 		// a host that was simply down, must not answer the retry with the
@@ -318,6 +360,13 @@ func (e *sftpBrowserEntry) retire() {
 // shared connection loses this reference, so a host nobody is tunnelling to
 // stops holding a login open after the panel moved on.
 func (b *sftpBrowser) disconnect(hostID string) {
+	if !b.releaseLease(hostID) {
+		return
+	}
+	b.disconnectEntry(hostID)
+}
+
+func (b *sftpBrowser) disconnectEntry(hostID string) {
 	b.mu.Lock()
 	e, ok := b.entries[hostID]
 	if ok {
@@ -341,6 +390,7 @@ func (b *sftpBrowser) closeAll() {
 		entries[id] = e
 	}
 	b.entries = map[string]*sftpBrowserEntry{}
+	b.leases = map[string]int{}
 	b.mu.Unlock()
 	for _, e := range entries {
 		<-e.ready
@@ -552,7 +602,9 @@ func (a *App) sftpBrowser() *sftpBrowser {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		a.sftp = newSFTPBrowser(ctx, a.dialSFTP)
+		a.sftp = newSFTPBrowser(ctx, func(hostID string, accepted AcceptedHostKey) (sftpClient, func(), error) {
+			return a.dialSFTP(ctx, hostID, accepted)
+		})
 	}
 	return a.sftp
 }
@@ -562,13 +614,16 @@ func (a *App) sftpBrowser() *sftpBrowser {
 // The connection comes from tunnelManager.acquireConn — the same refcount a
 // tunnel takes — so browsing a host the user is already tunnelling to costs no
 // extra login, and the last of the two to go closes it.
-func (a *App) dialSFTP(hostID string) (sftpClient, func(), error) {
+func (a *App) dialSFTP(ctx context.Context, hostID string, accepted AcceptedHostKey) (sftpClient, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	host, err := a.connectableSSHHost(hostID)
 	if err != nil {
 		return nil, nil, err
 	}
-	hc, err := a.tunnels.acquireConn(hostID, func() (*jumpChain, error) {
-		return a.dialTunnelConn(host)
+	hc, err := a.tunnels.acquireConnContext(ctx, hostID, func() (*jumpChain, error) {
+		return a.dialTunnelConnWithHostKeyContext(ctx, host, acceptedHostKey{Host: accepted.Host, Fingerprint: accepted.Fingerprint})
 	})
 	if err != nil {
 		return nil, nil, err
@@ -584,7 +639,7 @@ func (a *App) dialSFTP(hostID string) (sftpClient, func(), error) {
 	default:
 	}
 
-	ctx, cancel := context.WithTimeout(a.browserContext(), sftpOpenTimeout)
+	openCtx, cancel := context.WithTimeout(ctx, sftpOpenTimeout)
 	defer cancel()
 	conn := hc.conn()
 	// sftpfs.OpenContext bounds both halves of the handshake — the subsystem
@@ -599,12 +654,12 @@ func (a *App) dialSFTP(hostID string) (sftpClient, func(), error) {
 	// one assigned into the sftpClient interface would be a non-nil interface
 	// wrapping a nil pointer — it would pass sftpClientAlive and fail much
 	// later, somewhere far less obvious. err is checked before the conversion.
-	client, err := sftpfs.OpenContext(ctx, conn)
+	client, err := sftpfs.OpenContext(openCtx, conn)
 	if err != nil {
 		a.tunnels.releaseConn(hostID, hc)
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sshclient.ErrSFTPSubsystemUnavailable) {
 			return nil, nil, fmt.Errorf(
-				"the ssh connection is up but the host did not start an sftp session in time "+
+				"the ssh connection is up but the host did not start an sftp session "+
 					"(is sftp-server installed and enabled in its sshd_config?): %w", err)
 		}
 		return nil, nil, err
@@ -626,6 +681,53 @@ func (a *App) dialSFTP(hostID string) (sftpClient, func(), error) {
 		_ = cl.Close()
 		a.tunnels.releaseConn(hostID, hc)
 	}, nil
+}
+
+type SFTPSourceInfo struct {
+	HostID     string `json:"host_id"`
+	InitialDir string `json:"initial_dir"`
+}
+
+func (a *App) OpenSFTPSource(hostID string, accepted AcceptedHostKey) (SFTPSourceInfo, error) {
+	browser := a.sftpBrowser()
+	client, err := browser.acquireSource(hostID, accepted)
+	if err != nil {
+		return SFTPSourceInfo{}, err
+	}
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			browser.disconnect(hostID)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(a.browserContext(), sftpOpTimeout)
+	defer cancel()
+	initialDir, err := client.Getwd(ctx)
+	if err != nil {
+		var status *sftp.StatusError
+		if errors.As(err, &status) && status.FxCode() == sftp.ErrSSHFxOpUnsupported {
+			initialDir = "/"
+		} else {
+			return SFTPSourceInfo{}, err
+		}
+	}
+	if !strings.HasPrefix(initialDir, "/") {
+		initialDir = "/"
+	}
+	initialDir, err = sftpResolvePath(initialDir)
+	if err != nil {
+		return SFTPSourceInfo{}, err
+	}
+	succeeded = true
+	return SFTPSourceInfo{HostID: hostID, InitialDir: initialDir}, nil
+}
+
+func (a *App) newSFTPTransferEndpoint(ctx context.Context, hostID string, accepted AcceptedHostKey) (transferEndpoint, error) {
+	client, release, err := a.dialSFTP(ctx, hostID, accepted)
+	if err != nil {
+		return nil, err
+	}
+	return newSFTPTransferEndpointForClient(hostID, client, release), nil
 }
 
 func (a *App) browserContext() context.Context {

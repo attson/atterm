@@ -23,6 +23,8 @@ export function BuildConfigExport():Promise<main.ConfigExport>;
 
 export function CancelDownload():Promise<void>;
 
+export function CancelFileTransfer(arg1:string):Promise<void>;
+
 export function CancelSnippetRun(arg1:string):Promise<void>;
 
 export function CancelTermiusImport(arg1:string):Promise<void>;
@@ -219,6 +221,8 @@ export function JoinPeerSpace(arg1:main.JoinPeerSpaceReq):Promise<main.PeerSpace
 
 export function ListActiveForwards():Promise<Array<main.ActiveForward>>;
 
+export function ListFileTransfers():Promise<Array<main.FileTransferJob>>;
+
 export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
 
 export function ListPeerInvitations():Promise<Array<main.PeerInvitation>>;
@@ -254,6 +258,8 @@ export function NewSession(arg1:main.NewSessionReq):Promise<main.NewSessionResp>
 export function NewSshSession(arg1:main.SSHConnectReq):Promise<main.NewSessionResp>;
 
 export function NewSshSessionByID(arg1:string,arg2:main.AcceptedHostKey):Promise<main.NewSessionResp>;
+
+export function OpenSFTPSource(arg1:string,arg2:main.AcceptedHostKey):Promise<main.SFTPSourceInfo>;
 
 export function PickLogFilePath():Promise<string>;
 
@@ -296,6 +302,8 @@ export function RememberRelayPassword(arg1:string):Promise<void>;
 export function RemoveKnownHost(arg1:string):Promise<void>;
 
 export function RestoreSessionInputHistory(arg1:string,arg2:string):Promise<void>;
+
+export function RetryFileTransfer(arg1:string,arg2:main.AcceptedHostKey):Promise<string>;
 
 export function RevealSSHKey(arg1:string):Promise<main.SSHKeySecret>;
 
@@ -430,6 +438,8 @@ export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;
+
+export function StartFileTransfer(arg1:main.StartFileTransferReq):Promise<string>;
 
 export function StartForward(arg1:string,arg2:string):Promise<void>;
 

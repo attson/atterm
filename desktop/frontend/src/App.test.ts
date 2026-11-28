@@ -1,4 +1,5 @@
 import { describe, expect, test, it, beforeEach, afterEach, vi } from "vitest";
+import { defineComponent, markRaw } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { __setPlatformForTests } from "./platform";
@@ -44,6 +45,7 @@ import source from "./App.vue?raw";
 import closeConfirmSource from "./composables/useCloseSessionConfirm.ts?raw";
 import settingsSource from "./components/SettingsDialog.vue?raw";
 import capacitorMainSource from "./main.capacitor.ts?raw";
+import wailsMainSource from "./main.ts?raw";
 import zhCNSource from "./i18n/messages/zh-CN.ts?raw";
 
 describe("tab activation", () => {
@@ -82,10 +84,17 @@ describe("terminal pane mounting", () => {
 });
 
 describe("web capability gates", () => {
+  test("keeps the Wails-only SFTP workspace out of the shared App bundle", () => {
+    expect(source).not.toContain('import SftpWorkspace from "./components/sftp/SftpWorkspace.vue"');
+    expect(wailsMainSource).toMatch(/import\(['"]\.\/components\/sftp\/SftpWorkspace\.vue['"]\)/);
+    expect(wailsMainSource).toContain("markRaw(defineAsyncComponent");
+    expect(source).toContain("sftpWorkspace?: Component");
+  });
+
   test("does not mount plugin hosts when caps.pluginHost=false", () => {
-    expect(source).toContain('<template v-if="caps.pluginHost && rightPanelHasPlugin">');
-    expect(source).toContain('<PluginHost\n      v-if="caps.pluginHost"');
-    expect(source).toContain('<TranslatePanelHost v-if="caps.pluginHost"');
+    expect(source).toContain('<template v-if="mainView === \'terminal\' && caps.pluginHost && rightPanelHasPlugin">');
+    expect(source).toContain('<PluginHost\n      v-if="mainView === \'terminal\' && caps.pluginHost"');
+    expect(source).toContain('<TranslatePanelHost v-if="mainView === \'terminal\' && caps.pluginHost"');
   });
 
   test("relay config changes refresh both desktop connection state and identity", () => {
@@ -1316,10 +1325,11 @@ describe("admin view (main-area swap)", () => {
   // exposes two triggers — toggle-admin (mirrors the real admin button) and
   // activate (mirrors clicking a session tab, i.e. gotoTab).
   const tabBarStub = {
-    props: ["isAdmin", "adminOpen"],
+    props: ["isAdmin", "adminOpen", "sftpAvailable", "sftpOpen"],
     template: `
       <div>
         <button v-if="isAdmin" data-testid="toggle-admin" :class="{ active: adminOpen }" @click="$emit('toggle-admin')">admin</button>
+        <button v-if="sftpAvailable" data-testid="toggle-sftp" :class="{ active: sftpOpen }" @click="$emit('toggle-sftp')">sftp</button>
         <button data-testid="activate-session-tab" @click="$emit('activate', 'tab-1')">tab</button>
       </div>
     `,
@@ -1327,15 +1337,26 @@ describe("admin view (main-area swap)", () => {
 
   function mountAdminApp() {
     return mount(App, {
+      props: {
+        sftpWorkspace: markRaw(defineComponent({
+          props: { active: Boolean },
+          emits: ["edit-host"],
+          template: `<div data-testid="sftp-workspace-stub" :data-active="active"><button data-testid="sftp-edit-host" @click="$emit('edit-host', 'host-2')">edit</button></div>`,
+        })),
+      },
       global: {
         stubs: {
           TitleBar: true,
-          TaskSidebar: true,
-          PluginHost: true,
+          TaskSidebar: { template: `<div data-testid="task-sidebar-stub" />` },
+          PluginHost: { template: `<div data-testid="plugin-host-stub" />` },
           TranslatePanelHost: true,
           ShortcutHints: true,
           PaneGrid: { template: `<div data-testid="pane-grid-stub" />` },
           AdminPanel: { template: `<div data-testid="admin-panel-stub" />` },
+          SshHostsPanel: {
+            props: ["editHostId"],
+            template: `<div data-testid="ssh-hosts-panel-stub" :data-edit-host-id="editHostId" />`,
+          },
           TabBar: tabBarStub,
         },
       },
@@ -1386,6 +1407,57 @@ describe("admin view (main-area swap)", () => {
     await flushPromises();
 
     expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
+  });
+
+  it("opens SFTP as a mutually exclusive main view and keeps it mounted when returning to a terminal", async () => {
+    const platform = createFakePlatform();
+    __setPlatformForTests(platform);
+    const wrapper = mountAdminApp();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="sftp-workspace-stub"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="toggle-sftp"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("data-active")).toBe("true");
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("style") ?? "").not.toContain("display: none");
+    expect(wrapper.find('[data-testid="task-sidebar-stub"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="plugin-host-stub"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
+
+    await wrapper.get('[data-testid="activate-session-tab"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="sftp-workspace-stub"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("data-active")).toBe("false");
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("style")).toContain("display: none");
+    expect(wrapper.find('[data-testid="task-sidebar-stub"]').exists()).toBe(true);
+  });
+
+  it("opens the exact SSH host editor requested by a failed SFTP job", async () => {
+    const platform = createFakePlatform();
+    __setPlatformForTests(platform);
+    const wrapper = mountAdminApp();
+    await flushPromises();
+    await wrapper.get('[data-testid="toggle-sftp"]').trigger("click");
+    await wrapper.get('[data-testid="sftp-edit-host"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="ssh-hosts-panel-stub"]').attributes("data-edit-host-id")).toBe("host-2");
+  });
+
+  it("opening admin closes the SFTP view", async () => {
+    const platform = createFakePlatform();
+    platform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: "u1", email: "a@b.com", is_admin: true });
+    __setPlatformForTests(platform);
+    const wrapper = mountAdminApp();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="toggle-sftp"]').trigger("click");
+    await wrapper.get('[data-testid="toggle-admin"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="admin-panel-stub"]').isVisible()).toBe(true);
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("data-active")).toBe("false");
+    expect(wrapper.get('[data-testid="sftp-workspace-stub"]').attributes("style")).toContain("display: none");
   });
 
   it("isAdmin transitioning true -> false auto-resets adminViewOpen", async () => {

@@ -128,6 +128,10 @@ describe("SftpPane", () => {
 
     expect(SFTPDisconnect).toHaveBeenCalledWith("build");
     expect(wrapper.get('[data-test="load-error"]').text()).toContain("archive offline");
+
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
+    expect(wrapper.get('[data-test="action-refresh"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-test="create-dir"]').attributes("disabled")).toBeDefined();
   });
 
   it("navigates, filters, sorts, and keeps multi-selection stable", async () => {
@@ -188,6 +192,54 @@ describe("SftpPane", () => {
 
     expect(wrapper.findAll('[data-test="file-row"]')).toHaveLength(3);
     expect(wrapper.find('[data-path="/home/me/.env"]').exists()).toBe(true);
+  });
+
+  it("keeps navigation entries out of selection, transfer, rename, and delete actions", async () => {
+    const state = createPaneState({ kind: "local" }, "/home/me");
+    state.selectedPaths.add("/home/me/..");
+    const wrapper = mountPane(fakeFS({
+      listDir: vi.fn().mockResolvedValue([
+        { name: ".", isDir: true, size: 0, modTime: 1 },
+        { name: "..", isDir: true, size: 0, modTime: 1 },
+      ]),
+    }), state);
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="row-select-/home/me/."]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="row-select-/home/me/.."]').exists()).toBe(false);
+    expect(wrapper.get('[data-path="/home/me/.."]').attributes("draggable")).toBe("false");
+
+    await wrapper.get('[data-path="/home/me/.."]').trigger("contextmenu", { clientX: 12, clientY: 18 });
+    expect(wrapper.find('[data-test="context-transfer"]').exists()).toBe(false);
+
+    const setData = vi.fn();
+    await wrapper.get('[data-path="/home/me/.."]').trigger("dragstart", {
+      dataTransfer: { setData, effectAllowed: "" },
+    });
+    expect(setData).not.toHaveBeenCalled();
+
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
+    expect(wrapper.get('[data-test="action-transfer"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-test="rename"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-test="delete"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-test="select-all"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("closes the Actions disclosure with Escape from an item and restores trigger focus", async () => {
+    const wrapper = mountPane(fakeFS());
+    document.body.appendChild(wrapper.element);
+    await flushPromises();
+
+    const trigger = wrapper.get('[data-test="actions-menu-trigger"]');
+    await trigger.trigger("click");
+    const item = wrapper.get('[data-test="toggle-hidden"]');
+    (item.element as HTMLButtonElement).focus();
+
+    await item.trigger("keydown", { key: "Escape" });
+
+    expect(wrapper.find('[data-test="actions-menu"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(trigger.element);
+    wrapper.unmount();
   });
 
   it("reloads a parent-provided local cwd and ignores the stale initial request", async () => {

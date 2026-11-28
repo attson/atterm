@@ -82,8 +82,12 @@ export function visibleEntries(entries: SFTPDirEntry[], state: SftpPaneState): S
   return [...filtered].sort((left, right) => compareEntries(left, right, state));
 }
 
+export function isNavigationEntry(entry: Pick<SFTPDirEntry, "name">): boolean {
+  return entry.name === "." || entry.name === "..";
+}
+
 function isHiddenName(name: string): boolean {
-  return name.startsWith(".") && name !== "." && name !== "..";
+  return name.startsWith(".") && !isNavigationEntry({ name });
 }
 
 function compareEntries(left: SFTPDirEntry, right: SFTPDirEntry, state: SftpPaneState): number {

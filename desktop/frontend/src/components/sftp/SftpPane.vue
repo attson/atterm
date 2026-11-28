@@ -28,6 +28,7 @@ import SftpSourcePicker from "./SftpSourcePicker.vue";
 import {
   goBack,
   goForward,
+  isNavigationEntry,
   navigate,
   switchSource,
   visibleEntries,
@@ -73,6 +74,7 @@ const remoteDeletePending = ref(false);
 const contextMenu = ref({ open: false, x: 0, y: 0 });
 const actionsMenuOpen = ref(false);
 const actionsMenuRoot = ref<HTMLElement | null>(null);
+const actionsMenuTrigger = ref<HTMLButtonElement | null>(null);
 
 watch(() => props.state, (next) => {
   const cwdChanged = next.cwd !== paneState.value.cwd;
@@ -87,10 +89,14 @@ watch(() => props.state, (next) => {
 }, { deep: true });
 
 const shownEntries = computed(() => visibleEntries(entries.value, paneState.value));
-const selectedEntries = computed(() => entries.value.filter((entry) => paneState.value.selectedPaths.has(entryPath(entry))));
-const canOpen = computed(() => selectedEntries.value.length === 1);
-const canRename = computed(() => selectedEntries.value.length === 1);
-const canDelete = computed(() => selectedEntries.value.length > 0);
+const selectedEntries = computed(() => entries.value.filter((entry) => (
+  !isNavigationEntry(entry) && paneState.value.selectedPaths.has(entryPath(entry))
+)));
+const selectableEntries = computed(() => shownEntries.value.filter((entry) => !isNavigationEntry(entry)));
+const fsReady = computed(() => currentFS.value !== null && !loading.value);
+const canOpen = computed(() => fsReady.value && selectedEntries.value.length === 1);
+const canRename = computed(() => fsReady.value && selectedEntries.value.length === 1);
+const canDelete = computed(() => fsReady.value && selectedEntries.value.length > 0);
 
 function updateState(next: SftpPaneState) {
   paneState.value = cloneState(next);
@@ -227,6 +233,11 @@ function openActionFromMenu(kind: ActionKind) {
   openAction(kind);
 }
 
+function closeActionsMenu(restoreFocus = false) {
+  actionsMenuOpen.value = false;
+  if (restoreFocus) actionsMenuTrigger.value?.focus();
+}
+
 function openSelected() {
   const selected = selectedEntries.value[0];
   actionsMenuOpen.value = false;
@@ -250,7 +261,7 @@ function selectAll() {
   const next = cloneState(paneState.value);
   next.selectedPaths = new Set(
     shownEntries.value
-      .filter((entry) => entry.name !== "." && entry.name !== "..")
+      .filter((entry) => !isNavigationEntry(entry))
       .map(entryPath),
   );
   actionsMenuOpen.value = false;
@@ -307,6 +318,7 @@ function closeAction() {
 }
 
 function openContextMenu(event: MouseEvent, entry: SFTPDirEntry) {
+  if (isNavigationEntry(entry)) return;
   const path = entryPath(entry);
   if (!paneState.value.selectedPaths.has(path)) {
     const next = cloneState(paneState.value);
@@ -329,7 +341,7 @@ function onWindowPointerDown(event: PointerEvent) {
 }
 
 function onDragStart(event: DragEvent, entry: SFTPDirEntry) {
-  if (!event.dataTransfer) return;
+  if (!event.dataTransfer || isNavigationEntry(entry)) return;
   const path = entryPath(entry);
   const paths = paneState.value.selectedPaths.has(path)
     ? Array.from(paneState.value.selectedPaths)
@@ -385,7 +397,7 @@ onBeforeUnmount(() => {
         <button data-test="nav-back" v-tooltip="t('sftp.back')" :disabled="!paneState.back.length" @click="moveTo(goBack(paneState))"><ArrowLeft :size="16" /></button>
         <button data-test="nav-forward" v-tooltip="t('sftp.forward')" :disabled="!paneState.forward.length" @click="moveTo(goForward(paneState))"><ArrowRight :size="16" /></button>
         <button data-test="nav-up" v-tooltip="t('sftp.up')" @click="moveTo(navigate(paneState, upPath(paneState.cwd)))"><ArrowUp :size="16" /></button>
-        <button v-tooltip="t('common.refresh')" @click="loadDirectory"><RefreshCw :size="16" /></button>
+        <button v-tooltip="t('common.refresh')" :disabled="!fsReady" @click="loadDirectory"><RefreshCw :size="16" /></button>
       </div>
     </header>
 
@@ -397,28 +409,28 @@ onBeforeUnmount(() => {
       </label>
       <div ref="actionsMenuRoot" class="actions-menu-wrap">
         <button
+          ref="actionsMenuTrigger"
           class="actions-menu-trigger"
           data-test="actions-menu-trigger"
           type="button"
-          aria-haspopup="menu"
           :aria-expanded="actionsMenuOpen"
           @click="actionsMenuOpen = !actionsMenuOpen"
-          @keydown.esc="actionsMenuOpen = false"
+          @keydown.esc="closeActionsMenu(true)"
         >
           {{ t("sftp.actions") }} <ChevronDown :size="14" :class="{ open: actionsMenuOpen }" />
         </button>
-        <div v-if="actionsMenuOpen" class="actions-menu" data-test="actions-menu" role="menu">
-          <button data-test="action-open" role="menuitem" :disabled="!canOpen" @click="openSelected"><File :size="15" />{{ t("sftp.open") }}</button>
-          <button data-test="action-transfer" role="menuitem" :disabled="!canDelete" @click="transferSelection"><Copy :size="15" />{{ t("sftp.copyToOtherPane") }}</button>
-          <button data-test="rename" role="menuitem" :disabled="!canRename" @click="openActionFromMenu('rename')"><Pencil :size="15" />{{ t("sftp.rename") }}</button>
-          <button data-test="delete" role="menuitem" :disabled="!canDelete" @click="openActionFromMenu('delete')"><Trash2 :size="15" />{{ t("common.delete") }}</button>
-          <span class="menu-separator"></span>
-          <button data-test="action-refresh" role="menuitem" @click="refreshFromMenu"><RefreshCw :size="15" />{{ t("common.refresh") }}</button>
-          <button data-test="create-dir" role="menuitem" @click="openActionFromMenu('mkdir')"><FolderPlus :size="15" />{{ t("sftp.createDirectory") }}</button>
-          <button data-test="toggle-hidden" role="menuitemcheckbox" :aria-checked="paneState.showHidden" @click="toggleHidden">
+        <div v-if="actionsMenuOpen" class="actions-menu" data-test="actions-menu" @keydown.esc.stop.prevent="closeActionsMenu(true)">
+          <button data-test="action-open" :disabled="!canOpen" @click="openSelected"><File :size="15" />{{ t("sftp.open") }}</button>
+          <button data-test="action-transfer" :disabled="!canDelete" @click="transferSelection"><Copy :size="15" />{{ t("sftp.copyToOtherPane") }}</button>
+          <button data-test="rename" :disabled="!canRename" @click="openActionFromMenu('rename')"><Pencil :size="15" />{{ t("sftp.rename") }}</button>
+          <button data-test="delete" :disabled="!canDelete" @click="openActionFromMenu('delete')"><Trash2 :size="15" />{{ t("common.delete") }}</button>
+          <span class="menu-separator" aria-hidden="true"></span>
+          <button data-test="action-refresh" :disabled="!fsReady" @click="refreshFromMenu"><RefreshCw :size="15" />{{ t("common.refresh") }}</button>
+          <button data-test="create-dir" :disabled="!fsReady" @click="openActionFromMenu('mkdir')"><FolderPlus :size="15" />{{ t("sftp.createDirectory") }}</button>
+          <button data-test="toggle-hidden" :aria-pressed="paneState.showHidden" @click="toggleHidden">
             <span class="menu-check"><Check v-if="paneState.showHidden" :size="14" /></span>{{ t("sftp.showHidden") }}
           </button>
-          <button data-test="select-all" role="menuitem" :disabled="shownEntries.length === 0" @click="selectAll"><Check :size="15" />{{ t("sftp.selectAll") }}</button>
+          <button data-test="select-all" :disabled="!fsReady || selectableEntries.length === 0" @click="selectAll"><Check :size="15" />{{ t("sftp.selectAll") }}</button>
         </div>
       </div>
     </div>
@@ -448,12 +460,12 @@ onBeforeUnmount(() => {
             :data-path="entryPath(entry)"
             :class="{ selected: paneState.selectedPaths.has(entryPath(entry)) }"
             tabindex="0"
-            draggable="true"
+            :draggable="!isNavigationEntry(entry)"
             @dblclick="onRowDoubleClick(entry)"
             @contextmenu.prevent="openContextMenu($event, entry)"
             @dragstart="onDragStart($event, entry)"
           >
-            <td><input :data-test="`row-select-${entryPath(entry)}`" type="checkbox" :checked="paneState.selectedPaths.has(entryPath(entry))" @change="toggleSelection(entryPath(entry), ($event.target as HTMLInputElement).checked)" /></td>
+            <td><input v-if="!isNavigationEntry(entry)" :data-test="`row-select-${entryPath(entry)}`" type="checkbox" :checked="paneState.selectedPaths.has(entryPath(entry))" @change="toggleSelection(entryPath(entry), ($event.target as HTMLInputElement).checked)" /></td>
             <td class="name-cell" v-tooltip="entry.name">
               <span class="name-content">
                 <Folder v-if="entry.isDir" data-test="entry-icon-folder" :size="16" />

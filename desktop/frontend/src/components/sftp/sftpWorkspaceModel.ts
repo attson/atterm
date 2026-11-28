@@ -86,6 +86,12 @@ export function isNavigationEntry(entry: Pick<SFTPDirEntry, "name">): boolean {
   return entry.name === "." || entry.name === "..";
 }
 
+export function selectablePaths(paths: Iterable<string>): string[] {
+  return Array.from(paths).filter((path) => (
+    path.split(/[\\/]+/).every((part) => part !== "." && part !== "..")
+  ));
+}
+
 function isHiddenName(name: string): boolean {
   return name.startsWith(".") && !isNavigationEntry({ name });
 }
@@ -123,7 +129,7 @@ export function buildTransferRequest(
   to: SftpPaneState,
   conflict: FileTransferConflict,
 ): StartFileTransferReq {
-  const paths = Array.from(from.selectedPaths);
+  const paths = selectablePaths(from.selectedPaths);
   if (paths.length === 0) throw new Error("No files selected");
 
   const source = sourceEndpoint(from.source);

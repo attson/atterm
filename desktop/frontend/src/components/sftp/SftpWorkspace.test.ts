@@ -113,6 +113,26 @@ describe("SftpWorkspace", () => {
     });
   });
 
+  it("disables stale-only selections and strips navigation paths from mixed transfers", async () => {
+    const StartFileTransfer = vi.fn().mockResolvedValue("job-1");
+    __setBindingsForTest(bindings({ StartFileTransfer }));
+    const wrapper = mountWorkspace();
+    await flushPromises();
+    const panes = wrapper.findAllComponents(SftpPaneStub);
+
+    panes[0].vm.$emit("update:state", paneState("left-host", "/from", ["/from/.."]));
+    panes[1].vm.$emit("update:state", paneState("right-host", "/to"));
+    await nextTick();
+    expect(wrapper.get('[data-test="transfer-right"]').attributes("disabled")).toBeDefined();
+
+    panes[0].vm.$emit("update:state", paneState("left-host", "/from", ["/from/a.txt", "/from/.."]));
+    await nextTick();
+    await wrapper.get('[data-test="transfer-right"]').trigger("click");
+    await confirmTransfer(wrapper);
+
+    expect(StartFileTransfer).toHaveBeenCalledWith(expect.objectContaining({ paths: ["/from/a.txt"] }));
+  });
+
   it("reloads saved hosts when the retained workspace becomes active again", async () => {
     const ListSFTPHosts = vi.fn()
       .mockResolvedValueOnce([{ id: "left-host", alias: "Left", host: "left.example", user: "me", auth_kind: "password" }])

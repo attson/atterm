@@ -30,6 +30,7 @@ import {
   goForward,
   isNavigationEntry,
   navigate,
+  selectablePaths,
   switchSource,
   visibleEntries,
   type SftpPaneState,
@@ -344,7 +345,7 @@ function onDragStart(event: DragEvent, entry: SFTPDirEntry) {
   if (!event.dataTransfer || isNavigationEntry(entry)) return;
   const path = entryPath(entry);
   const paths = paneState.value.selectedPaths.has(path)
-    ? Array.from(paneState.value.selectedPaths)
+    ? selectablePaths(paneState.value.selectedPaths)
     : [path];
   const endpoint = paneState.value.source.kind === "local"
     ? { kind: "local" as const }
@@ -367,7 +368,7 @@ function cloneState(state: SftpPaneState): SftpPaneState {
     source: state.source.kind === "local" ? { kind: "local" } : { kind: "ssh", hostId: state.source.hostId },
     back: [...state.back],
     forward: [...state.forward],
-    selectedPaths: new Set(state.selectedPaths),
+    selectedPaths: new Set(selectablePaths(state.selectedPaths)),
   };
 }
 
@@ -458,7 +459,7 @@ onBeforeUnmount(() => {
             :key="entryPath(entry)"
             data-test="file-row"
             :data-path="entryPath(entry)"
-            :class="{ selected: paneState.selectedPaths.has(entryPath(entry)) }"
+            :class="{ selected: !isNavigationEntry(entry) && paneState.selectedPaths.has(entryPath(entry)) }"
             tabindex="0"
             :draggable="!isNavigationEntry(entry)"
             @dblclick="onRowDoubleClick(entry)"

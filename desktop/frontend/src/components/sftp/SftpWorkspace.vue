@@ -23,6 +23,7 @@ import SftpTransferQueue from "./SftpTransferQueue.vue";
 import {
   buildTransferRequest,
   createPaneState,
+  selectablePaths,
   type SftpPaneState,
   type SftpSource,
 } from "./sftpWorkspaceModel";
@@ -67,8 +68,9 @@ function pane(side: Side): SftpPaneState {
 }
 
 function setPane(side: Side, state: SftpPaneState) {
-  if (side === "left") left.value = state;
-  else right.value = state;
+  const sanitized = { ...state, selectedPaths: new Set(selectablePaths(state.selectedPaths)) };
+  if (side === "left") left.value = sanitized;
+  else right.value = sanitized;
 }
 
 function beginSelectionTransfer(source: Side) {

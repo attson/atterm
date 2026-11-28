@@ -207,7 +207,9 @@ describe("SftpPane", () => {
 
     expect(wrapper.find('[data-test="row-select-/home/me/."]').exists()).toBe(false);
     expect(wrapper.find('[data-test="row-select-/home/me/.."]').exists()).toBe(false);
-    expect(wrapper.get('[data-path="/home/me/.."]').attributes("draggable")).toBe("false");
+    const parentRow = wrapper.get('[data-path="/home/me/.."]');
+    expect(parentRow.attributes("draggable")).toBe("false");
+    expect(parentRow.classes()).not.toContain("selected");
 
     await wrapper.get('[data-path="/home/me/.."]').trigger("contextmenu", { clientX: 12, clientY: 18 });
     expect(wrapper.find('[data-test="context-transfer"]').exists()).toBe(false);
@@ -364,9 +366,11 @@ describe("SftpPane", () => {
   });
 
   it("offers context-menu transfer and writes endpoint-only internal drag data", async () => {
+    const state = createPaneState({ kind: "local" }, "/home/me");
+    state.selectedPaths = new Set(["/home/me/note.txt", "/home/me/.."]);
     const wrapper = mountPane(fakeFS({
       listDir: vi.fn().mockResolvedValue([{ name: "note.txt", isDir: false, size: 1, modTime: 1 }]),
-    }));
+    }), state);
     await flushPromises();
 
     await wrapper.get('[data-path="/home/me/note.txt"]').trigger("contextmenu", { clientX: 12, clientY: 18 });

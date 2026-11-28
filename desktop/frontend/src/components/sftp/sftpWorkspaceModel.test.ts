@@ -120,6 +120,25 @@ describe("SFTP workspace transfer requests", () => {
     });
   });
 
+  it("excludes paths containing navigation segments from transfer requests", () => {
+    const from: SftpPaneState = {
+      ...createPaneState({ kind: "ssh", hostId: "left" }, "/src"),
+      selectedPaths: new Set([
+        "/src/a.txt",
+        "/src/..",
+        "/src/./nested.txt",
+        "/src/.env",
+        "C:\\src\\..\\secret.txt",
+      ]),
+    };
+    const to = createPaneState({ kind: "ssh", hostId: "right" }, "/dst");
+
+    expect(buildTransferRequest(from, to, "skip").paths).toEqual(["/src/a.txt", "/src/.env"]);
+
+    from.selectedPaths = new Set(["/src/..", "/src/."]);
+    expect(() => buildTransferRequest(from, to, "skip")).toThrow(/no files selected/i);
+  });
+
   it("rejects an empty selection, the same target, and a descendant target", () => {
     const empty = createPaneState({ kind: "local" }, "/tmp");
     expect(() => buildTransferRequest(empty, empty, "skip")).toThrow(/no files selected/i);

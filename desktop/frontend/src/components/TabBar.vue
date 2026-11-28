@@ -311,18 +311,6 @@ function onStripDrop(e: DragEvent) {
     @dragleave="onStripDragLeave"
     @drop="onStripDrop"
   >
-    <button
-      v-if="sftpAvailable"
-      class="sftp-tab"
-      :class="{ active: sftpOpen }"
-      type="button"
-      data-test="sftp-tab"
-      :aria-label="i18nT('sftp.workspace')"
-      @click="emit('toggle-sftp')"
-    >
-      <FolderSync :size="14" />
-      <span>{{ i18nT("sftp.workspace") }}</span>
-    </button>
     <div class="tabs" ref="tabsEl">
       <div
         v-for="(t, idx) in tabs"
@@ -364,59 +352,73 @@ function onStripDrop(e: DragEvent) {
         <button class="close" @pointerdown.stop @click="onClose($event, t.id)">×</button>
       </div>
     </div>
-    <button
-      v-if="canNewLocal"
-      class="plus"
-      data-test="new-local-shell"
-      :disabled="starting"
-      v-tooltip="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
-      :aria-label="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
-      @click="emit('new')"
-    >+</button>
-    <button
-      v-if="canNewLocal"
-      class="ssh-btn"
-      type="button"
-      data-test="new-ssh"
-      v-tooltip="'SSH hosts'"
-      aria-label="SSH hosts"
-      @click="emit('new-ssh')"
-    >
-      <Server :size="14" />
-    </button>
-    <button
-      v-if="isAdmin"
-      class="admin-btn"
-      type="button"
-      data-test="admin-button"
-      :class="{ active: adminOpen }"
-      v-tooltip="i18nT('terminal.adminPanel')"
-      :aria-label="i18nT('terminal.adminPanel')"
-      @click="emit('toggle-admin')"
-    >
-      <ShieldUser :size="14" />
-    </button>
-    <button
-      class="settings-btn"
-      type="button"
-      data-test="tabbar-settings"
-      v-tooltip="i18nT('terminal.relaySettings')"
-      :aria-label="i18nT('terminal.relaySettings')"
-      @click="emit('open-settings')"
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="14" height="14"
-        viewBox="0 0 24 24"
-        fill="none" stroke="currentColor"
-        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        aria-hidden="true"
+    <div class="tabbar-actions" data-test="tabbar-actions">
+      <button
+        v-if="canNewLocal"
+        class="plus"
+        data-test="new-local-shell"
+        :disabled="starting"
+        v-tooltip="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
+        :aria-label="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
+        @click="emit('new')"
+      >+</button>
+      <button
+        v-if="canNewLocal"
+        class="ssh-btn"
+        type="button"
+        data-test="new-ssh"
+        v-tooltip="'SSH hosts'"
+        aria-label="SSH hosts"
+        @click="emit('new-ssh')"
       >
-        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
-      <span v-if="updateBadge" class="dot"></span>
-    </button>
+        <Server :size="14" />
+      </button>
+      <button
+        v-if="sftpAvailable"
+        class="sftp-btn"
+        :class="{ active: sftpOpen }"
+        type="button"
+        data-test="sftp-tab"
+        v-tooltip="i18nT('sftp.workspace')"
+        :aria-label="i18nT('sftp.workspace')"
+        @click="emit('toggle-sftp')"
+      >
+        <FolderSync :size="14" />
+      </button>
+      <button
+        v-if="isAdmin"
+        class="admin-btn"
+        type="button"
+        data-test="admin-button"
+        :class="{ active: adminOpen }"
+        v-tooltip="i18nT('terminal.adminPanel')"
+        :aria-label="i18nT('terminal.adminPanel')"
+        @click="emit('toggle-admin')"
+      >
+        <ShieldUser :size="14" />
+      </button>
+      <button
+        class="settings-btn"
+        type="button"
+        data-test="tabbar-settings"
+        v-tooltip="i18nT('terminal.relaySettings')"
+        :aria-label="i18nT('terminal.relaySettings')"
+        @click="emit('open-settings')"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14" height="14"
+          viewBox="0 0 24 24"
+          fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0-.73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+        <span v-if="updateBadge" class="dot"></span>
+      </button>
+    </div>
   </div>
 </template>
 
@@ -443,18 +445,7 @@ function onStripDrop(e: DragEvent) {
 }
 .tabs::-webkit-scrollbar { display: none; }
 
-.sftp-tab {
-  flex: 0 0 auto; min-width: 82px; padding: 0 12px;
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  border: 0; border-right: 1px solid var(--border);
-  background: transparent; color: var(--fg-dim); cursor: pointer;
-  font: inherit; font-size: 12px;
-}
-.sftp-tab:hover { background: rgba(255, 255, 255, 0.04); color: var(--fg); }
-.sftp-tab.active {
-  background: var(--bg); color: var(--fg);
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
+.tabbar-actions { flex: 0 0 auto; display: flex; align-items: stretch; }
 
 .tab {
   display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px;
@@ -502,15 +493,15 @@ function onStripDrop(e: DragEvent) {
 }
 .plus:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 .plus:disabled { opacity: 0.4; cursor: not-allowed; }
-.ssh-btn {
+.ssh-btn, .sftp-btn {
   display: inline-flex; align-items: center; justify-content: center;
   border: none; background: transparent; color: var(--fg-dim);
   padding: 0 10px; cursor: pointer;
   border-left: 1px solid var(--border);
   transition: color 120ms, background 120ms;
 }
-.ssh-btn:hover { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
-.ssh-btn svg { display: block; }
+.ssh-btn:hover, .sftp-btn:hover, .sftp-btn.active { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
+.ssh-btn svg, .sftp-btn svg { display: block; }
 .settings-btn {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center;
@@ -562,7 +553,8 @@ function onStripDrop(e: DragEvent) {
     opacity: 1;
     padding: 0 2px;
   }
-  .sftp-tab { min-width: 70px; padding: 0 9px; }
+  .sftp-btn,
+  .ssh-btn,
   .settings-btn,
   .admin-btn {
     min-width: 40px;

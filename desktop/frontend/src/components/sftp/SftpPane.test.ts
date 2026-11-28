@@ -168,6 +168,28 @@ describe("SftpPane", () => {
     expect(wrapper.get('[data-test="file-row"]').text()).toContain("z.txt");
   });
 
+  it("renders file-kind icons and reveals hidden files from the Actions menu", async () => {
+    const wrapper = mountPane(fakeFS({
+      listDir: vi.fn().mockResolvedValue([
+        { name: "Projects", isDir: true, size: 0, modTime: 1 },
+        { name: "notes.txt", isDir: false, size: 1, modTime: 1 },
+        { name: ".env", isDir: false, size: 1, modTime: 1 },
+      ]),
+    }));
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-test="file-row"]')).toHaveLength(2);
+    expect(wrapper.find('[data-path="/home/me/Projects"] [data-test="entry-icon-folder"]').exists()).toBe(true);
+    expect(wrapper.find('[data-path="/home/me/notes.txt"] [data-test="entry-icon-file"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
+    expect(wrapper.get('[data-test="actions-menu"]').isVisible()).toBe(true);
+    await wrapper.get('[data-test="toggle-hidden"]').trigger("click");
+
+    expect(wrapper.findAll('[data-test="file-row"]')).toHaveLength(3);
+    expect(wrapper.find('[data-path="/home/me/.env"]').exists()).toBe(true);
+  });
+
   it("reloads a parent-provided local cwd and ignores the stale initial request", async () => {
     let rejectRoot!: (error: Error) => void;
     const rootRequest = new Promise<never>((_resolve, reject) => { rejectRoot = reject; });
@@ -228,6 +250,7 @@ describe("SftpPane", () => {
     const wrapper = mountPane(localFS);
     await flushPromises();
 
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
     await wrapper.get('[data-test="create-dir"]').trigger("click");
     await wrapper.get('[data-test="action-input"]').setValue("new-dir");
     await wrapper.get('[data-test="action-confirm"]').trigger("click");
@@ -235,6 +258,7 @@ describe("SftpPane", () => {
     expect(mkdir).toHaveBeenCalledWith("/home/me/new-dir");
 
     await wrapper.get('[data-test="row-select-/home/me/note.txt"]').setValue(true);
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
     await wrapper.get('[data-test="rename"]').trigger("click");
     await wrapper.get('[data-test="action-input"]').setValue("renamed.txt");
     await wrapper.get('[data-test="action-confirm"]').trigger("click");
@@ -242,12 +266,15 @@ describe("SftpPane", () => {
     expect(rename).toHaveBeenCalledWith("/home/me/note.txt", "/home/me/renamed.txt");
 
     await wrapper.get('[data-test="row-select-/home/me/note.txt"]').setValue(true);
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
     await wrapper.get('[data-test="delete"]').trigger("click");
     await wrapper.get('[data-test="action-confirm"]').trigger("click");
     await flushPromises();
     expect(trash).toHaveBeenCalledWith("/home/me/note.txt");
 
-    await wrapper.get('[data-path="/home/me/note.txt"]').trigger("dblclick");
+    await wrapper.get('[data-test="row-select-/home/me/note.txt"]').setValue(true);
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
+    await wrapper.get('[data-test="action-open"]').trigger("click");
     await flushPromises();
     expect(wrapper.get('[data-test="file-editor-stub"]').text()).toBe("/home/me/note.txt");
   });
@@ -270,6 +297,7 @@ describe("SftpPane", () => {
     await wrapper.findAll('[data-testid="select-option"]')[1].trigger("click");
     await flushPromises();
     await wrapper.get('[data-test="row-select-/srv/release"]').setValue(true);
+    await wrapper.get('[data-test="actions-menu-trigger"]').trigger("click");
     await wrapper.get('[data-test="delete"]').trigger("click");
     await wrapper.get('[data-test="action-confirm"]').trigger("click");
     await flushPromises();

@@ -198,7 +198,7 @@ describe("TabBar admin button", () => {
   });
 });
 
-describe("TabBar fixed SFTP tab", () => {
+describe("TabBar SFTP workspace button", () => {
   it("renders only when available and emits toggle-sftp", async () => {
     const hidden = mount(TabBar, { props: { tabs: [], currentId: null, starting: false } });
     expect(hidden.find('[data-test="sftp-tab"]').exists()).toBe(false);
@@ -210,7 +210,7 @@ describe("TabBar fixed SFTP tab", () => {
     expect(wrapper.emitted("toggle-sftp")).toHaveLength(1);
   });
 
-  it("is fixed before numbered terminal tabs and has no close or drag affordance", () => {
+  it("lives in the right action group between SSH hosts and settings", () => {
     const wrapper = mount(TabBar, {
       props: {
         tabs: [
@@ -225,12 +225,19 @@ describe("TabBar fixed SFTP tab", () => {
     });
     const fixed = wrapper.get('[data-test="sftp-tab"]');
     expect(fixed.classes()).toContain("active");
-    expect(fixed.text()).toContain("SFTP");
+    expect(fixed.attributes("aria-label")).toBe("SFTP");
+    expect(fixed.find("svg").exists()).toBe(true);
     expect(fixed.find(".num").exists()).toBe(false);
     expect(fixed.find(".close").exists()).toBe(false);
     expect(fixed.attributes("data-tab-id")).toBeUndefined();
     expect(wrapper.findAll(".tab .num").map((node) => node.text())).toEqual(["1:", "2:"]);
-    expect(wrapper.get(".tabbar").element.firstElementChild).toBe(fixed.element);
+    const actions = wrapper.get('[data-test="tabbar-actions"]');
+    expect(actions.findAll("button").map((button) => button.attributes("data-test"))).toEqual([
+      "new-local-shell",
+      "new-ssh",
+      "sftp-tab",
+      "tabbar-settings",
+    ]);
   });
 });
 

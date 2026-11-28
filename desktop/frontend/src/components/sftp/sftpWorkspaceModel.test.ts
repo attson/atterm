@@ -44,6 +44,7 @@ describe("SFTP workspace pane model", () => {
       forward: [],
       selectedPaths: new Set(),
       query: "",
+      showHidden: false,
       sort: "name",
       direction: "asc",
     });
@@ -79,6 +80,25 @@ describe("SFTP workspace pane model", () => {
     });
     expect(filtered.map((entry) => entry.name)).toEqual(["Alpha-dir"]);
     expect(entries.map((entry) => entry.name)).toEqual(["z-file", "Alpha-dir", "beta-dir", "a-file"]);
+  });
+
+  it("hides dotfiles by default while preserving parent navigation entries", () => {
+    const entries: SFTPDirEntry[] = [
+      { name: "..", isDir: true },
+      { name: ".env", isDir: false },
+      { name: ".config", isDir: true },
+      { name: "README.md", isDir: false },
+    ];
+    const state = createPaneState({ kind: "local" }, "/home/me");
+
+    expect(state).toMatchObject({ showHidden: false });
+    expect(visibleEntries(entries, state).map((entry) => entry.name)).toEqual(["..", "README.md"]);
+    expect(visibleEntries(entries, { ...state, showHidden: true }).map((entry) => entry.name)).toEqual([
+      "..",
+      ".config",
+      ".env",
+      "README.md",
+    ]);
   });
 });
 

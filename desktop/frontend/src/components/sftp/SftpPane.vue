@@ -5,6 +5,11 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Check,
+  ChevronDown,
+  Copy,
+  File,
+  Folder,
   FolderPlus,
   Pencil,
   RefreshCw,
@@ -66,6 +71,8 @@ const actionBusy = ref(false);
 const actionError = ref("");
 const remoteDeletePending = ref(false);
 const contextMenu = ref({ open: false, x: 0, y: 0 });
+const actionsMenuOpen = ref(false);
+const actionsMenuRoot = ref<HTMLElement | null>(null);
 
 watch(() => props.state, (next) => {
   const cwdChanged = next.cwd !== paneState.value.cwd;
@@ -81,6 +88,7 @@ watch(() => props.state, (next) => {
 
 const shownEntries = computed(() => visibleEntries(entries.value, paneState.value));
 const selectedEntries = computed(() => entries.value.filter((entry) => paneState.value.selectedPaths.has(entryPath(entry))));
+const canOpen = computed(() => selectedEntries.value.length === 1);
 const canRename = computed(() => selectedEntries.value.length === 1);
 const canDelete = computed(() => selectedEntries.value.length > 0);
 
@@ -214,6 +222,41 @@ function openAction(kind: ActionKind) {
   if (kind === "rename") actionInput.value = selectedEntries.value[0]?.name ?? "";
 }
 
+function openActionFromMenu(kind: ActionKind) {
+  actionsMenuOpen.value = false;
+  openAction(kind);
+}
+
+function openSelected() {
+  const selected = selectedEntries.value[0];
+  actionsMenuOpen.value = false;
+  if (selected) onRowDoubleClick(selected);
+}
+
+function refreshFromMenu() {
+  actionsMenuOpen.value = false;
+  void loadDirectory();
+}
+
+function toggleHidden() {
+  const next = cloneState(paneState.value);
+  next.showHidden = !next.showHidden;
+  next.selectedPaths.clear();
+  actionsMenuOpen.value = false;
+  updateState(next);
+}
+
+function selectAll() {
+  const next = cloneState(paneState.value);
+  next.selectedPaths = new Set(
+    shownEntries.value
+      .filter((entry) => entry.name !== "." && entry.name !== "..")
+      .map(entryPath),
+  );
+  actionsMenuOpen.value = false;
+  updateState(next);
+}
+
 async function confirmAction() {
   const fs = currentFS.value;
   if (!fs || !action.value) return;
@@ -275,7 +318,14 @@ function openContextMenu(event: MouseEvent, entry: SFTPDirEntry) {
 
 function transferSelection() {
   contextMenu.value.open = false;
+  actionsMenuOpen.value = false;
   emit("transfer-selection");
+}
+
+function onWindowPointerDown(event: PointerEvent) {
+  if (!actionsMenuOpen.value) return;
+  if (actionsMenuRoot.value?.contains(event.target as Node)) return;
+  actionsMenuOpen.value = false;
 }
 
 function onDragStart(event: DragEvent, entry: SFTPDirEntry) {
@@ -310,11 +360,13 @@ function cloneState(state: SftpPaneState): SftpPaneState {
 }
 
 onMounted(async () => {
+  window.addEventListener("pointerdown", onWindowPointerDown);
   if (paneState.value.source.kind === "ssh") await chooseSource(paneState.value.source);
   else await loadDirectory();
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("pointerdown", onWindowPointerDown);
   loadGeneration.value++;
   disposeRemoteBridge();
 });
@@ -343,12 +395,35 @@ onBeforeUnmount(() => {
         <Search :size="14" />
         <input data-test="query-input" :value="paneState.query" :placeholder="t('sftp.filter')" @input="updateQuery(($event.target as HTMLInputElement).value)" />
       </label>
+      <div ref="actionsMenuRoot" class="actions-menu-wrap">
+        <button
+          class="actions-menu-trigger"
+          data-test="actions-menu-trigger"
+          type="button"
+          aria-haspopup="menu"
+          :aria-expanded="actionsMenuOpen"
+          @click="actionsMenuOpen = !actionsMenuOpen"
+          @keydown.esc="actionsMenuOpen = false"
+        >
+          {{ t("sftp.actions") }} <ChevronDown :size="14" :class="{ open: actionsMenuOpen }" />
+        </button>
+        <div v-if="actionsMenuOpen" class="actions-menu" data-test="actions-menu" role="menu">
+          <button data-test="action-open" role="menuitem" :disabled="!canOpen" @click="openSelected"><File :size="15" />{{ t("sftp.open") }}</button>
+          <button data-test="action-transfer" role="menuitem" :disabled="!canDelete" @click="transferSelection"><Copy :size="15" />{{ t("sftp.copyToOtherPane") }}</button>
+          <button data-test="rename" role="menuitem" :disabled="!canRename" @click="openActionFromMenu('rename')"><Pencil :size="15" />{{ t("sftp.rename") }}</button>
+          <button data-test="delete" role="menuitem" :disabled="!canDelete" @click="openActionFromMenu('delete')"><Trash2 :size="15" />{{ t("common.delete") }}</button>
+          <span class="menu-separator"></span>
+          <button data-test="action-refresh" role="menuitem" @click="refreshFromMenu"><RefreshCw :size="15" />{{ t("common.refresh") }}</button>
+          <button data-test="create-dir" role="menuitem" @click="openActionFromMenu('mkdir')"><FolderPlus :size="15" />{{ t("sftp.createDirectory") }}</button>
+          <button data-test="toggle-hidden" role="menuitemcheckbox" :aria-checked="paneState.showHidden" @click="toggleHidden">
+            <span class="menu-check"><Check v-if="paneState.showHidden" :size="14" /></span>{{ t("sftp.showHidden") }}
+          </button>
+          <button data-test="select-all" role="menuitem" :disabled="shownEntries.length === 0" @click="selectAll"><Check :size="15" />{{ t("sftp.selectAll") }}</button>
+        </div>
+      </div>
     </div>
 
     <div class="action-row">
-      <button data-test="create-dir" v-tooltip="t('sftp.createDirectory')" @click="openAction('mkdir')"><FolderPlus :size="16" /></button>
-      <button data-test="rename" v-tooltip="t('sftp.rename')" :disabled="!canRename" @click="openAction('rename')"><Pencil :size="16" /></button>
-      <button data-test="delete" v-tooltip="t('common.delete')" :disabled="!canDelete" @click="openAction('delete')"><Trash2 :size="16" /></button>
       <span class="action-spacer"></span>
       <button data-test="sort-name" :class="{ active: paneState.sort === 'name' }" v-tooltip="t('sftp.sortName')" @click="cycleSort('name')"><ArrowDownAZ :size="15" />{{ t("sftp.name") }}</button>
       <button data-test="sort-size" :class="{ active: paneState.sort === 'size' }" @click="cycleSort('size')">{{ t("sftp.size") }}</button>
@@ -379,7 +454,13 @@ onBeforeUnmount(() => {
             @dragstart="onDragStart($event, entry)"
           >
             <td><input :data-test="`row-select-${entryPath(entry)}`" type="checkbox" :checked="paneState.selectedPaths.has(entryPath(entry))" @change="toggleSelection(entryPath(entry), ($event.target as HTMLInputElement).checked)" /></td>
-            <td class="name-cell" v-tooltip="entry.name">{{ entry.name }}</td>
+            <td class="name-cell" v-tooltip="entry.name">
+              <span class="name-content">
+                <Folder v-if="entry.isDir" data-test="entry-icon-folder" :size="16" />
+                <File v-else data-test="entry-icon-file" :size="16" />
+                <span class="name-text">{{ entry.name }}</span>
+              </span>
+            </td>
             <td>{{ entry.modTime ? new Date(entry.modTime).toLocaleString() : "—" }}</td>
             <td>{{ entry.isDir ? "—" : (entry.size ?? 0).toLocaleString() }}</td>
             <td>{{ entry.isDir ? t("sftp.directory") : t("sftp.file") }}</td>
@@ -439,6 +520,24 @@ input { box-sizing: border-box; min-width: 0; height: 30px; border: 1px solid #3
 .search-box { flex: 1 1 42%; min-width: 100px; position: relative; display: flex; align-items: center; }
 .search-box svg { position: absolute; left: 8px; color: #8b949e; }
 .search-box input { width: 100%; padding-left: 28px; }
+.actions-menu-wrap { position: relative; flex: 0 0 auto; }
+.actions-menu-trigger { width: auto; padding: 0 9px; }
+.actions-menu-trigger svg { transition: transform .12s ease; }
+.actions-menu-trigger svg.open { transform: rotate(180deg); }
+.actions-menu {
+  position: absolute; z-index: 9; top: calc(100% + 5px); right: 0;
+  min-width: 210px; padding: 5px;
+  border: 1px solid #30363d; border-radius: 6px;
+  background: #21262d; box-shadow: 0 12px 30px rgba(0,0,0,.45);
+}
+.actions-menu button {
+  width: 100%; height: 32px; justify-content: flex-start;
+  padding: 0 9px; border: 0; background: transparent;
+}
+.actions-menu button:hover:not(:disabled) { background: #30363d; }
+.actions-menu button > svg { flex: 0 0 auto; }
+.menu-separator { display: block; height: 1px; margin: 4px 5px; background: #30363d; }
+.menu-check { width: 15px; height: 15px; display: inline-grid; place-items: center; flex: 0 0 auto; }
 .action-row { min-height: 32px; }
 .action-row button { width: auto; padding: 0 8px; font-size: 12px; }
 .action-spacer { flex: 1; }
@@ -452,6 +551,9 @@ td input[type="checkbox"] { width: 14px; height: 14px; accent-color: #2f81f7; }
 tr.selected td { background: rgba(47, 129, 247, .14); }
 tbody tr:hover td { background: #1f242c; }
 .name-cell { color: #f0f6fc; }
+.name-content { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.name-content svg { flex: 0 0 auto; color: #58a6ff; }
+.name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .empty { text-align: center; color: #8b949e; padding: 28px 12px; }
 .state { flex: 1; display: grid; place-content: center; color: #8b949e; gap: 10px; padding: 20px; text-align: center; }
 .state.error { color: #ff7b72; }

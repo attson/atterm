@@ -15,6 +15,7 @@ export interface SftpPaneState {
   forward: string[];
   selectedPaths: Set<string>;
   query: string;
+  showHidden: boolean;
   sort: "name" | "modified" | "size";
   direction: "asc" | "desc";
 }
@@ -27,6 +28,7 @@ export function createPaneState(source: SftpSource, cwd: string): SftpPaneState 
     forward: [],
     selectedPaths: new Set(),
     query: "",
+    showHidden: false,
     sort: "name",
     direction: "asc",
   };
@@ -73,10 +75,15 @@ export function goForward(state: SftpPaneState): SftpPaneState {
 
 export function visibleEntries(entries: SFTPDirEntry[], state: SftpPaneState): SFTPDirEntry[] {
   const query = state.query.trim().toLocaleLowerCase();
-  const filtered = query
-    ? entries.filter((entry) => entry.name.toLocaleLowerCase().includes(query))
-    : entries;
+  const filtered = entries.filter((entry) => {
+    if (!state.showHidden && isHiddenName(entry.name)) return false;
+    return !query || entry.name.toLocaleLowerCase().includes(query);
+  });
   return [...filtered].sort((left, right) => compareEntries(left, right, state));
+}
+
+function isHiddenName(name: string): boolean {
+  return name.startsWith(".") && name !== "." && name !== "..";
 }
 
 function compareEntries(left: SFTPDirEntry, right: SFTPDirEntry, state: SftpPaneState): number {
